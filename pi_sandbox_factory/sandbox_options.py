@@ -148,7 +148,8 @@ def guidance(selected, subagents=False):
     if selected['browser']:
         server_shell = ('bash_escalate (or the editor terminal)' if mode != 'off' else 'the editor terminal') if inner else 'bash (or the editor terminal)'
         lines.append('Use the native browser tool for Playwright automation. For browser testing, start the dev server with '
-                     + server_shell + ', running it in the background with output redirected to a log, then open http://localhost:PORT in browser. '
+                     + server_shell + ', running it in the background with nohup and redirected input/output '
+                     '(for example, nohup npm run dev >/tmp/dev.log 2>&1 </dev/null &), then open http://localhost:PORT in browser. '
                      + ('Ordinary bash has a separate network namespace and cannot host a server reachable by this browser. ' if inner else '')
                      + 'Local pages, API calls, WebSockets and popups need no network approval.')
         if selected['protect_browser_credentials']:

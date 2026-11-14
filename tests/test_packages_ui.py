@@ -71,6 +71,9 @@ class PackageUITests(unittest.TestCase):
                 await pilot.click('#packages'); await pilot.pause()
                 await pilot.click('#package-install'); await pilot.pause()
                 form = app.screen
+                # Textual ignores mouse clicks while its 200 ms press effect is
+                # active. Exercise validation without racing that animation.
+                form.query_one('#package-add', Button).active_effect_duration = 0
                 await pilot.click('#package-add'); await pilot.pause()
                 self.assertIs(app.screen, form)
                 self.assertIn('local name', str(form.query_one('#package-error', Static).render()))
@@ -82,7 +85,6 @@ class PackageUITests(unittest.TestCase):
                 self.assertIn('inside', str(form.query_one('#package-error', Static).render()))
                 form.query_one('#package-subdir', Input).value = 'profiles/reporting'
                 form.query_one('#package-ref', Input).value = 'v1'
-                await pilot.pause(0.3)
                 await pilot.click('#package-add'); await self.ready(app, pilot)
                 self.assertTrue(service.calls, str(form.query_one('#package-error', Static).render()) if app.screen is form else str(app.screen))
                 self.assertEqual(service.calls[-1], ['profile', 'add', 'reporting', str(self.root), '--ref', 'v1', '--subdir', 'profiles/reporting'])
