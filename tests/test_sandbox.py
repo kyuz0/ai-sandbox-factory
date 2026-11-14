@@ -571,6 +571,8 @@ class RecoveryTests(LifecycleTestCase):
                     starts = [call.args[0] for call in run.call_args_list if call.args[0][1] == 'run']
                     self.assertEqual(len(starts), 2)
                     proxy, dev = starts
+                    self.assertIn('--pids-limit=512', proxy)
+                    self.assertIn('--pids-limit=2048', dev)
                     self.assertNotIn('--security-opt=label=disable', proxy)
                     self.assertIn(f'{state / "squid.conf"}:/etc/squid/sandbox.conf:ro,Z', proxy)
                     self.assertIn('--security-opt=label=disable', dev)

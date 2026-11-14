@@ -527,7 +527,7 @@ def up(config, state):
                 ensure_gateway(config)
             continue
         base = [engine, 'run', '-d', '--name', name, '--label', f'{LABEL}={config["name"]}',
-                '--security-opt=no-new-privileges', '--pids-limit=512']
+                '--security-opt=no-new-privileges', f'--pids-limit={512 if name == proxy else 2048}']
         if name == proxy:
             args = [
                 '--cap-drop=ALL', '--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID',

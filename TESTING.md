@@ -34,6 +34,21 @@ python3 -m venv /tmp/pi-sandbox-package-check
 
 ## Container and Pendant integration
 
+Check process headroom with a cached Factory image:
+
+```sh
+podman run --rm --network none --pids-limit 512 --security-opt label=disable \
+  --entrypoint python3 -v "$PWD/tests/process_headroom.py:/tmp/check.py:ro" \
+  FACTORY_IMAGE /tmp/check.py exhausted
+podman run --rm --network none --pids-limit 2048 --security-opt label=disable \
+  --entrypoint python3 -v "$PWD/tests/process_headroom.py:/tmp/check.py:ro" \
+  FACTORY_IMAGE /tmp/check.py healthy
+```
+
+The fixture reproduces the relay's fork failure at the old limit and checks
+that 600 worker threads coexist with a working relay at the development limit.
+Both containers are disposable and removed when the check finishes.
+
 For creation cancellation, run the real Podman fixture with a locally cached image:
 
 ```sh

@@ -12,6 +12,10 @@ for client-side access.
 
 Each sandbox has a separate persistent home volume for Pi configuration and sessions. Desktop editor state is kept separately on the host. Stopping or recreating containers preserves that saved state. Deleting a sandbox removes its private home and editor state, but keeps the selected workspace and shared images.
 
+The development container permits up to 2,048 processes and threads combined,
+shared by the editor, agent, browser and development tools. The network gateway
+has a separate limit of 512.
+
 ## Restricted networking
 
 The development container uses `--network=none`. HTTP clients use its inherited proxy environment and a local relay to a Unix socket in a shared volume. A separate gateway container runs the socket relay and Squid, which checks exact destination hostname/port pairs. The development container mounts the socket volume read-only.
