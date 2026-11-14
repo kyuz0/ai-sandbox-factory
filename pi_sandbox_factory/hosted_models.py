@@ -1,4 +1,5 @@
 """Configure native Pi models through the isolated inference companion."""
+from . import activity
 import copy
 import json
 from pathlib import Path
@@ -87,7 +88,6 @@ def request(config, action, **values):
 
 def save(config, state, value):
     from . import inference, sandbox
-    from .sandbox_options import write_json
     value = validate(value)
     request(config, 'status')  # Check the client container before changing a connection.
     state = Path(state)
@@ -109,22 +109,22 @@ def save(config, state, value):
             raise ValueError('Could not configure the inference service or restore its previous connection. Start the sandbox and retry.') from failure
         raise
     # Save a recoverable connection before configuring the client; credentials stay in its companion.
-    write_json(state / 'config.json', updated)
+    activity.save_config(state, updated)
     if sandbox.network_mode(updated) == 'allowlist':
         sandbox.update_network(updated, state, (state / 'allowlist.txt').read_text())
+    activity.record(state, 'edited')
     reply = request(updated, 'configure', provider=provider, endpoint=inference.client_url(provider,saved), region=saved.get('region',''))
     return {**reply, **saved}
 
 
 def remove(config, state, provider):
     from . import inference, sandbox
-    from .sandbox_options import write_json
     state = Path(state)
     inference.up(config, state)
     inference.credentials(config, state, {'id':provider, 'remove':True})
     updated = copy.deepcopy(config)
     updated.get('hosted_connections', {}).pop(provider, None)
-    write_json(state / 'config.json', updated)
+    activity.save_config(state, updated)
     if inference.enabled(updated): inference.up(updated, state)
     else: inference.down(config, remove=True)
     if sandbox.network_mode(updated) == 'allowlist':

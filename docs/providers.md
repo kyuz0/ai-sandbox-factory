@@ -12,7 +12,7 @@ discovers models on the host ports you select. See [local setup](usage.md#local-
 ## Hosted services
 
 For OpenRouter, Together, Azure/Foundry and AWS Bedrock, use **Settings → Models →
-Connect provider…**, or **Model services and providers** during creation. Factory
+Connect provider…**, or **Models** during creation. Factory
 keeps their keys in a separate inference container and configures Pi/Pendant for you.
 See [hosted model setup](hosted-models.md) for deployment names and model selection.
 
@@ -31,9 +31,9 @@ pi-sandbox-factory provider show company
 ```
 
 Add `--subdir FOLDER` to install from a shared plugin repository. Updates retain
-that folder and ref. The same option is available in **Packages**.
+that folder and ref. The same option is available in **Library…**.
 
-In **Configuration → Model services and providers**, enable the package and fill in
+In **Configuration → Models**, enable the package and fill in
 its non-secret settings. Any declared development-container destinations are added to the form’s
 allowlist. Inference routes use the separate companion. Apply rebuilds the sandbox; it preserves the workspace and private home.
 During creation, enter the provider credential in its masked field, or leave it

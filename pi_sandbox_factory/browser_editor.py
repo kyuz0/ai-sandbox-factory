@@ -285,7 +285,8 @@ async def serve(container, cwd, preferences, state, ready=None):
         editor = await asyncio.create_subprocess_exec('podman', 'exec', '-i', '--user', 'node',
             container, 'python3', '-u', '-c', helper, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, start_new_session=True)
         editor.stdin.write((json.dumps({'binary': INSTALL + '/bin/code-server',
-                                      'cwd': cwd, 'authority': relay.host, 'password_hash': preferences['password_hash']}) + '\n').encode())
+                                      'cwd': cwd, 'authority': relay.host, 'password_hash': preferences['password_hash'],
+                                      'watch_fallback': (Path(__file__).parent / 'containers/editor/watch-fallback.cjs').read_text()}) + '\n').encode())
         await editor.stdin.drain()
         status = await asyncio.wait_for(editor.stdout.readline(), 60)
         if status != b'ready\n':

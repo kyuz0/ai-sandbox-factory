@@ -2,11 +2,12 @@
 import asyncio
 import subprocess
 from textual import on, work
+from textual.message import Message
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
-from . import hosted_models
+from . import hosted_models, settings_effects, editor_settings
 from .tui_widgets import Feedback
 
 
@@ -96,6 +97,10 @@ class ProviderDialog(ModalScreen):
 
 
 class HostedProviders(Vertical):
+    class Changed(Message):
+        """The configured provider list changed."""
+
+
     DEFAULT_CSS = '''
     HostedProviders, .hosted-list { height: auto; }
     .hosted-row { height: auto; margin-bottom: 1; padding: 1 2; background: #24292f; }
@@ -115,7 +120,8 @@ class HostedProviders(Vertical):
         yield Vertical(classes='hosted-list', id='hosted-list')
         with Vertical(classes='setting'):
             yield Button('Connect provider…', id='hosted-add')
-            yield Static('Choose a model after the sandbox starts.' if not self.sandbox_name else 'Choose a default model for new Pi and Pendant chats. Reopen an existing client after changing its connection.', classes='setting-help')
+            yield Static('Choose a model after the sandbox starts.' if not self.sandbox_name else
+                'Manage connections and choose models for this sandbox.', classes='setting-help')
         yield Static('',id='hosted-message',markup=False, classes='setting-help')
 
     async def on_mount(self):
@@ -149,6 +155,7 @@ class HostedProviders(Vertical):
             await buttons.mount(Button('Connection…',name='edit:'+provider), Button('Remove',name='remove:'+provider))
             if self.sandbox_name: await buttons.mount(Button('Choose model…',name='model:'+provider))
         self.query_one('#hosted-add',Button).disabled = self.busy
+        self.post_message(self.Changed())
 
     @on(Button.Pressed)
     def pressed(self,event):
@@ -181,11 +188,17 @@ class HostedProviders(Vertical):
         self.busy = True
         self.show_message('Saving connection…')
         try:
+            before = self.saved.get(value['provider'])
+            routing = hosted_models.connection(value)
+            credentials_only = before is not None and all(before.get(key) == val for key, val in routing.items())
             reply = await asyncio.to_thread(self.app.service.hosted_save,self.sandbox_name,value)
             self.saved[value['provider']] = reply
-            self.show_message('Connection saved. Choose a model to use.')
+            mode = editor_settings.load(self.app.state_root / self.sandbox_name)['mode']
+            self.show_message('Credentials saved for subsequent requests.' if credentials_only else
+                settings_effects.bullets(['Connection saved.', settings_effects.reconnect(mode)[0], 'Choose a model for the chat.']))
             await self.render_rows()
-            self.app.push_screen(ModelDialog(self.sandbox_name,value['provider']))
+            if not credentials_only:
+                self.app.push_screen(ModelDialog(self.sandbox_name,value['provider']))
         except (ValueError, OSError, subprocess.SubprocessError) as error:
             self.show_message(str(error))
         finally:
@@ -199,7 +212,8 @@ class HostedProviders(Vertical):
             await asyncio.to_thread(self.app.service.hosted_remove,self.sandbox_name,provider)
             self.saved.pop(provider,None)
             await self.render_rows()
-            self.show_message('Connection removed. Choose another default model if needed.')
+            mode = editor_settings.load(self.app.state_root / self.sandbox_name)['mode']
+            self.show_message(settings_effects.bullets(['Connection removed.', settings_effects.reconnect(mode)[0], 'Select another model in affected chats.']))
         except (ValueError, OSError, subprocess.SubprocessError) as error: self.show_message(str(error))
         finally:
             self.busy = False
@@ -245,6 +259,7 @@ class ModelDialog(ModalScreen):
                     yield Button('Refresh catalogue',id='model-refresh')
                 with Vertical(classes='setting'):
                     yield Button('Test selected model · sends a short request',id='model-test',disabled=True)
+            yield Static('Default for new conversations only.',classes='section-intro')
             yield Static('Loading catalogue…',id='model-error',markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel',id='model-cancel')

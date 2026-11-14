@@ -7,7 +7,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 npm ci --prefix pi_sandbox_factory/containers/inference --ignore-scripts
-node --test tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs
+node --test tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
 ```
 
 These suites use fixtures without account credentials. For macOS, put fixtures
@@ -76,6 +76,21 @@ For local discovery and profile resources, install `examples/profile` as `report
 create a disposable reporting sandbox with local discovery on port 18082 and that
 port allowed, then run `tests/provider_container.py --name NAME`.
 It checks local discovery, preservation of unrelated models and the profile skill.
+
+To verify Radiance discovery without a GPU server, run the synthetic metadata fixture
+inside a disposable Factory image (replace `FACTORY_IMAGE` with its local image name):
+
+```sh
+podman run --rm --network none --security-opt label=disable --entrypoint node \
+  -v "$PWD/tests/check_radiance_discovery.mjs:/tmp/check_radiance_discovery.mjs:ro" \
+  FACTORY_IMAGE /tmp/check_radiance_discovery.mjs
+```
+
+It checks fresh discovery, model identity, image support and accepted thinking
+levels, then loads the catalogue through the shipped Pi CLI and Pendant worker.
+For an extension change before rebuilding the image, also mount its checkout
+read-only at `/opt/pi-local-model-manager`. The extension's own `npm test` suite
+covers malformed metadata, non-chat models, adapters and preserved user settings.
 
 For expanded-skill approval, use a disposable sandbox with the workshop spikee
 profile, automatic approval and host-loopback port 18187 allowed:
@@ -660,3 +675,51 @@ fields and errors. Review every image with Claude Opus before committing UI chan
 using the layout rules in `AGENTS.md`. Re-render corrected views; passing tests alone
 is insufficient. Use `--size 80x24 --monochrome` for the monochrome check, or
 `--only STATE` to repeat a corrected view. Also exercise keyboard focus and scrolling.
+
+## Skill library
+
+`PYTHONPATH=tests .venv/bin/python -m unittest test_skill_library test_skills_ui`
+checks multi-skill import, YAML validation without execution, duplicate names,
+source changes, atomic copies, retained sandbox snapshots and removal.
+`tests/render_skills.py OUTPUT_DIR [--mono]` captures the library, import errors
+and creation/configuration selection at 80×24, 120×40 and 220×50.
+
+Run `.venv/bin/python tests/check_library_skills.py IMAGE` against an existing
+Factory development image to build two synthetic library skills, remove their
+library entries, and check registration in the shipped Pi CLI and Pendant worker.
+It then removes and adds a skill in the client configuration and reopens the same
+saved conversation. A loopback server captures the actual outbound requests and
+returns synthetic replies. The assertions check the updated system-prompt skill
+catalogue, preserved messages and lazy loading of skill bodies in both clients.
+The check uses a disposable image and containers with networking disabled.
+Use `--local-model-manager PATH` to test an unbuilt dependency checkout.
+
+`tests/test_settings_effects.py` requires an explicit update-effect assessment for
+every managed option and checks the change review and completion instructions at
+all three terminal sizes. Relevance checks reject unrelated feature notices and
+instructions for other clients. Render those states with
+`tests/render_settings_effects.py OUTPUT_DIR [--mono]`.
+
+## Explorer updates and sandbox activity
+
+`test_activity.py`, `test_sandbox.py` and the dashboard tests cover saved lifecycle
+times, no-op saves, successful starts, stale-runtime recovery, sorting, missing
+dates, filtering and selection preservation. Render `tests/render_dashboard.py`
+at its three built-in sizes, in colour and with `--mono`.
+
+Run `node --test tests/test_editor_watch_fallback.cjs` for watcher events,
+resource-error selection, abort, close and encoding. For the real browser test,
+use a cached Factory image and an extracted copy of the pinned code-server:
+
+```sh
+.venv/bin/python tests/browser_editor_watching.py \
+  --image FACTORY_IMAGE --code-server /path/to/code-server-4.145.2-linux-amd64 \
+  --output /tmp/factory-watcher-results
+```
+
+This runs disposable containers with native watching, an isolated `EMFILE` syscall
+failure, the polling fallback, and Factory's production editor supervisor with
+the fallback installed through its normal payload. It checks Explorer creation, rename and deletion
+without refreshing or refocusing, and reproduces the stale list in the failure
+control. It never exhausts the host quota or changes kernel limits. The fixture
+removes its containers and preserves screenshots and logs in the output directory.

@@ -86,6 +86,10 @@ sock.unlink(missing_ok=True)
 env = dict(os.environ)
 for key in ('PASSWORD', 'HASHED_PASSWORD', 'GITHUB_TOKEN', 'VSCODE_IPC_HOOK_CLI'):
     env.pop(key, None)
+watch_fallback = root / 'watch-fallback.cjs'
+watch_fallback.write_text(settings['watch_fallback'])
+# Inherited by code-server's server and extension-host children. No host changes.
+env['NODE_OPTIONS'] = (env.get('NODE_OPTIONS', '') + ' --require=' + str(watch_fallback)).strip()
 command = [settings['binary'], '--config', str(config), '--socket', str(sock),
            '--socket-mode', '600', '--auth', 'password' if settings['password_hash'] else 'none', '--user-data-dir', str(root / 'data'),
            '--extensions-dir', str(extensions), '--disable-telemetry', '--disable-update-check',

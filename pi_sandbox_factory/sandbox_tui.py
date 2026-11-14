@@ -1,4 +1,5 @@
 """Terminal interface for Pi Sandbox Factory."""
+from . import activity
 import json
 import copy
 import asyncio
@@ -22,6 +23,8 @@ from .models_ui import HostedProviders
 from . import hosted_models
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
+from .skills_ui import SkillSelection, SkillLibraryScreen
+from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
 
@@ -41,7 +44,7 @@ def profile_titles():
     return registry.choices('profile')
 DEFAULT_SETTINGS = {'profile': 'base', 'model_providers': {'local':{}}, 'workspace_parent': '', 'network': 'allowlist',
                     'engine': 'podman', 'memory': '8g', 'subagents': False, 'env_file': '',
-                    'pi_config': '', 'skill_repo': '', 'skill_path': '', 'open_editor': True,
+                    'pi_config': '', 'skill_repo': '', 'skill_path': '', 'library_skills': [], 'open_editor': True,
                     'local_model_ports': '8000', 'options': DEFAULTS, 'editor': {**editor_settings.DEFAULTS, 'mode': editor_settings.default_mode()}}
 
 
@@ -201,6 +204,8 @@ class Service:
             for field, flag in [('memory', '--memory'), ('env_file', '--env-file'), ('pi_config', '--pi-config')]:
                 if draft.get(field):
                     args += [flag, draft[field]]
+            for skill in draft.get('library_skills', []):
+                args += ['--skill', skill]
             if draft.get('skill_repo'):
                 args += ['--skill-source', draft['skill_repo'], '--skill-path', draft['skill_path']]
             if draft.get('local_model_ports'):
@@ -217,7 +222,7 @@ class Service:
         if pending:
             config = self.config(name)
             config['hosted_connections'] = {p: hosted_models.connection(v) for p,v in pending.items()}
-            write_json(state / 'config.json', config)
+            activity.save_config(state, config)
             (state / 'squid.conf').write_text(sandbox.network_policy(config, sandbox.parse_rules(draft['allowlist'])))
         editor_settings.save(state, draft.get('editor', editor_settings.DEFAULTS))
         if creation_token:
@@ -250,7 +255,9 @@ class Service:
         return hosted_models.remove(self.config(name), self.state / name, provider)
 
     def hosted_select(self, name, provider, model, **values):
-        return hosted_models.select(self.config(name), provider, model, **values)
+        result = hosted_models.select(self.config(name), provider, model, **values)
+        activity.record(self.state / name, 'edited')
+        return result
 
     def hosted_test(self, name, provider, model, **values):
         return hosted_models.select(self.config(name), provider, model, test=True, **values)
@@ -289,7 +296,7 @@ class Service:
         changes['local_model_ports'] = draft.get('local_model_ports')
         changes['model_providers'] = draft.get('model_providers', {'local':{}})
         changes.update(skill_source=draft.get('skill_repo', ''), skill_path=draft.get('skill_path', ''),
-                       remove_skills=draft.get('remove_skills', []))
+                       remove_skills=draft.get('remove_skills', []), library_skills=draft.get('library_skills', []))
         changes['allowlist'] = draft['allowlist'] if draft['network'] == 'allowlist' else ''
         with tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
@@ -717,7 +724,7 @@ class NetworkForm(Screen):
         yield Header()
         with VerticalScroll(classes='form'):
             yield Label('Network · ' + self.sandbox_name, classes='title')
-            yield Static('Applying network changes restarts the gateway; active requests may need to reconnect. Development processes keep running.')
+            yield Static(settings_effects.bullets(['Applying restarts the gateway; development processes keep running.', 'Active connections may disconnect.']))
             yield WebsiteGroups(options(self.config.get('options'))['website_groups'])
             search = web_access.destinations(options(self.config.get('options'))['web_access'])
             if search:
@@ -775,7 +782,7 @@ class NetworkForm(Screen):
                     path.write_text(text)
                     service.run(['network', self.sandbox_name, '--allowlist', str(path), '--website-groups', *groups], log)
             self.app.pop_screen()
-            self.app.push_screen(Operation('Updating network · ' + self.sandbox_name, apply))
+            self.app.push_screen(Operation('Updating network · ' + self.sandbox_name, apply, success_message=settings_effects.NETWORK))
 
     def action_back(self):
         self.app.pop_screen()
@@ -802,6 +809,30 @@ class Confirm(ModalScreen[bool]):
     def pressed(self, event):
         event.stop()
         self.dismiss(event.button.id == 'yes')
+
+
+class ApplySettingsReview(Confirm):
+    """Scrollable effects review keeps Apply reachable with many changes."""
+    DEFAULT_CSS = '''
+    ApplySettingsReview { align: center middle; }
+    ApplySettingsReview #apply-review { width: 88; max-width: 94%; height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    ApplySettingsReview #apply-review-fields { height: 1fr; }
+    ApplySettingsReview Static { height: auto; margin: 0 0 1 0; }
+    '''
+
+    def __init__(self, original, draft, mode='browser'):
+        changes = settings_effects.configuration_changes(original, draft)
+        summary = 'Changes\n' + settings_effects.bullets(changes) if changes else 'No configuration values changed.'
+        super().__init__(summary + '\n\nWhen you apply\n' + settings_effects.bullets(settings_effects.configuration_notes(original, draft, mode)), 'Apply and recreate')
+
+    def compose(self):
+        with Vertical(id='apply-review'):
+            yield Label('Review changes', classes='title')
+            with VerticalScroll(id='apply-review-fields'):
+                yield Static(self.message, markup=False)
+            with Horizontal(classes='buttons dialog-actions'):
+                yield Button('Cancel', id='cancel', variant='primary')
+                yield Button(self.action, id='yes', variant='error')
 
 
 class MoreActions(ModalScreen[Optional[str]]):
@@ -841,11 +872,11 @@ class MoreActions(ModalScreen[Optional[str]]):
 
 class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Back')]
-    ACTIONS = [('Editor · browser, Pi CLI or VS Code on host', 'editor-settings'),
-               ('Models · endpoints and discovery', 'models'),
+    ACTIONS = [('Open with · browser editor, Pi in terminal or VS Code', 'editor-settings'),
+               ('Models · local models, hosted services and providers', 'models'),
                ('Folders · starting folder and host mounts', 'folders'),
-               ('Advisors · Codex, Claude and Antigravity', 'advisors'),
                ('SSH & Git · identity, destinations and keys', 'ssh-settings'),
+               ('Advisors · Codex, Claude and Antigravity', 'advisors'),
                ('Network · website categories and allowed destinations', 'network-settings'),
                ('Web access · search providers and API keys', 'web-access'),
                ('Communications · Slack', 'communications'),
@@ -888,7 +919,7 @@ class FoldersScreen(Screen):
         with VerticalScroll(classes='form'):
             yield Label('Folders · ' + self.record['name'], classes='title')
             yield FolderFields(self.record['config'], self.app.state_root)
-            yield Static('Changing host mounts recreates the sandbox. Changing only the starting folder takes effect when you reopen Pi or VS Code.')
+            yield Static(settings_effects.bullets(['Changing host mounts restarts sandbox processes.', settings_effects.FOLDER]))
             yield Feedback('', id='folders-error', classes='error', markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='folders-back')
@@ -906,7 +937,8 @@ class FoldersScreen(Screen):
                 service = self.app.service
                 def apply():
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('Updating folders', lambda log: service.folders(self.record['name'], selected, log)))
+                    self.app.push_screen(Operation('Updating folders', lambda log: service.folders(self.record['name'], selected, log),
+                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
                     self.app.push_screen(Confirm('Apply folder mounts? This recreates the sandbox and interrupts running processes.', 'Apply and recreate'), lambda yes: apply() if yes else None)
                 else:
@@ -935,6 +967,7 @@ class SSHScreen(Screen):
         with VerticalScroll(classes='form'):
             yield Label('SSH & Git · ' + self.record['name'], classes='title')
             yield Static('Keys stay in a separate SSH container. The remote account or deploy key determines what the sandbox can do.', classes='section-intro')
+            yield Static('Apply restarts sandbox processes. Review the confirmation before applying.', classes='section-intro')
             with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True, id='git-identity-section'):
                 yield GitIdentityFields(identity)
             with Vertical(classes='setting'):
@@ -1014,8 +1047,9 @@ class SSHScreen(Screen):
                 def apply(yes):
                     if not yes: return
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('SSH & Git settings · ' + name, lambda log: service.ssh_settings(name, settings, log, identity)))
-                self.app.push_screen(Confirm('Apply SSH & Git settings?\nActive sandbox processes restart. Workspace and private key are preserved.\nSSH destinations restrict the key; commit identity sets the name and email recorded on commits.', 'Apply'), apply)
+                    self.app.push_screen(Operation('SSH & Git settings · ' + name, lambda log: service.ssh_settings(name, settings, log, identity),
+                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity != options(self.record['config'].get('options'))['git_identity'] else []))))
+                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(['Active sandbox processes restart.', 'Workspace and private key are preserved.']), 'Apply'), apply)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.notify(safe_text(error), severity='error')
 
@@ -1051,6 +1085,7 @@ class AdvisorsScreen(Screen):
         with VerticalScroll(classes='form'):
             yield Label('Advisors · ' + self.record['name'], classes='title')
             yield Static('Choose the advisors Pi can consult. Sign-ins stay in a separate container.')
+            yield Static(settings_effects.bullets(['Apply restarts sandbox processes.', 'Sign in and Check advisors take effect immediately.']), classes='section-intro')
             yield AdvisorChoices(providers, 'advisor-')
             yield Static('Copying credentials replaces the selected advisor’s saved sign-in when you apply.')
             yield Static('If a copied sign-in stops working, use its Sign in button below, then Check advisors.' if providers else 'Sign-in is available only after the advisor has been added. Select Apply, then reopen Settings → Advisors.', id='advisor-login-help')
@@ -1139,7 +1174,7 @@ class AdvisorsScreen(Screen):
                     service.advisors(name, settings, log)
                     for provider in imports:
                         service.run(['advisor-import', name, provider], log)
-                self.app.push_screen(Operation('Advisors · ' + name, setup))
+                self.app.push_screen(Operation('Advisors · ' + name, setup, success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']))))
             self.app.push_screen(Confirm('Apply advisor settings?\nActive sandbox processes restart. Workspace and private home are preserved.'
                                          + ('\nSelected host sign-ins replace the saved advisor logins.' if imports else ''), 'Apply'), apply)
 
@@ -1156,8 +1191,14 @@ class ModelsScreen(Screen):
         yield Header()
         with VerticalScroll(classes='form'):
             yield Label('Models · '+self.record['name'],classes='title')
+            with Vertical(classes='setting'):
+                yield Label('Local models', classes='group-title')
+                ports = self.record['config'].get('local_model_ports')
+                yield Static('On · server ports ' + ports if ports else 'Off', markup=False)
+                yield Button('Configure model sources…', id='configuration')
+                yield Static('Changing local access or provider plugins recreates the sandbox.', classes='setting-help')
             yield HostedProviders(self.record['name'])
-            yield Label('Installed provider plugins', classes='group-title')
+            yield Label('Model discovery and credentials', classes='group-title')
             if not rows:
                 yield Static('No provider plugins are enabled. Add one in Configuration.', id='no-model-providers')
             with Vertical(id='provider-controls') as controls:
@@ -1174,7 +1215,6 @@ class ModelsScreen(Screen):
                     yield Button('Status',id='provider-status',disabled=not rows)
                     yield Button('Preview',id='provider-preview',disabled=not rows)
                     yield Button('Refresh',id='provider-refresh',disabled=not rows)
-            yield Button('Configuration…',id='configuration')
         with Horizontal(classes='wizard-actions'):
             yield Button('Continue' if self.finished else 'Back',id='models-back',variant='primary' if self.finished else 'default')
         yield Footer()
@@ -1183,7 +1223,7 @@ class ModelsScreen(Screen):
         event.stop();action=event.button.id
         if action in ('configuration','models-back'):
             self.app.pop_screen()
-            if action=='configuration':self.app.perform(action)
+            if action=='configuration':self.app.perform('model-sources')
             elif self.finished:self.finished()
             return
         if action not in ('provider-status','provider-preview','provider-refresh','provider-auth'):return
@@ -1195,7 +1235,8 @@ class ModelsScreen(Screen):
         service=self.app.service
         def task(log):
             service.provider(self.record['name'], selected, action.removeprefix('provider-'), key, log)
-        self.app.pop_screen();self.app.push_screen(Operation('Provider · '+selected,task))
+        self.app.pop_screen();self.app.push_screen(Operation('Provider · '+selected,task,
+            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('provider-auth', 'provider-refresh') else ''))
     def action_back(self):self.app.pop_screen()
 
 
@@ -1226,9 +1267,10 @@ class PackagesScreen(Screen):
     def compose(self):
         yield Header()
         with VerticalScroll(classes='form'):
-            yield Label('Profiles and Providers',classes='title')
+            yield Label('Profiles, providers and skills',classes='title')
             with Vertical(classes='setting'):
-                yield Static('Profiles add tools, skills and instructions. Providers configure the models Pi can use.')
+                yield Static('Profiles add tools and instructions. Providers configure models. Skills are reusable agent instructions.')
+            yield Button('Open skill library…', id='package-skills')
             with Vertical(classes='setting'):
                 yield Label('Show installed')
                 yield Select([('Profiles','profile'),('Providers','provider')],value='profile',allow_blank=False,id='package-kind')
@@ -1270,6 +1312,7 @@ class PackagesScreen(Screen):
     def pressed(self,event):
         event.stop()
         if event.button.id=='packages-back':self.action_back();return
+        if event.button.id=='package-skills':self.app.push_screen(SkillLibraryScreen());return
         kind=self.query_one('#package-kind',Select).value
         if event.button.id=='package-install':
             self.app.push_screen(InstallPackage(kind));return
@@ -1358,7 +1401,7 @@ class OperationLog(RichLog):
 class Operation(Screen):
     BINDINGS = [Binding('escape', 'back', 'Back')]
 
-    def __init__(self, title, task, *, back_label='Back to sandboxes', on_success=None, cancellation=None):
+    def __init__(self, title, task, *, back_label='Back to sandboxes', on_success=None, cancellation=None, success_message=''):
         super().__init__()
         self.title, self.operation_task, self.finished = title, task, False
         self.back_label = back_label
@@ -1368,18 +1411,21 @@ class Operation(Screen):
         self.cancellation = cancellation
         self.cancelled = False
         self.result = ''
+        self.success_message = success_message
 
     def compose(self):
         yield Header()
         with Vertical(id='operation-body'):
             yield Static(self.title, id='operation-title', markup=False, classes='title')
             yield Static('●  Running', id='operation-status')
+            yield Static('', id='operation-next', markup=False)
             yield OperationLog(id='operation-log', markup=False, wrap=True, min_width=1)
         with Horizontal(classes='wizard-actions'):
             yield Button('Cancel creation' if self.cancellation else 'Working…', id='operation-back', disabled=not bool(self.cancellation))
         yield Footer()
 
     def on_mount(self):
+        self.query_one('#operation-next').display = False
         self.query_one(RichLog).border_title = 'Output'
         self.execute()
 
@@ -1423,6 +1469,10 @@ class Operation(Screen):
             status.update('●  Cleanup failed · saved state retained; use Delete to retry')
         status.add_class('failed' if self.failed else 'cancelled' if self.cancelled else 'disconnected' if self.model_disconnected else 'complete')
         output = self.query_one(RichLog)
+        if not self.failed and not self.cancelled and self.success_message:
+            message = self.query_one('#operation-next', Static)
+            message.update(self.success_message() if callable(self.success_message) else self.success_message)
+            message.display = True
         self.call_after_refresh(output.scroll_end, animate=False)
         if not self.failed and not self.cancelled and self.on_success:
             callback, self.on_success = self.on_success, None
@@ -1706,29 +1756,45 @@ class SettingsForm(Screen):
         with VerticalScroll(classes='form'):
             yield Label('Defaults for new sandboxes' if self.defaults_mode else
                         ('Sandbox settings' if self.editing else 'Review sandbox · 2 of 2'), classes='title')
+            if self.defaults_mode:
+                yield Label('Default profile')
+                yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
+                             allow_blank=False, id='default-profile')
+                yield Label('Workspace parent folder')
+                yield Input(value.get('workspace_parent', ''), id='workspace-parent')
             if not self.defaults_mode:
                 yield Static('Profile: ' + profile_titles().get(self.profile_name, self.profile_name) + '\nWorkspace: ' + value['workspace'], markup=False)
+            if self.editing:
+                yield Static('Review the changes and any restart requirements before applying.', classes='section-intro')
             if not self.editing:
                 mode = value.get('editor', editor_settings.DEFAULTS)['mode']
-                with Collapsible(title='Editor · ' + editor_settings.MODES[mode], collapsed=True, id='editor-section'):
+                with Collapsible(title='Open with · ' + editor_settings.MODES[mode], collapsed=True, id='editor-section'):
                     yield EditorFields(value.get('editor', editor_settings.DEFAULTS), connection_settings=not self.defaults_mode)
-            yield Checkbox('Connect to models on this host (rootless Podman)',
-                           value=bool(value.get('local_model_ports')), id='local-models')
-            with Vertical(classes='setting', id='model-port-setting'):
-                yield Label('Host model ports · comma-separated ports or ranges')
-                yield Input(value.get('local_model_ports') or '8000', id='model-ports')
-                yield Static(('Inside the sandbox, local-model.internal reaches these ports inside WSL.' if host_platform.is_wsl() else 'Inside the sandbox, local-model.internal reaches these ports on your computer.'), classes='setting-help')
             configured=value.get('model_providers',{'local':{}})
             if isinstance(configured,list):configured={r['name']:r.get('settings',{}) for r in configured}
             saved_rows={r['name']:r for r in value.get('model_providers',[]) if isinstance(r,dict)}
             available=registry.choices('provider')
             available.update({name:row['manifest'].get('description',name) for name,row in saved_rows.items() if name not in available})
             self.provider_forms={}
-            with Collapsible(title='Model services and providers',collapsed=True,id='hosted-section'):
+            with Collapsible(title='Models',collapsed=True,id='hosted-section'):
+                yield Label('Local models', classes='group-title')
+                with Vertical(classes='setting'):
+                    yield Checkbox('Connect to models on this computer',
+                                   value=bool(value.get('local_model_ports')), id='local-models')
+                    yield Static('Requires rootless Podman.', classes='setting-help checkbox-help')
+                with Vertical(classes='setting', id='model-port-setting'):
+                    yield Label('Server ports · comma-separated ports or ranges')
+                    yield Input(value.get('local_model_ports') or '8000', id='model-ports')
+                    yield Static('Use the ports of your running model servers, for example 8000,8080-8082.', classes='setting-help')
+                    yield Feedback('', id='model-ports-error', markup=False)
                 if not self.editing and not self.defaults_mode:
                     yield HostedProviders(changes=value.get('_hosted_changes'))
-                elif self.editing:
-                    yield Static('Configure hosted services in Settings → Models without recreating the sandbox.')
+                else:
+                    with Vertical(classes='setting'):
+                        yield Label('Hosted model services', classes='group-title')
+                        yield Static('Configure hosted services in Settings → Models without recreating the sandbox.' if self.editing else 'Connect hosted services when creating a sandbox, or later in Settings → Models.', classes='setting-help')
+                if any(name != 'local' for name in available):
+                    yield Label('Provider plugins', classes='group-title')
                 for name,label in available.items():
                     if name=='local':continue
                     info=saved_rows[name]['manifest'] if name in saved_rows else registry.manifest('provider',registry.resolve('provider',name))
@@ -1748,7 +1814,7 @@ class SettingsForm(Screen):
                                 yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
                                              + 'Optional; configure later in Settings → Models.', classes='setting-help')
                                 yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
-                yield Static('Install additional providers from the home screen’s Packages button.', classes='setting-help')
+                yield Static('Install additional providers from the home screen’s Library… button.', classes='setting-help')
             if not self.editing and not self.defaults_mode:
                 with Collapsible(title='Folders · starting folder and host mounts', collapsed=not bool(value.get('extra_folders')), id='folders-section'):
                     yield FolderFields(value, self.app.state_root)
@@ -1763,11 +1829,6 @@ class SettingsForm(Screen):
                     yield AdvisorChoices(providers, 'new-advisor-')
                     yield Static('Copy an existing host sign-in, or sign in after creation through Settings → Advisors. Credentials stay in the separate advisor container.', id='new-advisor-help')
             if self.defaults_mode:
-                yield Label('Default profile')
-                yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
-                             allow_blank=False, id='default-profile')
-                yield Label('Workspace parent folder')
-                yield Input(value.get('workspace_parent', ''), id='workspace-parent')
                 from .repository_ui import GitIdentityFields
                 with Collapsible(title='SSH & Git · commit identity ' + ('set' if selected['git_identity'] else 'not set'), collapsed=True, id='git-identity-section'):
                     yield GitIdentityFields(selected['git_identity'], defaults=True, setup=True)
@@ -1803,44 +1864,37 @@ class SettingsForm(Screen):
                                   ('Ask me — human approval', 'manual'), ('No approval prompts', 'off')],
                                  value=selected['approval'], allow_blank=False, id='approval')
                     yield Static('', id='approval-help', markup=False, classes='setting-help')
-            with Collapsible(title='Skills and features', collapsed=True, id='skills-section'):
+            with Collapsible(title='Agent tools & subagents', collapsed=True, id='skills-section'):
                 yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
                 with Vertical(classes='setting'):
                     yield Label('Conversation recall')
                     yield Select([('Lite — search history on demand', 'lite'),
                                   ('Full — automatic history hints', 'full'), ('Off', 'off')],
                                  value=selected['compaction_recall'], allow_blank=False, id='compaction-recall')
-                    yield Static('Full adds automatic hints and may reduce prefix-cache reuse.', classes='setting-help')
+                    yield Static('Finds earlier details after conversation compaction. Full adds automatic hints and may reduce prefix-cache reuse.', classes='setting-help')
                 with Vertical(classes='setting'):
-                    yield Checkbox('Browser · Betterwright', value=selected['browser'], id='browser')
+                    yield Checkbox('Agent browser · Betterwright', value=selected['browser'], id='browser')
                     yield Static('Adds a browser with a live viewer for you to see and interact with its pages.', classes='setting-help checkbox-help')
                 with Vertical(classes='setting browser-vault-setting', id='browser-vault-setting'):
                     yield Checkbox('Protect saved browser vault files', value=selected['protect_browser_credentials'], id='protect-browser-credentials')
                     yield Static('Blocks native file tools from the saved vault; browser account selection and login still work.', classes='setting-help checkbox-help')
                     yield Static('', id='browser-vault-shell-help', classes='setting-help checkbox-help')
                     yield Static('Not isolation from malicious editor or Pi extensions with the same user permissions. Active browser sessions remain accessible to browser automation.', classes='setting-help checkbox-help')
-                for skill in PROFILE_SKILLS.get(self.profile_name, []):
-                    yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
-                for skill in value.get('extra_skills', []):
-                    with Vertical(classes='setting'):
-                        yield Checkbox(skill['name'] + ' — remote skill', value=True, id='extra-' + skill['name'])
-                        yield Static(skill['repo'] + ' · ' + skill['commit'][:12], markup=False, classes='setting-help checkbox-help')
                 with Vertical(classes='setting'):
                     yield Checkbox('Question forms', value=selected['question_forms'], id='question-forms')
                     yield Static('Let Pi and Pendant ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
                 yield Checkbox('Pendant goals', value=selected['goals'], id='goals')
                 yield Checkbox('Scheduled prompts in the current chat', value=selected['scheduling'], id='scheduling')
-                with Vertical(classes='setting'):
-                    yield Label('Additional skill Git repository URL')
-                    yield Input(value.get('skill_repo', ''), id='skill-repo')
-                with Vertical(classes='setting'):
-                    yield Label('Skill folder in that repository · must contain SKILL.md')
-                    yield Input(value.get('skill_path', ''), id='skill-path')
-                    yield Static('Add one skill per save. Existing skills are kept; add another through Settings → Configuration.', classes='setting-help')
+            with Collapsible(title='Skills · select from your library', collapsed=True, id='skill-library-section'):
+                for skill in PROFILE_SKILLS.get(self.profile_name, []):
+                    yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
+                yield SkillSelection(value)
             with Collapsible(title='Advanced settings', collapsed=True):
                 yield Label('Container engine')
                 yield Select([('Automatic — prefer rootless Podman', 'auto'), ('Podman', 'podman'), ('Docker', 'docker')],
                              value=value.get('engine', 'auto'), allow_blank=False, id='engine', disabled=self.editing)
+                if self.editing:
+                    yield Static('Container engine and seed directory are fixed for this sandbox. Create a separate sandbox to change them.', classes='setting-help')
                 yield Label('Memory limit · empty means no explicit limit')
                 yield Input(value.get('memory') or '', id='memory')
                 yield Label('Credentials environment file · optional path')
@@ -1849,7 +1903,7 @@ class SettingsForm(Screen):
                 yield Input(value.get('pi_config') or '', id='pi-config', disabled=self.editing)
             yield Feedback('', id='form-error', classes='error', markup=False)
         with Vertical(classes='wizard-actions settings-actions'):
-            yield Checkbox('Open selected editor after applying' if self.editing else 'Open selected editor after creation',
+            yield Checkbox('Open sandbox after applying' if self.editing else 'Open sandbox after creation',
                            value=False if self.editing else value.get('open_editor', True), id='open-editor')
             with Horizontal(classes='action-buttons'):
                 yield Button('Back', id='back')
@@ -1862,6 +1916,7 @@ class SettingsForm(Screen):
         self.network_changed()
         self.local_models_changed()
         self.browser_changed()
+        self.tools_summary()
         if self.initial_section:
             section = self.query_one('#' + self.initial_section, Collapsible)
             section.collapsed = False
@@ -1871,7 +1926,36 @@ class SettingsForm(Screen):
 
     @on(Checkbox.Changed, '#local-models')
     def local_models_changed(self):
-        self.query_one('#model-ports', Input).disabled = not self.query_one('#local-models', Checkbox).value
+        disabled = not self.query_one('#local-models', Checkbox).value
+        self.query_one('#model-ports', Input).disabled = disabled
+        self.query_one('#model-port-setting').set_class(disabled, '-provider-disabled')
+        self.query_one('#model-ports-error', Feedback).update('')
+        self.models_summary()
+
+    @on(Input.Changed, '#model-ports')
+    def local_ports_changed(self):
+        self.query_one('#model-ports-error', Feedback).update('')
+
+    @on(HostedProviders.Changed)
+    def models_summary(self):
+        local = self.query_one('#local-models', Checkbox).value
+        count = sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
+        count += sum(len({**group.saved, **group.changes}) for group in self.query(HostedProviders))
+        self.query_one('#hosted-section', Collapsible).title = ('Models · local ' + ('on' if local else 'off')
+            + (f' · {count} provider' + ('s' if count != 1 else '') if count else ''))
+
+    @on(SkillSelection.Changed)
+    def skills_summary(self):
+        self.query_one('#skill-library-section', Collapsible).title = 'Skills · ' + self.query_one(SkillSelection).summary()
+
+    @on(Checkbox.Changed, '#browser')
+    @on(Checkbox.Changed, '#goals')
+    @on(Select.Changed, '#compaction-recall')
+    def tools_summary(self):
+        browser = 'on' if self.query_one('#browser', Checkbox).value else 'off'
+        goals = 'on' if self.query_one('#goals', Checkbox).value else 'off'
+        recall = str(self.query_one('#compaction-recall', Select).value).capitalize()
+        self.query_one('#skills-section', Collapsible).title = f'Agent tools & subagents · Recall {recall} · Browser {browser} · Goals {goals}'
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -1898,6 +1982,7 @@ class SettingsForm(Screen):
                             field.remove_class('-invalid-credential')
                             for message in field.parent.query(Feedback):
                                 message.update('')
+                self.models_summary()
                 break
 
     @on(Input.Changed)
@@ -1961,8 +2046,18 @@ class SettingsForm(Screen):
                                 field.parent.scroll_visible(animate=False)
                                 raise ValueError(spec.get('label', key) + ': enter a single-line credential.')
                             draft['_provider_keys'][name] = credential
-        if draft['local_model_ports']:
-            sandbox.local_model_ports(draft['local_model_ports'])
+        if check('local-models'):
+            try:
+                if not draft['local_model_ports']:
+                    raise ValueError('Enter at least one server port, or turn off local models.')
+                sandbox.local_model_ports(draft['local_model_ports'])
+            except ValueError as error:
+                self.query_one('#model-ports-error', Feedback).update('Error: ' + str(error))
+                self.query_one('#hosted-section', Collapsible).collapsed = False
+                field = self.query_one('#model-ports', Input)
+                field.focus()
+                self.call_after_refresh(field.parent.scroll_visible, animate=False)
+                raise
         if not self.editing and not self.defaults_mode:
             draft.update(self.query_one(FolderFields).collect(private_paths=[inp('pi-config')]))
         selected = options(draft.get('options'))
@@ -1988,7 +2083,8 @@ class SettingsForm(Screen):
                      subagents=check('subagents'), options=options(selected), engine=self.query_one('#engine', Select).value,
                      env_file=inp('env-file') or None, pi_config=inp('pi-config') or None,
                      open_editor=check('open-editor'),
-                     skill_repo=inp('skill-repo'), skill_path=inp('skill-path'))
+                     skill_repo='', skill_path='')
+        draft.update(self.query_one(SkillSelection).collect())
         if not self.editing and not self.defaults_mode:
             from . import sandbox_advisors
             choices = self.query_one(AdvisorChoices)
@@ -2007,11 +2103,6 @@ class SettingsForm(Screen):
             raise ValueError('Add an allowed destination or enable host-local models.')
         draft['allowlist'] = '\n'.join(f'{host}:{port}' for host,port in rules)
         sandbox.validate_env(draft['env_file'])
-        draft['remove_skills'] = [s['name'] for s in draft.get('extra_skills', []) if not check('extra-' + s['name'])]
-        if draft['skill_repo']:
-            sandbox_skills.validate_source(draft['skill_repo'], draft['skill_path'])
-        if bool(draft['skill_repo']) != bool(draft['skill_path']):
-            raise ValueError('Specify both the skill repository and its folder.')
         return draft, key
 
     def configuration_unchanged(self, draft):
@@ -2025,7 +2116,7 @@ class SettingsForm(Screen):
         if isinstance(providers, list):
             providers = {row['name']: row.get('settings', {}) for row in providers}
         return (draft.get('model_providers') == providers and not draft.get('skill_repo')
-                and not draft.get('remove_skills') and
+                and not draft.get('remove_skills') and not draft.get('library_skills') and
                 set(sandbox.parse_rules(draft['allowlist'])) == set(sandbox.parse_rules(original.get('allowlist', ''))))
 
     @on(Button.Pressed)
@@ -2051,6 +2142,7 @@ class SettingsForm(Screen):
             elif action == 'apply':
                 self.query_one('#form-error', Static).update('')
                 draft, key = self.collect()
+                draft['_search_keys_changed'] = bool(key)
                 if self.defaults_mode:
                     saved = {k: draft[k] for k in DEFAULT_SETTINGS if k in draft}
                     saved['editor'] = editor_settings.copy_choice(saved['editor'])
@@ -2064,16 +2156,20 @@ class SettingsForm(Screen):
                     service = self.app.service
                     self.app.pop_screen()
                     self.app.push_screen(Operation('Saving Slack credentials', lambda log:
-                        service.save_communication_keys(draft['name'], draft['_communication_keys'], log)))
+                        service.save_communication_keys(draft['name'], draft['_communication_keys'], log),
+                        success_message='Slack credentials saved for the next tool call; no reload needed.'))
                 elif self.editing:
-                    self.app.push_screen(Confirm('Apply settings to ' + draft['name'] + '?\n'
-                        'This recreates its containers and interrupts active processes.\n'
-                        'Workspace files and saved private configuration/sessions are preserved.', 'Apply and recreate'),
+                    self.app.push_screen(ApplySettingsReview(self.draft, draft, editor_settings.load(self.app.state_root / draft['name'])['mode']),
                         lambda yes: self.submit(draft, key) if yes else None)
                 else:
                     self.submit(draft, key)
         except (OSError, ValueError) as error:
-            if not any(message.display for message in self.query('.provider-setting Feedback')):
+            if any(message.display for message in self.query('SkillSelection Feedback')):
+                self.query_one('#skill-library-section', Collapsible).collapsed = False
+            if self.query_one('#skill-selection-error').display:
+                self.query_one('#skill-library-section', Collapsible).collapsed = False
+                self.query_one('#skill-selection-error').scroll_visible(animate=False)
+            if not any(message.display for message in self.query('.provider-setting Feedback, #model-ports-error, SkillSelection Feedback')):
                 self.query_one('#form-error', Static).update(str(error))
 
     def submit(self, draft, key):
@@ -2081,7 +2177,9 @@ class SettingsForm(Screen):
         editing = self.editing
         cancellation = None if editing else Creation()
         editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
+        opened = False
         def task(log):
+            nonlocal opened
             if draft.get('mkdir'):
                 Path(draft['workspace']).mkdir(parents=True, exist_ok=True)
             if editing:
@@ -2091,6 +2189,7 @@ class SettingsForm(Screen):
             if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
                 try:
                     service.run(['open', draft['name']], log)
+                    opened = True
                 except (OSError, ValueError) as error:
                     log(f'Sandbox {"updated" if editing else "created"}, but the editor could not open: {error}')
                     log('Use Open on the sandbox list to try again.')
@@ -2106,6 +2205,7 @@ class SettingsForm(Screen):
             self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
         self.app.push_screen(Operation(('Updating ' if editing else 'Creating ') + draft['name'], task,
             cancellation=cancellation,
+            success_message=(lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened))) if editing else '',
             on_success=choose_models if draft.get('_hosted_changes') else
             open_after_models if not editing and draft.get('open_editor') else
             (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None))
@@ -2134,7 +2234,14 @@ class Cockpit(App):
     .form > Static { height: auto; margin-bottom: 1; }
     .form > Label { margin-bottom: 0; }
     .form > .title, .form > .group-title { margin-bottom: 1; }
-    #package-list { height: auto; }
+    #package-list, #library-list, #skill-candidates { height: auto; }
+    SkillLibraryScreen .setting > .buttons { margin: 1 0 0 0; }
+    #skill-discover { margin: 0 0 0 0; }
+    #skill-import-error, #skill-selection-error, #library-error { color: #f1f3f5; text-style: bold; }
+    SkillSelection Feedback.error { color: #f1f3f5; text-style: bold; }
+    #skill-selection-error { margin: 1 0 0 0; }
+    ImportSkills Input { border: solid #707780; }
+    ImportSkills Input:focus { border: solid $primary; }
     .package-row { height: auto; padding: 1 2; margin-bottom: 1; background: #24292f; }
     .package-title { text-style: bold; }
     .package-actions { height: 1; margin-top: 1; }
@@ -2148,7 +2255,11 @@ class Cockpit(App):
     GitIdentityFields Input.-invalid, GitIdentityFields Input.-invalid:focus { border: double $error; }
     #git-identity-error { color: #f1f3f5; text-style: bold; }
     .provider-setting { margin: 0 0 1 2; }
-    .provider-setting.-provider-disabled { opacity: 50%; }
+    .setting.-provider-disabled { opacity: 50%; }
+    #model-ports-error { text-style: bold; }
+    Screen:nocolor #model-ports-error { color: white; text-style: bold reverse; }
+    ModelsScreen #configuration { margin: 1 0 0 0; }
+    #package-skills { margin: 0 0 1 0; }
     .provider-setting Input.-invalid-credential { border: tall $error; }
     .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
     .setting > Button, .setting > .buttons, .setting > .path-row { margin: 0; }
@@ -2162,6 +2273,7 @@ class Cockpit(App):
     Checkbox { height: 1; border: none; padding: 0; margin: 0 0 1 0; }
     Checkbox > .toggle--button { color: #f1f3f5; background: transparent; text-style: bold; }
     Checkbox.-on > .toggle--button { color: #f2b544; background: transparent; }
+    Screen:nocolor Checkbox.-on > .toggle--button { color: white; text-style: bold; }
     Checkbox:focus > .toggle--label { color: #171a1d; background: #f2b544; text-style: bold underline; }
     Checkbox:focus > .toggle--button { color: #171a1d; background: #f2b544; }
     Button.-primary { background: #f2b544; color: #171a1d; }
@@ -2219,12 +2331,18 @@ class Cockpit(App):
     #application-update-message { width: 1fr; height: auto; }
     #application-update-run { width: 14; margin: 0 0 0 1; }
     #home { padding: 1 3; }
+    #dashboard-filters { height: 4; margin: 0 0 1 0; }
+    #dashboard-search { width: 1fr; }
+    #dashboard-filters Input, #dashboard-filters Select { height: 3; margin: 0; }
+    #sandbox-sort { width: 22; margin: 0 2; }
+    #sort-direction { margin: 1 0 0 0; height: 3; padding: 1 2; min-width: 16; }
     #sandboxes { padding-right: 1; height: 1fr; min-height: 5; }
     #details { height: auto; min-height: 3; padding: 1 0; }
     #home-error { height: auto; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }
     #operation-status { height: auto; color: #f2b544; text-style: bold; margin-bottom: 1; }
+    #operation-next { height: auto; margin: 0 0 1 0; }
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: scroll; }
@@ -2250,6 +2368,8 @@ class Cockpit(App):
         self.state_root = Path(state_root)
         self.service = service or Service(self.state_root)
         self.records = []
+        self.sort_field = "started"
+        self.sort_reverse = True
         self.defaults = load_defaults()
         self.version = updates.installed_version()
         self.available_version = None
@@ -2265,9 +2385,15 @@ class Cockpit(App):
                 yield Label('Sandboxes', classes='title')
                 yield Button('New sandbox', id='new')
                 yield Button('Create from existing…', id='create-from', disabled=True)
-                yield Button('Packages', id='packages')
-            yield Label('Search sandboxes')
-            yield Input(id='search')
+                yield Button('Library…', id='packages')
+            with Horizontal(id='dashboard-filters'):
+                with Vertical(id='dashboard-search'):
+                    yield Label('Search sandboxes')
+                    yield Input(id='search')
+                with Vertical(id='sandbox-sort'):
+                    yield Label('Sort by')
+                    yield Select([(label, key) for key, label in [('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('name', 'Name'), ('dev', 'Status')]], value='started', allow_blank=False, id='sort-field')
+                yield Button('Newest first', id='sort-direction')
             yield DataTable(id='sandboxes', cursor_type='row', zebra_stripes=True)
             yield Static('Choose a sandbox, or create your first one.', id='details', markup=False)
             yield Feedback('', id='home-error', markup=False)
@@ -2279,7 +2405,8 @@ class Cockpit(App):
         yield Footer()
 
     def on_mount(self):
-        self.query_one(DataTable).add_columns('Name', 'Status', 'Model sources', 'Network')
+        for key, label in [('name', 'Name'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
+            self.query_one(DataTable).add_column(label, key=key)
         self.refresh_inventory()
         self.check_update()
         self.resize_banner()
@@ -2347,7 +2474,7 @@ class Cockpit(App):
         selected = self.selected_name()
         table.clear()
         text = self.query_one('#search', Input).value.casefold()
-        for record in self.records:
+        for record in self.sorted_records():
             if text not in (record['name'] + ' ' + record['profile'] + ' ' + (record.get('workspace') or '')).casefold():
                 continue
             config = record['config']
@@ -2356,11 +2483,54 @@ class Cockpit(App):
             sources = (['Local ' + config['local_model_ports']] if config.get('local_model_ports') else [])
             sources += [name for name in source_names if name != 'local']
             table.add_row(*[safe_text(x) for x in (record['name'], record['dev'].capitalize(),
+                          *[activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')],
                           ', '.join(sources) or 'Not configured',
                           'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted')], key=record['name'])
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
         self.update_details()
+
+    def sorted_records(self):
+        dated = self.sort_field in activity.FIELDS
+        def value(record):
+            return ((record.get('activity', {}).get(self.sort_field) or '') if dated
+                    else str(record.get(self.sort_field, '')).casefold())
+        known = [r for r in self.records if not dated or value(r)]
+        unknown = [r for r in self.records if dated and not value(r)]
+        # Stable name ordering for ties; missing dates always remain at the end.
+        known.sort(key=lambda r: r['name'].casefold())
+        return sorted(known, key=value, reverse=self.sort_reverse) + sorted(unknown, key=lambda r: r['name'].casefold())
+
+    def update_sort(self):
+        dated = self.sort_field in activity.FIELDS
+        self.query_one('#sort-direction', Button).label = (
+            ('Newest first' if self.sort_reverse else 'Oldest first') if dated
+            else ('Z–A' if self.sort_reverse else 'A–Z'))
+        self.render_records()
+
+    @on(Select.Changed, '#sort-field')
+    def sort_changed(self, event):
+        self.sort_field = str(event.value)
+        self.sort_reverse = self.sort_field in activity.FIELDS
+        if self.is_mounted:
+            self.update_sort()
+
+    @on(Button.Pressed, '#sort-direction')
+    def reverse_sort(self, event):
+        event.stop()
+        self.sort_reverse = not self.sort_reverse
+        self.update_sort()
+
+    @on(DataTable.HeaderSelected, '#sandboxes')
+    def sort_header(self, event):
+        key = str(event.column_key.value)
+        if key not in (*activity.FIELDS, 'name', 'dev'):
+            return
+        if key == self.sort_field:
+            self.sort_reverse = not self.sort_reverse
+            self.update_sort()
+        else:
+            self.query_one('#sort-field', Select).value = key
 
     def selected_name(self):
         table = self.query_one(DataTable)
@@ -2485,7 +2655,7 @@ class Cockpit(App):
                 self.notify('Choose Restricted in Settings → Configuration → Network first.')
                 return
             self.push_screen(NetworkForm(name, (self.state_root / name / 'allowlist.txt').read_text(), config))
-        elif action in ('configuration', 'web-access', 'communications'):
+        elif action in ('configuration', 'web-access', 'communications', 'model-sources'):
             if not record.get('engine'):
                 self.notify('Repair the saved configuration before editing it.', severity='error')
                 return
@@ -2495,7 +2665,7 @@ class Cockpit(App):
             if value['profile'] not in profile_titles():
                 value['profile'] = config['profile']['path']
             value['allowlist'] = (self.state_root / name / 'allowlist.txt').read_text()
-            self.push_screen(SettingsForm(value, editing=True, section={'web-access': 'web-section', 'communications': 'communications-section'}.get(action)))
+            self.push_screen(SettingsForm(value, editing=True, section={'web-access': 'web-section', 'communications': 'communications-section', 'model-sources': 'hosted-section'}.get(action)))
         elif action in ('preview-models', 'refresh-models'):
             mode = 'preview' if action == 'preview-models' else 'refresh'
             self.push_screen(Operation('Local models · ' + name, lambda log: self.service.models(name, mode, log)))

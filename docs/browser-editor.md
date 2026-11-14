@@ -23,8 +23,8 @@ Stopping the sandbox stops both clients.
 
 ## Connection settings
 
-During creation, expand **Editor → Browser connection**. For a saved sandbox,
-use **Settings → Editor → Browser connection**.
+During creation, expand **Open with → Browser connection**. For a saved sandbox,
+use **Settings → Open with → Browser connection**.
 
 - **Listen address:** empty chooses a separate local-only address for each sandbox.
   Enter a specific IP address and enable a password to use a custom address.
@@ -44,7 +44,7 @@ stays on the host and must have permissions `0600`; encrypted keys are unsupport
 
 ## Choose a client
 
-**Settings → Editor** changes the default client. **Open with…** selects a client
+**Settings → Open with** changes the default client. **Open with…** selects a client
 for one launch. Use Pi CLI alongside either editor.
 
 A sandbox used in the browser cannot subsequently attach to host VS Code: that
@@ -92,3 +92,11 @@ extension probes, login protection and session cleanup.
 - [VS Code execution location and client resources](https://code.visualstudio.com/api/advanced-topics/remote-extensions#execution-location-and-access-to-client-resources)
 - [code-server architecture and differences](https://coder.com/docs/code-server/FAQ)
 - [Browser filesystem access](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API)
+
+## File updates
+
+Explorer normally updates through native filesystem notifications. If an editor
+file or folder watcher cannot start because a Linux watch limit is exhausted,
+Factory polls that path every two seconds instead. This does not change host
+kernel settings. Recursive watchers used by other extensions can still require
+available native watches. Stopping unused sandboxes frees their watcher resources.

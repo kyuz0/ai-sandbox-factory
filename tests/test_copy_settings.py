@@ -1,6 +1,7 @@
 """Creation reuses immutable packages without sharing private state."""
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -37,11 +38,11 @@ class CopySettingsTests(unittest.TestCase):
         (self.source / 'allowlist.txt').write_text('example.com:443\n')
         (self.source / 'private-auth.json').write_text('PRIVATE_TEST_SENTINEL')
 
-    def create(self, omit=()):
+    def create(self, omit=(), skills=()):
         args = SimpleNamespace(name='target', profile=self.config['profile']['path'], reuse_from='source',
             workspace=str(self.workspace), pi_config=None, env_file=None, memory='12g',
             engine='docker', allowlist=None, allow_domain=['example.com:443'], advisor=['claude'],
-            omit_skill=list(omit))
+            omit_skill=list(omit), skill=list(skills))
         state = self.root / 'target'
         with patch.object(sandbox.host_platform, 'check_engine', return_value=None), \
              patch.object(sandbox, 'choose_engine', return_value='docker'), \
@@ -101,3 +102,35 @@ class CopySettingsTests(unittest.TestCase):
         self.assertNotIn('--pi-config', commands[0])
         self.assertNotIn('synthetic-key', str(commands))
         self.assertEqual(setup.call_args.args[2], {'exa': 'synthetic-key'})
+
+    def test_create_copies_multiple_library_skills_with_saved_selection(self):
+        from pi_sandbox_factory import skill_library
+        with patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': str(self.root / 'library')}):
+            source=self.root/'new-skills'
+            for name in ('first','second'):
+                folder=source/name;folder.mkdir(parents=True)
+                (folder/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Synthetic {name}\n---\n')
+            rows=skill_library.discover(str(source),self.root/'fetched')
+            skill_library.install(rows)
+            state, config=self.create(skills=[row['id'] for row in rows])
+            self.assertEqual([row['name'] for row in config['extra_skills']], ['example','first','second'])
+            for row in rows:skill_library.remove(row['id'])
+            self.assertTrue(all(Path(row['path']).is_relative_to(state) for row in config['extra_skills']))
+            self.assertTrue(all((Path(row['path'])/'SKILL.md').exists() for row in config['extra_skills']))
+
+    def test_failed_multi_skill_update_preserves_config_and_running_container(self):
+        from pi_sandbox_factory import skill_library
+        self.config.update(workspace=str(self.workspace), env_file=None, extra_folders=[], ssh={'hosts':[]}, advisors={'providers':[]})
+        (self.source/'config.json').write_text(json.dumps(self.config))
+        original=(self.source/'config.json').read_bytes()
+        with patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': str(self.root / 'library')}):
+            source=self.root/'new-skills'
+            for name in ('first','second'):
+                folder=source/name;folder.mkdir(parents=True)
+                (folder/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Synthetic {name}\n---\n')
+            rows=skill_library.discover(str(source),self.root/'fetched');skill_library.install(rows)
+            with patch.object(sandbox,'build',side_effect=ValueError('build failed')), patch.object(sandbox,'down') as down, patch.object(sandbox,'up') as up:
+                with self.assertRaisesRegex(ValueError,'build failed'):
+                    sandbox.apply_settings(self.config,self.source,{'library_skills':[r['id'] for r in rows],'remove_skills':['example']})
+                down.assert_not_called();up.assert_not_called()
+            self.assertEqual((self.source/'config.json').read_bytes(),original)

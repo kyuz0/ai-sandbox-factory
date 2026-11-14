@@ -5,12 +5,12 @@ and [platform setup](platforms.md) for prerequisites. `--version` prints the
 installed version. Pipx installations can update from the manager; source checkouts
 use Git and a package reinstall.
 
-Select **New sandbox**, choose a name and workspace, review settings, then create the sandbox. The base profile includes Pi, Pendant with built-in goals, and document tools. Install additional profiles through **Packages**, or select a custom profile folder.
+Select **New sandbox**, choose a name and workspace, review settings, then create the sandbox. The base profile includes Pi, Pendant with built-in goals, and document tools. Install additional profiles through **Library…**, or select a custom profile folder.
 
 **Create from existing…**, beside **New sandbox**, lets you reuse a saved setup.
 Choose the source, enter a new name and workspace, then review its profile, model
 providers, network rules, features and advisor settings before creating. Added
-skills are included; you can deselect them in **Skills and features**.
+skills are included; you can deselect them in **Skills**.
 
 Select **Include search API keys** to copy those keys from a running source.
 Model and advisor logins, SSH credentials, browser sessions and conversations
@@ -18,9 +18,9 @@ start fresh. Environment files and Pi seed directories must be selected again.
 The new sandbox keeps independent copies of its packages.
 
 **Open in browser** is the default on supported hosts. The editor opens locally
-without a password. During creation, expand **Editor** to choose Pi CLI or
+without a password. During creation, expand **Open with** to choose Pi CLI or
 VS Code on host; clear **Open selected editor after creation** to launch later.
-Use **Settings → Editor** to change the launch choice, address, port or password.
+Use **Settings → Open with** to change the launch choice, address, port or password.
 
 **Open with…** opens another client without changing the default. Pi CLI runs in
 the current terminal; exit Pi to return to the manager. You can use it alongside
@@ -37,6 +37,28 @@ new sandboxes.
 Deleting a sandbox removes its containers, private home and editor state while preserving the workspace. Closing the manager or editor leaves containers running.
 
 ## Change approval and sandbox settings
+
+Settings show the effect before applying and the reconnect steps afterwards.
+
+| Settings you change | When they apply | What to do afterwards |
+| --- | --- | --- |
+| Configuration: permissions, browser/vault protection, recall, goals, questions, scheduling, subagents, skills, search, Slack tools, provider plugins, local model ports, memory, environment or network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Use Open in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
+| Network: allowed hosts and website groups | The gateway reloads. Development processes continue; connections may disconnect. | Retry interrupted connections. No editor reload or new conversation is needed. |
+| Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
+| Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
+| SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
+| Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
+| Open with: client choice and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
+| Models: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
+| Models: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
+| Models: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
+| Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
+| Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Configuration and apply them to an existing sandbox. |
+
+Reloading tools and instructions does not rewrite earlier chat messages. Engine,
+profile, workspace and seed-home choices are fixed for an existing sandbox; create
+another sandbox to change them. A failed image build leaves the current runtime
+in place.
 
 For a sandbox you have already created:
 
@@ -60,19 +82,26 @@ sandboxes, not existing ones.
 See [approval modes and shell behavior](approvals.md#configuration-and-updates).
 The outer container and its network policy still apply when the inner sandbox is off.
 
-## Additional skills
+## Agent tools and skills
 
-**Skills and features** also contains **Enable optional subagents**, alongside
-question forms, conversation recall, browser tools, goals and scheduled prompts.
+**Agent tools & subagents** groups conversation recall, the agent browser,
+question forms, goals, scheduled prompts and optional subagents. Its collapsed
+heading shows the current recall, browser and goals settings.
 
-In **Skills and features**, enter a Git repository URL and the relative folder
-containing the skill’s `SKILL.md`. Any supported HTTPS or SSH Git server works.
-The form adds one skill per save. To add another, open **Settings → Configuration**
-and enter its source; previously added skills remain listed and enabled. Adding
-the same skill name again replaces that skill. Deselect an added skill to remove it.
+Use **Library… → Open skill library… → Add skills…** to import a Git repository
+or local folder. **Find and validate skills** lists the discovered skills and any
+validation errors. Select several and choose **Add selected skills**. Validation
+reads frontmatter and checks files without running skill code. Git sources use
+host authentication; local Git folders import committed content.
 
-Profiles can bundle several skills and can be installed from a local folder.
-The individual additional-skill field currently accepts Git URLs only.
+During creation or in **Settings → Configuration → Skills**, select any number
+of library skills. **Manage skill library…** opens the same library without
+losing the form. Profile skills appear alongside the library selection.
+
+Each sandbox keeps its own skill snapshots. Updating or removing a library entry
+does not change saved sandboxes. To use an updated version, deselect its saved
+copy and select the new library version. Applying skill changes rebuilds the
+sandbox while preserving project files and private home state.
 
 ## Workspace and additional folders
 
@@ -210,8 +239,19 @@ in **Lite** mode. Pi can search conversation history removed by compaction with
 `history_grep` and retrieve a passage with `history_expand`.
 Lite adds no automatic history hints.
 
-Choose **Configuration → Skills and features → Conversation recall** when creating
+Choose **Configuration → Agent tools & subagents → Conversation recall** when creating
 or editing a sandbox. **Full** adds automatic hints and may reduce prefix-cache
 reuse. **Off** disables recall. The selection applies to both Pi CLI and Pendant.
 For CLI creation, use `"compaction_recall": "lite"`, `"full"` or `"off"` in the
 JSON passed to `--options-file`.
+
+## Sandbox activity
+
+The dashboard records **Created**, **Last edited** (saved Factory settings) and
+**Last started** (a successful container start). Dates use your local timezone.
+Opening an already-running sandbox does not change its start time.
+
+Use **Sort by** or click a date column heading; **Newest first / Oldest first**
+changes the order. Missing dates stay at the bottom. **—** means the event was
+not recorded, including events before this version. Project file edits do not
+change **Last edited**.

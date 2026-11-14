@@ -90,6 +90,46 @@ async def capture(size):
                 await shot('new', NewSandbox())
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                 draft.update(name='demo', workspace=str(workspace), working_directory='.', extra_folders=[])
+                if args.only and any(name.startswith('model-settings-') for name in args.only):
+                    for context in ('create', 'defaults', 'existing'):
+                        sample = copy.deepcopy(draft)
+                        if context == 'create':
+                            sample['_hosted_changes'] = {'openrouter': {'provider': 'openrouter'}}
+                        screen = SettingsForm(sample, editing=context == 'existing', defaults=context == 'defaults')
+                        await app.push_screen(screen)
+                        await shot('model-settings-' + context + '-collapsed')
+                        section = screen.query_one('#hosted-section', Collapsible)
+                        section.collapsed = False
+                        await pilot.pause()
+                        section.scroll_visible(top=True, animate=False)
+                        screen.query_one('#model-ports', Input).value = '8000,8080-8082,9000-9010,10000-10010'
+                        await shot('model-settings-' + context + '-on', focus='#model-ports')
+                        screen.query_one('#local-models', Checkbox).value = False
+                        await shot('model-settings-' + context + '-off', focus='#local-models')
+                        screen.query_one('#local-models', Checkbox).value = True
+                        screen.query_one('#model-ports', Input).value = '8000,not-a-port'
+                        await pilot.pause()
+                        try:
+                            screen.collect()
+                        except ValueError:
+                            pass
+                        await shot('model-settings-' + context + '-error', focus='#model-ports')
+                        if context != 'existing':
+                            section.collapsed = True
+                            screen.query_one('#editor-section', Collapsible).collapsed = False
+                            screen.query_one('#editor-section').scroll_visible(top=True, animate=False)
+                            await shot('model-settings-' + context + '-open-with', focus='#editor-mode')
+                        for part in ('browser', 'goals', 'compaction-recall'):
+                            screen.query_one('#skills-section', Collapsible).collapsed = False
+                            await shot('model-settings-' + context + '-tools-' + part, focus='#' + part)
+                        await app.pop_screen()
+                    await shot('model-settings-open-with', EditorScreen('demo'))
+                    await shot('model-settings-menu', SettingsMenu('demo'))
+                    await shot('model-settings-saved-models', ModelsScreen(record))
+                    app.service.populated = True
+                    await shot('model-settings-connected-models', ModelsScreen(record))
+                    app.service.populated = False
+                    return
                 if not args.only or any(name.startswith('git-') for name in args.only):
                     for context in ('create', 'defaults', 'ssh'):
                         screen = SSHScreen(record) if context == 'ssh' else SettingsForm(copy.deepcopy(draft), defaults=context == 'defaults')

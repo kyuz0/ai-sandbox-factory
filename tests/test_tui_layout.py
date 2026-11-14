@@ -204,6 +204,57 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.press('escape')
             await pilot.press('q')
 
+    async def test_model_settings_are_grouped_and_bad_ports_are_visible(self):
+        for size in ((80,24),(120,40),(220,50)):
+            for context in ('create','defaults','existing'):
+                app=self.app()
+                async with app.run_test(size=size) as pilot:
+                    await self.ready(app,pilot)
+                    form=SettingsForm(self.draft(),editing=context=='existing',defaults=context=='defaults')
+                    await app.push_screen(form)
+                    await pilot.pause()
+                    section=form.query_one('#hosted-section',Collapsible)
+                    self.assertTrue(section.collapsed)
+                    self.assertIn('local on',section.title)
+                    field=form.query_one('#model-ports',Input)
+                    self.assertIn(field,section.query(Input))
+                    for invalid in ('bad',''):
+                        field.value=invalid
+                        await pilot.pause()
+                        with self.assertRaises(ValueError):form.collect()
+                        await pilot.pause()
+                        self.assertFalse(section.collapsed)
+                        error=form.query_one('#model-ports-error')
+                        self.assertTrue(error.display)
+                        self.assertGreaterEqual(error.region.y,1)
+                        self.assertLessEqual(error.region.bottom,form.query_one('.wizard-actions').region.y)
+                    form.query_one('#local-models',Checkbox).value=False
+                    await pilot.pause()
+                    self.assertTrue(field.disabled)
+                    self.assertFalse(form.query_one('#model-ports-error').display)
+                    self.assertIn('local off',section.title)
+                    field.value='8000'
+                    form.query_one('#local-models',Checkbox).value=True
+                    await pilot.pause()
+                    self.assertFalse(field.disabled)
+
+    async def test_agent_tools_summary_tracks_visible_controls(self):
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            form = SettingsForm(self.draft())
+            await app.push_screen(form)
+            await pilot.pause()
+            section = form.query_one('#skills-section', Collapsible)
+            self.assertIn('Agent tools & subagents', section.title)
+            form.query_one('#browser', Checkbox).value = True
+            form.query_one('#goals', Checkbox).value = False
+            form.query_one('#compaction-recall', Select).value = 'full'
+            await pilot.pause()
+            self.assertIn('Browser on', section.title)
+            self.assertIn('Recall Full', section.title)
+            self.assertIn('Goals off', section.title)
+
     async def test_form_groups_and_disabled_fields_follow_selections(self):
         app = self.app()
         async with app.run_test(size=(120, 40)) as pilot:
@@ -211,7 +262,12 @@ class TUILayoutTests(unittest.TestCase):
             await app.push_screen(SettingsForm(self.draft()))
             form = app.screen
             ports = form.query_one('#model-port-setting')
-            self.assertEqual(form.query_one('#hosted-section').region.y, ports.region.bottom + 1)
+            section = form.query_one('#hosted-section', Collapsible)
+            self.assertIn(ports, section.query('#model-port-setting'))
+            self.assertIn(form.query_one('#local-models'), section.query('#local-models'))
+            section.collapsed = False
+            await pilot.pause()
+            self.assertIn('local on', section.title)
             form.query_one('#network-section', Collapsible).collapsed = False
             await pilot.pause()
             categories = form.query_one('WebsiteGroups')
@@ -258,6 +314,23 @@ class TUILayoutTests(unittest.TestCase):
                 await pilot.press('escape')
                 await self.ready(app, pilot)
                 await pilot.press('q')
+
+    async def test_update_completion_reports_whether_editor_reopened(self):
+        for fails in (False, True):
+            app = self.app()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await self.ready(app, pilot)
+                draft = self.draft()
+                draft['open_editor'] = True
+                await app.push_screen(SettingsForm(draft, editing=True))
+                with patch.object(app.service, 'run', side_effect=ValueError('Cannot open') if fails else None):
+                    app.screen.submit(draft, {})
+                    await self.ready(app, pilot)
+                notice = str(app.screen.query_one('#operation-next', Static).render())
+                self.assertIn('Open in Factory' if fails else 'reopened client', notice)
+                self.assertNotIn('Slack', notice)
+                self.assertNotIn('SSH', notice)
+                self.assertFalse(app.screen.failed)
 
     async def test_create_with_pi_opens_the_terminal_after_success(self):
         app = self.app()
@@ -330,7 +403,7 @@ class TUILayoutTests(unittest.TestCase):
             await self.ready(app, pilot)
             self.assertTrue(app.screen.finished)
             self.assertFalse(app.screen.failed)
-            self.assertTrue(app.screen.title.startswith('Creating '))
+            self.assertTrue(app.screen.title.startswith('Created '))
             await pilot.press('escape')
             await pilot.press('q')
 

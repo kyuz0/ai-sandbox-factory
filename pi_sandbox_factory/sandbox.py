@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pi development containers managed with Podman or Docker."""
 import argparse
+from . import activity
 from . import sandbox_skills
 from . import sandbox_extensions
 from . import sandbox_advisors
@@ -409,7 +410,8 @@ def list_sandboxes(state_root, structured=False):
         if config.get('network') == 'unrestricted' and states[1] == 'missing':
             states[1] = 'not used'
         inventory.append(dict(name=config['name'], profile=profile, engine=engine, dev=states[0],
-                              proxy=states[1], workspace=config.get('workspace'), config=config))
+                              proxy=states[1], workspace=config.get('workspace'), config=config,
+                              activity=activity.load(state_root / config['name'])))
         rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-')))
     if structured:
         print(json.dumps(inventory))
@@ -440,7 +442,7 @@ def resume_existing(config, name, current):
         result = run([config['engine'], 'exec', name, 'true'], capture=True,
                      check=False, stderr=subprocess.PIPE)
         if result.returncode == 0:
-            return
+            return False
         if 'not running' not in (result.stderr or '').lower():
             raise ValueError(f'Cannot execute in {name}; inspect with {config["engine"]} logs {name}. '
                              'The container was not restarted.')
@@ -448,6 +450,7 @@ def resume_existing(config, name, current):
         restart_existing(config, name)
     else:
         run([config['engine'], 'start', name])
+    return True
 
 
 def ensure_gateway(config):
@@ -514,9 +517,12 @@ def up(config, state):
     sandbox_advisors.up(config, state)
     sandbox_ssh.up(config, state)
     inference.up(config, state)
+    started_dev = current[dev] is None
     for name in active:
         if current[name]:
-            resume_existing(config, name, current[name])
+            restarted = resume_existing(config, name, current[name])
+            if name == dev:
+                started_dev = bool(restarted)
             if name == proxy:
                 ensure_gateway(config)
             continue
@@ -590,6 +596,8 @@ def up(config, state):
         if result.returncode == 0:
             if options(config.get('options'))['browser']:
                 browser_viewer.ensure_viewer(engine, inspect(config, dev)['Id'])
+            if started_dev:
+                activity.record(state, 'started')
             print(f'Ready: {dev}; workspace /workspace; engine {engine}; network {network_mode(config)}')
             return
         time.sleep(0.25)
@@ -778,18 +786,21 @@ def create(args, state):
             if not target.exists():
                 shutil.copytree(source, target)
             config['extra_skills'].append(dict(skill, path=str(target)))
+        from . import skill_library
+        config['extra_skills'] = skill_library.snapshot(getattr(args, 'skill', []) or [], state, config['extra_skills'])
         if getattr(args, 'skill_source', None):
             added = sandbox_skills.snapshot(args.skill_source, args.skill_path, state, SimpleNamespace(run=run, tree_digest=tree_digest))
             config['extra_skills'] = [s for s in config['extra_skills'] if s['name'] != added['name']] + [added]
     except (Exception, KeyboardInterrupt):
         shutil.rmtree(state)  # This create owns the newly created, incomplete state.
         raise
-    (state / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
+    activity.save_config(state, config)
     (state / 'allowlist.txt').write_text(policy_text)
     (state / 'squid.conf').write_text(network_policy(config, rules))
     write_attach(config, state)
     from . import editor_settings
-    editor_settings.save(state, {'mode': getattr(args, 'editor', None) or editor_settings.default_mode(engine)})
+    editor_settings.save(state, {'mode': getattr(args, 'editor', None) or editor_settings.default_mode(engine)}, record_edit=False)
+    activity.record(state, 'created')
     print(f'Created {state}\nProfile: {profile["name"]}. Network: {mode}; {len(rules)} hostname/port rules. Run build, then up.')
 
 
@@ -836,15 +847,15 @@ def prepare_options(config, state):
 
 
 def apply_settings(config, state, changes):
-    allowed = {'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'local_model_ports', 'model_providers'}
+    allowed = {'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
     updated = dict(config)
-    updated.update({k: v for k, v in changes.items() if k not in ('allowlist', 'skill_source', 'skill_path', 'remove_skills')})
+    updated.update({k: v for k, v in changes.items() if k not in ('allowlist', 'skill_source', 'skill_path', 'remove_skills', 'library_skills')})
     updated['working_directory'] = folders.working_directory(updated['workspace'], updated.get('working_directory', '.'))
     updated['extra_folders'] = folders.validate_config(updated, state.parent)
     if set(changes) <= {'working_directory', 'extra_folders'} and updated['extra_folders'] == config.get('extra_folders', []):
-        write_json(state / 'config.json', updated)
+        activity.save_config(state, updated)
         write_attach(updated, state)
         print('Starting folder saved. Open a new Pi session or reopen VS Code to use it.')
         return
@@ -860,11 +871,14 @@ def apply_settings(config, state, changes):
     if type(updated.get('subagents', False)) is not bool:
         raise ValueError('subagents must be a boolean')
     validate_env(updated.get('env_file'))
-    text = changes.get('allowlist', (state / 'allowlist.txt').read_text())
+    old_text = (state / 'allowlist.txt').read_text()
+    text = changes.get('allowlist', old_text)
     rules = parse_rules(text)
     configure_local_gateway(updated, updated.get('local_model_ports'), rules)
     if network_mode(updated) == 'unrestricted' and rules:
         raise ValueError('Unrestricted networking cannot include an active allowlist')
+    from . import skill_library
+    updated['extra_skills'] = skill_library.snapshot(changes.get('library_skills', []), state, updated['extra_skills'])
     if changes.get('skill_source'):
         added = sandbox_skills.snapshot(changes['skill_source'], changes.get('skill_path', '.'), state, SimpleNamespace(run=run, tree_digest=tree_digest))
         updated['extra_skills'] = [s for s in updated['extra_skills'] if s['name'] != added['name']] + [added]
@@ -876,10 +890,12 @@ def apply_settings(config, state, changes):
     build(updated)  # Leave the old running container intact if the build fails.
     print('Applying settings: recreating containers; saved workspace and home are preserved.')
     down(config, remove=True)
-    write_json(state / 'config.json', updated)
+    activity.save_config(state, updated)
     write_attach(updated, state)
     (state / 'allowlist.txt').write_text(text)
     (state / 'squid.conf').write_text(network_policy(updated, rules))
+    if text != old_text:
+        activity.record(state, 'edited')
     up(updated, state)
 
 
@@ -908,7 +924,9 @@ def update_network(config, state, text, groups=None):
             restart_existing(config, proxy)
             ensure_gateway(config)
         (state / 'allowlist.txt').write_text(text)
-        write_json(state / 'config.json', updated)
+        activity.save_config(state, updated)
+        if old_text != text:
+            activity.record(state, 'edited')
     except Exception:
         (state / 'squid.conf').write_text(old_policy)
         (state / 'allowlist.txt').write_text(old_text)
@@ -1084,6 +1102,7 @@ def main():
     new.add_argument('--env-file')
     new.add_argument('--engine', choices=['auto', 'podman', 'docker'], default='auto')
     new.add_argument('--memory', default=None, help='Optional memory limit, e.g. 8g; default: no explicit limit')
+    new.add_argument('--skill', action='append', default=[], help='Skill library identifier; repeat to select several')
     new.add_argument('--skill-source', help='Additional skill Git repository URL')
     new.add_argument('--skill-path', default='.', help='Skill folder in the additional repository')
     new.add_argument('--advisor', action='append', choices=['codex', 'claude', 'agy'], default=[],
@@ -1198,10 +1217,11 @@ def main():
     if args.command == 'build':
         if not config.get('common'):
             config['common'] = snapshot_profile(common_profile(), state)
-            (state / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
+            activity.save_config(state, config)
         build(config)
     elif args.command == 'ssh-import-key':
         sandbox_ssh.import_key(config, state, args.key_file)
+        activity.record(state, 'edited')
     elif args.command in ('ssh-generate-key', 'ssh-public-key'):
         print(sandbox_ssh.repository_key(config, state, generate=args.command == 'ssh-generate-key'))
     elif args.command == 'ssh-unlock':
@@ -1211,6 +1231,7 @@ def main():
     elif args.command == 'advisor-import':
         from .advisor_credentials import import_from_host, LABELS
         import_from_host(config, state, args.provider)
+        activity.record(state, 'edited')
         print(f'{LABELS[args.provider]} host sign-in copied into the advisor container.')
     elif args.command == 'advisor-login':
         sandbox_advisors.login(config, state, args.provider)
@@ -1236,7 +1257,7 @@ def main():
                 updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
             build(updated)
             config = updated
-        (state / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
+        activity.save_config(state, config)
         down(config, remove=True)
         up(config, state)
     elif args.command == 'browser-editor':
@@ -1285,6 +1306,8 @@ def main():
                                 input=payload, text=True, capture_output=True)
         if result.returncode:
             raise ValueError('Could not save Slack credentials; check the token format and private storage')
+        if not args.status:
+            activity.record(state, 'edited')
         print(result.stdout.strip() if args.status else 'Slack credentials saved.')
     elif args.command == 'web-key':
         current = inspect(config, names(config)[0])
@@ -1324,11 +1347,12 @@ def main():
             if network_mode(config) == 'allowlist':
                 update_network(updated, state, (state / 'allowlist.txt').read_text())
             else:
-                write_json(state / 'config.json', updated)
+                activity.save_config(state, updated)
             prepare_options(updated, state)
             result = subprocess.run(command, text=True, capture_output=True)
             if result.returncode:
                 raise ValueError('Search key saved, but configuration refresh failed')
+            activity.record(state, 'edited')
             print('Search keys updated. Reload an open Pi or Pendant session.')
     elif args.command == 'network':
         update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups)
@@ -1343,7 +1367,7 @@ def main():
             validate_models(Path(config['pi_config']), rules, strict=False)
         down(config, remove=True)
         config['network'] = args.network
-        (state / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
+        activity.save_config(state, config)
         (state / 'allowlist.txt').write_text(text)
         (state / 'squid.conf').write_text(network_policy(config, rules))
         up(config, state)

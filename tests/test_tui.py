@@ -530,7 +530,7 @@ class TUITests(unittest.TestCase):
             for name in ['open','launch-with','settings','new','create-from','more','packages']:
                 b=app.query_one('#'+name,Button)
                 self.assertLessEqual(b.region.right,80,name);self.assertLessEqual(b.region.bottom,23,name)
-            self.assertEqual(len(app.query('#home Button')),7)
+            self.assertEqual(len(app.query('#home Button')),8)
             app.save_screenshot(filename='sandbox-home-declutter.svg',path='/tmp')
             await self.settings_page(app,pilot,action="network-settings")
             self.assertLessEqual(app.screen.query_one('#apply-network',Button).region.bottom,23)
@@ -976,3 +976,31 @@ class WebAccessUITests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class DashboardActivityTests(unittest.TestCase):
+    setUpClass = classmethod(TUITests.setUpClass.__func__)
+    tearDownClass = classmethod(TUITests.tearDownClass.__func__)
+    _callTestMethod = TUITests._callTestMethod
+    setUp = TUITests.setUp
+    tearDown = TUITests.tearDown
+    ready = TUITests.ready
+    async def test_timestamp_sorting_search_and_selection(self):
+        self.records[0]['activity']={'created':'2026-11-13T12:00:00+00:00','started':'2026-11-14T10:00:00+00:00','edited':None}
+        self.records[1]['activity']={'created':'2026-11-14T12:00:00+00:00','started':'2026-11-14T11:00:00+00:00','edited':'2026-11-14T12:30:00+00:00'}
+        app=Cockpit(self.root,FakeService(self.records))
+        from textual.widgets import Select
+        async with app.run_test(size=(80,24)) as pilot:
+            await self.ready(app,pilot)
+            table=app.query_one('#sandboxes',DataTable)
+            self.assertEqual(table.get_row_at(0)[0],'beta')
+            selected=app.selected_name()
+            await pilot.click('#sort-direction');await pilot.pause()
+            self.assertEqual(table.get_row_at(0)[0],'alpha')
+            self.assertEqual(app.selected_name(),selected)
+            app.query_one('#sort-field',Select).value='edited';await pilot.pause()
+            self.assertEqual(table.get_row_at(0)[0],'beta')
+            await pilot.click('#sort-direction');await pilot.pause()
+            self.assertEqual(table.get_row_at(0)[0],'beta') # unknown stays last
+            app.query_one('#search',Input).value='alpha';await pilot.pause()
+            self.assertEqual(table.row_count,1);self.assertEqual(table.get_row_at(0)[0],'alpha')
+            self.assertLess(app.query_one('#more').region.bottom,24)

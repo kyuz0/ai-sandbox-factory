@@ -7,6 +7,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Input, OptionList, Select, Static
 from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ModelsScreen, SettingsForm, preset
 from pi_sandbox_factory.models_ui import HostedProviders, ModelDialog, ProviderDialog
+from pi_sandbox_factory import editor_settings
 from test_tui import FakeService
 
 
@@ -17,6 +18,8 @@ class ModelService(FakeService):
                           'maxTokens':8192,'input':['text','image'],'reasoning':True}], 'warning':''}
     def hosted_select(self,*args,**kwargs): self.calls.append((args,kwargs))
     def hosted_test(self,*args,**kwargs): self.calls.append(('test',args,kwargs));return {'ok':True}
+    def hosted_save(self,name,value):
+        return {'provider':value['provider'],'configured':True,'has_key':True}
 
 
 class HostedUITests(unittest.TestCase):
@@ -25,6 +28,31 @@ class HostedUITests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.runner.close()
     def _callTestMethod(self,method): self.runner.run(method())
+
+    async def test_key_only_save_does_not_show_unrelated_model_or_reload_steps(self):
+        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+            root=Path(temp);(root/'test').mkdir()
+            editor_settings.save(root/'test',{'mode':'pi'})
+            app=Cockpit(root,ModelService([]))
+            async with app.run_test(size=(80,24)) as pilot:
+                await pilot.pause();await app.workers.wait_for_complete()
+                await app.push_screen(ModelsScreen({'name':'test','config':{'model_providers':[]}}))
+                await pilot.pause();await app.workers.wait_for_complete()
+                form=app.screen.query_one(HostedProviders)
+                form.save({'provider':'openrouter','key':'fixture-only'})
+                await app.workers.wait_for_complete();await pilot.pause()
+                self.assertIsInstance(app.screen,ModelsScreen)
+                message=str(form.query_one('#hosted-message',Static).render())
+                self.assertIn('subsequent requests',message)
+                for irrelevant in ('reload','Reopen','VS Code','Choose a model','fixture-only'):
+                    self.assertNotIn(irrelevant,message)
+                form.save({'provider':'together','key':'fixture-only'})
+                await app.workers.wait_for_complete();await pilot.pause()
+                self.assertIsInstance(app.screen,ModelDialog)
+                message=str(form.query_one('#hosted-message',Static).render())
+                self.assertIn('Restart Pi CLI',message)
+                self.assertNotIn('VS Code',message)
+                self.assertTrue(all(line.startswith('• ') for line in message.splitlines()))
 
     async def test_create_edit_model_selection_and_small_terminal(self):
         for size in [(80,24),(120,40),(220,50)]:

@@ -27,7 +27,7 @@ class EditorFields(Vertical):
 
     def compose(self):
         with Vertical(classes='setting'):
-            yield Label('Open sandbox with')
+            yield Label('Default choice')
             yield Select([(title, key) for key, title in editor_settings.MODES.items() if self.desktop_allowed or key != 'desktop'],
                          value=self.value['mode'], allow_blank=False, id='editor-mode')
             yield Static('', id='editor-description', classes='setting-help')
@@ -77,7 +77,7 @@ class EditorFields(Vertical):
             'desktop': 'Opens VS Code on this computer. Host-side extensions have host access.',
         }[mode])
         for section in self.screen.query('#editor-section'):
-            section.title = 'Editor · ' + editor_settings.MODES[mode]
+            section.title = 'Open with · ' + editor_settings.MODES[mode]
         if not self.connection_settings:
             return
         self.query_one('#editor-connection').display = mode == 'browser'
@@ -135,10 +135,10 @@ class EditorScreen(Screen):
     def compose(self):
         yield Header()
         with VerticalScroll(classes='form'):
-            yield Label('Editor · ' + self.sandbox_name, classes='title')
+            yield Label('Open with · ' + self.sandbox_name, classes='title')
             state = self.app.state_root / self.sandbox_name
             yield EditorFields(editor_settings.load(state), desktop_allowed=not (state / 'browser-editor.enabled').exists())
-            yield Static('Saving stops a running browser editor. Use Open on the sandbox list to reopen it.', classes='setting-help')
+            yield Static('• Saving stops a running browser editor.\n• Use Open with… on the sandbox list to reopen it.', classes='setting-help')
             yield Feedback('', id='editor-error', classes='error', markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='editor-back')
@@ -162,9 +162,10 @@ class EditorScreen(Screen):
                 def apply(log):
                     browser_editor.stop(state)
                     editor_settings.save(state, value)
-                    log('Editor settings saved. Use Open to launch with these settings.')
+                    log('Editor settings saved. Use Open with… to launch with these settings.')
                 self.app.pop_screen()
-                self.app.push_screen(Operation('Saving editor settings', apply))
+                self.app.push_screen(Operation('Saving editor settings', apply,
+                    success_message='• Use Open with… to reconnect.\n• Resume your saved conversation.'))
             except (ValueError, OSError) as error:
                 self.query_one('#editor-error', Static).update(str(error))
 

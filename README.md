@@ -32,10 +32,9 @@ Pendant and their dependencies.
 
 Choose **New sandbox**, select your project folder and configure a model:
 
-- **Local server:** enable its port, usually `8000`. The included
+- **Local server:** open **Models**, enable local models and enter its port, usually `8000`. The included
   [Pi Local Model Manager](docs/usage.md#local-models) discovers the running model.
-- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model services
-  and providers → Connect provider…**. Factory keeps credentials outside Pi and
+- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Models → Connect provider…**. Factory keeps credentials outside Pi and
   editor extensions; see [hosted model setup](docs/hosted-models.md).
 
 Choose **Create and start** to open the editor. Use **Settings** to change the
@@ -68,7 +67,7 @@ the checkbox continues to protect native file tools only.
 ## Profiles and providers
 
 A **Profile** supplies tools, skills and agent instructions. A **Provider** connects
-Pi to a model service and configures its models. Install either through **Packages**
+Pi to a model service and configures its models. Install either through **Library…**
 from a Git repository or local folder, then select it in the sandbox configuration.
 Packages contain executable code; install ones you trust.
 

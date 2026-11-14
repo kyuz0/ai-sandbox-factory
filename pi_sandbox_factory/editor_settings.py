@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from .sandbox_options import write_json
-from . import host_platform
+from . import host_platform, activity
 
 MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host'}
 DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': ''}
@@ -69,12 +69,15 @@ def load(state):
     return validate()
 
 
-def save(state, value):
+def save(state, value, *, record_edit=True):
     value = validate(value)
     if value['mode'] == 'desktop' and (Path(state) / 'browser-editor.enabled').exists():
         raise ValueError('This sandbox uses the browser editor. Create a separate sandbox for VS Code on host.')
     tls_context(value)
+    previous = load(state)
     write_json(Path(state) / 'editor.json', value)
+    if record_edit and previous != value and (Path(state) / 'config.json').exists():
+        activity.record(state, 'edited')
     return value
 
 

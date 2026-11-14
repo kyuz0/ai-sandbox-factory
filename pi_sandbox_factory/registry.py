@@ -163,16 +163,17 @@ def package_directory(root, subdir):
     return selected
 
 
-def export(source, dest, ref=None, *, subdir="."):
+def export(source, dest, ref=None, *, subdir=".", check=True):
     source = source_url(source)
     local = Path(source)
     if local.is_dir() and not (local / ".git").exists():
         if ref:
             raise ValueError("A revision requires a Git repository")
         selected = package_directory(local, subdir)
-        safe_tree(selected)
+        if check:
+            safe_tree(selected)
         shutil.copytree(
-            selected, dest, ignore=shutil.ignore_patterns("__pycache__", ".env", ".env.*", ".venv")
+            selected, dest, symlinks=not check, ignore=shutil.ignore_patterns("__pycache__", ".env", ".env.*", ".venv")
         )
         return None
     if ref and (ref.startswith("-") or any(c.isspace() for c in ref)):
@@ -203,8 +204,9 @@ def export(source, dest, ref=None, *, subdir="."):
         git("-C", checkout, "checkout", "--quiet", "--detach", revision)
         git("-C", checkout, "submodule", "update", "--init", "--recursive")
         selected = package_directory(checkout, subdir)
-        safe_tree(selected)
-        shutil.copytree(selected, dest, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        if check:
+            safe_tree(selected)
+        shutil.copytree(selected, dest, symlinks=not check, ignore=shutil.ignore_patterns(".git", "__pycache__"))
         return revision
 
 

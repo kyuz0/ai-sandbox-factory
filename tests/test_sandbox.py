@@ -535,6 +535,7 @@ class RecoveryTests(LifecycleTestCase):
                     patch.object(sandbox, 'image_names', return_value=('dev-image', 'proxy-image')), \
                     patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
                 sandbox.up(config, state)
+            self.assertIsNotNone(sandbox.activity.load(state)['started'])
             starts = [call.args[0] for call in run.call_args_list if call.args[0][1] == 'run']
             self.assertEqual(len(starts), 1)
             command = starts[0]
@@ -584,6 +585,7 @@ class RecoveryTests(LifecycleTestCase):
                     patch.object(sandbox, 'image_names', side_effect=AssertionError('No image lookup needed')), \
                     patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
                 sandbox.up(self.config, state)
+            self.assertIsNone(sandbox.activity.load(state)['started'])
             self.assertTrue(run.call_args_list)
             self.assertTrue(all(call.args[0][1] == 'exec' for call in run.call_args_list))
             # Gateway readiness must be verified even when both containers exist.
@@ -615,6 +617,7 @@ class RecoveryTests(LifecycleTestCase):
                 with patch.object(sandbox, 'inspect', side_effect=lambda config, name: containers[name]), \
                         patch.object(sandbox, 'run', side_effect=run):
                     sandbox.up(self.config, state)
+                self.assertEqual(sandbox.activity.load(state)['started'] is not None, stale == self.dev)
                 self.assertTrue(repaired)
                 self.assertEqual([a for a in actions if a[1] == 'start'], [['podman', 'start', stale]])
                 self.assertEqual([a[-1] for a in actions if a[1] == 'stop'], [stale])

@@ -1,6 +1,6 @@
 # Hosted models
 
-During creation, open **Model services and providers → Connect provider…**.
+During creation, open **Models → Connect provider…**.
 For an existing sandbox, use **Settings → Models → Connect provider…**.
 Save the connection, choose a model, then select **Use as default**. During creation,
 model selection opens after the container starts. **Continue** then opens your

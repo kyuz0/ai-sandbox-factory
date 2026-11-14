@@ -74,6 +74,26 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ## Terminal layout and navigation
 
+### Relevance and cognitive load
+
+- Show only information that helps the user make the current decision or take the
+  next required action. Derive change notices from the actual diff and selected
+  client. Never show unrelated feature exceptions, credentials guidance or advice
+  for clients the user is not using.
+- Render independent actions, effects and changed settings as separate bullets.
+  Never compress a list into a paragraph or a semicolon-separated sentence.
+  Use a short sentence only for one coherent fact.
+- Keep completion feedback to the result and necessary next steps. Put background
+  explanations in help or documentation; do not repeat all possible caveats on
+  every successful operation. Show restart/reload requirements before Apply and
+  actionable reconnect steps after success, never after failure.
+- Include a notice only when its condition is true: for example, Slack credential
+  guidance requires a Slack credential change; Git identity guidance requires an
+  identity change. Choose the reconnect instruction for the selected client.
+- QA must test both presence and absence of conditional notices, inspect narrow
+  screens for readable bullets and visible actions, and remove irrelevant or
+  repeated text before release.
+
 - Group each label, control and explanation in one `.setting`. Keep help directly
   below its control; put one blank row between groups, not inside them.
 - Path inputs and Browse buttons share a three-row height. Put dependent options
