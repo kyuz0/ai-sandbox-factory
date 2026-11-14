@@ -742,6 +742,10 @@ startup, browser localhost navigation, API POST and popup tabs. Exactly one
 review is expected for server startup; localhost browser traffic and scratch
 files must require neither network review nor human permission.
 
+Add `--goals` to run the Pendant variant with native goal creation, reading and
+completion. It checks unlimited creation and explicit budget removal, with no
+goal approval requests; the server start must still receive exactly one review.
+
 Exercise the browser code shipped in that image, including Chromium routing,
 WebSockets, multiple loopback names and external allow/deny behavior:
 

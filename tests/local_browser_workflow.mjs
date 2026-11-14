@@ -22,6 +22,11 @@ const cases=[
  {tool:'browser',args:{code:"const p=await page; await p.goto('http://localhost:8765'); const value=await p.evaluate(async()=>await (await fetch('/api',{method:'POST',body:'API_OK'})).text()); const popup=p.waitForEvent('popup'); await p.getByRole('button',{name:'Popup'}).click(); const child=await popup; await child.waitForLoadState(); return {title:await child.title(),api:value};"},contains:'API_OK'},
  {tool:'bash',args:{command:'cat /tmp/local-test.txt'},contains:'SHELL_TEMP_OK'},
 ];
+if(process.argv.includes('--goals')) {
+ cases.unshift({tool:'create_goal',args:{objective:'Test the local application',auto_continue:false,skip_auditor:true,verification_contract:'The browser returns API_OK.'}});
+ cases.push({tool:'get_goal',args:{}},
+  {tool:'update_goal',args:{token_budget:null,status:'complete'}});
+}
 let reviews=0,requests=0;
 const inference=http.createServer((req,res)=>{let data='';req.on('data',c=>data+=c);req.on('end',()=>{
  try {
@@ -53,13 +58,19 @@ try {
  const timer=setTimeout(()=>reject(Error('Workflow exceeded 180s: '+errors+' '+JSON.stringify(events.slice(-3)))),180000);
  child.on('exit',code=>{clearTimeout(timer);reject(Error('Client exited '+code+': '+errors));});
  child.stdout.on('data',c=>{buffer+=c;let n;while((n=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,n);buffer=buffer.slice(n+1);let e;try{e=JSON.parse(line);}catch{continue;}events.push(e);if(e.type==='agent_settled'){clearTimeout(timer);resolve();}}});
- child.stdin.write(JSON.stringify({type:'prompt',id:'local',message:'Build and test the synthetic local application, including a popup and API request. Start its server through bash_escalate. Use container /tmp for scratch.'})+'\n');
+ child.stdin.write(JSON.stringify({type:'prompt',id:'local',message:'Build and test the synthetic local application, including a popup and API request. Start its server through bash_escalate. Use container /tmp for scratch.'+(process.argv.includes('--goals')?' Create a goal without a token budget; complete it after verification.':'')})+'\n');
  });
  const results=events.filter(e=>e.type==='tool_execution_end');
  assert.equal(results.length,cases.length,JSON.stringify(events)+' '+errors);
  for(const [i,c] of cases.entries()){assert(!results[i].isError,JSON.stringify(results[i],(key,value)=>key==='data'?'[image omitted]':value));assert(!results[i].result?.isError,JSON.stringify(results[i],(key,value)=>key==='data'?'[image omitted]':value));if(c.contains)assert(JSON.stringify(results[i],(key,value)=>key==='data'?'[image omitted]':value).includes(c.contains),JSON.stringify(results[i],(key,value)=>key==='data'?'[image omitted]':value));}
  assert(!events.some(e=>e.type==='extension_ui_request'&&['select','confirm','input'].includes(e.method)),'Permission prompt');
  assert.equal(reviews,1,'Only server start needs review; temp files and browser localhost do not');
+ if(process.argv.includes('--goals')) {
+  assert.equal(results[0].result.details.goal.status,'active');
+  assert.equal(results[0].result.details.goal.tokenBudget,undefined);
+  assert.equal(results.at(-1).result.details.goal.status,'complete');
+  console.log('PASS native goal create/read/update: no review, unlimited creation, explicit budget removal and completion');
+ }
  assert.equal(requests,cases.length+1);
  console.log('PASS '+client+': generated guidance, native /tmp write, ordinary Bash shared /tmp, reviewed server start, browser localhost API + popup, preapproved network request, no network reviews or permission dialogs');
 } finally {child?.kill();inference.closeAllConnections();inference.close();gateway.closeAllConnections();gateway.close();}

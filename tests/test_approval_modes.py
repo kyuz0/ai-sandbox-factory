@@ -6,6 +6,20 @@ from pi_sandbox_factory import sandbox
 from pi_sandbox_factory.sandbox_options import options, permissions, guidance
 
 class ApprovalModeTests(unittest.TestCase):
+    def test_native_goal_management_is_preapproved_without_allowing_other_tools(self):
+        source = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev'
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            for mode in ('automatic', 'assisted', 'manual'):
+                sandbox.prepare_options({'common': {'path': str(source)}, 'options': {'approval': mode}}, state)
+                rules = json.loads((state / 'runtime-config/permissions.json').read_text())['permission']
+                for name in ('get_goal', 'create_goal', 'update_goal', 'set_goal_tasks',
+                             'update_goal_task', 'goal_question', 'goal_questionnaire', 'propose_goal_draft'):
+                    self.assertEqual(rules[name], 'allow')
+                self.assertEqual(rules['*'], 'ask')
+                self.assertEqual(rules['browser_session_export'], 'ask')
+                self.assertEqual(rules['external_directory'], 'ask')
+
     def test_browser_vault_guard_is_independent_of_shell_and_common_file_settings(self):
         self.assertIs(options()['protect_browser_credentials'], True)
         template = {'permission': {'path': {'*.key': 'deny', '/private/other': 'deny'}}}

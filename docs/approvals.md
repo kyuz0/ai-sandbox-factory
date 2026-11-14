@@ -28,6 +28,11 @@ reviewed separately before execution.
 Enabling browser support allows native `browser` calls without per-action review.
 The outer network allowlist still applies, and downloads keep their separate approval.
 
+Built-in goal creation, updates, task tracking and goal questions need no approval.
+Actions performed to achieve a goal keep their normal permissions. Goals have no
+token budget unless you request one; zero is a literal zero-token limit. To remove
+an existing budget, the agent can use `update_goal` with `token_budget: null`.
+
 ## Choosing a shell
 
 | Task | Tool |

@@ -162,7 +162,9 @@ def guidance(selected, subagents=False):
     lines.append('Standard pi-subagents are enabled with the same selected capabilities and approval rules.' if subagents
                  else 'Subagents are disabled. Work in the current agent; do not start extra Pi processes for delegation.')
     if selected['goals']:
-        lines.append('Pendant provides built-in goals. Start a goal only when explicitly requested and the goal tools are present.')
+        lines.append('Pendant provides built-in goals without approval review. Start a goal only when explicitly requested and the goal tools are present. '
+                     'Set or change a token budget only when the user specifies one. Omit token_budget for an unlimited new goal; '
+                     'zero means no tokens, not unlimited. In update_goal, token_budget: null removes an existing budget.')
     if selected['scheduling']:
         lines.append('Use schedule_prompt for requested future or recurring prompts. Jobs inject into this chat, '
                      'with its model and approval rules. Timers run only while this Pi session is open; '
