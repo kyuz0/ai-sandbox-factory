@@ -1,5 +1,5 @@
 FROM docker.io/library/debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends squid socat tini ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends squid socat tini ca-certificates python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY entrypoint.sh /usr/local/bin/proxy-entrypoint
 RUN chmod 755 /usr/local/bin/proxy-entrypoint

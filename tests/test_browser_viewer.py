@@ -70,6 +70,40 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         await writer.wait_closed()
         return result
 
+    async def test_eighty_concurrent_viewer_connections_are_not_dropped(self):
+        from test_browser_editor import FAKE_SERVER
+        import sys
+        children, clients = [], []
+        async def connect(session, desktop=False):
+            proc = await asyncio.create_subprocess_exec(sys.executable, '-u', '-c', FAKE_SERVER,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+            children.append(proc)
+            self.viewer.processes.add(proc)
+            return proc
+        self.viewer.connector = connect
+        headers = (f'Origin: http://{self.viewer.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+                   'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: aaaaaaaaaaaaaaaaaaaaaa==\r\n')
+        try:
+            for _ in range(80):
+                reader, writer = await asyncio.open_connection('127.0.0.1', self.port)
+                clients.append((reader, writer))
+                writer.write(request('vnc', headers, self.viewer.host))
+                await writer.drain()
+                self.assertIn(b'101 Switching Protocols', await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 10))
+            for i, (reader, writer) in enumerate(clients):
+                payload = f'viewer-{i}'.encode()
+                writer.write(payload)
+                await writer.drain()
+                self.assertEqual(await asyncio.wait_for(reader.readexactly(len(payload)), 10), payload)
+        finally:
+            for _, writer in clients:
+                writer.close()
+                await writer.wait_closed()
+            await asyncio.wait_for(asyncio.gather(*list(self.viewer.connections)), 15)
+        self.assertFalse(self.viewer.connections)
+        self.assertFalse(self.viewer.processes)
+        self.assertTrue(all(child.returncode is not None for child in children))
+
     async def test_rejected_requests_do_not_spawn_connector(self):
         self.viewer.connector = AsyncMock(side_effect=AssertionError('Must not spawn'))
         for path in ('json/list', 'devtools/browser/ABC', '../', 'devtools/%2e%2e/json/list'):

@@ -40,14 +40,46 @@ Check process headroom with a cached Factory image:
 podman run --rm --network none --pids-limit 512 --security-opt label=disable \
   --entrypoint python3 -v "$PWD/tests/process_headroom.py:/tmp/check.py:ro" \
   FACTORY_IMAGE /tmp/check.py exhausted
-podman run --rm --network none --pids-limit 2048 --security-opt label=disable \
+podman run --rm --network none --pids-limit=-1 --security-opt label=disable \
   --entrypoint python3 -v "$PWD/tests/process_headroom.py:/tmp/check.py:ro" \
-  FACTORY_IMAGE /tmp/check.py healthy
+  FACTORY_IMAGE /tmp/check.py healthy 3000
 ```
 
 The fixture reproduces the relay's fork failure at the old limit and checks
-that 600 worker threads coexist with a working relay at the development limit.
+that 3,000 worker threads coexist with repeated relay requests for 30 seconds.
+Choose a larger thread count when ten times the measured baseline exceeds 3,000.
 Both containers are disposable and removed when the check finishes.
+
+Exercise real relay supervision with synthetic services and no accounts:
+
+```sh
+podman run --rm --network none --pids-limit=512 --user 0 --security-opt label=disable \
+  --entrypoint python3 -v "$PWD/tests/relay_recovery.py:/tmp/check.py:ro" \
+  -v "$PWD/pi_sandbox_factory/containers/dev/entrypoint.sh:/tmp/entrypoint.sh:ro" \
+  FACTORY_IMAGE /tmp/check.py dev /tmp/entrypoint.sh --exhaust
+```
+
+This holds PID exhaustion for 30 seconds, verifies listener death and recovery,
+then kills the listener ten times. Each time the relay must recover without stopping the entrypoint. For
+`proxy` and `advisor`, mount that directory's entrypoint, replace `dev` with the
+matching name, use `--pids-limit=-1`, and omit `--exhaust`. Those variants hold
+600 simultaneous connections throughout all ten listener restarts.
+
+Check the production editor supervisor's orphan collection and natural exit:
+
+```sh
+podman run --rm --network none --pids-limit=-1 --security-opt label=disable \
+  --entrypoint python3 -v "$PWD/tests/editor_orphan_reaping.py:/tmp/check.py:ro" \
+  -v "$PWD/pi_sandbox_factory/containers/editor/launch.py:/tmp/launch.py:ro" \
+  FACTORY_IMAGE /tmp/check.py /tmp/launch.py
+```
+
+It creates 1,000 orphan helpers across ten waves, checks they are reaped while the
+editor remains available, then checks that the supervisor follows editor exit.
+The normal Python suite also holds 80 editor and 80 viewer WebSocket connections
+and verifies connector cleanup. The inference suite sends 80 simultaneous 1 MiB
+uploads, keeps all responses live, tests queued upload cancellation, and advances
+a fake clock through 32 minutes of stream progress.
 
 For creation cancellation, run the real Podman fixture with a locally cached image:
 
@@ -756,6 +788,10 @@ reviewed `bash_escalate` server
 startup, browser localhost navigation, API POST and popup tabs. Exactly one
 review is expected for server startup; localhost browser traffic and scratch
 files must require neither network review nor human permission.
+
+Add `--editor-env` to inherit the browser editor’s Node preload configuration
+and verify ordinary Node/npm commands and current-chat scheduling in both clients.
+Scheduling must add no reviewer calls or permission prompts.
 
 Add `--goals` to run the Pendant variant with native goal creation, reading and
 completion. It checks unlimited creation and explicit budget removal, with no

@@ -130,7 +130,7 @@ def up(config, state):
         args = [config['engine'], 'run', '-d', '--name', worker, '--label', f'{sandbox.LABEL}={config["name"]}',
                 '--label', 'io.pi-sandbox-factory.inference=' + identity,
                 '--cap-drop=ALL', '--security-opt=no-new-privileges',
-                '--read-only', '--memory=256m', '--pids-limit=64', '--user', f'{config["uid"]}:{config["gid"]}',
+                '--read-only', '--pids-limit=-1', '--user', f'{config["uid"]}:{config["gid"]}',
                 '-v', socket + ':/run/inference:z', '-v', keys + ':/private:z', '-v', str(target) + ':/config:ro,Z']
         if config['engine'] == 'podman':
             args += ['--userns=keep-id:uid=1000,gid=1000']

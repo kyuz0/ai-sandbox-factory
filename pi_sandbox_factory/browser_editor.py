@@ -127,9 +127,6 @@ class Relay:
             stderr=asyncio.subprocess.DEVNULL, start_new_session=True)
 
     async def handle(self, reader, writer):
-        if len(self.tasks) >= 32:
-            writer.close()
-            return
         task = asyncio.current_task()
         self.tasks.add(task)
         process = None

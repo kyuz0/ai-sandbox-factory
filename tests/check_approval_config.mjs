@@ -28,7 +28,7 @@ console.log('Approval configuration: conversation without tools; workspace restr
 const permissions = JSON.parse(readFileSync(`${root}/config/permissions.json`, 'utf8'));
 assert.equal(permissions.permission.ask_user_question, 'allow');
 for (const name of ['get_goal', 'create_goal', 'update_goal', 'set_goal_tasks',
-  'update_goal_task', 'goal_question', 'goal_questionnaire', 'propose_goal_draft']) {
+  'update_goal_task', 'goal_question', 'goal_questionnaire', 'propose_goal_draft', 'schedule_prompt']) {
   assert.equal(permissions.permission[name], 'allow', name);
 }
 assert.equal(permissions.permission['*'], 'ask');

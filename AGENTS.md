@@ -72,6 +72,21 @@ Browser supervisors must work without `fork`, `/proc` or Linux pidfds on the hos
 Keep generated browser origins separate per sandbox and validate Host and Origin.
 Do not solve VM mount failures with recursive ownership changes or wider host mounts.
 
+## Capacity and recovery
+
+- Treat an ordinary sustained editor, agent and browser session as the minimum
+  workload. Capacity changes must exercise at least ten times the measured
+  baseline in the affected layer, with cancellation, cleanup and fault recovery.
+  Record the workload and results; a component stress test is not proof of an
+  untested end-to-end workload.
+- Do not invent fixed process counts, memory quotas, concurrency caps or duration
+  cutoffs. Use explicit user settings or a documented protocol/resource need.
+  Use backpressure for transient pressure rather than rejecting valid work.
+- A transient relay failure must not stop active editor or agent processes.
+  Retrying must preserve the same destination and configured network rules.
+- Exercise the shipped clients with the editor's inherited environment, including
+  Node preload settings. Mocked tool calls alone do not establish usability.
+
 ## Terminal layout and navigation
 
 ### Relevance and cognitive load

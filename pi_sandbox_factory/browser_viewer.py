@@ -189,9 +189,6 @@ class Viewer:
             await self.finish(proc)
 
     async def handle(self, reader, writer):
-        if len(self.connections) >= 32:
-            writer.close()
-            return
         task = asyncio.current_task()
         self.connections.add(task)
         proc = None

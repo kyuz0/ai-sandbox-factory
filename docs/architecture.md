@@ -12,9 +12,11 @@ for client-side access.
 
 Each sandbox has a separate persistent home volume for Pi configuration and sessions. Desktop editor state is kept separately on the host. Stopping or recreating containers preserves that saved state. Deleting a sandbox removes its private home and editor state, but keeps the selected workspace and shared images.
 
-The development container permits up to 2,048 processes and threads combined,
-shared by the editor, agent, browser and development tools. The network gateway
-has a separate limit of 512.
+Factory imposes no process/thread caps or default container memory quotas. The
+editor, browser, development tools and companions share the host's available
+capacity. An explicit sandbox memory setting limits the development container.
+Relay failures retry their fixed routes without stopping active editor work.
+The editor supervisor continuously collects exited helper processes.
 
 ## Restricted networking
 
@@ -44,6 +46,12 @@ The development container has no mount for the credential volume or container
 engine socket. Compromised agent or editor code can still make allowed inference
 requests and spend quota. Provider-side budgets and permissions limit that use.
 The host manager, container runtime and configured upstream service remain trusted.
+
+Inference streams have no concurrency cap, idle cutoff or total-duration deadline.
+Client cancellation closes the upstream request; TCP keepalive detects dead peers.
+Each upload may contain up to 32 MiB; the companion buffers up to 64 MiB of concurrent uploads, releasing each
+body after forwarding it. Additional uploads wait for buffer space; cancellation
+releases their reservations.
 
 ## Commands, approval and skills
 

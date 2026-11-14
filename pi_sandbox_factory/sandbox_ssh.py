@@ -150,7 +150,7 @@ def up(config,state):
     if existing: core.resume_existing(config,worker,existing)
     else:
         args=[engine,'run','-d','--name',worker,'--label',f'{core.LABEL}={config["name"]}',
-              '--cap-drop=ALL','--security-opt=no-new-privileges','--security-opt=label=disable','--memory=128m','--pids-limit=64',
+              '--cap-drop=ALL','--security-opt=no-new-privileges','--security-opt=label=disable','--pids-limit=-1',
               '--user',f'{config["uid"]}:{config["gid"]}','-v',f'{socket}:/run/ssh-access','-v',f'{keys}:/private',
               '-v',f'{target}:/etc/ssh-access:ro']
         if engine=='podman':args+=['--userns=keep-id:uid=1000,gid=1000']

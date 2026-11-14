@@ -14,7 +14,7 @@ class ApprovalModeTests(unittest.TestCase):
                 sandbox.prepare_options({'common': {'path': str(source)}, 'options': {'approval': mode}}, state)
                 rules = json.loads((state / 'runtime-config/permissions.json').read_text())['permission']
                 for name in ('get_goal', 'create_goal', 'update_goal', 'set_goal_tasks',
-                             'update_goal_task', 'goal_question', 'goal_questionnaire', 'propose_goal_draft'):
+                             'update_goal_task', 'goal_question', 'goal_questionnaire', 'propose_goal_draft', 'schedule_prompt'):
                     self.assertEqual(rules[name], 'allow')
                 self.assertEqual(rules['*'], 'ask')
                 self.assertEqual(rules['browser_session_export'], 'ask')

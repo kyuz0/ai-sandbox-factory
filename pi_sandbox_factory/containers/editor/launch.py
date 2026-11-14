@@ -106,6 +106,20 @@ stopping = threading.Event()
 def stop(*_):
     stopping.set()
 
+def reap_children():
+    # Subreaping adopts exited orphan helpers as well as live descendants.
+    # Reap during normal operation, not only when the editor shuts down.
+    process.poll()
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            break
+        if not pid:
+            break
+        if pid == process.pid:
+            process.returncode = os.waitstatus_to_exitcode(status)
+
 def descendants():
     parents = {}
     for item in Path('/proc').glob('[0-9]*/status'):
@@ -129,6 +143,7 @@ for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
 try:
     deadline = time.monotonic() + 55
     while not stopping.is_set() and process.poll() is None:
+        reap_children()
         try:
             with socket.socket(socket.AF_UNIX) as connection:
                 connection.connect(str(sock))
@@ -139,7 +154,7 @@ try:
                 raise RuntimeError('Browser editor did not open its socket')
             stopping.wait(0.1)
     while not stopping.wait(0.2) and process.poll() is None:
-        pass
+        reap_children()
 finally:
     for signum, delay in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
         deadline = time.monotonic() + delay
@@ -149,12 +164,7 @@ finally:
                     os.kill(pid, signum)
                 except ProcessLookupError:
                     pass
-            process.poll()
-            try:
-                while os.waitpid(-1, os.WNOHANG)[0]:
-                    pass
-            except ChildProcessError:
-                pass
+            reap_children()
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.1)

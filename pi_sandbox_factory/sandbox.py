@@ -527,11 +527,11 @@ def up(config, state):
                 ensure_gateway(config)
             continue
         base = [engine, 'run', '-d', '--name', name, '--label', f'{LABEL}={config["name"]}',
-                '--security-opt=no-new-privileges', f'--pids-limit={512 if name == proxy else 2048}']
+                '--security-opt=no-new-privileges', '--pids-limit=-1']
         if name == proxy:
             args = [
                 '--cap-drop=ALL', '--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID',
-                '--cap-add=DAC_OVERRIDE', '--memory=256m',
+                '--cap-add=DAC_OVERRIDE',
                 '-v', f'{state / "squid.conf"}:/etc/squid/sandbox.conf:{host_platform.bind_mode()}',
                 '-v', f'{socket_volume}:/run/egress:z',
             ]

@@ -14,7 +14,7 @@ HOST = '127.12.34.56:12345'
 
 
 FAKE_SERVER = r"""
-import os, sys
+import os, sys, base64, hashlib
 stream = sys.stdin.buffer
 while True:
     head = b''
@@ -25,7 +25,9 @@ while True:
     length = next((int(line.split(b':',1)[1]) for line in head.split(b'\r\n') if line.lower().startswith(b'content-length:')), 0)
     body = stream.read(length)
     if b'Upgrade: websocket' in head:
-        os.write(1, b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
+        key = next((line.split(b':',1)[1].strip() for line in head.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:')), b'')
+        accept = base64.b64encode(hashlib.sha1(key + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+        os.write(1, b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + b'\r\n\r\n')
         while True:
             data = os.read(0, 65536)
             if not data: sys.exit()
@@ -82,6 +84,41 @@ class Requests(unittest.TestCase):
 
 
 class RelayChecks(unittest.IsolatedAsyncioTestCase):
+    async def test_eighty_concurrent_editor_connections_are_not_dropped(self):
+        relay = editor.Relay('a' * 64)
+        children = []
+        async def connect():
+            process = await asyncio.create_subprocess_exec(sys.executable, '-u', '-c', FAKE_SERVER,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+            children.append(process)
+            return process
+        relay.connector = connect
+        server = await asyncio.start_server(relay.handle, '127.0.0.1', 0)
+        port = server.sockets[0].getsockname()[1]
+        relay.host = f'127.0.0.1:{port}'
+        clients = []
+        try:
+            for _ in range(80):
+                reader, writer = await asyncio.open_connection('127.0.0.1', port)
+                clients.append((reader, writer))
+                writer.write(head(headers='Upgrade: websocket\r\nConnection: Upgrade\r\n', host=relay.host))
+                await writer.drain()
+                self.assertIn(b'101 Switching Protocols', await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 10))
+            for i, (reader, writer) in enumerate(clients):
+                payload = f'connection-{i}'.encode()
+                writer.write(payload)
+                await writer.drain()
+                self.assertEqual(await asyncio.wait_for(reader.readexactly(len(payload)), 10), payload)
+        finally:
+            for _, writer in clients:
+                writer.close()
+                await writer.wait_closed()
+            server.close()
+            await server.wait_closed()
+            await relay.close()
+        self.assertFalse(relay.tasks)
+        self.assertTrue(all(child.returncode is not None for child in children))
+
     async def test_connector_is_fixed_and_container_id_required(self):
         with self.assertRaises(ValueError):
             editor.Relay('name; command')

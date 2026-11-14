@@ -119,7 +119,7 @@ test('chunked body limits are enforced while reading the stream',async t=>{
  assert.equal(status,413);assert.equal(f.received.length,0);
 });
 
-test('total deadline stops a stream even while chunks keep arriving',async t=>{
+test('an explicitly configured total deadline stops a stream even while chunks keep arriving',async t=>{
  let closed;
  const stopped=new Promise(r=>closed=r);
  const f=await setup(t,(_req,res)=>{
@@ -172,4 +172,90 @@ test('native context-limit errors survive with credentials redacted and AWS erro
 test('oversized upstream errors are withheld',async t=>{
  const f=await setup(t,(_req,res)=>{res.writeHead(400);res.end(JSON.stringify({message:'x'.repeat(70000)}));});
  const r=await f.send();assert.equal(r.status,400);assert((await r.text()).length<1000);
+});
+
+test('eighty live inference streams release uploaded bodies and complete independently', async t => {
+ const streams=[];
+ const f=await setup(t,(_req,res,body)=>{
+  res.writeHead(200,{'content-type':'text/event-stream'});
+  res.write('data: ready\n\n');
+  streams.push({res,id:JSON.parse(body).id});
+ });
+ const responses=await Promise.all(Array.from({length:80},async(_,id)=>{
+  const response=await f.send(JSON.stringify({id,padding:'x'.repeat(1024*1024)}));
+  assert.equal(response.status,200,`stream ${id}`);
+  return response;
+ }));
+ assert.equal(streams.length,80);
+ for(const {res,id} of streams)res.end(`data: ${id}\n\n`);
+ for(let id=0;id<80;id++)assert.equal(await responses[id].text(),`data: ready\n\ndata: ${id}\n\n`);
+});
+
+test('default inference stream survives thirty minutes of continuing progress', async t => {
+ t.mock.timers.enable({apis:['setTimeout']});
+ let upstream;
+ const f=await setup(t,(_req,res)=>{upstream=res;res.writeHead(200);res.write('start');});
+ const completed=new Promise((resolve,reject)=>{
+  const req=http.request(f.base+'/r/sample/v1/chat/completions',{method:'POST'},res=>{
+   let body='';res.on('data',chunk=>body+=chunk);res.on('error',reject);res.on('end',()=>resolve(body));
+  });
+  req.on('error',reject);req.end('{}');
+ });
+ // Install a handler immediately so an unexpected disconnect is captured.
+ completed.catch(()=>{});
+ while(!upstream)await new Promise(setImmediate);
+ for(let minute=0;minute<32;minute++){
+  upstream.write('.');
+  await new Promise(setImmediate);
+  t.mock.timers.tick(60000);
+  await new Promise(setImmediate);
+ }
+ upstream.end('end');
+ assert.equal(await completed,'start'+'.'.repeat(32)+'end');
+});
+
+test('aggregate upload pressure queues and cancelled uploads release space',async t=>{
+ const f=await setup(t,(_req,res)=>res.end('ok'),{maxBuffered:4});
+ let first;
+ const waiting=new Promise(resolve=>{
+  first=http.request(f.base+'/r/sample/v1/chat/completions',{method:'POST'},res=>res.resume());
+  first.on('error',()=>{});first.write('123',resolve);
+ });
+ await waiting;
+ // The first body stays incomplete while the second competes for buffer space.
+ await new Promise(resolve=>setTimeout(resolve,20));
+ try{
+  let settled=false;
+  const pending=f.send('456').then(response=>{settled=true;return response;});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(settled,false);
+  first.destroy();
+  const response=await pending;
+  assert.equal(response.status,200);assert.equal(await response.text(),'ok');
+ }finally{first.destroy();}
+});
+
+test('cancelling a waiting upload does not consume the next request budget',async t=>{
+ const f=await setup(t,(_req,res)=>res.end('ok'),{maxBuffered:4});
+ const open=()=>{
+  const req=http.request(f.base+'/r/sample/v1/chat/completions',
+   {method:'POST',headers:{'content-length':'4'}},res=>res.resume());
+  req.on('error',()=>{});req.flushHeaders();return req;
+ };
+ const first=open();
+ await new Promise(resolve=>setTimeout(resolve,20));
+ const queued=open();
+ await new Promise(resolve=>setTimeout(resolve,20));
+ queued.destroy();
+ await new Promise(resolve=>setTimeout(resolve,20));
+ try{
+  let settled=false;
+  const pending=f.send('1234').then(res=>{settled=true;return res;});
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(settled,false);
+  first.destroy();
+  const response=await pending;
+  assert.equal(response.status,200);assert.equal(await response.text(),'ok');
+  assert.equal(f.received.length,1);
+ }finally{first.destroy();queued.destroy();}
 });

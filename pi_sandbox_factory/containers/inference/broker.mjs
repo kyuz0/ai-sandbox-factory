@@ -35,31 +35,55 @@ export function compileRoutes(values, {allowHttpFixture=false}={}) {
   return routes;
 }
 
-export function createBroker(routes, credentials, {idleMs=120000, totalMs=1800000, maxBody=32*1024*1024, maxBuffered=64*1024*1024, concurrency=8}={}) {
-  let active = 0, buffered = 0;
-  function fail(res, status) {
+export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=32*1024*1024, maxBuffered=64*1024*1024, concurrency=Infinity}={}) {
+  let active = 0, reserved = 0;
+  const uploads = [];
+  function admitUploads() {
+    while (uploads.length && reserved + uploads[0].bytes <= maxBuffered) {
+      const next = uploads.shift();
+      next.granted = true;
+      reserved += next.bytes;
+      next.resolve(true);
+    }
+  }
+  function fail(res, status, detail) {
     if (res.destroyed || res.writableEnded) return;
     if (res.headersSent) { res.destroy(); return; }
-    const message = ({401:'Provider authentication failed. Replace the credential in Factory.',
+    const message = detail || ({401:'Provider authentication failed. Replace the credential in Factory.',
       403:'The provider refused access to this model or operation.',429:'The provider rate or usage limit was reached.',
-      413:'Inference request is too large.',404:'Inference route is not available.',
+      413:`Inference request exceeds this proxy's ${maxBody} byte upload limit.`,404:'Inference route is not available.',
       503:'Inference connection is unavailable. Check its configuration in Factory.'})[status] || 'Inference request failed.';
     res.writeHead(status, {'content-type':'application/json'});
     res.end(JSON.stringify({error:{type:'upstream_error',message,status}}));
   }
   const server = http.createServer({maxHeaderSize:16384}, async (req,res) => {
-    let upstream, deadline, held = 0, counted = false, finished = false;
+    let upstream, deadline, admission, body, held = 0, counted = false, finished = false;
+    const releaseBody = () => {
+      body = undefined;
+      if (!admission) return;
+      if (admission.granted) reserved -= admission.bytes;
+      else {
+        const index = uploads.indexOf(admission);
+        if (index !== -1) uploads.splice(index, 1);
+        admission.resolve(false);
+      }
+      admission = undefined;
+      admitUploads();
+    };
     const cleanup = () => {
       if (finished) return;
       finished = true;
       clearTimeout(deadline);
       if (upstream && !upstream.destroyed) upstream.destroy();
       if (counted) active--;
-      buffered -= held;
+      releaseBody();
     };
     res.on('close', cleanup);
     try {
-      if (active >= concurrency) return fail(res,503);
+      if (active >= concurrency) {
+        res.setHeader('retry-after','1');
+        return fail(res,503,'Inference service is busy. Retry shortly.');
+      }
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\\\x00-\x20#]/.test(req.url) || req.headers.upgrade) return fail(res,400);
       const match = /^\/r\/([a-z][a-z0-9-]{0,63})(\/[^?]*)(?:\?(.*))?$/.exec(req.url);
       if (!match) return fail(res,404);
@@ -82,15 +106,30 @@ export function createBroker(routes, credentials, {idleMs=120000, totalMs=180000
       if (route.auth.type === 'sigv4' ? !(secret?.accessKeyId && secret.secretAccessKey) : !secret?.key) return fail(res,503);
       if (Number(req.headers['content-length']) > maxBody) return fail(res,413);
       active++; counted = true;
-      deadline = setTimeout(() => { fail(res,504); cleanup(); },totalMs);
+      if (totalMs > 0) deadline = setTimeout(() => { fail(res,504); cleanup(); },totalMs);
+      // Reserve upload space before reading. Waiting sockets apply backpressure;
+      // a burst must not turn valid requests into misleading size errors.
+      const declared = Number(req.headers['content-length']);
+      const bytes = Math.min(Number.isFinite(declared) ? declared : req.headers['transfer-encoding'] ? maxBody : 0, maxBuffered);
+      const admitted = await new Promise(resolve => {
+        admission = {bytes, resolve, granted:false};
+        uploads.push(admission);
+        admitUploads();
+      });
+      if (!admitted || finished) return;
       const chunks = [];
       for await (const chunk of req) {
         if (finished) return;
-        if (held + chunk.length > maxBody || buffered + chunk.length > maxBuffered) return fail(res,413);
-        held += chunk.length; buffered += chunk.length; chunks.push(chunk);
+        if (held + chunk.length > maxBody) return fail(res,413);
+        if (held + chunk.length > admission.bytes) {
+          res.setHeader('retry-after','1');
+          return fail(res,503,'Inference upload buffer is busy. Retry shortly.');
+        }
+        held += chunk.length; chunks.push(chunk);
       }
       if (finished) return;
-      const body = Buffer.concat(chunks);
+      body = Buffer.concat(chunks);
+      chunks.length = 0;
       let headers = {'accept-encoding':'identity', 'content-length':String(body.length)};
       for (const key of requestHeaders) if (req.headers[key]) headers[key] = req.headers[key];
       const url = route.origin;
@@ -133,13 +172,14 @@ export function createBroker(routes, credentials, {idleMs=120000, totalMs=180000
         res.writeHead(response.statusCode,safe); res.flushHeaders();
         pipeline(response,res,()=>{});
       });
+      upstream.on('socket',socket=>socket.setKeepAlive(true,30000));
       upstream.on('timeout',()=>{ fail(res,504); cleanup(); });
       upstream.on('error',()=>fail(res,502));
-      upstream.end(body);
+      upstream.end(body, releaseBody);
     } catch { fail(res,502); }
   });
   server.headersTimeout = 15000;
-  server.requestTimeout = 120000;
+  server.requestTimeout = 0;
   server.timeout = 0;
   server.on('connect', (_req,socket) => socket.end('HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n'));
   server.on('upgrade', (_req,socket) => socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'));

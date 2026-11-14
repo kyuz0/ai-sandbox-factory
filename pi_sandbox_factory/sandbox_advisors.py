@@ -140,13 +140,13 @@ def up(config, state):
             core.resume_existing(config, name, existing)
             continue
         args = [engine, 'run', '-d', '--name', name, '--label', f'{core.LABEL}={config["name"]}',
-                '--security-opt=no-new-privileges', '--cap-drop=ALL', '--pids-limit=256']
+                '--security-opt=no-new-privileges', '--cap-drop=ALL', '--pids-limit=-1']
         if name == proxy:
             args += core.host_platform.gateway_labels()
-            args += ['--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID', '--cap-add=DAC_OVERRIDE', '--memory=256m',
+            args += ['--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID', '--cap-add=DAC_OVERRIDE',
                      '-v', f'{target / "squid.conf"}:/etc/squid/sandbox.conf:{core.host_platform.bind_mode()}', '-v', f'{egress}:/run/egress:z', core.image_names(config)[1]]
         else:
-            args += ['--network=none', '--memory=2g', '--security-opt=label=disable',
+            args += ['--network=none', '--security-opt=label=disable',
                      '--user', f'{config["uid"]}:{config["gid"]}',
                      '-v', f'{home}:/home/node', '-v', f'{socket}:/run/advisor',
                      '-v', f'{egress}:/run/egress:ro', '-v', f'{target / "config.json"}:/etc/advisor/config.json:ro']

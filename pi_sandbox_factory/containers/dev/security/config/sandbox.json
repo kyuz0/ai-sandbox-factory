@@ -4,5 +4,10 @@
   },
   "hostIPC": {
     "mode": "off"
+  },
+  "filesystem": {
+    "additionalAllowRead": [
+      "/home/node/.local/share/pi-browser-editor/watch-fallback.cjs"
+    ]
   }
 }

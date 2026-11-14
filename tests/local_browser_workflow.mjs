@@ -22,6 +22,16 @@ const cases=[
  {tool:'browser',args:{code:"const p=await page; await p.goto('http://localhost:8765'); const value=await p.evaluate(async()=>await (await fetch('/api',{method:'POST',body:'API_OK'})).text()); const popup=p.waitForEvent('popup'); await p.getByRole('button',{name:'Popup'}).click(); const child=await popup; await child.waitForLoadState(); return {title:await child.title(),api:value};"},contains:'API_OK'},
  {tool:'bash',args:{command:'cat /tmp/local-test.txt'},contains:'SHELL_TEMP_OK'},
 ];
+if(process.argv.includes('--editor-env')) {
+ const folder='/home/node/.local/share/pi-browser-editor';
+ await mkdir(folder,{recursive:true});
+ await writeFile(folder+'/watch-fallback.cjs',await readFile('/fixture-watch.cjs'));
+ process.env.NODE_OPTIONS='--require='+folder+'/watch-fallback.cjs';
+ cases.push({tool:'bash',args:{command:"node -e \"console.log('NODE_ENV_OK')\""},contains:'NODE_ENV_OK'},
+  {tool:'bash',args:{command:'npm --version'}},
+  {tool:'schedule_prompt',args:{action:'add',type:'once',schedule:'+1h',prompt:'Synthetic fixture follow-up',name:'fixture-follow-up'}},
+  {tool:'schedule_prompt',args:{action:'list'}});
+}
 if(process.argv.includes('--goals')) {
  cases.unshift({tool:'create_goal',args:{objective:'Test the local application',auto_continue:false,skip_auditor:true,verification_contract:'The browser returns API_OK.'}});
  cases.push({tool:'get_goal',args:{}},
@@ -71,6 +81,7 @@ try {
   assert.equal(results.at(-1).result.details.goal.status,'complete');
   console.log('PASS native goal create/read/update: no review, unlimited creation, explicit budget removal and completion');
  }
+ if(process.argv.includes('--editor-env'))console.log('PASS '+client+': inherited editor Node preload, node/npm commands and scheduling without review');
  assert.equal(requests,cases.length+1);
  console.log('PASS '+client+': generated guidance, native /tmp write, ordinary Bash shared /tmp, reviewed server start, browser localhost API + popup, preapproved network request, no network reviews or permission dialogs');
 } finally {child?.kill();inference.closeAllConnections();inference.close();gateway.closeAllConnections();gateway.close();}
