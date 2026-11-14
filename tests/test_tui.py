@@ -17,7 +17,7 @@ class FakeService:
     def run(self,args,log):
         self.calls.append(args);log('done')
         if args[0]=='delete':self.records=[r for r in self.records if r['name']!=args[1]]
-    def create(self,draft,key,log):self.calls.append(['create',draft]);log('created')
+    def create(self,draft,key,log,cancellation=None):self.calls.append(['create',draft]);log('created')
     def update(self,name,draft,key,log):self.calls.append(['update',name,draft]);log('updated')
     def provider(self,name,provider,mode,key,log):self.calls.append(['provider',name,provider,mode,key]);log('Provider ready')
     def models(self,name,mode,log):self.calls.append(['models',name,mode]);log('Model catalogue')
@@ -560,6 +560,58 @@ class TUITests(unittest.TestCase):
             app.query_one(DataTable).focus()
             await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['start','beta'],['open','beta','--editor','browser']])
+
+    async def test_creation_cancel_button_escape_cleanup_failure_and_no_success_callback(self):
+        import threading
+        from pi_sandbox_factory.creation import Creation, Cancelled
+        from textual.widgets import Static, Footer
+        for size in ((80,24),(120,40),(220,50)):
+            for failure in (False, True):
+                app=Cockpit(self.root,FakeService(self.records))
+                control=Creation()
+                release=threading.Event()
+                success=[]
+                def task(log):
+                    for step in range(35):
+                        log(f'Step {step}: building fixture image with a long message to exercise wrapping in narrow terminals…')
+                    release.wait(10)
+                    if failure: raise ValueError('Creation stopped, but cleanup failed. Saved state was retained; use Delete on this sandbox to retry. Container engine unavailable.')
+                    raise Cancelled('Creation cancelled. Containers removed; workspace preserved.')
+                async with app.run_test(size=size) as pilot:
+                    await self.ready(app,pilot)
+                    operation=Operation('Creating fixture',task,cancellation=control,on_success=lambda:success.append(True))
+                    await app.push_screen(operation)
+                    await pilot.pause()
+                    button=operation.query_one('#operation-back',Button)
+                    self.assertFalse(button.disabled)
+                    self.assertEqual(str(button.label),'Cancel creation')
+                    self.assertLessEqual(button.region.bottom,operation.query_one(Footer).region.y)
+                    await pilot.press('escape')
+                    self.assertFalse(control.requested.is_set())
+                    await pilot.click('#operation-back')
+                    await pilot.pause()
+                    self.assertTrue(control.requested.is_set())
+                    self.assertTrue(button.disabled)
+                    self.assertIn('Cancelling',str(operation.query_one('#operation-status',Static).render()))
+                    await pilot.press('escape','q')
+                    self.assertIs(app.screen,operation)
+                    release.set()
+                    await self.ready(app,pilot)
+                    self.assertEqual(operation.failed,failure)
+                    self.assertEqual(operation.cancelled,not failure)
+                    self.assertEqual(success,[])
+                    self.assertFalse(button.disabled)
+                    self.assertEqual(str(button.label),'Back to sandboxes')
+                    summary=str(operation.query_one('#operation-status',Static).render())
+                    self.assertIn('use Delete to retry' if failure else 'project files and build cache preserved',summary)
+                    self.assertLessEqual(operation.query_one('#operation-log').region.bottom,
+                                         operation.query_one('.wizard-actions').region.y)
+                    output=operation.query_one('#operation-log')
+                    self.assertLessEqual(output.virtual_size.width,output.scrollable_content_region.width)
+                    self.assertEqual(operation.title,'Creation failed: fixture' if failure else 'Creation cancelled: fixture')
+                    await pilot.press('escape')
+                    await self.ready(app,pilot)
+                    self.assertEqual(len(app.screen_stack),1)
 
     async def test_missing_model_is_completed_with_warning(self):
         app=Cockpit(self.root,FakeService(self.records))

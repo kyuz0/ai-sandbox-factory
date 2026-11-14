@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 import platform
 import secrets
+import signal
 import shutil
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 
@@ -25,6 +27,31 @@ def python_command(module, *args):
     bootstrap = (f"import sys; sys.path.insert(0, {package_root!r}); "
                  f"from runpy import run_module; run_module({module!r}, run_name='__main__')")
     return [sys.executable, '-I', '-c', bootstrap, *args]
+
+
+def stop_process_group(process, grace=5):
+    """Stop a dedicated creation session and its children on Linux, WSL or macOS."""
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        process.poll()
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            process.wait()
+            return True
+        except PermissionError:
+            pass  # It may be an unreaped group; only ESRCH proves it has gone.
+        until = time.monotonic() + grace
+        while time.monotonic() < until:
+            process.poll()  # Reap the leader before testing whether its group remains.
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                process.wait()
+                return True
+            except PermissionError:
+                pass
+            time.sleep(0.05)
+    return False
 
 
 def windows_drive(path):

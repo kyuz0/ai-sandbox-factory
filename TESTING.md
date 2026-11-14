@@ -34,6 +34,19 @@ python3 -m venv /tmp/pi-sandbox-package-check
 
 ## Container and Pendant integration
 
+For creation cancellation, run the real Podman fixture with a locally cached image:
+
+```sh
+.venv/bin/python tests/creation_cancellation.py --image docker.io/library/debian:bookworm-slim
+```
+
+It cancels an active build and startup after all companion containers and private
+volumes exist, using the production cancellation and deletion paths. It checks
+runtime cleanup, preserved workspace files and build images, and unchanged
+existing containers. The fixture removes its own disposable build storage after
+testing; production cancellation preserves build cache. Unit and UI tests also
+cover ownership collisions, cleanup failures, repeated clicks and late cancellation.
+
 Use a disposable workspace and an unused port. This fixture serves synthetic
 replies; it does not evaluate a real inference model.
 

@@ -726,7 +726,11 @@ def create(args, state):
         validate_models(shared, rules, strict=False)
     env_file = str(Path(args.env_file).expanduser().resolve(strict=True)) if args.env_file else None
     validate_env(env_file)
-    if state.exists():
+    creation_token = getattr(args, 'creation_token', None)
+    if creation_token:
+        from .creation import reserved
+        reserved(state, creation_token)
+    elif state.exists():
         raise ValueError(f'Sandbox already exists: {state}; choose a new name')
     engine = choose_engine(args.engine)
     connection = host_platform.check_engine(engine)
@@ -753,7 +757,8 @@ def create(args, state):
         config['options'] = options({**config.get('options', {}), 'browser': True})
     config['website_groups'] = network_groups.snapshots(options(config.get('options'))['website_groups'])
     config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
-    state.mkdir(parents=True, mode=0o700)
+    if not creation_token:
+        state.mkdir(parents=True, mode=0o700)
     try:
         values = json.loads(Path(args.providers_file).read_text()) if getattr(args,'providers_file',None) else {name:{} for name in (getattr(args,'model_provider',None) or ['local'])}
         config['model_providers'] = model_providers.prepare(values, state, saved=reuse.get('model_providers', []))
@@ -1058,6 +1063,7 @@ def main():
     new.add_argument('name')
     new.add_argument('--profile', default='base', help='Installed profile name or custom profile directory (default: base)')
     new.add_argument('--workspace', required=True)
+    new.add_argument('--creation-token', help=argparse.SUPPRESS)
     new.add_argument('--working-directory', default='.', help='Starting folder relative to the workspace')
     new.add_argument('--folders-file', help='JSON list of additional host folders: source, name, read_only')
     new.add_argument('--reuse-from', help='Reuse saved provider and skill packages and advisor settings from NAME; other settings use the supplied flags')

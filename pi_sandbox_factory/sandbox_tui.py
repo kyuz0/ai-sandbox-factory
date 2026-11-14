@@ -13,6 +13,7 @@ import shutil
 from typing import Optional
 
 from . import sandbox, editor_settings
+from .creation import Creation, Cancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .folders_ui import FolderFields
@@ -170,16 +171,20 @@ class Service:
             raise ValueError('Could not read saved search keys. Make sure the sandbox is running.')
         return json.loads(result.stdout)
 
-    def create(self, draft, key, log):
+    def create(self, draft, key, log, cancellation=None, *, creation_token=None):
+        if cancellation is not None:
+            return cancellation.run(self, draft, key, log)
         name = draft['name']
         state = self.state / name
-        if state.exists():
+        if state.exists() and not creation_token:
             raise ValueError('That sandbox name is already saved; choose another name.')
         with tempfile.TemporaryDirectory(prefix='pi-sandbox-cockpit-') as temp:
             selected = Path(temp) / 'options.json'
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
                     '--engine', draft['engine'], '--options-file', str(selected)]
+            if creation_token:
+                args += ['--creation-token', creation_token]
             folder_file = Path(temp) / 'folders.json'
             write_json(folder_file, draft.get('extra_folders', []))
             args += ['--folders-file', str(folder_file), '--working-directory', draft.get('working_directory', '.')]
@@ -215,6 +220,9 @@ class Service:
             write_json(state / 'config.json', config)
             (state / 'squid.conf').write_text(sandbox.network_policy(config, sandbox.parse_rules(draft['allowlist'])))
         editor_settings.save(state, draft.get('editor', editor_settings.DEFAULTS))
+        if creation_token:
+            from .creation import prepare_resources
+            prepare_resources(state, creation_token)
         self.run(['build', name], log)
         self.run(['up', name], log)
         self.setup(name, draft, key, log)
@@ -1340,25 +1348,35 @@ class InstallPackage(Screen):
     def action_back(self):self.app.pop_screen()
 
 
+class OperationLog(RichLog):
+    """Wrap output to the panel, rather than Rich's default console width."""
+
+    def write(self, content, width=None, expand=True, shrink=True, scroll_end=None, animate=False):
+        return super().write(content, width, expand, shrink, scroll_end, animate)
+
+
 class Operation(Screen):
     BINDINGS = [Binding('escape', 'back', 'Back')]
 
-    def __init__(self, title, task, *, back_label='Back to sandboxes', on_success=None):
+    def __init__(self, title, task, *, back_label='Back to sandboxes', on_success=None, cancellation=None):
         super().__init__()
         self.title, self.operation_task, self.finished = title, task, False
         self.back_label = back_label
         self.on_success = on_success
         self.failed = False
         self.model_disconnected = False
+        self.cancellation = cancellation
+        self.cancelled = False
+        self.result = ''
 
     def compose(self):
         yield Header()
         with Vertical(id='operation-body'):
             yield Static(self.title, id='operation-title', markup=False, classes='title')
             yield Static('●  Running', id='operation-status')
-            yield RichLog(id='operation-log', markup=False, wrap=True)
+            yield OperationLog(id='operation-log', markup=False, wrap=True, min_width=1)
         with Horizontal(classes='wizard-actions'):
-            yield Button('Working…', id='operation-back', disabled=True)
+            yield Button('Cancel creation' if self.cancellation else 'Working…', id='operation-back', disabled=not bool(self.cancellation))
         yield Footer()
 
     def on_mount(self):
@@ -1374,36 +1392,68 @@ class Operation(Screen):
         try:
             self.operation_task(log)
             log('Finished.')
+        except Cancelled as error:
+            self.cancelled = True
+            self.result = str(error)
+            log(str(error))
         except Exception as error:
             self.failed = True
-            log(str(error))
+            self.result = str(error)
+            log('Error: ' + str(error))
         finally:
             self.operation_task = None  # Release the completed task.
             self.app.call_from_thread(self.complete)
 
     def complete(self):
         self.finished = True
+        if self.cancellation and self.title.startswith('Creating '):
+            name = self.title.removeprefix('Creating ')
+            prefix = 'Creation failed: ' if self.failed else 'Creation cancelled: ' if self.cancelled else 'Created '
+            self.title = prefix + name
+            self.query_one('#operation-title', Static).update(self.title)
+        self.refresh_bindings()
         button = self.query_one('#operation-back', Button)
         button.disabled, button.label = False, self.back_label
         status = self.query_one('#operation-status', Static)
-        status.update('●  Failed · see output below' if self.failed else
+        status.update('●  Failed · see output below' if self.failed else '●  Cancelled' if self.cancelled else
                       '●  Complete · model not connected' if self.model_disconnected else '●  Complete')
-        status.add_class('failed' if self.failed else 'disconnected' if self.model_disconnected else 'complete')
+        if self.cancelled:
+            status.update('●  Cancelled · project files and build cache preserved')
+        elif self.failed and self.result.startswith('Creation stopped, but cleanup failed'):
+            status.update('●  Cleanup failed · saved state retained; use Delete to retry')
+        status.add_class('failed' if self.failed else 'cancelled' if self.cancelled else 'disconnected' if self.model_disconnected else 'complete')
         output = self.query_one(RichLog)
-        output.styles.height = min(18, max(6, len(output.lines) + 2))
-        if not self.failed and self.on_success:
+        self.call_after_refresh(output.scroll_end, animate=False)
+        if not self.failed and not self.cancelled and self.on_success:
             callback, self.on_success = self.on_success, None
             self.app.call_later(callback)
 
     @on(Button.Pressed)
     def back(self, event):
         event.stop()
-        self.action_back()
+        if self.finished:
+            self.action_back()
+        else:
+            self.action_cancel_creation()
+
+    def check_action(self, action, parameters):
+        if action == 'back':
+            return self.finished
+        if action == 'cancel_creation':
+            return bool(self.cancellation) and not self.finished and not self.cancellation.requested.is_set()
+        return True
 
     def action_back(self):
         if self.finished:
             self.app.pop_screen()
             self.app.refresh_inventory()
+
+    def action_cancel_creation(self):
+        if self.cancellation and self.cancellation.cancel():
+            button = self.query_one('#operation-back', Button)
+            button.disabled, button.label = True, 'Cancelling…'
+            self.query_one('#operation-status', Static).update('●  Cancelling · stopping creation and removing containers')
+            self.refresh_bindings()
 
 
 class FolderPicker(ModalScreen[Optional[str]]):
@@ -2029,6 +2079,7 @@ class SettingsForm(Screen):
     def submit(self, draft, key):
         service = self.app.service
         editing = self.editing
+        cancellation = None if editing else Creation()
         editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
         def task(log):
             if draft.get('mkdir'):
@@ -2036,8 +2087,8 @@ class SettingsForm(Screen):
             if editing:
                 service.update(draft['name'], draft, key, log)
             else:
-                service.create(draft, key, log)
-            if draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
+                service.create(draft, key, log, cancellation=cancellation)
+            if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
                 try:
                     service.run(['open', draft['name']], log)
                 except (OSError, ValueError) as error:
@@ -2054,7 +2105,9 @@ class SettingsForm(Screen):
             self.app.pop_screen()
             self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
         self.app.push_screen(Operation(('Updating ' if editing else 'Creating ') + draft['name'], task,
+            cancellation=cancellation,
             on_success=choose_models if draft.get('_hosted_changes') else
+            open_after_models if not editing and draft.get('open_editor') else
             (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None))
 
     def action_back(self):
@@ -2171,10 +2224,10 @@ class Cockpit(App):
     #home-error { height: auto; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }
-    #operation-status { height: 1; color: #f2b544; margin-bottom: 1; }
-    #operation-status.complete { color: #4f8a62; }
-    #operation-status.failed { color: #b75b52; }
-    #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; }
+    #operation-status { height: auto; color: #f2b544; text-style: bold; margin-bottom: 1; }
+    #operation-status.complete { color: #87c99b; }
+    #operation-status.failed { color: #ef9a91; }
+    #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: scroll; }
     Confirm, FolderPicker, MoreActions, SettingsMenu { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #confirm-box Static { height: auto; }
@@ -2358,6 +2411,8 @@ class Cockpit(App):
         self.exit()
 
     def check_action(self, action, parameters):
+        if action == 'quit' and isinstance(self.screen, Operation):
+            return self.screen.finished
         if action in ('new', 'search', 'refresh_inventory', 'defaults'):
             return self.screen is self.screen_stack[0]
         return True

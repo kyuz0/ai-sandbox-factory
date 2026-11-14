@@ -21,7 +21,7 @@ from test_tui import FakeService
 from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry
 from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, web_access
-from textual.widgets import Collapsible, Input, Static, OptionList, Select
+from textual.widgets import Collapsible, Input, Static, OptionList, Select, RichLog
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
@@ -231,6 +231,32 @@ async def capture(size):
                 await shot('repository', RepositorySetup())
                 await shot('public-key', PublicKey('demo'))
                 await shot('operation', Operation('Creating sandbox', lambda log: log('Sandbox ready.')))
+                if not args.only or any(name.startswith('creation-') for name in args.only):
+                    from pi_sandbox_factory.creation import Creation
+                    for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete'):
+                        controller = Creation()
+                        screen = Operation('Creating example-project-with-a-long-name', lambda log: None,
+                                           cancellation=controller)
+                        with patch.object(Operation, 'execute'):
+                            await app.push_screen(screen)
+                        output = screen.query_one(RichLog)
+                        for index in range(35):
+                            output.write(f'STEP {index + 1}/39: preparing sandbox dependencies and cached image layers')
+                        if state_name != 'running' and state_name != 'complete':
+                            screen.action_cancel_creation()
+                            output.write('Stopping creation…')
+                        if state_name in ('cancelled', 'cleanup-error', 'complete'):
+                            screen.failed = state_name == 'cleanup-error'
+                            screen.cancelled = state_name == 'cancelled'
+                            screen.result = ('Creation stopped, but cleanup failed. Saved state was retained; use Delete on this sandbox to retry. Container engine unavailable.' if screen.failed else
+                                             'Creation cancelled. Runtime containers and private state removed; project files and build cache preserved.' if screen.cancelled else 'Sandbox ready.')
+                            output.write(('Error: ' if screen.failed else '') + screen.result)
+                            screen.complete()
+                        await shot('creation-' + state_name, focus='#operation-back' if state_name != 'cancelling' else None)
+                        await app.pop_screen()
+                    if args.only and all(name.startswith('creation-') for name in args.only):
+                        return
+
                 for label, sel in [('editor', '#editor-section'), ('providers', '#hosted-section'), ('folders', '#folders-section'), ('advisors', '#new-advisors-section'), ('agent', '#agent-section'), ('communications', '#communications-section')]:
                     await shot('review-' + label, SettingsForm(copy.deepcopy(draft)), sel)
                 await app.push_screen(SSHScreen(record))

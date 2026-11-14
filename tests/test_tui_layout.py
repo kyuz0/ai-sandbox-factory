@@ -320,12 +320,18 @@ class TUILayoutTests(unittest.TestCase):
             await self.ready(app, pilot)
             self.assertEqual(app.service.calls[0][0], 'create')
             self.assertTrue(app.screen.finished)
-            self.assertFalse(app.screen.failed)
+            self.assertTrue(app.screen.failed)
+            self.assertTrue(app.screen.title.startswith('Opening '))
+            self.assertIsNone(app.screen.cancellation)
             output = '\n'.join(line.text for line in app.screen.query_one(RichLog).lines)
-            self.assertIn('Sandbox created, but the editor could not open', output)
-            self.assertIn('try again', output)
+            self.assertIn('VS Code is not installed', output)
+            # Opening is separate: a late Cancel cannot delete a completed sandbox.
             await pilot.press('escape')
             await self.ready(app, pilot)
+            self.assertTrue(app.screen.finished)
+            self.assertFalse(app.screen.failed)
+            self.assertTrue(app.screen.title.startswith('Creating '))
+            await pilot.press('escape')
             await pilot.press('q')
 
 
