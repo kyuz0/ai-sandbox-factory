@@ -207,19 +207,35 @@ class Relay:
                 except ConnectionError:
                     pass
         finally:
-            for child in pumps:
-                child.cancel()
-            await asyncio.gather(*pumps, return_exceptions=True)
-            if process is not None:
-                process.stdin.close()
-                if process.returncode is None:
-                    try:
-                        process.terminate()
-                    except ProcessLookupError:
-                        pass
-                await process.wait()
-            writer.close()
-            self.tasks.discard(task)
+            async def cleanup():
+                try:
+                    for child in pumps:
+                        child.cancel()
+                    await asyncio.gather(*pumps, return_exceptions=True)
+                    if process is not None:
+                        process.stdin.close()
+                        if process.returncode is None:
+                            try:
+                                process.terminate()
+                            except ProcessLookupError:
+                                pass
+                        await process.wait()
+                finally:
+                    writer.close()
+                    self.tasks.discard(task)
+
+            # Closing the relay may cancel a handler already cleaning up after EOF.
+            # Finish reaping its connector even when cancellation arrives here.
+            pending = asyncio.create_task(cleanup())
+            cancelled = False
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+            pending.result()
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def close(self):
         for task in list(self.tasks):

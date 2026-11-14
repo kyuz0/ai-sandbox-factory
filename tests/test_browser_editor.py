@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from pi_sandbox_factory import browser_editor as editor
 
@@ -118,6 +118,32 @@ class RelayChecks(unittest.IsolatedAsyncioTestCase):
             await relay.close()
         self.assertFalse(relay.tasks)
         self.assertTrue(all(child.returncode is not None for child in children))
+
+    async def test_close_during_connector_cleanup_still_reaps_it(self):
+        relay = editor.Relay('a' * 64)
+        relay.host = HOST
+        cleaning, release = asyncio.Event(), asyncio.Event()
+        async def wait():
+            cleaning.set()
+            await release.wait()
+            process.returncode = 0
+        process = Mock(returncode=None, wait=AsyncMock(side_effect=wait))
+        process.stdin.drain = AsyncMock()
+        process.stdout.readuntil = AsyncMock(return_value=b'HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n')
+        relay.connector = AsyncMock(return_value=process)
+        reader, writer = Mock(), Mock()
+        reader.readuntil = AsyncMock(return_value=head())
+        writer.drain = AsyncMock()
+        handler = asyncio.create_task(relay.handle(reader, writer))
+        await asyncio.wait_for(cleaning.wait(), 2)
+        closing = asyncio.create_task(relay.close())
+        await asyncio.sleep(0)  # Deliver cancellation during process.wait().
+        release.set()
+        await closing
+        self.assertTrue(handler.cancelled())
+        self.assertFalse(relay.tasks)
+        self.assertEqual(process.returncode, 0)
+        writer.close.assert_called_once()
 
     async def test_connector_is_fixed_and_container_id_required(self):
         with self.assertRaises(ValueError):

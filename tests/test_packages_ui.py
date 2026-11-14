@@ -110,8 +110,11 @@ class PackageUITests(unittest.TestCase):
                         if primary_id == 'package-install':
                             await pilot.click('#package-install'); await pilot.pause()
                     app.screen.query_one(Collapsible).collapsed = False
+                    await pilot.pause()  # Lay out the expanded fields before scrolling.
                     field = app.screen.query_one('#package-ref', Input)
-                    field.focus(); field.scroll_visible(animate=False); await pilot.pause()
+                    field.focus(); await pilot.pause()
+                    await pilot.wait_for_scheduled_animations()
+                    field.scroll_visible(animate=False); await pilot.pause()
                     self.assertLessEqual(field.region.bottom, app.screen.query_one('.wizard-actions').region.y)
                     await pilot.press('escape'); await pilot.pause()
                     self.assertIsInstance(app.screen, PackagesScreen)
