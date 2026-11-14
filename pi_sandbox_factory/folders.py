@@ -105,11 +105,16 @@ def roots(config):
     return [('/workspace', False)] + [('/mnt/' + r['name'], r['read_only']) for r in config.get('extra_folders', [])]
 
 
+def scratch_roots():
+    """Container scratch only; never a host mount or private runtime directory."""
+    return [('/tmp', False)]
+
+
 def permissions(value, config):
     permission = value['permission']
     for surface in ('external_directory_read', 'external_directory_write'):
         rules = permission.setdefault(surface, {})
-        for path, read_only in roots(config):
+        for path, read_only in roots(config) + scratch_roots():
             action = 'deny' if surface.endswith('write') and read_only else 'allow'
             rules[path] = action
             rules[path + '/*'] = action

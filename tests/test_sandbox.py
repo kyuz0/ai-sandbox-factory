@@ -31,6 +31,8 @@ class PolicyTests(unittest.TestCase):
             state=Path(tmp)
             (state/'allowlist.txt').write_text('example.com:443')
             (state/'squid.conf').write_text('old policy')
+            (state/'runtime-config').mkdir()
+            (state/'runtime-config/sandbox.json').write_text('{}')
             inode=(state/'squid.conf').stat().st_ino
             config={'name':'test','engine':'podman','network':'allowlist'}
             with patch.object(sandbox,'inspect',return_value={'State':{'Running':True}}), patch.object(sandbox,'restart_existing') as restart, patch.object(sandbox,'ensure_gateway') as ready:
@@ -38,9 +40,11 @@ class PolicyTests(unittest.TestCase):
                 restart.assert_called_once_with(config,sandbox.names(config)[1])
                 self.assertEqual((state/'squid.conf').stat().st_ino,inode)
                 self.assertEqual((state/'allowlist.txt').read_text(),'pypi.org:443')
+                self.assertEqual(json.loads((state/'runtime-config/sandbox.json').read_text())['network']['allowedDomains'],['pypi.org:443'])
                 ready.side_effect=[RuntimeError('failed'),None]
                 with self.assertRaises(RuntimeError):sandbox.update_network(config,state,'files.pythonhosted.org:443')
                 self.assertEqual((state/'allowlist.txt').read_text(),'pypi.org:443')
+                self.assertEqual(json.loads((state/'runtime-config/sandbox.json').read_text())['network']['allowedDomains'],['pypi.org:443'])
 
     def test_network_update_rejects_removing_model_port_before_mutation(self):
         config={'name':'test','engine':'podman','network':'allowlist','local_model_ports':'8000'}

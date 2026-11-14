@@ -723,3 +723,37 @@ the fallback installed through its normal payload. It checks Explorer creation, 
 without refreshing or refocusing, and reproduces the stale list in the failure
 control. It never exhausts the host quota or changes kernel limits. The fixture
 removes its containers and preserves screenshots and logs in the output directory.
+
+## Local development browser and temporary files
+
+Run the shipped-client regression in disposable containers using a cached Factory
+image with browser support:
+
+```sh
+.venv/bin/python tests/local_browser_workflow.py --image FACTORY_IMAGE
+```
+
+For dependency development, add `--packages /absolute/path/to/pi-packages`.
+The fixture uses generated Factory configuration and synthetic model responses.
+It checks both Pi CLI and the actual Pendant worker: model-visible localhost
+instructions, native and Bash `/tmp` writes, a preapproved network request,
+reviewed `bash_escalate` server
+startup, browser localhost navigation, API POST and popup tabs. Exactly one
+review is expected for server startup; localhost browser traffic and scratch
+files must require neither network review nor human permission.
+
+Exercise the browser code shipped in that image, including Chromium routing,
+WebSockets, multiple loopback names and external allow/deny behavior:
+
+```sh
+podman run --rm --network none --security-opt label=disable --entrypoint node \
+  -v "$PWD/tests/local_browser_chromium.mjs:/opt/betterwright/local-check.mjs:ro" \
+  FACTORY_IMAGE /opt/betterwright/local-check.mjs
+```
+
+The dependency's `browser-network.test.mjs` checks HTTP routing, CONNECT tunnels,
+exact loopback addresses and socket cleanup. `reviewer-scheduler.test.ts` and
+`conversation.test.ts` cover concurrent review bursts, queue cancellation, hung
+providers and independent grants. `test_local_development.py` checks generated
+network grants and private runtime placement. No fixture uses real credentials
+or restarts an existing sandbox.

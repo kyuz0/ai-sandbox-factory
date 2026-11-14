@@ -31,6 +31,8 @@ RUN python3 /opt/pi-security/fetch.py \
 COPY compaction-recall/ /opt/pi-compaction-recall/
 RUN npm ci --omit=dev --ignore-scripts --legacy-peer-deps --prefix /opt/pi-compaction-recall
 ENV PI_SANDBOX_CONTAINER=1
+RUN install -d -o node -g node -m 700 /var/tmp/pi
+ENV TMPDIR=/var/tmp/pi TMUX_TMPDIR=/var/tmp/pi
 COPY security/security.md /opt/sandbox/security.md
 # Preload the extension during the trusted image build, before network restrictions.
 RUN curl -fSL --retry 3 \

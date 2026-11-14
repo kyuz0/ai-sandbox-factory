@@ -255,3 +255,18 @@ Use **Sort by** or click a date column heading; **Newest first / Oldest first**
 changes the order. Missing dates stay at the bottom. **—** means the event was
 not recorded, including events before this version. Project file edits do not
 change **Last edited**.
+
+## Testing a local web application
+
+Ask Pi to start the development server with `bash_escalate`, then open
+`http://localhost:PORT` with the browser tool. You can also start the server in
+the editor terminal. When using `bash_escalate`, keep the server in the background
+and redirect output to a log, for example `nohup npm run dev >/tmp/dev.log 2>&1 </dev/null &`.
+Ordinary `bash` has a separate network namespace, so its
+servers are not reachable by the managed browser. Escalation runs inside the
+development container, not on your computer.
+
+Local browser pages, API requests, WebSockets and popup tabs work without network
+approval. External websites still use your network rules. Container `/tmp` is
+writable scratch space shared between commands; `$TMPDIR` is private to one
+command and removed when it ends.

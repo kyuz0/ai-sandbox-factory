@@ -36,7 +36,7 @@ try:
  try:
   import time
   for _ in range(80):
-   if core.run(['podman','exec',dev,'test','-f','/tmp/pi-sandbox-factory-ready'],capture=True,check=False).returncode==0:break
+   if core.run(['podman','exec',dev,'test','-f','/var/tmp/pi/pi-sandbox-factory-ready'],capture=True,check=False).returncode==0:break
    time.sleep(.25)
   core.run(['podman','exec',dev,'node','/tmp/pendant-advisor-test.cjs','--advisor'])
   # Use a second socket with synthetic replies to exercise images without an account.

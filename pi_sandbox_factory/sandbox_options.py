@@ -126,7 +126,8 @@ def guidance(selected, subagents=False):
                      'Read-only shell commands can also read the trusted installed tool and skill directories. '
                      'This does not permit changing those files. ' + credential_text)
         lines.append('Each bash call has its own temporary directory in $TMPDIR, removed when the call ends. '
-                     'Keep files needed by later calls in the workspace, for example .tmp/.')
+                     'Container /tmp is also writable scratch space shared between calls; it is not the host /tmp. '
+                     'Private runtime files live outside it.')
         if mode != 'off':
             lines.append('The inner sandbox blocks Unix sockets, which tmux needs. '
                          'Use bash_escalate for tmux creation, send-keys, capture-pane, session checks and cleanup. '
@@ -138,12 +139,18 @@ def guidance(selected, subagents=False):
                          'bash_escalate is unavailable with approval disabled; ask the user to select an approval mode if tmux is needed.')
     if inner:
         lines.append('For network commands in bash, keep the inherited proxy settings. '
-                     'Outbound connections are reviewed and the outer network allowlist still applies. '
+                     'Explicit allowlist and network-category destinations are preapproved. '
+                     + ('Other outbound connections are reviewed. ' if mode != 'off' else 'Other outbound connections are refused while approval is off. ')
+                     + 'The outer network allowlist still applies. '
                      'Container-local services, including the inference proxy on outer-container loopback, '
                      'may require bash_escalate because the inner shell has a separate network namespace. '
                      'Escalation does not add destinations to the outer allowlist or reveal provider keys.')
     if selected['browser']:
-        lines.append('Use the native browser tool for Playwright automation; do not launch a separate browser through bash.')
+        server_shell = ('bash_escalate (or the editor terminal)' if mode != 'off' else 'the editor terminal') if inner else 'bash (or the editor terminal)'
+        lines.append('Use the native browser tool for Playwright automation. For browser testing, start the dev server with '
+                     + server_shell + ', running it in the background with output redirected to a log, then open http://localhost:PORT in browser. '
+                     + ('Ordinary bash has a separate network namespace and cannot host a server reachable by this browser. ' if inner else '')
+                     + 'Local pages, API calls, WebSockets and popups need no network approval.')
         if selected['protect_browser_credentials']:
             lines.append('The saved Betterwright credential vault at ~/.betterwright/vault is protected from native file tools. '
                          'Use browser account selection and login on matching sites; do not inspect, dump or copy vault files through bash_escalate. '

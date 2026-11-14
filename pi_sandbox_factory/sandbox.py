@@ -587,8 +587,8 @@ def up(config, state):
     for _ in range(40):
         ready = 'test -f /home/node/.vscode-server/data/Machine/settings.json'
         entrypoint = Path(config.get('common', {}).get('path', '/nonexistent')) / 'entrypoint.sh'
-        if 'options' in config and entrypoint.is_file() and '/tmp/pi-sandbox-factory-ready' in entrypoint.read_text():
-            ready += ' && test -f /tmp/pi-sandbox-factory-ready'
+        if 'options' in config and entrypoint.is_file() and '/var/tmp/pi/pi-sandbox-factory-ready' in entrypoint.read_text():
+            ready += ' && test -f /var/tmp/pi/pi-sandbox-factory-ready'
         if restricted:
             ready += ' && test -S /run/egress/proxy.sock && echo >/dev/tcp/127.0.0.1/3128'
         result = run([engine, 'exec', dev, 'bash', '-c', ready], capture=True, check=False,
@@ -814,6 +814,25 @@ def write_attach(config, state):
     (state / 'attached-container.json').write_text(json.dumps(attach, indent=2) + '\n')
 
 
+def shell_network_policy(config, state):
+    """Mirror user-approved egress; tool-owned destinations retain their review boundary."""
+    policy_file = state / 'allowlist.txt'
+    rules = parse_rules(policy_file.read_text()) if policy_file.is_file() else []
+    allowed = {f'{host}:{port}' for host, port in rules}
+    for domain in network_groups.collapse(config.get('website_groups', {})):
+        names = [domain] if not domain.startswith('.') else [domain[1:], '*' + domain]
+        allowed.update(f'{name}:{port}' for name in names for port in (80, 443))
+    return {'allowedDomains': sorted(allowed)}
+
+
+def refresh_shell_network(config, state):
+    path = state / 'runtime-config/sandbox.json'
+    if path.is_file():
+        value = json.loads(path.read_text())
+        value.setdefault('network', {}).update(shell_network_policy(config, state))
+        write_json(path, value)
+
+
 def prepare_options(config, state):
     from . import git_settings
     selected = options(config.get('options'))
@@ -838,7 +857,8 @@ def prepare_options(config, state):
             value = folders.permissions(permissions(value, selected), config)
         if path.name == 'sandbox.json':
             filesystem = value.setdefault('filesystem', {})
-            filesystem['additionalWriteRoots'] = [p for p, ro in folders.roots(config) if not ro]
+            filesystem['additionalWriteRoots'] = [p for p, ro in folders.roots(config) + folders.scratch_roots() if not ro]
+            value.setdefault('network', {}).update(shell_network_policy(config, state))
             filesystem['protectCommonCredentialFiles'] = selected['protect_credentials']
         write_json(target / path.name, value)
     guide = target / 'security.md'
@@ -924,12 +944,14 @@ def update_network(config, state, text, groups=None):
             restart_existing(config, proxy)
             ensure_gateway(config)
         (state / 'allowlist.txt').write_text(text)
+        refresh_shell_network(updated, state)
         activity.save_config(state, updated)
         if old_text != text:
             activity.record(state, 'edited')
     except Exception:
         (state / 'squid.conf').write_text(old_policy)
         (state / 'allowlist.txt').write_text(old_text)
+        refresh_shell_network(config, state)
         if current and current['State']['Running']:
             restart_existing(config, proxy)
             ensure_gateway(config)
