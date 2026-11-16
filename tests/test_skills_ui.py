@@ -104,3 +104,46 @@ class SkillsUITests(unittest.TestCase):
                 self.assertEqual(app.screen.query_one('#skill-source',Input).value,temp)
                 self.assertEqual(app.screen.query_one('#skill-ref',Input).value,'main')
                 self.assertEqual(app.screen.query_one('#skill-browse',Button).region.height,3)
+
+    async def test_search_preserves_hidden_selections_and_imports_them(self):
+        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)):
+            app = Cockpit(Path(temp), FakeService([]))
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause(); await app.workers.wait_for_complete()
+                screen = ImportSkills()
+                await app.push_screen(screen); await pilot.pause()
+                self.assertFalse(screen.query_one('#skill-search-setting').display)
+                rows = [dict(id=str(i), name=f'skill-{i}', description='Python auditing' if i == 42 else 'Code review', folder=f'plugins/group-{i}/skill') for i in range(1000)]
+                rows.append(dict(id='invalid', name='invalid-skill', description='', folder='broken', error='Missing description'))
+                await screen.show_candidates(rows); await pilot.pause()
+                search = screen.query_one('#skill-search', Input)
+                search.value = 'PYTHON auditing'; await pilot.pause()
+                self.assertEqual([i for i, (_, _, box, _) in enumerate(screen.candidates) if box.display], [42])
+                screen.query_one('#candidate-42', Checkbox).value = True
+                search.value = 'group-7/'; await pilot.pause()
+                self.assertTrue(screen.query_one('#candidate-7').parent.display)
+                self.assertFalse(screen.query_one('#candidate-42').parent.display)
+                screen.query_one('#candidate-7', Checkbox).value = True
+                search.value = 'no-such-skill'; await pilot.pause()
+                self.assertIn('No matching skills · 2 selected', str(screen.query_one('#skill-search-status').render()))
+                self.assertEqual(len(screen.rows), 1001)
+                search.value = 'invalid-skill'; await pilot.pause(0.1)
+                invalid = screen.query_one('#candidate-1000', Checkbox)
+                self.assertTrue(invalid.disabled)
+                self.assertLessEqual(invalid.region.bottom, screen.query_one('VerticalScroll').content_region.bottom)
+                self.assertGreaterEqual(invalid.region.y, screen.query_one('VerticalScroll').content_region.y)
+                search.value = ''; await pilot.pause()
+                self.assertTrue(screen.query_one('#candidate-42', Checkbox).value)
+                self.assertTrue(screen.query_one('#candidate-7', Checkbox).value)
+                search.value = 'no-such-skill'; await pilot.pause()
+                with patch.object(screen, 'install_selected') as install:
+                    screen.query_one('#skill-import-save', Button).focus()
+                    await pilot.press('enter'); await pilot.pause()
+                    self.assertEqual([row['id'] for row in install.call_args.args[0]], ['7', '42'])
+                screen.set_busy(False)
+                screen.query_one('#skill-source', Input).value = 'changed-source'; await pilot.pause()
+                self.assertEqual(search.value, '')
+                self.assertEqual(screen.rows, [])
+                self.assertFalse(screen.query_one('#skill-search-setting').display)
+                self.assertTrue(screen.query_one('#skill-import-save', Button).disabled)
+                await app.pop_screen(); await pilot.pause()

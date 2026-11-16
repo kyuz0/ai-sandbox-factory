@@ -153,3 +153,56 @@ class SkillLibraryTests(unittest.TestCase):
         self.assertFalse((self.root/'library'/'skills'/rows[0]['digest']).exists())
         skill_library.install(rows)
         self.assertEqual(len(skill_library.entries()),1)
+
+    def test_large_repository_has_no_arbitrary_skill_limit(self):
+        for index in range(201):
+            self.skill(f'skill-{index}')
+        self.assertEqual(len(self.discover()), 201)
+
+    def test_github_folder_file_and_slash_branch_links(self):
+        import subprocess
+        refs = 'a\trefs/heads/main\nb\trefs/heads/release/audit\n'
+        with patch.object(skill_library.registry, 'git', return_value=subprocess.CompletedProcess([], 0, refs)):
+            for path, expected_ref, expected_folder in (
+                ('tree/main/skills/example', 'main', 'skills/example'),
+                ('blob/main/skills/example/SKILL.md', 'main', 'skills/example'),
+                ('tree/release/audit/skills/example', 'release/audit', 'skills/example'),
+                ('tree/abcdef123/skills/example', 'abcdef123', 'skills/example'),
+            ):
+                with self.subTest(path=path):
+                    self.assertEqual(skill_library.resolve_source('https://github.com/owner/repo/'+path),
+                                     ('https://github.com/owner/repo.git', expected_ref, expected_folder))
+            with self.assertRaisesRegex(ValueError, 'inside the repository'):
+                skill_library.resolve_source('https://github.com/owner/repo/tree/main/%2e%2e/outside')
+            with self.assertRaisesRegex(ValueError, 'not found'):
+                skill_library.resolve_source('https://github.com/owner/repo/tree/missing/skill')
+            with self.assertRaisesRegex(ValueError, 'conflicts'):
+                skill_library.resolve_source('https://github.com/owner/repo/tree/main/skills/example', 'other')
+            self.assertEqual(skill_library.resolve_source('https://www.github.com/owner/repo/blob/main/skills/example/SKILL.md?plain=1#L3'),
+                             ('https://github.com/owner/repo.git', 'main', 'skills/example'))
+
+    def test_github_folder_discovery_and_repeat_import(self):
+        import shutil
+        self.skill('one')
+        url = 'https://github.com/owner/repo/tree/main/skills/one'
+        with patch.object(skill_library, 'resolve_source', return_value=('https://github.com/owner/repo.git', 'main', 'skills/one')), patch.object(skill_library.registry, 'export') as export:
+            def fetched(source, destination, ref, **kwargs):
+                self.assertEqual(kwargs['subdir'], 'skills/one')
+                shutil.copytree(self.source/'one', destination)
+                return 'abc123'
+            export.side_effect = fetched
+            rows = skill_library.discover(url, self.root/'fetched')
+            self.assertEqual(rows[0]['folder'], 'skills/one')
+            self.assertEqual(rows[0]['source'], url)
+            skill_library.install(rows)
+            again = skill_library.discover(rows[0]['source'], self.root/'again', rows[0]['ref'])
+            self.assertEqual(again[0]['id'], rows[0]['id'])
+            with patch.object(skill_library, 'resolve_source', return_value=('https://github.com/owner/repo/', 'main', 'skills/one')):
+                root_rows = skill_library.discover('https://github.com/owner/repo/', self.root/'root-import')
+            self.assertEqual(root_rows[0]['id'], rows[0]['id'])
+
+    def test_fetch_failure_has_actionable_message(self):
+        import subprocess
+        with patch.object(skill_library.registry, 'export', side_effect=subprocess.CalledProcessError(128, ['git', 'clone'])):
+            with self.assertRaisesRegex(ValueError, 'Check the repository URL, revision and your Git access'):
+                self.discover()

@@ -727,9 +727,15 @@ is insufficient. Use `--size 80x24 --monochrome` for the monochrome check, or
 
 `PYTHONPATH=tests .venv/bin/python -m unittest test_skill_library test_skills_ui`
 checks multi-skill import, YAML validation without execution, duplicate names,
-source changes, atomic copies, retained sandbox snapshots and removal.
+source changes, atomic copies, retained sandbox snapshots and removal. Search tests
+exercise 1,000 skills, matching names/descriptions/folders, empty results and importing
+selected skills hidden by the current filter. Discovery tests cover repositories
+above 200 skills and GitHub folder/file links, including slash-containing branch
+names, repeat imports and fetch failures.
 `tests/render_skills.py OUTPUT_DIR [--mono]` captures the library, import errors
 and creation/configuration selection at 80×24, 120×40 and 220×50.
+`tests/render_skill_search.py OUTPUT_DIR [--mono]` captures import search, retained
+selections, empty results and validation errors at the same sizes.
 
 Run `.venv/bin/python tests/check_library_skills.py IMAGE` against an existing
 Factory development image to build two synthetic library skills, remove their

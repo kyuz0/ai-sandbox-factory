@@ -197,6 +197,8 @@ class ImportSkills(Screen):
         self.preselect = set(preselect)
         self.staging = None
         self.rows = []
+        self.candidates = []
+        self.search_scroll_timer = None
         self.busy = False
 
     def compose(self):
@@ -204,7 +206,7 @@ class ImportSkills(Screen):
         with VerticalScroll(classes='form'):
             yield Label('Add skills to library', classes='title')
             with Vertical(classes='setting'):
-                yield Label('Git repository URL or local folder')
+                yield Label('Git repository, GitHub skill link or local folder')
                 with Horizontal(classes='path-row'):
                     yield Input(self.source, id='skill-source')
                     yield Button('Browse', id='skill-browse')
@@ -216,25 +218,71 @@ class ImportSkills(Screen):
                 yield Button('Find and validate skills', id='skill-discover')
             yield Feedback('', id='skill-import-error', markup=False)
             yield Static('', id='skill-import-status', markup=False)
+            with Vertical(classes='setting', id='skill-search-setting'):
+                yield Label('Search skills')
+                yield Input(placeholder='Name, description or folder', id='skill-search')
+                yield Static('', id='skill-search-status', classes='setting-help')
             yield Vertical(id='skill-candidates')
         with Horizontal(classes='wizard-actions'):
             yield Button('Cancel', id='skill-import-cancel')
             yield Button('Add selected skills', id='skill-import-save', variant='primary', disabled=True)
         yield Footer()
 
+    def on_mount(self):
+        self.query_one('#skill-search-setting').display = False
+
     def set_busy(self, busy):
         self.busy = busy
-        for identifier in ('skill-source', 'skill-ref', 'skill-browse', 'skill-discover', 'skill-import-cancel'):
+        for identifier in ('skill-source', 'skill-ref', 'skill-browse', 'skill-discover', 'skill-import-cancel', 'skill-search'):
             self.query_one('#' + identifier).disabled = busy
         self.query_one('#skill-import-save', Button).disabled = busy or not any(not row.get('error') for row in self.rows)
 
-    @on(Input.Changed)
+    @on(Input.Changed, '#skill-source')
+    @on(Input.Changed, '#skill-ref')
     async def source_changed(self):
         if self.is_mounted:
             self.rows = []
+            self.candidates = []
+            self.query_one('#skill-search', Input).value = ''
+            self.query_one('#skill-search-setting').display = False
             await self.query_one('#skill-candidates', Vertical).remove_children()
             self.query_one('#skill-import-save', Button).disabled = True
+            self.query_one('#skill-import-status', Static).display = True
             self.query_one('#skill-import-status', Static).update('Find and validate skills after changing the source.')
+
+    @on(Input.Changed, '#skill-search')
+    def search_changed(self):
+        self.filter_candidates()
+        if self.search_scroll_timer is not None:
+            self.search_scroll_timer.stop()
+        if self.rows:
+            # Let Input's cursor scrolling and the filtered layout settle first.
+            self.search_scroll_timer = self.set_timer(0.05, self.show_search_results)
+
+    def show_search_results(self):
+        search = self.query_one('#skill-search-setting')
+        form = self.query_one(VerticalScroll)
+        visible = next((box for _, _, box, _ in self.candidates if box.display), None)
+        if visible is not None:
+            visible.scroll_visible(animate=False, immediate=True)
+        else:
+            form.scroll_to(y=search.virtual_region.y, animate=False, immediate=True)
+
+    @on(Checkbox.Changed)
+    def filter_candidates(self):
+        if not self.is_mounted:
+            return
+        terms = self.query_one('#skill-search', Input).value.casefold().split()
+        shown = selected = 0
+        for row, checkbox, box, searchable in self.candidates:
+            matches = all(term in searchable for term in terms)
+            box.display = matches
+            shown += matches
+            selected += checkbox.value and not row.get('error')
+        status = f'{shown} of {len(self.rows)} skills · {selected} selected'
+        if not shown and self.rows:
+            status = f'No matching skills · {selected} selected'
+        self.query_one('#skill-search-status', Static).update(status)
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -248,10 +296,11 @@ class ImportSkills(Screen):
         elif event.button.id == 'skill-discover':
             self.set_busy(True)
             self.query_one('#skill-import-error', Feedback).update('')
+            self.query_one('#skill-import-status', Static).display = True
             self.query_one('#skill-import-status', Static).update('Fetching source and validating skills…')
             self.discover(self.query_one('#skill-source', Input).value.strip(), self.query_one('#skill-ref', Input).value.strip() or None)
         elif event.button.id == 'skill-import-save':
-            selected = [row for index, row in enumerate(self.rows) if not row.get('error') and self.query_one(f'#candidate-{index}', Checkbox).value]
+            selected = [row for row, checkbox, _, _ in self.candidates if not row.get('error') and checkbox.value]
             self.set_busy(True)
             self.install_selected(selected)
 
@@ -282,20 +331,33 @@ class ImportSkills(Screen):
         self.rows = rows
         listing = self.query_one('#skill-candidates', Vertical)
         await listing.remove_children()
+        boxes = []
+        self.candidates = []
         for index, row in enumerate(rows):
-            box = Vertical(classes='setting')
-            await listing.mount(box)
-            await box.mount(Checkbox(Text(row['name'] + (' · invalid' if row.get('error') else '')), value=row['id'] in self.preselect and not row.get('error'), disabled=bool(row.get('error')), id=f'candidate-{index}'),
-                            Static('Error: ' + row['error'] if row.get('error') else row['description'], markup=False, classes='setting-help checkbox-help'),
-                            Static('Folder: ' + row['folder'], markup=False, classes='setting-help checkbox-help'))
+            checkbox = Checkbox(Text(row['name'] + (' · invalid' if row.get('error') else '')), value=row['id'] in self.preselect and not row.get('error'), disabled=bool(row.get('error')), id=f'candidate-{index}')
+            box = Vertical(
+                checkbox,
+                Static('Error: ' + row['error'] if row.get('error') else row['description'], markup=False, classes='setting-help checkbox-help'),
+                Static('Folder: ' + row['folder'], markup=False, classes='setting-help checkbox-help'),
+                classes='setting')
+            boxes.append(box)
+            searchable = ' '.join(row.get(key, '') for key in ('name', 'description', 'folder')).casefold()
+            self.candidates.append((row, checkbox, box, searchable))
+        await listing.mount(*boxes)
         valid = sum(not row.get('error') for row in rows)
+        self.query_one('#skill-import-status', Static).display = True
         self.query_one('#skill-import-status', Static).update(f'{valid} valid ' + ('skill' if valid == 1 else 'skills') + f', {len(rows)-valid} invalid. Select the skills to add.')
+        self.query_one('#skill-search-setting').display = bool(rows)
+        self.filter_candidates()
         self.set_busy(False)
 
     async def show_failure(self, error):
         self.rows = []
+        self.candidates = []
+        self.query_one('#skill-search-setting').display = False
         await self.query_one('#skill-candidates', Vertical).remove_children()
         self.query_one('#skill-import-status', Static).update('')
+        self.query_one('#skill-import-status', Static).display = False
         feedback = self.query_one('#skill-import-error', Feedback)
         feedback.update('Error: ' + error)
         feedback.scroll_visible(animate=False)

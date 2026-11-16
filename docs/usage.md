@@ -89,8 +89,10 @@ question forms, goals, scheduled prompts and optional subagents. Its collapsed
 heading shows the current recall, browser and goals settings.
 
 Use **Library… → Open skill library… → Add skills…** to import a Git repository
-or local folder. **Find and validate skills** lists the discovered skills and any
-validation errors. Select several and choose **Add selected skills**. Validation
+or local folder. GitHub folder and `SKILL.md` links are accepted too.
+**Find and validate skills** lists the discovered skills and any validation errors.
+Use **Search skills** to filter by name, description or folder; selections stay
+checked when hidden by a search. Select several and choose **Add selected skills**. Validation
 reads frontmatter and checks files without running skill code. Git sources use
 host authentication; local Git folders import committed content.
 

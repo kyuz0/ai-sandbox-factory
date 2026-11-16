@@ -5,12 +5,13 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import subprocess
+from urllib.parse import unquote, urlsplit
 
 import yaml
 
 from . import registry
 
-MAX_SKILLS = 200
 MAX_MANIFEST_BYTES = 256 * 1024
 
 
@@ -52,11 +53,56 @@ def _write(base, values):
     temporary.replace(base / 'skills.json')
 
 
+def skill_source_url(source):
+    if isinstance(source, str):
+        url = urlsplit(source)
+        if url.scheme == 'https' and url.hostname in ('github.com', 'www.github.com') and not url.username and not url.password and url.port in (None, 443):
+            source = url._replace(netloc='github.com', query='', fragment='').geturl()
+    return registry.source_url(source)
+
+
+def resolve_source(source, ref=None):
+    """Accept GitHub links copied from a folder or SKILL.md page."""
+    source = skill_source_url(source)
+    url = urlsplit(source)
+    parts = url.path.strip('/').split('/')
+    if url.scheme != 'https' or url.hostname != 'github.com' or len(parts) < 4 or parts[2] not in ('tree', 'blob'):
+        return source, ref, '.'
+    repository = f'https://github.com/{parts[0]}/{parts[1].removesuffix(".git")}.git'
+    remainder = unquote('/'.join(parts[3:]))
+    refs = registry.git('ls-remote', '--heads', '--tags', '--', repository, capture=True).stdout
+    names = {line.split('\t', 1)[1].removeprefix('refs/heads/').removeprefix('refs/tags/')
+             for line in refs.splitlines() if '\t' in line and not line.endswith('^{}')}
+    # Longest match supports branch names containing slashes.
+    matched = next((name for name in sorted(names, key=len, reverse=True)
+                    if remainder == name or remainder.startswith(name + '/')), None)
+    if matched is None:
+        candidate = remainder.split('/', 1)[0]
+        if re.fullmatch(r'[0-9a-fA-F]{7,40}', candidate):
+            matched = candidate
+        else:
+            raise ValueError('The branch or tag in this GitHub link was not found. Copy a current folder link from GitHub.')
+    folder = remainder[len(matched):].lstrip('/') or '.'
+    if parts[2] == 'blob':
+        if Path(folder).name != 'SKILL.md':
+            raise ValueError('Choose a skill folder or a link to its SKILL.md file.')
+        folder = str(Path(folder).parent)
+    if Path(folder).is_absolute() or '..' in Path(folder).parts:
+        raise ValueError('The skill folder must stay inside the repository.')
+    if ref and ref != matched:
+        raise ValueError('The revision field conflicts with the GitHub link. Clear it to use the link, or enter the same branch, tag or commit.')
+    return repository, matched, folder
+
+
 def discover(source, destination, ref=None):
     """Fetch once into a private staging directory and report each candidate separately."""
     from .sandbox import tree_digest
-    source = registry.source_url(source)
-    revision = registry.export(source, Path(destination), ref, check=False)
+    source = skill_source_url(source)
+    try:
+        repository, revision_ref, subdir = resolve_source(source, ref)
+        revision = registry.export(repository, Path(destination), revision_ref, subdir=subdir, check=False)
+    except subprocess.CalledProcessError as error:
+        raise ValueError('Could not fetch the skills. Check the repository URL, revision and your Git access.') from error
     root = Path(destination)
     rows = []
     parents = []
@@ -66,16 +112,18 @@ def discover(source, destination, ref=None):
         if any(parent in file.parents for parent in parents):
             continue
         parents.append(file.parent)
-        if len(rows) >= MAX_SKILLS:
-            raise ValueError('Repository contains more than 200 skills; import a smaller local folder')
-        folder = file.parent.relative_to(root).as_posix()
+        folder = (Path(subdir) / file.parent.relative_to(root)).as_posix()
         # Only source descendants matter; the host temporary directory may itself
         # be reached through a symlink (for example /var on macOS).
         relative = file.relative_to(root)
         if any((root.joinpath(*relative.parts[:end])).is_symlink()
                for end in range(1, len(relative.parts) + 1)):
             continue
-        row = dict(id=hashlib.sha256((source + '\0' + folder).encode()).hexdigest()[:24],
+        identity_source = repository
+        parsed = urlsplit(repository)
+        if parsed.scheme == 'https' and parsed.hostname == 'github.com':
+            identity_source = repository.rstrip('/').removesuffix('.git') + '.git'
+        row = dict(id=hashlib.sha256((identity_source + '\0' + folder).encode()).hexdigest()[:24],
                    source=source, folder=folder, commit=revision or 'local', path=str(file.parent), ref=ref)
         try:
             row.update(metadata(file.parent), digest=tree_digest(file.parent))
