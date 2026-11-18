@@ -1,7 +1,6 @@
 # Web search and website access
 
-Enable **Web access** in **New sandbox → Configuration**, or in an existing
-sandbox’s **Settings → Configuration**. This installs
+Enable **Web access** when creating a sandbox or through **Settings → Web access**. This installs
 [pi-web-access](https://github.com/nicobailon/pi-web-access) and adds `web_search`
 and `fetch_content` to Pi and Pendant.
 

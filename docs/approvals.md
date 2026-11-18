@@ -54,7 +54,7 @@ remain enforced. Installed-file read access does not grant write access.
 By default, Pi and shell commands cannot read common credential files such as
 `.env`, private keys and certificates. For a disposable environment whose
 credentials may be shown to the model, clear **Protect common credential files**
-under **Settings → Configuration → Permissions and sandbox**. This changes reads
+under **Settings → Approvals & sandbox**. This changes reads
 and writes: the agent can see and change those files like other workspace files.
 
 ## Conversation and limits
@@ -84,7 +84,7 @@ is set to low, and its tokens share the output allowance.
 ## Configuration and updates
 
 For an existing sandbox, select it in the Factory manager, open
-**Settings → Configuration**, and expand **Permissions and sandbox**. Choose **Approval mode**, change
+**Settings → Approvals & sandbox**. Choose **Approval mode**, change
 **Use inner command sandbox** or **Protect common credential files**, then select **Apply and recreate**.
 This stops running processes, including tmux sessions, but preserves files and
 saved chats. Reopen Pi or Pendant to resume the conversation with the new settings.

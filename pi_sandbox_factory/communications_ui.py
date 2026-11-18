@@ -6,6 +6,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Link, Static
 from .tui_widgets import Checkbox, Feedback
+from .settings_catalog import CATEGORIES
 from . import communications
 
 
@@ -75,6 +76,7 @@ class SlackCredentials(ModalScreen):
 
 
 class CommunicationsForm(Vertical):
+    CATEGORY = CATEGORIES['communications']
     DEFAULT_CSS = '''
     CommunicationsForm { height: auto; }
     #slack-controls { height: auto; align-vertical: middle; }
@@ -90,7 +92,7 @@ class CommunicationsForm(Vertical):
         self.status = {}
 
     def compose(self):
-        with Collapsible(title='Communications · Off', collapsed=True, id='communications-section'):
+        with Collapsible(title=self.CATEGORY.label + ' · Off', collapsed=True, id=self.CATEGORY.section):
             with Vertical(classes='setting'):
                 with Horizontal(id='slack-controls'):
                     yield Checkbox('Slack', value=self.value['slack'], id='slack-enabled')
@@ -99,6 +101,8 @@ class CommunicationsForm(Vertical):
                 yield Static('', id='slack-status', markup=False, classes='setting-help checkbox-help')
 
     def on_mount(self):
+        if getattr(self.screen, 'setting', None) not in (None, 'communications'):
+            return
         if getattr(self.screen, 'editing', False):
             self.status = None
             self.refresh_status(self.screen.draft['name'])
@@ -117,7 +121,7 @@ class CommunicationsForm(Vertical):
     @on(Checkbox.Changed, '#slack-enabled')
     def sync(self):
         enabled = self.query_one('#slack-enabled', Checkbox).value
-        self.query_one('#communications-section', Collapsible).title = 'Communications · ' + ('Slack' if enabled else 'Off')
+        self.query_one('#' + self.CATEGORY.section, Collapsible).title = self.CATEGORY.label + ' · ' + ('Slack' if enabled else 'Off')
         self.query_one('#slack-configure', Button).disabled = self.defaults or (not enabled and not getattr(self.screen, 'editing', False))
         status = dict(self.status or {})
         status.update({key: bool(value) for key, value in self.changes.items()})

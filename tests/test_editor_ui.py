@@ -102,7 +102,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(screen.query('#editor-address, #editor-password, #editor-connection'))
             screen.query_one('#editor-mode', Select).value = 'pi'
             await pilot.pause()
-            self.assertEqual(screen.query_one('#editor-section', Collapsible).title, 'Open with · Pi CLI')
+            self.assertEqual(screen.query_one('#editor-section', Collapsible).title, 'Editor · Pi CLI')
             self.assertEqual(screen.query_one(EditorFields).collect(), {**editor_settings.DEFAULTS, 'mode': 'pi'})
 
     async def test_remote_validation_and_mode_selection(self):

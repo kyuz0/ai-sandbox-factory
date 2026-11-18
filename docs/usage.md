@@ -18,9 +18,9 @@ start fresh. Environment files and Pi seed directories must be selected again.
 The new sandbox keeps independent copies of its packages.
 
 **Open in browser** is the default on supported hosts. The editor opens locally
-without a password. During creation, expand **Open with** to choose Pi CLI or
-VS Code on host; clear **Open selected editor after creation** to launch later.
-Use **Settings → Open with** to change the launch choice, address, port or password.
+without a password. During creation, expand **Editor** to choose Pi CLI or
+VS Code on host; clear **Open sandbox after creation** to launch later.
+Use **Settings → Editor** to change the launch choice, address, port or password.
 
 **Open with…** opens another client without changing the default. Pi CLI runs in
 the current terminal; exit Pi to return to the manager. You can use it alongside
@@ -42,18 +42,18 @@ Settings show the effect before applying and the reconnect steps afterwards.
 
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
-| Configuration: permissions, browser/vault protection, recall, goals, questions, scheduling, subagents, skills, search, Slack tools, provider plugins, local model ports, memory, environment or network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Use Open in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
-| Network: allowed hosts and website groups | The gateway reloads. Development processes continue; connections may disconnect. | Retry interrupted connections. No editor reload or new conversation is needed. |
+| Approvals & sandbox, Agent tools, Skills, Web access, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose Open in browser in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
+| Network rules: allowed hosts and website groups | The gateway reloads. Development processes continue; connections may disconnect. | Retry interrupted connections. No editor reload or new conversation is needed. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
 | SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
-| Open with: client choice and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
+| Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
 | Models: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Models: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
 | Models: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
 | Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
-| Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Configuration and apply them to an existing sandbox. |
+| Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
 Reloading tools and instructions does not rewrite earlier chat messages. Engine,
 profile, workspace and seed-home choices are fixed for an existing sandbox; create
@@ -63,7 +63,7 @@ in place.
 For a sandbox you have already created:
 
 1. Open `pi-sandbox-factory` on the host and select the sandbox.
-2. Open **Settings → Configuration** and expand **Permissions and sandbox**.
+2. Open **Settings → Approvals & sandbox**.
 3. Choose **Approval mode**, set **Use inner command sandbox**, and leave
    **Protect common credential files** enabled unless `.env`, private keys and
    similar workspace files may be shown to the agent.
@@ -84,7 +84,7 @@ The outer container and its network policy still apply when the inner sandbox is
 
 ## Agent tools and skills
 
-**Agent tools & subagents** groups conversation recall, the agent browser,
+**Agent tools** groups conversation recall, the agent browser,
 question forms, goals, scheduled prompts and optional subagents. Its collapsed
 heading shows the current recall, browser and goals settings.
 
@@ -96,7 +96,7 @@ checked when hidden by a search. Select several and choose **Add selected skills
 reads frontmatter and checks files without running skill code. Git sources use
 host authentication; local Git folders import committed content.
 
-During creation or in **Settings → Configuration → Skills**, select any number
+During creation or in **Settings → Skills**, select any number
 of library skills. **Manage skill library…** opens the same library without
 losing the form. Profile skills appear alongside the library selection.
 
@@ -147,8 +147,8 @@ add each filesystem as its own folder if needed.
 
 ## Local models
 
-During creation or in **Settings → Configuration**, enable **Connect to models on
-this host** and enter the server ports, such as `8000` or `8000-8002`.
+During creation or in **Settings → Models → Local models & provider plugins**,
+enable **Connect to models on this computer** and enter the server ports, such as `8000` or `8000-8002`.
 Factory uses [Pi Local Model Manager](https://github.com/kyuz0/pi-local-model-manager)
 to discover models and configure their context, image and thinking support in
 Pi and Pendant.
@@ -175,7 +175,7 @@ before the command for a separate inventory. TUI defaults live in
 
 ### Package downloads and website categories
 
-In **Configuration → Network → Website categories**, select **Python** for PyPI,
+During creation, under **Network → Website categories**, select **Python** for PyPI,
 **npm** for JavaScript packages, **GitHub** for repositories and release downloads,
 or **Hugging Face** for models and datasets.
 For Microsoft sign-in and MFA, select **Authentication → Microsoft Entra / Microsoft 365**.
@@ -186,9 +186,9 @@ Node.js and npm are already installed. Yarn and pnpm can use the same npm regist
 Packages whose install scripts fetch binaries elsewhere may need additional
 `hostname:port` entries, as may private registries.
 
-Choose **Apply network** to update an existing sandbox. The gateway restarts;
-active requests may need to reconnect. Use **Settings → Configuration** for
-network mode or host model port changes.
+Choose **Apply rules** to update an existing sandbox. The gateway restarts and
+active requests may need to reconnect. Change the network mode in
+**Settings → Network → Change network mode…** or host model ports in **Settings → Models → Local models & provider plugins**.
 
 CLI equivalent:
 
@@ -241,9 +241,10 @@ in **Lite** mode. Pi can search conversation history removed by compaction with
 `history_grep` and retrieve a passage with `history_expand`.
 Lite adds no automatic history hints.
 
-Choose **Configuration → Agent tools & subagents → Conversation recall** when creating
-or editing a sandbox. **Full** adds automatic hints and may reduce prefix-cache
-reuse. **Off** disables recall. The selection applies to both Pi CLI and Pendant.
+Choose **Conversation recall** under **Agent tools** during creation
+or under **Settings → Agent tools** for an existing sandbox. **Full**
+adds automatic hints and may reduce prefix-cache reuse. **Off** disables recall.
+The selection applies to both Pi CLI and Pendant.
 For CLI creation, use `"compaction_recall": "lite"`, `"full"` or `"off"` in the
 JSON passed to `--options-file`.
 

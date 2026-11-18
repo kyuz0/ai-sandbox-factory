@@ -1,13 +1,18 @@
 """User-facing effects of the settings update paths, without secret values."""
 from .sandbox_options import options
+from .settings_catalog import CATEGORIES, OPEN_LABELS
 
 def bullets(items):
     return '\n'.join('• ' + item for item in items)
 
 
+def open_client(mode):
+    return f'Choose {OPEN_LABELS[mode]} in Factory.'
+
+
 def reconnect(mode='browser', *, opened=False):
     action = {
-        'browser': 'Use Open in Factory to reopen the browser editor.',
+        'browser': open_client('browser'),
         'desktop': 'Reload the VS Code window.',
         'pi': 'Restart Pi CLI.',
     }[mode]
@@ -19,11 +24,12 @@ RECREATE = 'Recreates the sandbox and stops active tasks, terminals and browser 
 NETWORK = bullets(['Rules apply to new connections.', 'Retry any interrupted connections. No editor reload is needed.'])
 MODELS = bullets(['Reopen the client to refresh model connections.', 'Select a model in the chat.'])
 FOLDER = 'The new starting folder applies when you next open the client.'
+APPROVALS_LABEL = CATEGORIES['approval-settings'].label
 
 # Keep every options key explicit so new settings require an effect assessment.
 OPTION_GROUPS = {
-    'approval': 'Approval and file protection', 'inner_sandbox': 'Approval and file protection',
-    'protect_credentials': 'Approval and file protection',
+    'approval': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
+    'protect_credentials': APPROVALS_LABEL,
     'protect_browser_credentials': 'Browser and saved vault protection',
     'browser': 'Browser and saved vault protection',
     'goals': 'Agent tools and conversation recall', 'scheduling': 'Agent tools and conversation recall',
@@ -34,7 +40,7 @@ OPTION_GROUPS = {
 
 
 def configuration_changes(original, draft):
-    """Describe differences in the full Configuration form, never credentials."""
+    """Describe changes to sandbox settings without credential values."""
     before, after = options(original.get('options')), options(draft.get('options'))
     groups = {title for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
     for key, title in {'network': 'Network access', 'memory': 'Memory limit',
@@ -64,7 +70,7 @@ def configuration_changes(original, draft):
 def configuration_notes(original, draft, mode='browser'):
     groups = set(configuration_changes(original, draft))
     notes = [RECREATE, 'Workspace files and saved chats are kept.', *reconnect(mode)]
-    if groups & {'Skills', 'Agent tools and conversation recall', 'Approval and file protection'}:
+    if groups & {'Skills', 'Agent tools and conversation recall', APPROVALS_LABEL}:
         notes.append('Earlier chat messages stay unchanged; a new chat gives a clean context.')
     before, after = options(original.get('options')), options(draft.get('options'))
     if 'Browser and saved vault protection' in groups and after['browser']:

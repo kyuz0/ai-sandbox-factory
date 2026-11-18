@@ -24,7 +24,7 @@ Stopping the sandbox stops both clients.
 ## Connection settings
 
 During creation, expand **Open with → Browser connection**. For a saved sandbox,
-use **Settings → Open with → Browser connection**.
+use **Settings → Editor → Browser connection**.
 
 - **Listen address:** empty chooses a separate local-only address for each sandbox.
   Enter a specific IP address and enable a password to use a custom address.
@@ -44,7 +44,7 @@ stays on the host and must have permissions `0600`; encrypted keys are unsupport
 
 ## Choose a client
 
-**Settings → Open with** changes the default client. **Open with…** selects a client
+**Settings → Editor** changes the default client. **Open with…** selects a client
 for one launch. Use Pi CLI alongside either editor.
 
 A sandbox used in the browser cannot subsequently attach to host VS Code: that

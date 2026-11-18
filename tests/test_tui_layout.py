@@ -204,6 +204,32 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.press('escape')
             await pilot.press('q')
 
+    async def test_create_and_edit_share_category_names_and_order(self):
+        from pi_sandbox_factory.settings_catalog import CATEGORIES
+        expected_order = ['Models', 'Editor', 'Folders', 'SSH & Git', 'Advisors', 'Network',
+                          'Web access', 'Communications', 'Approvals & sandbox', 'Agent tools',
+                          'Skills', 'Resources & environment']
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await app.push_screen(SettingsForm(self.draft()))
+            await pilot.pause()
+            sections = {category.section for category in CATEGORIES.values()}
+            category_widgets = [section for section in app.screen.query(Collapsible) if section.id in sections]
+            creation = [section.title.split(' · ', 1)[0] for section in category_widgets]
+            models = app.screen.query_one('#hosted-section', Collapsible)
+            self.assertFalse(models.collapsed)
+            self.assertIs(app.focused, models.query_one('CollapsibleTitle'))
+            models.collapsed = True
+            await pilot.pause()
+            self.assertLessEqual(category_widgets[-1].region.bottom, app.screen.query_one('.form').region.bottom)
+            await app.pop_screen()
+            await pilot.click('#settings')
+            menu = app.screen.query_one('#settings-actions', OptionList)
+            editing = [menu.get_option_at_index(i).prompt for i in range(menu.option_count)]
+            self.assertEqual(creation, expected_order)
+            self.assertEqual(editing, expected_order)
+
     async def test_model_settings_are_grouped_and_bad_ports_are_visible(self):
         for size in ((80,24),(120,40),(220,50)):
             for context in ('create','defaults','existing'):
@@ -214,7 +240,7 @@ class TUILayoutTests(unittest.TestCase):
                     await app.push_screen(form)
                     await pilot.pause()
                     section=form.query_one('#hosted-section',Collapsible)
-                    self.assertTrue(section.collapsed)
+                    self.assertEqual(section.collapsed, context != 'create')
                     self.assertIn('local on',section.title)
                     field=form.query_one('#model-ports',Input)
                     self.assertIn(field,section.query(Input))
@@ -246,7 +272,7 @@ class TUILayoutTests(unittest.TestCase):
             await app.push_screen(form)
             await pilot.pause()
             section = form.query_one('#skills-section', Collapsible)
-            self.assertIn('Agent tools & subagents', section.title)
+            self.assertIn('Agent tools', section.title)
             form.query_one('#browser', Checkbox).value = True
             form.query_one('#goals', Checkbox).value = False
             form.query_one('#compaction-recall', Select).value = 'full'
@@ -327,7 +353,7 @@ class TUILayoutTests(unittest.TestCase):
                     app.screen.submit(draft, {})
                     await self.ready(app, pilot)
                 notice = str(app.screen.query_one('#operation-next', Static).render())
-                self.assertIn('Open in Factory' if fails else 'reopened client', notice)
+                self.assertIn('Open in browser' if fails else 'reopened client', notice)
                 self.assertNotIn('Slack', notice)
                 self.assertNotIn('SSH', notice)
                 self.assertFalse(app.screen.failed)
@@ -458,7 +484,7 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn(app.screen.query_one('#agent-section', Collapsible), credentials.ancestors)
             credentials.value = False
             self.assertFalse(app.screen.collect()[0]['options']['protect_credentials'])
-            self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Permissions and sandbox'))
+            self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Approvals & sandbox'))
 
     async def test_labels_controls_and_feedback_do_not_create_empty_rows(self):
         from pi_sandbox_factory.sandbox_tui import CreateFromSandbox, Operation

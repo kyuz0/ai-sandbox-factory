@@ -124,7 +124,7 @@ Apple Silicon runs native ARM64 containers, including the editor and Chromium.
 On WSL and macOS, each editor gets a separate `sbx-….localhost` name and listens
 on `127.0.0.1`. Keep this generated name in the browser address: it separates
 sandbox cookies and is checked on every request. Linux retains its individual
-`127.x.x.x` addresses. Passwords and HTTPS are configured in **Settings → Open with**.
+`127.x.x.x` addresses. Passwords and HTTPS are configured in **Settings → Editor**.
 
 Use **Settings → Advisors** to sign in inside an advisor container. Host sign-in
 copies read the manager’s environment: WSL credentials on Windows, not Windows

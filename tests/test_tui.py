@@ -45,7 +45,7 @@ class TUITests(unittest.TestCase):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-    async def settings_page(self, app, pilot, action="configuration"):
+    async def settings_page(self, app, pilot, action="approval-settings"):
         await pilot.click('#settings');await pilot.pause()
         menu=app.screen.query_one('#settings-actions',OptionList)
         menu.highlighted=next(i for i, (_, key) in enumerate(SettingsMenu.ACTIONS) if key == action);menu.focus()
@@ -234,7 +234,7 @@ class TUITests(unittest.TestCase):
             self.assertIs(app.screen.query_one('#model-provider', Select).value, Select.NULL)
             for action in ('status', 'preview', 'refresh', 'auth'):
                 self.assertTrue(app.screen.query_one('#provider-' + action, Button).disabled)
-            self.assertFalse(app.screen.query_one('#configuration', Button).disabled)
+            self.assertEqual(str(app.screen.query_one('#model-sources', Button).label), 'Local models & provider plugins…')
             self.assertEqual(service.calls, [])
             await pilot.press('escape')
             self.assertNotIsInstance(app.screen, ModelsScreen)
@@ -588,6 +588,8 @@ class TUITests(unittest.TestCase):
             self.assertEqual(attempts[2][0]['local_model_ports'], '8004')
             self.assertIsNot(attempts[1][2], attempts[2][2])
             self.assertFalse(app.screen.failed)
+            self.assertEqual(str(app.screen.query_one('#operation-back', Button).label), 'Done')
+            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Done')
             self.assertFalse(app.screen.query_one('#operation-retry', Button).display)
             await pilot.click('#operation-back')
             await self.ready(app, pilot)
@@ -597,7 +599,8 @@ class TUITests(unittest.TestCase):
         service=FakeService(self.records);app=Cockpit(self.root,service)
         async with app.run_test(size=(100,42)) as pilot:
             await self.ready(app,pilot);app.query_one(DataTable).move_cursor(row=1);await pilot.pause()
-            await self.settings_page(app,pilot)
+            await self.settings_page(app,pilot,action='models')
+            await pilot.click('#model-sources');await pilot.pause()
             form=app.screen;self.assertIsInstance(form,SettingsForm)
             form.query_one('#model-ports',Input).value='8080'
             with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
@@ -605,6 +608,8 @@ class TUITests(unittest.TestCase):
             self.assertIsInstance(app.screen,Confirm);await pilot.click('#yes');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][0:2],['update','beta'])
             self.assertEqual(service.calls[0][2]['local_model_ports'],'8080')
+            self.assertEqual(app.screen.title, 'Updated beta')
+            self.assertEqual(str(app.screen.query_one('#operation-back', Button).label), 'Done')
             await pilot.click('#operation-back');await self.ready(app,pilot)
             app.query_one(DataTable).move_cursor(row=1);await pilot.pause()
             await self.settings_page(app,pilot,action="models")
@@ -626,6 +631,24 @@ class TUITests(unittest.TestCase):
             app.save_screenshot(filename='sandbox-network-declutter.svg',path='/tmp')
             await pilot.press('escape');await pilot.pause()
             await pilot.press('q')
+
+    async def test_network_category_opens_mode_for_unrestricted_sandbox(self):
+        from pi_sandbox_factory.sandbox_tui import NetworkForm
+        from textual.widgets import Select
+        self.records[0]['config'].update(network='unrestricted', local_model_ports=None)
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await self.settings_page(app, pilot, action='network-settings')
+            network = app.screen
+            self.assertIsInstance(network, NetworkForm)
+            self.assertFalse(network.query('#apply-network'))
+            self.assertTrue(await pilot.click('#change-network-mode'))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, SettingsForm)
+            self.assertEqual(app.screen.query_one('#network', Select).value, 'unrestricted')
+            await pilot.press('escape')
+            self.assertIs(app.screen, network)
 
     async def test_open_with_pi_uses_terminal_and_returns_to_manager(self):
         from contextlib import nullcontext
@@ -755,23 +778,57 @@ class TUITests(unittest.TestCase):
 
 
     async def test_automatic_approval_default_and_human_fallback_selection(self):
-        from textual.widgets import Select, Static
+        from textual.widgets import Select, Static, Collapsible
+        from pi_sandbox_factory import settings_effects
+        from unittest.mock import Mock
         service=FakeService(self.records);app=Cockpit(self.root,service)
-        async with app.run_test(size=(100,36)) as pilot:
-            await self.ready(app,pilot);await self.settings_page(app,pilot)
-            choice=app.screen.query_one('#approval',Select)
+        self.records[0]['config']['options'] = {
+            'web_access': {'enabled': True, 'mode': 'brave', 'providers': {'brave': {'has_key': True}}},
+        }
+        service.search_status = Mock(return_value={'brave': False})
+        async with app.run_test(size=(80,24)) as pilot:
+            await self.ready(app, pilot)
+            await pilot.click('#settings')
+            menu = app.screen.query_one('#settings-actions', OptionList)
+            labels = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
+            self.assertIn('Approvals & sandbox', labels)
+            self.assertEqual(labels.count('Network'), 1)
+            self.assertNotIn('Network mode', labels)
+            self.assertNotIn('Configuration', labels)
+            close = app.screen.query_one('#settings-back', Button)
+            self.assertEqual(str(close.label), 'Close')
+            self.assertIs(app.screen.get_widget_at(close.region.x, close.region.y)[0], close)
+            menu.highlighted = labels.index('Approvals & sandbox')
+            await pilot.press('enter')
+            await pilot.pause()
+            form = app.screen
+            choice=form.query_one('#approval',Select)
+            self.assertIs(app.focused, choice)
+            self.assertFalse(form.query_one('#agent-section', Collapsible).collapsed)
+            self.assertFalse(form.query_one('#hosted-section', Collapsible).display)
+            self.assertFalse(form.query_one('#web-section').parent.display)
             self.assertEqual(choice.value,'automatic')
-            self.assertIn('no approval dialogs',str(app.screen.query_one('#approval-help',Static).render()))
+            self.assertIn('without an approval dialog',str(form.query_one('#approval-help',Static).render()))
             choice.value='assisted';await pilot.pause()
-            self.assertIn('ask you',str(app.screen.query_one('#approval-help',Static).render()))
-            await pilot.press('escape');await pilot.press('q')
+            self.assertIn('ask you',str(form.query_one('#approval-help',Static).render()))
+            with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                await pilot.click('#apply');await pilot.pause()
+            self.assertIsInstance(app.screen, Confirm)
+            await pilot.click('#yes')
+            await self.ready(app, pilot)
+            self.assertEqual(settings_effects.configuration_changes(form.draft, service.calls[0][2]),
+                             ['Approvals & sandbox'])
+            service.search_status.assert_not_called()
+            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Done')
+            await pilot.press('escape')
+            self.assertEqual(len(app.screen_stack), 1)
 
 
     async def test_recall_selection_is_saved_at_small_terminal(self):
         from textual.widgets import Select, Collapsible
         service=FakeService(self.records);app=Cockpit(self.root,service)
         async with app.run_test(size=(80,24)) as pilot:
-            await self.ready(app,pilot);await self.settings_page(app,pilot)
+            await self.ready(app,pilot);await self.settings_page(app,pilot,action='agent-tools')
             form=app.screen
             form.query_one('#skills-section',Collapsible).collapsed=False
             choice=form.query_one('#compaction-recall',Select)
@@ -810,7 +867,8 @@ class TUITests(unittest.TestCase):
         service=FakeService(self.records);app=Cockpit(self.root,service)
         with patch.object(registry,'choices',side_effect=lambda kind:{'base':'Generic tools'} if kind=='profile' else {'local':'Local models'}):
             async with app.run_test(size=(80,24)) as pilot:
-                await self.ready(app,pilot);await self.settings_page(app,pilot)
+                await self.ready(app,pilot);await self.settings_page(app,pilot,action='models')
+                await pilot.click('#model-sources');await pilot.pause()
                 form=app.screen
                 self.assertTrue(form.query_one('#source-company',Checkbox).value)
                 self.assertEqual(form.query_one('#source-company-endpoint',Input).value,'https://models.example.com/v1')

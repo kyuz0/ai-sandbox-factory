@@ -34,7 +34,7 @@ class SettingsEffectsTests(unittest.TestCase):
     def test_notices_are_relevant_to_changed_settings_and_selected_client(self):
         before={'options':{},'memory':'8g'}
         after={'options':{},'memory':'16g'}
-        for mode, expected in [('browser','Open in Factory'),('pi','Restart Pi CLI'),('desktop','Reload the VS Code')]:
+        for mode, expected in [('browser','Open in browser'),('pi','Restart Pi CLI'),('desktop','Reload the VS Code')]:
             notes=settings_effects.configuration_notes(before,after,mode)
             text=settings_effects.bullets(notes)
             self.assertIn(expected,text)

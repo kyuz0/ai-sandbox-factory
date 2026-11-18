@@ -20,7 +20,9 @@ sys.path[:0] = [str(root), str(root / 'tests')]
 from test_tui import FakeService
 from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
-from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, web_access
+from pi_sandbox_factory.creation import Creation
+from pi_sandbox_factory.settings_catalog import EDIT_FORMS
+from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, settings_effects, web_access
 from textual.widgets import Collapsible, Input, Static, OptionList, Select, RichLog
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
@@ -112,6 +114,43 @@ async def capture(size):
                 await shot('new', NewSandbox())
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                 draft.update(name='demo', workspace=str(workspace), working_directory='.', extra_folders=[])
+                if args.only and all(name.startswith('settings-ux-') for name in args.only):
+                    await shot('settings-ux-menu', SettingsMenu('demo'))
+                    await shot('settings-ux-create', SettingsForm(copy.deepcopy(draft)))
+                    if 'settings-ux-create-categories' in args.only:
+                        await app.push_screen(SettingsForm(copy.deepcopy(draft)))
+                        app.screen.query_one('#hosted-section', Collapsible).collapsed = True
+                        await shot('settings-ux-create-categories')
+                        await app.pop_screen()
+                    await shot('settings-ux-create-approvals', SettingsForm(copy.deepcopy(draft)), '#agent-section')
+                    await shot('settings-ux-create-network', SettingsForm(copy.deepcopy(draft)), '#network-section')
+                    await shot('settings-ux-models', ModelsScreen(record))
+                    await shot('settings-ux-editor', EditorScreen('demo'))
+                    await shot('settings-ux-network', NetworkForm('demo', 'local-model.internal:8000', c))
+                    await shot('settings-ux-network-unrestricted', NetworkForm('demo', '', {**c, 'network': 'unrestricted'}))
+                    await shot('settings-ux-folders', FoldersScreen(record))
+                    await shot('settings-ux-ssh', SSHScreen(record))
+                    await shot('settings-ux-advisors', AdvisorsScreen(record))
+                    settings = {**draft, 'allowlist': 'local-model.internal:8000'}
+                    for action in EDIT_FORMS:
+                        await shot('settings-ux-' + action, SettingsForm(copy.deepcopy(settings), editing=True, setting=action))
+                    await shot('settings-ux-approval-choice', SettingsForm(
+                        {**settings, 'options': options({'approval': 'assisted'})}, editing=True, setting='approval-settings'))
+                    if 'settings-ux-model-error' in args.only:
+                        form = SettingsForm(copy.deepcopy(settings), editing=True, setting='model-sources')
+                        await app.push_screen(form)
+                        form.query_one('#model-ports', Input).value = '8000,bad-port'
+                        await pilot.pause()
+                        await pilot.click('#apply')
+                        await shot('settings-ux-model-error')
+                        await app.pop_screen()
+                    await shot('settings-ux-created', CreationOperation(
+                        root / 'new-demo', lambda log: log('Sandbox ready.'), Creation(), retry=lambda: None,
+                        on_success=None, success_message=settings_effects.open_client('browser')))
+                    await shot('settings-ux-updated', Operation(
+                        'Updating demo', lambda log: log('Sandbox ready.'), done_on_success=True,
+                        completed_title='Updated demo', success_message=settings_effects.REOPEN))
+                    return
                 if args.only and any(name.startswith('model-settings-') for name in args.only):
                     for context in ('create', 'defaults', 'existing'):
                         sample = copy.deepcopy(draft)
@@ -294,7 +333,6 @@ async def capture(size):
                 await shot('public-key', PublicKey('demo'))
                 await shot('operation', Operation('Creating sandbox', lambda log: log('Sandbox ready.')))
                 if not args.only or any(name.startswith('creation-') for name in args.only):
-                    from pi_sandbox_factory.creation import Creation
                     for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete', 'failed'):
                         controller = Creation()
                         name = 'example-project-with-a-long-name'

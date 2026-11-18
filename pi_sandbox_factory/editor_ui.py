@@ -8,6 +8,7 @@ from textual.widgets.option_list import Option
 from textual.widgets import Button, Collapsible, Footer, Header, Input, Label, OptionList, Select, Static
 
 from . import editor_settings
+from .settings_catalog import CATEGORIES
 from .tui_widgets import Checkbox, Feedback
 
 
@@ -27,7 +28,7 @@ class EditorFields(Vertical):
 
     def compose(self):
         with Vertical(classes='setting'):
-            yield Label('Default choice')
+            yield Label('Client')
             yield Select([(title, key) for key, title in editor_settings.MODES.items() if self.desktop_allowed or key != 'desktop'],
                          value=self.value['mode'], allow_blank=False, id='editor-mode')
             yield Static('', id='editor-description', classes='setting-help')
@@ -77,7 +78,7 @@ class EditorFields(Vertical):
             'desktop': 'Opens VS Code on this computer. Host-side extensions have host access.',
         }[mode])
         for section in self.screen.query('#editor-section'):
-            section.title = 'Open with · ' + editor_settings.MODES[mode]
+            section.title = CATEGORIES['editor-settings'].label + ' · ' + editor_settings.MODES[mode]
         if not self.connection_settings:
             return
         self.query_one('#editor-connection').display = mode == 'browser'
@@ -135,7 +136,7 @@ class EditorScreen(Screen):
     def compose(self):
         yield Header()
         with VerticalScroll(classes='form'):
-            yield Label('Open with · ' + self.sandbox_name, classes='title')
+            yield Label(CATEGORIES['editor-settings'].label + ' · ' + self.sandbox_name, classes='title')
             state = self.app.state_root / self.sandbox_name
             yield EditorFields(editor_settings.load(state), desktop_allowed=not (state / 'browser-editor.enabled').exists())
             yield Static('• Saving stops a running browser editor.\n• Use Open with… on the sandbox list to reopen it.', classes='setting-help')
@@ -144,6 +145,9 @@ class EditorScreen(Screen):
             yield Button('Back', id='editor-back')
             yield Button('Save', id='editor-save', variant='primary')
         yield Footer()
+
+    def on_mount(self):
+        self.query_one('#editor-mode', Select).focus()
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -164,7 +168,7 @@ class EditorScreen(Screen):
                     editor_settings.save(state, value)
                     log('Editor settings saved. Use Open with… to launch with these settings.')
                 self.app.pop_screen()
-                self.app.push_screen(Operation('Saving editor settings', apply,
+                self.app.push_screen(Operation('Saving editor settings', apply, done_on_success=True,
                     success_message='• Use Open with… to reconnect.\n• Resume your saved conversation.'))
             except (ValueError, OSError) as error:
                 self.query_one('#editor-error', Static).update(str(error))
