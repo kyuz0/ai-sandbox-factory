@@ -104,6 +104,12 @@ Other adapters receive `secret` only during credential entry. Return one of
 credentials. Status should describe saved state; preview must not change it.
 Refresh writes `${agentDir}/models.json` using Pi's model schema.
 
+Managed API-key providers can use Factory's saved-key picker. Declare a
+`credentialCheck` object with a fixed authenticated GET `path` on the inference
+origin. Factory uses it to check a new key before changing the active assignment.
+If omitted, Factory uses the first declared GET operation ending in `/models`.
+Use a check that returns 401 or 403 for invalid credentials.
+
 Preserve other providers and user customizations. Validate responses before
 writing, retain the old catalogue on failure, and replace files atomically.
 The runner serializes adapter calls and supplied extension commands using a shared

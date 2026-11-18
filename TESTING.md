@@ -124,6 +124,12 @@ create a disposable reporting sandbox with local discovery on port 18082 and tha
 port allowed, then run `tests/provider_container.py --name NAME`.
 It checks local discovery, preservation of unrelated models and the profile skill.
 
+For API keys on local servers, run `.venv/bin/python tests/local_model_keys.py`.
+The fixture creates and deletes a Podman sandbox, serves two protected model
+endpoints and one public endpoint on unused loopback ports, then tests discovery
+and chat in Pi and the shipped Pendant worker. It checks that keys stay bound to
+their ports and that a rejected replacement keeps the active key.
+
 To verify Radiance discovery without a GPU server, run the synthetic metadata fixture
 inside a disposable Factory image (replace `FACTORY_IMAGE` with its local image name):
 

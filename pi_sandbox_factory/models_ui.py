@@ -8,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from . import hosted_models, settings_effects, editor_settings
+from .credentials_ui import CredentialFields, choice_key_caption, key_caption
 from .tui_widgets import Feedback
 
 
@@ -15,8 +16,8 @@ class ProviderDialog(ModalScreen):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = '''
     ProviderDialog, ModelDialog { align: center middle; }
-    .model-dialog { width: 88; max-width: 94%; height: 24; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
-    .model-fields { height: 1fr; min-height: 1; }
+    .model-dialog { width: 88; max-width: 94%; height: auto; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    .model-fields { height: auto; min-height: 1; }
     .model-dialog Static { height: auto; }
     .provider-specific { height: auto; }
     '''
@@ -27,9 +28,10 @@ class ProviderDialog(ModalScreen):
 
     def compose(self):
         v = self.value
-        with Vertical(classes='model-dialog'):
-            yield Label('Connect a model provider', classes='title')
-            with VerticalScroll(classes='model-fields'):
+        with Vertical(classes='model-dialog key-dialog'):
+            yield Label(('Connection · ' + hosted_models.PROVIDERS[v['provider']]) if v.get('provider')
+                        else 'Connect a model provider', classes='title')
+            with VerticalScroll(classes='model-fields key-dialog-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Provider')
                     yield Select([(v,k) for k,v in hosted_models.PROVIDERS.items()], value=v.get('provider','openrouter'), allow_blank=False, disabled=bool(v.get('provider')), id='hosted-provider')
@@ -46,9 +48,11 @@ class ProviderDialog(ModalScreen):
                         yield Label('Authentication')
                         yield Select([('Bedrock bearer token','bearer'),('AWS access keys','iam')], value=v.get('method','bearer'), allow_blank=False, id='hosted-method')
                 with Vertical(id='hosted-key-field', classes='setting'):
-                    yield Label('API key / bearer token')
-                    yield Input(v.get('key',''), password=True, id='hosted-key')
-                    yield Static('Leave empty to keep the saved key.' if v.get('has_key') else 'Stored in a separate inference container; Pi and editor extensions receive no key.', classes='setting-help')
+                    yield CredentialFields('hosted-key',
+                                           binding=self.credential_binding({**v, 'provider':v.get('provider', 'openrouter')}),
+                                           choice=v.get('credential') or {'key':v.get('key','')})
+                    if v.get('has_key'):
+                        yield Static('Leave blank to keep the assigned key.', classes='setting-help')
                 with Vertical(id='iam-fields', classes='provider-specific'):
                     for field, label in [('access_key','AWS access key ID'),('secret_key','AWS secret access key'),('session_token','AWS session token · for temporary credentials')]:
                         with Vertical(classes='setting'):
@@ -59,20 +63,33 @@ class ProviderDialog(ModalScreen):
             yield Feedback('', id='hosted-error', markup=False, classes='error')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='hosted-cancel')
-                yield Button('Save', id='hosted-save', variant='primary')
+                yield Button('Use key', id='hosted-save', variant='primary')
 
     def on_mount(self): self.sync()
 
-    @on(Select.Changed)
+    def credential_binding(self, value):
+        try:
+            return hosted_models.credential_scope(value)
+        except ValueError:
+            return None
+
+    @on(Select.Changed, '#hosted-provider')
+    @on(Select.Changed, '#hosted-method')
+    @on(Input.Changed, '#hosted-endpoint')
+    @on(Input.Changed, '#hosted-region')
     def sync(self):
         provider = self.query_one('#hosted-provider', Select).value
-        self.query_one('.model-dialog').styles.height = 44 if provider == 'amazon-bedrock' else 32 if provider == 'azure' else 26
         iam = provider == 'amazon-bedrock' and self.query_one('#hosted-method', Select).value == 'iam'
         self.query_one('#azure-fields').display = provider == 'azure'
         self.query_one('#bedrock-fields').display = provider == 'amazon-bedrock'
         self.query_one('#iam-fields').display = iam
         self.query_one('#hosted-key-field').display = not iam
-        self.query_one('#hosted-destinations', Static).update('Factory connects the inference service and allows pi.dev for Pi’s model catalogue.')
+        self.query_one('#hosted-save', Button).label = 'Save connection' if iam else 'Use key'
+        self.query_one(CredentialFields).set_binding(self.credential_binding({
+            'provider': provider, 'endpoint': self.query_one('#hosted-endpoint', Input).value,
+            'region': self.query_one('#hosted-region', Input).value, 'method': self.query_one('#hosted-method', Select).value,
+        }))
+        self.query_one('#hosted-destinations', Static).update('Uses pi.dev for Pi’s model catalogue.')
 
     def action_cancel(self): self.dismiss(None)
 
@@ -84,13 +101,23 @@ class ProviderDialog(ModalScreen):
             try:
                 value = {**self.value, 'provider': self.query_one('#hosted-provider',Select).value,
                          'method': self.query_one('#hosted-method',Select).value}
-                for field in ('key','access_key','secret_key','session_token','endpoint','region'):
+                for field in ('access_key','secret_key','session_token','endpoint','region'):
                     value[field] = self.query_one('#hosted-'+field,Input).value.strip()
+                value.pop('credential', None)
+                value['key'] = ''
+                if not (value['provider'] == 'amazon-bedrock' and value['method'] == 'iam'):
+                    fields = self.query_one(CredentialFields)
+                    choice = fields.collect()
+                    value['key'] = choice.get('key', '')
+                    if choice and fields.binding:
+                        value['credential'] = choice
                 value = hosted_models.validate(value)
                 if not value.get('configured') and not value.get('has_key'):
                     if value['provider'] == 'amazon-bedrock' and value['method'] == 'iam':
                         if not value['access_key'] or not value['secret_key']: raise ValueError('Enter the AWS access key and secret key.')
-                    elif not value['key']: raise ValueError('Enter an API key.')
+                    elif not value['key'] and not value.get('credential'):
+                        fields.focus_key()
+                        raise ValueError('Enter an API key.')
                 self.dismiss(value)
             except ValueError as error:
                 self.query_one('#hosted-error',Static).update(str(error))
@@ -149,10 +176,16 @@ class HostedProviders(Vertical):
         for provider, value in {**self.saved, **self.changes}.items():
             row = Vertical(classes='hosted-row')
             await target.mount(row)
-            await row.mount(Static(hosted_models.PROVIDERS[provider],markup=False))
+            assignment = value.get('assignment')
+            await row.mount(Static(hosted_models.PROVIDERS[provider], markup=False))
+            if assignment:
+                await row.mount(Static(key_caption(assignment['label']), markup=False))
+            elif choice := value.get('credential'):
+                await row.mount(Static(choice_key_caption(hosted_models.credential_scope(value), choice), markup=False))
             buttons = Horizontal(classes='buttons')
             await row.mount(buttons)
-            await buttons.mount(Button('Connection…',name='edit:'+provider), Button('Remove',name='remove:'+provider))
+            edit_label = 'Change key…' if self.sandbox_name and provider in hosted_models.ENDPOINTS else 'Connection…'
+            await buttons.mount(Button(edit_label,name='edit:'+provider), Button('Remove',name='remove:'+provider))
             if self.sandbox_name: await buttons.mount(Button('Choose model…',name='model:'+provider))
         self.query_one('#hosted-add',Button).disabled = self.busy
         self.post_message(self.Changed())

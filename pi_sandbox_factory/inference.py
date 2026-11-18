@@ -11,6 +11,19 @@ PORT = 19431
 SENTINEL = 'factory-inference'
 
 
+def local_route_id(port):
+    return f'local-{port}'
+
+
+def local_route(port):
+    return {
+        'origin': f'http://local-model.internal:{port}', 'local': True,
+        'auth': {'type': 'bearer'}, 'basePath': '/v1',
+        'operations': [{'method': 'GET', 'path': path} for path in ('/v1/models', '/props', '/server_info')]
+        + [{'method': 'POST', 'path': '/v1/chat/completions'}],
+    }
+
+
 def names(config):
     name = 'pi-sandbox-factory-' + config['name'] + '-inference'
     return name, name + '-socket', name + '-keys'
@@ -18,19 +31,27 @@ def names(config):
 
 def routes(config):
     """Declare the exact upstream operations available to this sandbox."""
+    from . import sandbox
     result = {}
+    if config.get('local_model_ports'):
+        result.update({local_route_id(port): local_route(port)
+                       for port in sandbox.local_model_ports(config['local_model_ports'])})
     def op(method, path, query=None):
         return {'method': method, 'path': path, **({'query': query} if query else {})}
     for provider, value in config.get('hosted_connections', {}).items():
         auth = {'type': 'bearer'}
+        credential_check = None
         if provider == 'openrouter':
             origin = 'https://openrouter.ai'
+            prefix = '/api/v1'
+            credential_check = op('GET', '/api/v1/key')
             operations = [op('POST', '/api/v1/chat/completions'), op('POST', '/api/v1/responses'),
                           op('POST', '/api/v1/messages', {'beta': ['true']}),
                           {**op('POST', '/api/v1/v1/messages', {'beta': ['true']}), 'upstreamPath': '/api/v1/messages'},
                           op('GET', '/api/v1/models'), op('GET', '/api/v1/models/user')]
         elif provider == 'together':
             origin = 'https://api.together.xyz'
+            prefix = '/v1'
             operations = [op('POST', '/v1/chat/completions'), op('GET', '/v1/models')]
         elif provider == 'azure':
             endpoint = urlsplit(value['endpoint'])
@@ -44,12 +65,15 @@ def routes(config):
             region = value['region']
             suffix = 'amazonaws.com.cn' if region.startswith('cn-') else 'amazonaws.com'
             origin = f'https://bedrock-runtime.{region}.{suffix}'
+            prefix = ''
             if value.get('method') == 'iam':
                 auth = {'type': 'sigv4', 'region': region}
             operations = [op('POST', '/model/{model}/converse-stream')]
         else:
             raise ValueError('Unknown hosted provider.')
-        result[provider] = {'origin': origin, 'auth': auth, 'operations': operations}
+        result[provider] = {'origin': origin, 'auth': auth, 'operations': operations, 'basePath': prefix}
+        if credential_check:
+            result[provider]['credentialCheck'] = credential_check
     for row in config.get('model_providers', []):
         route = row['manifest'].get('inference')
         if route:
@@ -134,6 +158,8 @@ def up(config, state):
                 '-v', socket + ':/run/inference:z', '-v', keys + ':/private:z', '-v', str(target) + ':/config:ro,Z']
         if config['engine'] == 'podman':
             args += ['--userns=keep-id:uid=1000,gid=1000']
+        if config.get('local_model_ports'):
+            args += ['-v', sandbox.names(config)[2] + ':/run/egress:ro,z']
         subprocess.run(args + [image()], check=True, capture_output=True)
     for _ in range(80):
         result = subprocess.run([config['engine'], 'exec', worker, 'node', '-e',

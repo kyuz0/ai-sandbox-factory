@@ -23,11 +23,13 @@ from pi_sandbox_factory import sandbox, registry, host_platform
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
 from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, settings_effects, web_access
-from textual.widgets import Collapsible, Input, Static, OptionList, Select, RichLog
+from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
 from pi_sandbox_factory.models_ui import ProviderDialog, ModelDialog
+from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
+from pi_sandbox_factory import hosted_models, inference, provider_credentials
 from pi_sandbox_factory.communications_ui import SlackCredentials
 from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields
 
@@ -39,6 +41,9 @@ class ReviewService(FakeService):
 
     def hosted_request(self, *args, **kw):
         return ModelService.hosted_request(self, *args, **kw) if self.populated else {'providers': [], 'models': []}
+
+    def provider_key_status(self, name):
+        return {'configured': ['company'], 'assignments': {'company': {'ref': 'a'*32, 'label': 'Work'}}}
 out = Path(args.output)
 out.mkdir(exist_ok=True, parents=True)
 coverage = []
@@ -85,6 +90,86 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('local-key-') for name in args.only):
+                    ports = [8000, 8080, 8081]
+                    binding = provider_credentials.scope('local', inference.local_route(8000))
+                    work = 'a' * 32
+                    status = {'configured': ['local-8000', 'local-8080'],
+                              'assignments': {'local-8000': {'ref': work, 'label': 'Work'}}}
+                    with patch.object(provider_credentials, 'entries', side_effect=lambda scope:
+                                      {work: {'label': 'Work', 'scope': binding}} if scope == binding else {}):
+                        draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                        draft.update(name='demo', workspace=str(workspace), local_model_ports='8000,8080-8081')
+                        await shot('local-key-create', SettingsForm(draft), focus='#local-server-keys')
+                        await shot('local-key-settings', ModelsScreen({**record, 'config':{**c, 'local_model_ports':'8000,8080-8081'}}),
+                                   focus='#local-server-keys')
+                        await shot('local-key-ports', LocalKeysDialog(ports, draft={}), focus='#local-key-port')
+                        await shot('local-key-assigned', LocalKeysDialog(ports, status=status), focus='#local-key-choose')
+                        if 'local-key-menu' in args.only:
+                            await app.push_screen(LocalKeysDialog(ports, status=status))
+                            await pilot.pause()
+                            app.screen.query_one('#local-key-port', Select).focus()
+                            await pilot.press('enter')
+                            await shot('local-key-menu')
+                            await app.pop_screen()
+                        await shot('local-key-selected', LocalKeysDialog(ports, draft={8000: {'ref':work}}), focus='#local-key-choose')
+                        await shot('local-key-change', CredentialDialog('Local server · port 8000', binding,
+                            choice={'ref': work}), focus='#saved-key')
+                        if 'local-key-invalid' in args.only:
+                            draft['local_model_ports'] = '8080-8000'
+                            await app.push_screen(SettingsForm(draft, section='hosted-section'))
+                            await pilot.pause()
+                            app.screen.query_one('#local-server-keys', Button).focus()
+                            await pilot.press('enter')
+                            await shot('local-key-invalid')
+                            await app.pop_screen()
+                    return
+                if args.only and all(name.startswith('provider-key-') for name in args.only):
+                    hosted = hosted_models.credential_scope({'provider': 'openrouter'})
+                    route = {'origin':'https://models.example.test', 'basePath':'/api',
+                             'auth':{'type':'bearer'}, 'operations':[{'method':'GET', 'path':'/api/models'}]}
+                    company = provider_credentials.scope('company', route)
+                    work, personal = 'a'*32, 'b'*32
+                    def records(binding):
+                        if binding in (hosted, company):
+                            return {work:{'label':'Work', 'scope':binding}, personal:{'label':'Personal', 'scope':binding}}
+                        return {}
+                    manifest = {'description':'Company models', 'inference':route,
+                                'settings':{'key':{'type':'secret','label':'Company API key'}}}
+                    row = {'name':'company', 'manifest':manifest, 'settings':{}}
+                    with patch.object(provider_credentials, 'entries', side_effect=records):
+                        await shot('provider-key-hosted', ProviderDialog({
+                            'credential':{'key':'synthetic-key', 'label':'Work'}}), focus='#remember-key')
+                        await shot('provider-key-hosted-new', ProviderDialog(), focus='#saved-key')
+                        await shot('provider-key-plugin', CredentialDialog('Company models', company, active=True),
+                                   focus='#saved-key')
+                        await shot('provider-key-plugin-saved', CredentialDialog('Company models', company,
+                            choice={'ref': work}, active=True), focus='#saved-key')
+                        await shot('provider-key-replace', CredentialDialog('Company models', company,
+                            choice={'key':'synthetic-key','label':'Work','replace':work}, active=True), focus='#replace-key')
+                        if 'provider-key-error' in args.only:
+                            await app.push_screen(CredentialDialog('Company models', company))
+                            await pilot.pause()
+                            app.screen.query_one('#credential-apply').focus()
+                            await pilot.press('enter')
+                            await pilot.pause(0.3)
+                            await shot('provider-key-error')
+                            await app.pop_screen()
+                        await shot('provider-key-settings',
+                            ModelsScreen({**record, 'config':{**c, 'model_providers':[row]}}), focus='#provider-change-key')
+                        if 'provider-key-create' in args.only:
+                            resolve = registry.resolve
+                            with patch.object(registry, 'choices', side_effect=lambda kind:
+                                {'company':'Company models'} if kind == 'provider' else {'base':'Generic tools'}), \
+                                 patch.object(registry, 'manifest', return_value=manifest), \
+                                 patch.object(registry, 'resolve', side_effect=lambda kind,name:
+                                    root if kind == 'provider' else resolve(kind,name)):
+                                draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                                draft.update(name='demo', workspace=str(workspace), model_providers={'company': {}})
+                                await shot('provider-key-create', SettingsForm(draft), focus='#source-company-key')
+                                draft['_provider_credential_choices'] = {'company': {'ref': work}}
+                                await shot('provider-key-create-selected', SettingsForm(draft), focus='#source-company-key')
+                    return
                 await shot('home')
                 with patch.object(host_platform, 'is_mac', return_value=False), \
                         patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/pipx' if name == 'pipx' else None), \

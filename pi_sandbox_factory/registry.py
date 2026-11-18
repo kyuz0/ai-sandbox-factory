@@ -110,6 +110,16 @@ def manifest(kind, path):
                 raise ValueError("Provider plugins support bearer or API-key header authentication")
             if not isinstance(route.get("operations"),list) or not route["operations"]:
                 raise ValueError("Declare the inference and discovery operations")
+            check = route.get("credentialCheck")
+            if "local" in route:
+                raise ValueError("Local inference routes are managed by Factory")
+            if check is not None and (
+                not isinstance(check, dict) or set(check) != {"path"}
+                or not isinstance(check["path"], str)
+                or not re.fullmatch(r"/[A-Za-z0-9_./-]+", check["path"])
+                or ".." in check["path"] or "//" in check["path"]
+            ):
+                raise ValueError("Credential check must declare a fixed authenticated GET path")
         for key in ("extensions", "skills"):
             if not isinstance(data.get(key, []), list) or any(
                 not isinstance(entry, str) or not entry for entry in data.get(key, [])

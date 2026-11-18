@@ -145,6 +145,25 @@ Additional folders require Docker Engine 25+ when using Docker.
 Separately mounted filesystems nested inside an added host folder are excluded;
 add each filesystem as its own folder if needed.
 
+## Saved model keys
+
+In **Model Providers**, use **Choose key…** or **Change key…** for a managed
+provider, or connect a hosted service. Choose a saved key for that endpoint or
+enter a new one. Select **Remember on this computer** and name the key to reuse
+it in other sandboxes. Factory uses macOS Keychain or a Linux Secret Service
+when available. WSL can use an available Linux Secret Service.
+
+Each sandbox has its own active key in its inference companion. Factory checks a
+replacement before assigning it. Subsequent requests use the new assignment
+without recreating the development container. Replacing or forgetting a saved
+key affects the workstation picker. Other sandboxes keep their current copies
+until you change or disconnect their assignments.
+
+The workstation index stores names and endpoints. The inference companion
+stores its active keys in a permission-restricted, unencrypted file in its
+private volume. Pi and Pendant connect through the inference proxy with
+placeholder credentials.
+
 ## Local models
 
 During creation or in **Settings → Model Providers → Local models & provider plugins**,
@@ -152,6 +171,13 @@ enable **Connect to models on this computer** and enter the server ports, such a
 Factory uses [Pi Local Model Manager](https://github.com/kyuz0/pi-local-model-manager)
 to discover models and configure their context, image and thinking support in
 Pi and Pendant.
+
+If a local server requires a bearer API key, open **Local server keys…** and
+choose its port. Enter a key or pick a saved key for that port. Leave the other
+ports empty if their servers allow anonymous requests. Factory checks the key
+with that server's `/v1/models` endpoint and supplies it for discovery and chat.
+For a sandbox created before this feature, use **Actions → Update sources and
+recreate…** once. Later key changes take effect on the next request.
 
 Choose a model in Pendant’s picker or with `/model`. After changing the running
 model, use `/local-models refresh` or **Settings → Model Providers → Refresh**.

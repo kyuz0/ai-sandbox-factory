@@ -468,6 +468,19 @@ async function main() {
     console.log('PASS fresh actual Pendant startup: initial model available and selected before any slash command');
     return;
   }
+  if (process.argv.includes('--local-server-keys')) {
+    const expected = JSON.parse(process.env.TEST_LOCAL_MODELS);
+    await request({ type: 'session_prompt', text: '/local-models refresh', images: [], source: 'interactive' }, 'inventory');
+    const local = await request({ type: 'models_list', cwd: sessionCwd });
+    for (const [provider, modelId] of expected) {
+      assert(JSON.stringify(local).includes(modelId), 'Missing local model: ' + modelId);
+      await request({ type: 'session_set_model', provider, modelId, persist: false }, 'inventory');
+      await request({ type: 'session_prompt', text: 'Return the synthetic response.', images: [], source: 'interactive' }, 'inventory');
+      await waitForReply('inventory', 'LOCAL_MODEL_KEY_OK_' + modelId);
+    }
+    console.log('PASS actual Pendant refresh and chat with separate authenticated and public ports');
+    return;
+  }
   if (process.argv.includes('--discovery')) {
     const file = '/home/node/.pi/agent/models.json';
     const before = fs.readFileSync(file, 'utf8');
@@ -478,7 +491,9 @@ async function main() {
     assert(JSON.stringify(state.messages).includes('Local models'), JSON.stringify(state));
     const models = await request({ type: 'models_list', cwd: sessionCwd });
     assert(JSON.stringify(models).includes('Qwen3.8-27B-UD-Q4_K_XL'), JSON.stringify(models));
-    assert(Object.values(JSON.parse(fs.readFileSync(file)).providers).some(p => p.baseUrl === 'http://local-model.internal:8000/v1'));
+    const discovery = JSON.parse(fs.readFileSync('/home/node/.pi/agent/local-pi-models.json'));
+    const baseUrl = discovery.gateway?.replace('{port}', '8000') || 'http://local-model.internal:8000';
+    assert(Object.values(JSON.parse(fs.readFileSync(file)).providers).some(p => p.baseUrl === baseUrl + '/v1'));
     console.log('PASS actual Pendant discovery preview, refresh and model catalogue');
     return;
   }

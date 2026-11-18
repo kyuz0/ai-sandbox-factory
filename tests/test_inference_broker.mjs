@@ -6,12 +6,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {compileRoutes,createBroker} from '../pi_sandbox_factory/containers/inference/broker.mjs';
-import {readCredentials,updateCredentials} from '../pi_sandbox_factory/containers/inference/credentials.mjs';
+import {checkCredential,readCredentials,updateCredentials} from '../pi_sandbox_factory/containers/inference/credentials.mjs';
 
 const listen = server => new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
 const close = server => {server.closeAllConnections();return new Promise(resolve=>server.close(resolve));};
 const secret = 'fixture-secret-that-must-stay-private';
 const operation = {method:'POST',path:'/v1/chat/completions'};
+
+test('HTTP model routes are limited to a matching local gateway port', () => {
+  const route = { local:true, origin:'http://local-model.internal:8000', auth:{type:'bearer'}, operations:[operation] };
+  assert.equal(compileRoutes({'local-8000':route}).size, 1);
+  assert.throws(() => compileRoutes({'local-8001':route}), /local model route/);
+  assert.throws(() => compileRoutes({'local-8000':{...route,origin:'http://192.0.2.80:8000'}}), /local model route/);
+  assert.throws(() => compileRoutes({'local-8000':{...route,local:false}}), /Invalid upstream origin/);
+});
 async function setup(t, handler, options={}) {
   const received=[];
   const source=http.createServer((req,res)=>{let body='';req.on('data',b=>body+=b);req.on('end',()=>{received.push({path:req.url,headers:req.headers,body});handler(req,res,body);});});
@@ -37,6 +45,61 @@ test('credential storage replaces atomically, reports names only, and removes co
   assert.equal(readCredentials(file).sample.key,undefined);
   updateCredentials(file,{id:'sample',remove:true});assert.deepEqual(readCredentials(file),{});
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('candidate verification uses its fixed route without following a redirect', async t => {
+  let redirected = 0;
+  const target = http.createServer((_req, res) => { redirected++; res.end(); });
+  await listen(target);
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push([req.method, req.url, req.headers.authorization]);
+    if (req.headers.authorization === 'Bearer redirect') {
+      res.writeHead(302, { location: 'http://127.0.0.1:' + target.address().port }).end();
+    } else {
+      res.writeHead(req.headers.authorization === 'Bearer accepted' ? 200 : 401).end();
+    }
+  });
+  await listen(upstream);
+  t.after(async () => { await close(upstream); await close(target); });
+  const route = {origin:'http://127.0.0.1:' + upstream.address().port, auth:{type:'bearer'},
+    operations:[{method:'GET',path:'/api/v1/models',query:{model_type:['ALL_TEXT']}}]};
+  assert.equal(await checkCredential(route, 'accepted'), 'accepted');
+  assert.equal(await checkCredential(route, 'bad-key'), 'rejected');
+  assert.equal(await checkCredential(route, 'redirect'), 'unavailable');
+  assert(seen.every(([method, url]) => method === 'GET' && url === '/api/v1/models?model_type=ALL_TEXT'));
+  assert.equal(redirected, 0);
+});
+
+test('the next request uses the new assignment and a different path cannot reuse it', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-keys-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  const file = path.join(dir, 'credentials.json');
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push(req.headers.authorization);
+    req.resume();
+    res.end('ok');
+  });
+  await listen(upstream);
+  const origin = 'http://127.0.0.1:' + upstream.address().port;
+  const route = {origin, basePath:'/v1', auth:{type:'bearer'}, operations:[operation]};
+  const routes = compileRoutes({sample:route, other:{...route, basePath:'/other'}}, {allowHttpFixture:true});
+  const proxy = createBroker(routes, () => readCredentials(file).sample);
+  await listen(proxy);
+  t.after(async () => { await close(proxy); await close(upstream); });
+  const request = {id:'sample', origin, basePath:'/v1', auth:'bearer', authHeader:null};
+  const send = id => fetch('http://127.0.0.1:' + proxy.address().port + '/r/' + id + '/v1/chat/completions',
+    {method:'POST', body:'{}'});
+  const work = {ref:'a'.repeat(32),label:'Work'};
+  const test = {ref:'b'.repeat(32),label:'Test'};
+  updateCredentials(file, {...request, credentials:{key:'work-key'}, assignment:work});
+  await (await send('sample')).text();
+  updateCredentials(file, {...request, credentials:{key:'test-key'}, assignment:test});
+  await (await send('sample')).text();
+  assert.deepEqual(readCredentials(file).sample.assignment, test);
+  assert.equal((await send('other')).status, 503);
+  assert.deepEqual(seen, ['Bearer work-key', 'Bearer test-key']);
 });
 
 test('route configuration requires a fixed HTTPS origin and declared authentication',()=>{

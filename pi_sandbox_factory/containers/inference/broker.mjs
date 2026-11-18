@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {pipeline} from 'node:stream';
 import {SignatureV4} from '@smithy/signature-v4';
 import {Sha256} from '@aws-crypto/sha256-js';
-import {readCredentials} from './credentials.mjs';
+import {localGatewayOptions, readCredentials} from './credentials.mjs';
 
 const requestHeaders = ['content-type', 'accept', 'anthropic-version', 'anthropic-beta'];
 const responseHeaders = ['content-type', 'content-encoding', 'retry-after'];
@@ -16,7 +16,10 @@ export function compileRoutes(values, {allowHttpFixture=false}={}) {
   for (const [id, value] of Object.entries(values)) {
     if (!idPattern.test(id)) throw Error('Invalid route ID.');
     const origin = new URL(value.origin);
-    if ((origin.protocol !== 'https:' && !(allowHttpFixture && origin.protocol === 'http:')) ||
+    const local = value.local === true;
+    if (local && (origin.protocol !== 'http:' || origin.hostname !== 'local-model.internal' ||
+        id !== 'local-' + (origin.port || '80') || value.auth.type !== 'bearer')) throw Error('Invalid local model route.');
+    if ((origin.protocol !== 'https:' && !local && !(allowHttpFixture && origin.protocol === 'http:')) ||
         origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw Error('Invalid upstream origin.');
     if (!['bearer', 'header', 'sigv4'].includes(value.auth.type)) throw Error('Invalid authentication type.');
     if (value.auth.type === 'header' && !['api-key', 'x-api-key'].includes(value.auth.header)) throw Error('Invalid authentication header.');
@@ -101,9 +104,12 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
       for (const [key,value] of query) {
         if (!op.query?.[key]?.includes(value) || query.getAll(key).length !== 1) return fail(res,400);
       }
-      const secret = credentials(match[1]);
-      if (secret?.origin !== route.origin.origin) return fail(res,503);
-      if (route.auth.type === 'sigv4' ? !(secret?.accessKeyId && secret.secretAccessKey) : !secret?.key) return fail(res,503);
+      const secret = credentials(match[1]) || {};
+      if ((!route.local || secret.key) && secret.origin !== route.origin.origin) return fail(res,503);
+      if (secret.scope && (secret.scope.basePath !== (route.basePath ?? '') ||
+          secret.scope.auth !== route.auth.type || secret.scope.header !== (route.auth.header ?? null)))
+        return fail(res,503);
+      if (!route.local && (route.auth.type === 'sigv4' ? !(secret.accessKeyId && secret.secretAccessKey) : !secret.key)) return fail(res,503);
       if (Number(req.headers['content-length']) > maxBody) return fail(res,413);
       active++; counted = true;
       if (totalMs > 0) deadline = setTimeout(() => { fail(res,504); cleanup(); },totalMs);
@@ -140,10 +146,17 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
           method:req.method,path:upstreamPath,query:Object.fromEntries(query),headers,body});
         headers = signed.headers;
       } else if (route.auth.type === 'header') headers[route.auth.header] = secret.key;
-      else headers.authorization = 'Bearer '+secret.key;
+      else if (secret.key) headers.authorization = 'Bearer '+secret.key;
+      else if (route.local && req.headers.authorization && req.headers.authorization !== 'Bearer not-needed') {
+        // A manually configured Pi key still works on its fixed local port.
+        headers.authorization = req.headers.authorization;
+      }
       if (finished) return;
-      upstream = (url.protocol === 'https:' ? https : http).request({protocol:url.protocol,hostname:url.hostname,port:url.port,
-        method:req.method,path:upstreamPath+(match[3] ? '?'+match[3] : ''),headers,timeout:idleMs}, async response => {
+      const upstreamRequestPath = upstreamPath+(match[3] ? '?'+match[3] : '');
+      const destination = route.local ? localGatewayOptions(url, upstreamRequestPath)
+        : {protocol:url.protocol,hostname:url.hostname,port:url.port,path:upstreamRequestPath};
+      upstream = (url.protocol === 'https:' ? https : http).request({
+        ...destination, method:req.method, headers, timeout:idleMs}, async response => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           if (response.headers['retry-after']) res.setHeader('retry-after',response.headers['retry-after']);
           const status=response.statusCode;

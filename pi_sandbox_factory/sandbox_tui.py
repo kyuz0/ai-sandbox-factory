@@ -22,7 +22,9 @@ from .settings_catalog import CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_P
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm
 from .models_ui import HostedProviders
-from . import hosted_models
+from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
+                             assigned_key_caption, choice_key_caption, key_caption)
+from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
 from .skills_ui import SkillSelection, SkillLibraryScreen
@@ -245,8 +247,10 @@ class Service:
         config = self.config(name)
         if action == 'status':
             from . import inference
-            connected = inference.credentials(config, self.state / name, {'status': True})['configured'] if inference.enabled(config) else []
-            return {'providers': [{'provider': provider, 'configured': provider in connected, 'has_key': provider in connected, **value}
+            status = inference.credentials(config, self.state / name, {'status': True}) if inference.enabled(config) else {'configured': []}
+            connected = status['configured']
+            return {'providers': [{'provider': provider, 'configured': provider in connected, 'has_key': provider in connected,
+                                    'assignment': status.get('assignments', {}).get(provider), **value}
                                   for provider, value in config.get('hosted_connections', {}).items()]}
         return hosted_models.request(config, action, **values)
 
@@ -273,8 +277,15 @@ class Service:
             log('Slack credentials saved in the sandbox.')
 
     def setup(self, name, draft, key, log):
+        if local_keys := draft.get('_local_model_keys'):
+            config = self.config(name)
+            for port, choice in local_keys.items():
+                provider_credentials.assign(config, self.state / name, inference.local_route_id(port), **choice)
+            log('Local server keys assigned.')
         for provider, credential in draft.get('_provider_keys', {}).items():
             self.provider(name, provider, 'refresh', credential, log)
+        for provider, choice in draft.get('_provider_credential_choices', {}).items():
+            self.assign_provider_key(name, provider, choice, log)
         self.save_communication_keys(name, draft.get('_communication_keys'), log)
         if key:
             result = subprocess.run(self.command('web-key', name, '--keys-stdin'), input=json.dumps(key), text=True, capture_output=True)
@@ -292,6 +303,36 @@ class Service:
         log(safe_text(result.stdout))
         if action not in ('status','preview'):
             log('Reload an open Pi/Pendant session before selecting newly discovered models.')
+
+    def provider_key_status(self, name, *, local=False):
+        config = self.config(name)
+        if local:
+            dev = sandbox.names(config)[0]
+            runtime = sandbox.inspect(config, dev)
+            if not runtime or not runtime['State']['Running']:
+                raise ValueError('Start the sandbox to manage its local server keys.')
+            result = subprocess.run([config['engine'], 'exec', dev, 'node', '-e',
+                "const fs=require('fs');const config=JSON.parse(fs.readFileSync(process.env.PI_CODING_AGENT_DIR+"
+                "'/local-pi-models.json'));if(!config.gateway)process.exit(1);"],
+                capture_output=True, text=True, timeout=15)
+            if result.returncode:
+                raise ValueError('Use Actions → Update sources and recreate… to enable local server keys.')
+        return inference.credentials(config, self.state / name, {'status': True})
+
+    def assign_provider_key(self, name, provider, choice, log):
+        config = self.config(name)
+        state = self.state / name
+        local = bool(inference.routes(config).get(provider, {}).get('local'))
+        status = self.provider_key_status(name, local=local)
+        assignment = provider_credentials.assign(config, state, provider, **choice)
+        if provider not in status['configured']:
+            self.provider(name, 'local' if local else provider, 'refresh', None, log)
+        log('API key assigned. Subsequent requests use it.')
+        return assignment
+
+    def disconnect_provider_key(self, name, provider):
+        from . import inference
+        return inference.credentials(self.config(name), self.state / name, {'id': provider, 'remove': True})
 
     def update(self, name, draft, key, log):
         changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
@@ -1255,6 +1296,11 @@ class ModelsScreen(Screen):
     BINDINGS=[('escape','back','Back')]
     def __init__(self,record,finished=None):
         super().__init__();self.record=record;self.finished=finished
+        self.key_status = {}
+        self.providers = {row['name']: row['manifest'] for row in record['config'].get('model_providers', [])}
+
+    def credential_binding(self, name):
+        return provider_credentials.scope(name, self.providers.get(name, {}).get('inference'))
     def compose(self):
         rows=self.record['config'].get('model_providers',[{'name':'local','manifest':{}}])
         yield Header()
@@ -1266,6 +1312,9 @@ class ModelsScreen(Screen):
                 yield Static('On · server ports ' + ports if ports else 'Off', markup=False)
                 yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
                 yield Static('Changing local access or provider plugins recreates the sandbox.', classes='setting-help')
+            if ports:
+                with Vertical(classes='setting'):
+                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
             yield HostedProviders(self.record['name'])
             yield Label('Model discovery and credentials', classes='group-title')
             if not rows:
@@ -1275,11 +1324,14 @@ class ModelsScreen(Screen):
                 with Vertical(classes='setting'):
                     yield Label('Model provider')
                     yield Select([(r['manifest'].get('description',r['name']),r['name']) for r in rows],id='model-provider',allow_blank=not rows,value=rows[0]['name'] if rows else Select.NULL,disabled=not rows)
-                with Vertical(classes='setting'):
+                with Vertical(classes='setting', id='legacy-provider-key'):
                     yield Label('Provider credential · when required')
                     with Horizontal(classes='path-row'):
                         yield Input(password=True,id='provider-key',disabled=not rows)
                         yield Button('Configure',id='provider-auth',disabled=not rows)
+                with Vertical(classes='setting', id='managed-provider-key'):
+                    yield Static(key_caption(), id='assigned-provider-key', markup=False)
+                    yield Button('Change key…', id='provider-change-key')
                 with Horizontal(classes='buttons'):
                     yield Button('Status',id='provider-status',disabled=not rows)
                     yield Button('Preview',id='provider-preview',disabled=not rows)
@@ -1290,6 +1342,52 @@ class ModelsScreen(Screen):
 
     def on_mount(self):
         self.query_one('#model-sources', Button).focus()
+        self.show_key_status()
+        if any(self.credential_binding(name) for name in self.providers):
+            self.load_key_status()
+
+    @on(Select.Changed, '#model-provider')
+    def show_key_status(self):
+        provider = self.query_one('#model-provider', Select).value
+        managed = bool(self.credential_binding(provider))
+        self.query_one('#legacy-provider-key').display = not managed and provider not in ('local', Select.NULL)
+        self.query_one('#managed-provider-key').display = managed
+        self.query_one('#assigned-provider-key', Static).update(assigned_key_caption(self.key_status, provider))
+
+    @work(exclusive=True)
+    async def load_key_status(self):
+        try:
+            self.key_status = await asyncio.to_thread(self.app.service.provider_key_status, self.record['name'])
+            self.show_key_status()
+        except (ValueError, OSError, subprocess.SubprocessError):
+            self.query_one('#assigned-provider-key', Static).update('Start the sandbox to view its assigned key.')
+
+    def change_key(self, provider, choice, label=None):
+        if choice is None:
+            return
+        service, name = self.app.service, self.record['name']
+        def task(log):
+            if choice.get('disconnect'):
+                service.disconnect_provider_key(name, provider)
+                log('API key disconnected from this sandbox.')
+            else:
+                service.assign_provider_key(name, provider, choice, log)
+        self.app.push_screen(Operation('API key · ' + (label or provider), task, done_on_success=True,
+                                      on_success=self.load_key_status))
+
+    @work(exclusive=True, group='local-server-keys')
+    async def open_local_keys(self):
+        try:
+            status = await asyncio.to_thread(self.app.service.provider_key_status, self.record['name'], local=True)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            self.notify(str(error), severity='error')
+            return
+        ports = sandbox.local_model_ports(self.record['config']['local_model_ports'])
+        def selected(selection):
+            if selection:
+                port, choice = selection
+                self.change_key(inference.local_route_id(port), choice, f'Local server · port {port}')
+        self.app.push_screen(LocalKeysDialog(ports, status=status), selected)
 
     @on(Button.Pressed)
     def pressed(self,event):
@@ -1299,9 +1397,18 @@ class ModelsScreen(Screen):
             if action=='model-sources':self.app.perform('model-sources', record=self.record)
             elif self.finished:self.finished()
             return
-        if action not in ('provider-status','provider-preview','provider-refresh','provider-auth'):return
+        if action == 'local-server-keys':
+            self.open_local_keys()
+            return
         selected=self.query_one('#model-provider',Select).value
         if selected is Select.NULL:return
+        if action == 'provider-change-key':
+            provider = self.providers[selected]
+            self.app.push_screen(CredentialDialog(provider.get('description', selected),
+                self.credential_binding(selected), active=selected in self.key_status.get('configured', ())),
+                lambda choice: self.change_key(selected, choice))
+            return
+        if action not in ('provider-status','provider-preview','provider-refresh','provider-auth'):return
         key=self.query_one('#provider-key',Input).value if action=='provider-auth' else None
         if action=='provider-auth' and not key.strip():self.notify('Enter the provider credential first.',severity='error');return
         self.query_one('#provider-key',Input).value=''
@@ -1891,6 +1998,8 @@ class SettingsForm(Screen):
     def __init__(self, draft, editing=False, defaults=False, search_keys=None, section=None, setting=None):
         super().__init__(classes='settings-review' if not editing and not defaults else None)
         self.draft, self.editing, self.defaults_mode = draft, editing, defaults
+        self.provider_key_choices = dict(draft.get('_provider_credential_choices', {}))
+        self.local_key_choices = dict(draft.get('_local_model_keys', {}))
         self.setting = setting
         self.initial_section = EDIT_FORMS[setting].section if setting else section
         self.search_keys = search_keys
@@ -1956,8 +2065,11 @@ class SettingsForm(Screen):
             with Vertical(classes='setting', id='model-port-setting'):
                 yield Label('Server ports · comma-separated ports or ranges')
                 yield Input(value.get('local_model_ports') or '8000', id='model-ports')
-                yield Static('Use the ports of your running model servers, for example 8000,8080-8082.', classes='setting-help')
                 yield Feedback('', id='model-ports-error', markup=False)
+                yield Static('For example, 8000,8080-8082.', classes='setting-help')
+            if not self.editing and not self.defaults_mode:
+                with Vertical(classes='setting local-keys-action'):
+                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
             if not self.editing and not self.defaults_mode:
                 yield HostedProviders(changes=value.get('_hosted_changes'))
             elif self.setting != 'model-sources':
@@ -1980,6 +2092,13 @@ class SettingsForm(Screen):
                     secret = spec['type']=='secret'
                     if secret and (self.editing or self.defaults_mode):continue
                     with Vertical(classes='setting provider-setting' + (' -provider-disabled' if name not in configured else '')):
+                        if secret and (binding := provider_credentials.scope(name, info.get('inference'))):
+                            choice = self.provider_key_choices.get(name)
+                            yield Static(choice_key_caption(binding, choice), id='source-key-label-'+name, markup=False)
+                            yield Button('Change key…' if choice else 'Choose key…',
+                                         id='source-'+name+'-'+key, name='provider-key:'+name,
+                                         disabled=name not in configured)
+                            continue
                         yield Label(spec.get('label',key))
                         yield Input('' if secret else configured.get(name,{}).get(key,spec.get('default','')),
                                     password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
@@ -1987,7 +2106,7 @@ class SettingsForm(Screen):
                             yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
                                          + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
                             yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
-            yield Static('Install additional providers from the home screen’s Library… button.', classes='setting-help')
+            yield Static('Add providers from Library…', classes='setting-help')
 
     def compose_editor_settings(self, category, value, selected):
         if not self.editing:
@@ -2109,6 +2228,8 @@ class SettingsForm(Screen):
     def local_models_changed(self):
         disabled = not self.query_one('#local-models', Checkbox).value
         self.query_one('#model-ports', Input).disabled = disabled
+        for button in self.query('#local-server-keys'):
+            button.parent.display = not disabled
         self.query_one('#model-port-setting').set_class(disabled, '-provider-disabled')
         self.query_one('#model-ports-error', Feedback).update('')
         self.models_summary()
@@ -2116,6 +2237,19 @@ class SettingsForm(Screen):
     @on(Input.Changed, '#model-ports')
     def local_ports_changed(self):
         self.query_one('#model-ports-error', Feedback).update('')
+
+    def checked_local_ports(self):
+        field = self.query_one('#model-ports', Input)
+        try:
+            if not field.value.strip():
+                raise ValueError('Enter at least one server port, or turn off local models.')
+            return sandbox.local_model_ports(field.value.strip())
+        except ValueError as error:
+            self.query_one('#model-ports-error', Feedback).update(str(error))
+            self.query_one('#hosted-section', Collapsible).collapsed = False
+            field.focus()
+            self.call_after_refresh(field.parent.scroll_visible, animate=False)
+            raise
 
     @on(HostedProviders.Changed)
     def models_summary(self):
@@ -2219,10 +2353,13 @@ class SettingsForm(Screen):
         draft['local_model_ports'] = inp('model-ports') if check('local-models') else None
         draft['model_providers'] = {'local':{}} if check('local-models') else {}
         draft.pop('_provider_keys', None)
+        draft.pop('_provider_credential_choices', None)
+        draft.pop('_local_model_keys', None)
         provider_rules=[]
         if not self.editing and not self.defaults_mode:
             draft['_hosted_changes'] = dict(self.query_one(HostedProviders).changes)
             draft['_provider_keys'] = {}
+            draft['_provider_credential_choices'] = {}
         for name,info in self.provider_forms.items():
             if check('source-'+name):
                 settings={key:inp('source-'+name+'-'+key) for key,spec in info.get('settings',{}).items() if spec['type']!='secret'}
@@ -2230,7 +2367,12 @@ class SettingsForm(Screen):
                 provider_rules+=model_providers.required_rules([{'manifest':info,'settings':settings}])
                 if not self.editing and not self.defaults_mode:
                     for key,spec in info.get('settings',{}).items():
-                        if spec['type']=='secret' and (credential := inp('source-'+name+'-'+key)):
+                        if spec['type'] != 'secret':
+                            continue
+                        if provider_credentials.scope(name, info.get('inference')):
+                            if choice := self.provider_key_choices.get(name):
+                                draft['_provider_credential_choices'][name] = choice
+                        elif credential := inp('source-'+name+'-'+key):
                             if any(c in credential for c in '\r\n\0'):
                                 field = self.query_one('#source-'+name+'-'+key, Input)
                                 field.add_class('-invalid-credential')
@@ -2240,17 +2382,10 @@ class SettingsForm(Screen):
                                 raise ValueError(spec.get('label', key) + ': enter a single-line credential.')
                             draft['_provider_keys'][name] = credential
         if check('local-models'):
-            try:
-                if not draft['local_model_ports']:
-                    raise ValueError('Enter at least one server port, or turn off local models.')
-                sandbox.local_model_ports(draft['local_model_ports'])
-            except ValueError as error:
-                self.query_one('#model-ports-error', Feedback).update('Error: ' + str(error))
-                self.query_one('#hosted-section', Collapsible).collapsed = False
-                field = self.query_one('#model-ports', Input)
-                field.focus()
-                self.call_after_refresh(field.parent.scroll_visible, animate=False)
-                raise
+            ports = self.checked_local_ports()
+            if not self.editing and not self.defaults_mode and self.local_key_choices:
+                draft['_local_model_keys'] = {port: self.local_key_choices[port] for port in ports
+                                              if port in self.local_key_choices}
         if not self.editing and not self.defaults_mode:
             draft.update(self.query_one(FolderFields).collect(private_paths=[inp('pi-config')]))
         selected = options(draft.get('options'))
@@ -2326,6 +2461,17 @@ class SettingsForm(Screen):
         event.stop()
         action = event.button.id
         try:
+            if action == 'local-server-keys':
+                self.app.push_screen(LocalKeysDialog(self.checked_local_ports(), draft=self.local_key_choices),
+                                     self.choose_local_keys)
+                return
+            if (event.button.name or '').startswith('provider-key:'):
+                name = event.button.name.split(':', 1)[1]
+                info = self.provider_forms[name]
+                self.app.push_screen(CredentialDialog(info.get('description', name),
+                    provider_credentials.scope(name, info.get('inference')), choice=self.provider_key_choices.get(name)),
+                    lambda choice: self.choose_provider_key(name, event.button, choice))
+                return
             if action == 'back':
                 self.action_back()
             elif action == 'explain-approval':
@@ -2365,6 +2511,18 @@ class SettingsForm(Screen):
                 feedback = self.query_one('#form-error', Static)
                 feedback.update(str(error))
                 feedback.scroll_visible(animate=False)
+
+    def choose_provider_key(self, name, button, choice):
+        if choice is None:
+            return
+        self.provider_key_choices[name] = choice
+        button.label = 'Change key…'
+        binding = provider_credentials.scope(name, self.provider_forms[name].get('inference'))
+        self.query_one('#source-key-label-'+name, Static).update(choice_key_caption(binding, choice))
+
+    def choose_local_keys(self, choices):
+        if choices is not None:
+            self.local_key_choices = choices
 
     def submit(self, draft, key):
         service = self.app.service
@@ -2523,6 +2681,15 @@ class Cockpit(App):
     Button { height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
+    .key-dialog .key-dialog-fields { max-height: 65vh; }
+    .compact-terminal .key-dialog { height: 96%; max-height: 96%; }
+    .compact-terminal .key-dialog .key-dialog-fields { height: 1fr; max-height: 100%; }
+    .compact-terminal .key-dialog.-saved-key-selected,
+    .compact-terminal .key-dialog.-saved-key-selected .key-dialog-fields { height: auto; }
+    .compact-terminal .key-dialog #hosted-provider,
+    .compact-terminal .key-dialog .credential-key-input { margin: 0; }
+    .key-dialog #remember-key { margin: 0 0 1 2; }
+    .local-keys-action { margin: 0 0 1 2; }
     SSHScreen #ssh-hosts { height: 5; }
     #web-fields > .buttons { margin: 0 0 1 0; }
     #slack-controls { width: auto; }

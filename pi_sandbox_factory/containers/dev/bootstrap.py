@@ -289,7 +289,8 @@ for server in ('.vscode-server', '.vscode-server-insiders'):
 if os.environ.get('LOCAL_MODEL_PORTS'):
     discovery = agent / 'local-pi-models.json'
     value = json.loads(discovery.read_text()) if discovery.exists() else {}
-    value.update(host='local-model.internal', ports=os.environ['LOCAL_MODEL_PORTS'])
+    value.update(host='local-model.internal', ports=os.environ['LOCAL_MODEL_PORTS'],
+                 gateway='http://127.0.0.1:19431/r/local-{port}')
     temporary = discovery.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2)+'\n')
     temporary.chmod(0o600)

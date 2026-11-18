@@ -674,8 +674,12 @@ def local_model_ports(value):
             raise ValueError('Invalid local model port range')
         ends = list(map(int, part.split('-')))
         start, end = ends[0], ends[-1]
-        if start < 1 or end > 65535 or end < start or end-start >= 256:
-            raise ValueError('Invalid local model port range (maximum 256 ports)')
+        if not 1 <= start <= end <= 65535:
+            if end < start:
+                raise ValueError('Enter the lower port first in each range.')
+            raise ValueError('Enter ports from 1 to 65535.')
+        if end-start >= 256:
+            raise ValueError('Enter at most 256 local model ports.')
         ports.update(range(start,end+1))
     if len(ports)>256:
         raise ValueError('At most 256 local model ports')

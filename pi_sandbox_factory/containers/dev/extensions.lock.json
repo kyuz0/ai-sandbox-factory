@@ -3,7 +3,7 @@
   "extensions": {
     "pi-local-model-manager": {
       "repository": "https://github.com/kyuz0/pi-local-model-manager.git",
-      "commit": "c0395df7e5aca9f6df08f4dfba2dace1042dc805"
+      "commit": "45da144ab7973a4cc19c3a66232f307d553dfca5"
     },
     "pi-advisor": {
       "repository": "https://github.com/kyuz0/pi-advisor.git",

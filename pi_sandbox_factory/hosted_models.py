@@ -56,6 +56,13 @@ def connection(value):
     return {}
 
 
+def credential_scope(value):
+    from . import inference, provider_credentials
+    provider = value['provider']
+    route = inference.routes({'hosted_connections': {provider: connection(value)}})[provider]
+    return provider_credentials.scope(provider, route)
+
+
 def destinations(connections):
     # Inference goes through its companion. Pi fetches public model metadata here.
     return [('pi.dev', 443)] if connections else []
@@ -87,20 +94,37 @@ def request(config, action, **values):
 
 
 def save(config, state, value):
-    from . import inference, sandbox
+    from . import inference, provider_credentials, sandbox
     value = validate(value)
     request(config, 'status')  # Check the client container before changing a connection.
     state = Path(state)
     updated = copy.deepcopy(config)
     provider = value['provider']
     saved = connection(value)
+    choice = value.get('credential')
+    previous = config.get('hosted_connections', {}).get(provider)
+    if previous is not None and previous != saved and not any(
+            (choice, value['key'], value['access_key'], value['secret_key'])):
+        raise ValueError('Choose a key for the new endpoint or enter a new credential.')
+    if choice and previous == saved:
+        status = inference.credentials(config, state, {'status': True})
+        if provider in status['configured']:
+            assignment = provider_credentials.assign(config, state, provider, **choice)
+            activity.record(state, 'edited')
+            return {'provider': provider, 'configured': True, 'has_key': True,
+                    'assignment': assignment, **saved}
     updated.setdefault('hosted_connections', {})[provider] = saved
     credentials = ({'accessKeyId':value['access_key'], 'secretAccessKey':value['secret_key'], 'sessionToken':value['session_token']}
                    if provider == 'amazon-bedrock' and value['method'] == 'iam' else {'key':value['key']})
     route = inference.routes(updated)[provider]
     try:
         inference.up(updated, state)
-        inference.credentials(updated, state, {'id':provider, 'origin':route['origin'], 'auth':route['auth']['type'], 'credentials':credentials})
+        if choice:
+            assignment = provider_credentials.assign(updated, state, provider, **choice)
+        else:
+            inference.credentials(updated, state, {'id':provider, 'origin':route['origin'], 'auth':route['auth']['type'], 'credentials':credentials})
+            assignment = (inference.credentials(updated, state, {'status': True}).get('assignments', {}).get(provider)
+                          if previous == saved and not value['key'] and not value['access_key'] else None)
     except Exception as failure:
         try:
             if inference.enabled(config): inference.up(config, state)
@@ -114,7 +138,7 @@ def save(config, state, value):
         sandbox.update_network(updated, state, (state / 'allowlist.txt').read_text())
     activity.record(state, 'edited')
     reply = request(updated, 'configure', provider=provider, endpoint=inference.client_url(provider,saved), region=saved.get('region',''))
-    return {**reply, **saved}
+    return {**reply, **saved, 'assignment': assignment}
 
 
 def remove(config, state, provider):
