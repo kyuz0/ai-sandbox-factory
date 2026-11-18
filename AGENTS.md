@@ -97,8 +97,11 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   next required action. Derive change notices from the actual diff and selected
   client. Never show unrelated feature exceptions, credentials guidance or advice
   for clients the user is not using.
-- Keep multi-sentence explanations hidden by default behind a labeled help control
-  near the setting. Use natural, connected language in the help.
+- Keep short explanations beside their controls. Put longer explanations behind
+  a labeled help control near the setting. Use natural, connected language in
+  the help.
+- Preserve existing details when moving or condensing settings help or
+  documentation. Removing a detail requires explicit user authorization.
 - Render independent actions, effects and changed settings as separate bullets.
   Never compress a list into a paragraph or a semicolon-separated sentence.
   Use a short sentence only for one coherent fact.

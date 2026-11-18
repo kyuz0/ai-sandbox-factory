@@ -22,6 +22,7 @@ with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
         if not (parts[0] == "packages" or str(relative) in (
             "package.json", "package-lock.json", "LICENSE",
             "scripts/prepare-container.py", "scripts/container-sources.json",
+            "scripts/permission-system-review.patch",
         )):
             continue
         if entry.isdir():

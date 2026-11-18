@@ -9,10 +9,10 @@ import threading
 
 mode = os.environ['SANDBOX_APPROVAL_MODE']
 label = {
-    'automatic': 'Automatic (non-interactive)',
-    'assisted': 'Automatic (interactive)',
-    'manual': 'Manual (ask me)',
-    'off': 'No approval prompts (YOLO)',
+    'automatic': 'Auto (non-interactive)',
+    'assisted': 'Auto (interactive)',
+    'manual': 'Manual approval (ask me)',
+    'off': 'YOLO (no approvals)',
 }[mode]
 automatic = mode in ('automatic', 'assisted')
 reload_fixture = Path('/tmp/reload-reviewer-fixture.mjs')

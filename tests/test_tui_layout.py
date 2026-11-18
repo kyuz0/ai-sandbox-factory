@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Label, OptionList, Select, Static, RichLog
 from pi_sandbox_factory import sandbox
+from pi_sandbox_factory.sandbox_options import APPROVAL_MODES
 from pi_sandbox_factory.sandbox_tui import (
     Cockpit, Confirm, DEFAULT_SETTINGS, FolderPicker, NewSandbox, SettingsForm,
     SettingsMenu, WebAccessForm, preset,
@@ -471,16 +472,33 @@ class TUILayoutTests(unittest.TestCase):
             approval = app.screen.query_one('#approval', Select)
             explanation = app.screen.query_one('#explain-approval', Button)
             subagents = app.screen.query_one('#subagents', Checkbox)
+            inner = app.screen.query_one('#inner-sandbox', Checkbox)
+            credentials = app.screen.query_one('#protect-credentials', Checkbox)
+            self.assertLess(inner.region.y, credentials.region.y)
+            self.assertLess(credentials.region.y, approval.region.y)
+            for checkbox in (inner, credentials):
+                help_text = app.screen.query_one('#' + checkbox.id + '-help', Static)
+                self.assertIs(help_text.parent, checkbox.parent)
+                self.assertEqual(help_text.region.y, checkbox.region.bottom)
+                self.assertTrue(str(help_text.render()))
             self.assertIs(approval.parent, explanation.parent.parent)
             self.assertEqual(approval.region.y, explanation.region.bottom)
             explanation.scroll_visible(animate=False)
             await pilot.pause()
             await pilot.click('#explain-approval')
             await pilot.pause()
-            help_text = app.screen.query_one('#approval-help', Static)
-            self.assertIn('Settings → Approvals & sandbox.', str(help_text.render()))
+            help_box = app.screen.query_one('#approval-help')
+            rows = list(help_box.query('.approval-mode-help'))
+            self.assertEqual(len(rows), len(APPROVAL_MODES))
+            for row, (label, _, description) in zip(rows, APPROVAL_MODES.values()):
+                self.assertEqual(str(row.query_one(Label).render()), '•')
+                self.assertEqual(str(row.query_one('.approval-mode-description', Static).render()),
+                                 f'{label} {description}')
+            self.assertIn('Settings → Approvals & sandbox.', str(list(help_box.query(Static))[-1].render()))
             close = app.screen.query_one('#close-approval-help', Button)
             self.assertEqual(close.region.height, 3)
+            for y in range(close.region.y, close.region.bottom):
+                self.assertIs(app.screen.get_widget_at(close.region.x + 1, y)[0], close)
             await pilot.click('#close-approval-help')
             await pilot.pause()
             self.assertIn(app.screen.query_one('#skills-section', Collapsible), subagents.ancestors)
@@ -493,6 +511,9 @@ class TUILayoutTests(unittest.TestCase):
             self.assertTrue(credentials.value)
             self.assertIn(app.screen.query_one('#agent-section', Collapsible), credentials.ancestors)
             credentials.value = False
+            await pilot.pause()
+            self.assertIn('Their contents can reach the model.',
+                          str(app.screen.query_one('#protect-credentials-help', Static).render()))
             self.assertFalse(app.screen.collect()[0]['options']['protect_credentials'])
             self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Approvals & sandbox'))
 

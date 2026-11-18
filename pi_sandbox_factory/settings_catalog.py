@@ -15,7 +15,7 @@ CATEGORIES = {
     'editor-settings': Category('Editor', 'editor-section'),
     'folders': Category('Folders', 'folders-section'),
     'network-settings': Category('Network', 'network-section'),
-    'approval-settings': Category('Approvals & sandbox', 'agent-section', 'approval'),
+    'approval-settings': Category('Approvals & sandbox', 'agent-section', 'inner-sandbox'),
     'web-access': Category('Web access', 'web-section', 'web-enabled'),
     'agent-tools': Category('Agent tools', 'skills-section', 'subagents'),
     'ssh-settings': Category('SSH & Git', 'git-identity-section'),

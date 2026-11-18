@@ -55,6 +55,8 @@ Settings show the effect before applying and the reconnect steps afterwards.
 | Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
 | Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
+Use **Resources & environment** for the container memory limit and environment file.
+
 Reloading tools and instructions does not rewrite earlier chat messages. Engine,
 profile, workspace and seed-home choices are fixed for an existing sandbox; create
 another sandbox to change them. A failed image build leaves the current runtime
@@ -64,9 +66,10 @@ For a sandbox you have already created:
 
 1. Open `pi-sandbox-factory` on the host and select the sandbox.
 2. Open **Settings → Approvals & sandbox**.
-3. Choose **Approval mode**, set **Use inner command sandbox**, and leave
-   **Protect common credential files** enabled unless `.env`, private keys and
-   similar workspace files may be shown to the agent.
+3. Set **Use inner command sandbox** and **Protect common credential files**,
+   then choose **Approval mode**. **Explain** compares all four modes. Leave
+   credential protection enabled unless the agent may read and change `.env`,
+   private keys and similar workspace files.
 4. Select **Apply and recreate**, then reopen Pi or Pendant and resume your saved chat.
 
 Applying these settings stops running commands and tmux sessions. Workspace files,
@@ -75,9 +78,10 @@ before applying the change.
 
 Factory applies these settings at creation or recreation. In either automatic
 mode, `/auto-review-settings` changes the reviewer model or thinking effort for
-the open chat. When **Protect common credential files** is disabled, the agent
-can read and write those files like other workspace files. Changing defaults on the manager's home screen affects future
-sandboxes, not existing ones.
+the open chat. `/reload` restores the saved reviewer defaults for that chat.
+When **Protect common credential files** is disabled, the agent can read and
+write those files like other workspace files. Changing defaults on the
+manager's home screen affects future sandboxes, not existing ones.
 
 See [approval modes and shell behavior](approvals.md#configuration-and-updates).
 The outer container and its network policy still apply when the inner sandbox is off.

@@ -7,11 +7,27 @@ from . import web_access, network_groups, communications, git_settings
 
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
+# Label, inline help, and the full explanation shown by Explain.
 APPROVAL_MODES = {
-    'automatic': 'Automatic (non-interactive)',
-    'assisted': 'Automatic (interactive)',
-    'manual': 'Manual (ask me)',
-    'off': 'No approval prompts (YOLO)',
+    'automatic': ('Auto (non-interactive)',
+                  'The reviewer model checks actions without asking you.',
+                  'uses a reviewer model to check actions that need approval. If the reviewer blocks an action, '
+                  'the agent gets the reason and can try another way. You won’t get an approval prompt.'),
+    'assisted': ('Auto (interactive)',
+                 'You can approve an action the reviewer rejects or leaves open.',
+                 'uses a reviewer model to check actions that need approval. If the reviewer rejects an action '
+                 'or leaves the decision to you, Pi shows you the exact action and the reviewer’s reason. '
+                 'You can approve that action once or deny it.'),
+    'manual': ('Manual approval (ask me)',
+               'Pi asks you to approve actions that need permission.',
+               'with the inner sandbox on, Pi can run Bash inside it without your approval but if a command '
+               'needs to run outside the inner sandbox, Pi asks you to approve the escalation. '
+               'With the inner sandbox off, you need to approve every Bash command. File tools such as '
+               'read and write ask for approval when their permission rules require it.'),
+    'off': ('YOLO (no approvals)',
+            'Runs without approval prompts or reviewer checks.',
+            'skips approval prompts and reviewer checks. To run Bash directly in the development container, '
+            'turn off the inner sandbox too. If you leave it on, Bash stays inside it.'),
 }
 DEFAULTS = {'approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
@@ -65,6 +81,7 @@ def permissions(template, selected):
     selected = options(selected)
     policy = json.loads(json.dumps(template))
     policy['authorizerChain'] = ['pi-auto-review'] if selected['approval'] in ('automatic', 'assisted') else []
+    policy['yoloMode'] = selected['approval'] == 'off'
     rules = policy['permission']
     paths = rules.setdefault('path', {})
     for pattern in BROWSER_VAULT_PATTERNS:
@@ -88,8 +105,6 @@ def permissions(template, selected):
     rules['bash'] = ('allow' if selected['inner_sandbox'] or selected['approval'] == 'off' else 'ask')
     if selected['browser']:
         rules.update({name: 'allow' for name in ('browser', 'browser_login', 'browser_evidence')})
-    if selected['approval'] == 'off':
-        rules.update({'*': 'allow', 'external_directory': 'allow'})
     return policy
 
 
@@ -113,14 +128,14 @@ def guidance(selected, subagents=False):
     if inner:
         lines.append('Ordinary bash runs inside the inner OS sandbox without command-level model review. '
                      'Workspace edits are allowed; private home and security configuration are protected.')
-        lines.append({'assisted': 'Boundary requests use automatic review with human fallback. Use bash_escalate for an exact reviewed command.',
+        lines.append({'assisted': 'The reviewer checks boundary requests. Pi asks the user if the reviewer rejects the action or leaves the decision open. If the reviewer fails, the action stays blocked. Use bash_escalate with an exact command and justification.',
                       'automatic': 'Boundary requests use the current-model reviewer without human approval dialogs. Review failures return a reason; retry the review or choose an allowed alternative without bypassing a rejection. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'manual': 'Boundary requests require human approval. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'off': 'Approval prompts are disabled. Requests beyond the inner sandbox are refused; bash_escalate is unavailable.'}[mode])
     else:
         lines.append('The inner command sandbox is disabled. Bash executes inside the outer devcontainer. '
                      + {'automatic': 'Shell commands require automatic review without human approval dialogs. Failures return a reason to the agent.',
-                        'assisted': 'Shell commands use automatic review with human fallback.',
+                        'assisted': 'The reviewer checks shell commands. Pi asks the user if the reviewer rejects a command or leaves the decision open. If the reviewer fails, the command stays blocked.',
                         'manual': 'Shell commands require human approval.',
                         'off': 'Approval prompts are disabled; commands execute directly.'}[mode])
     if inner:

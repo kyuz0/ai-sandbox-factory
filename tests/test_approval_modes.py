@@ -56,6 +56,7 @@ class ApprovalModeTests(unittest.TestCase):
         for mode in ('automatic','assisted','manual','off'):
             result=permissions({'permission':{}}, {'approval':mode})
             self.assertEqual(result['authorizerChain'], ['pi-auto-review'] if mode in ('automatic','assisted') else [])
+            self.assertIs(result['yoloMode'], mode == 'off')
             self.assertTrue(guidance({'approval':mode}))
 
     def test_generated_settings_match_selected_mode(self):

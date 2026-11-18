@@ -10,7 +10,11 @@ flowchart LR
     USER[Original user instructions] --> REVIEW[Separate reviewer conversation]
     ACTION[Exact proposed action + evidence] --> REVIEW
     REVIEW -->|allow| GRANT[One-use command grant]
-    REVIEW -->|deny or unresolved| STOP[No automatic execution]
+    REVIEW -->|deny or defer in Auto interactive| ASK[Pi asks about the exact action]
+    ASK -->|approve once| GRANT
+    ASK -->|deny or cancel| STOP[Action stays blocked]
+    REVIEW -->|deny or defer in Auto non-interactive| STOP
+    REVIEW -->|reviewer failure| STOP
     GRANT --> RUN[Execute inside the development container]
 ```
 
@@ -51,11 +55,16 @@ not make it work there. Escalated commands still require review and run inside
 the development container. The outer network allowlist and protected credentials
 remain enforced. Installed-file read access does not grant write access.
 
-By default, Pi and shell commands cannot read common credential files such as
-`.env`, private keys and certificates. For a disposable environment whose
-credentials may be shown to the model, clear **Protect common credential files**
-under **Settings → Approvals & sandbox**. This changes reads
-and writes: the agent can see and change those files like other workspace files.
+## Common credential files
+
+**Protect common credential files** is enabled by default. It blocks agent reads
+and writes to files such as `.env`, private keys and certificates through file
+tools and the inner Bash sandbox. See the explanation beside the checkbox in
+**Settings → Approvals & sandbox**.
+
+Clear the checkbox only when the agent may read and change those workspace files.
+Their contents can reach the model. The workspace permissions and the outer
+container’s network rules still apply.
 
 ## Conversation and limits
 
@@ -89,17 +98,28 @@ For an existing sandbox, select it in the Factory manager, open
 **Use inner command sandbox** or **Protect common credential files**, then select **Apply and recreate**.
 This stops running processes, including tmux sessions, but preserves files and
 saved chats. Reopen Pi or Pendant to resume the conversation with the new settings.
+Choose **Explain** beside **Approval mode** to compare all four modes.
 
-- **Automatic (non-interactive)** is the default. The reviewer handles requests
-  without asking you. If it blocks an action, the agent gets the reason and can
-  try another permitted approach.
-- **Automatic (interactive)** asks you when the reviewer leaves a decision open
-  or a tool requires confirmation. Explicit denials and reviewer failures block
-  the action.
-- **Manual (ask me)** asks you to decide on requests that need approval.
-- **No approval prompts (YOLO)** turns off approval prompts. Commands stay inside
-  the inner sandbox when it is enabled. The outer container and its network
-  rules apply in every mode.
+- **Auto (non-interactive)** uses a reviewer model to check actions that need
+  approval. If the reviewer blocks an action, the agent gets the reason and can
+  try another way. You won’t get an approval prompt. This is the default.
+- **Auto (interactive)** uses a reviewer model to check actions that need
+  approval. If the reviewer rejects an action or leaves the decision to you,
+  Pi shows you the exact action and the reviewer’s reason. You can approve
+  that action once or deny it. If the reviewer rates the action critical, Pi
+  also asks you to type `APPROVE`.
+- **Manual approval (ask me)** with the inner sandbox on, Pi can run Bash
+  inside it without your approval but if a command needs to run outside the
+  inner sandbox, Pi asks you to approve the escalation. With the inner
+  sandbox off, you need to approve every Bash command. File tools such as
+  `read` and `write` ask for approval when their permission rules require it.
+- **YOLO (no approvals)** skips approval prompts and reviewer checks. To run
+  Bash directly in the development container, turn off the inner sandbox too.
+  If you leave it on, Bash stays inside it.
+
+Pi can ask in its terminal or in Pendant. Reviewer failures block the action in
+both Auto modes. Explicit sandbox and permission blocks and the container’s
+network rules apply in every mode.
 
 Pi and Pendant show the approval mode when you open a chat. In either automatic
 mode, use `/auto-review-settings` to change the reviewer model or thinking effort
@@ -107,8 +127,11 @@ for that chat. Choose **Current chat model** to follow the model selected in Pi 
 Pendant. Choose **Off** under **Thinking effort** to send a review without
 requesting thinking. New chats and resource reloads restore the saved defaults.
 
-In Pi's interactive terminal, `/auto-review-approve` requests one retry of an
-exact denied action.
+In Factory’s **Auto (interactive)** mode, decide on the original action when Pi
+or Pendant asks. The standalone extension’s `/auto-review-approve` command does
+not apply to Factory’s approval modes. Change the approval mode, the inner sandbox, and credential
+protection in Factory and apply them by recreating the sandbox. `/reload` reloads
+Pi resources and restores the default per-chat reviewer settings.
 
 In both automatic modes, `/opt/pi-security/config/auto-review.json` selects the
 current chat model and enables `retainedContext` and `reviewerConversation`. Inspection tools cannot be

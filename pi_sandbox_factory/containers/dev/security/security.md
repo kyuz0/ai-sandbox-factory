@@ -10,7 +10,10 @@ private home files, and reviews outbound destinations. If required access is
 unavailable there, use bash_escalate with the exact command and justification.
 That tool reviews one command before executing inside the outer devcontainer;
 it cannot execute on the physical host or override the outer network policy.
-A denial must not be worked around. A deferral requires the user's decision.
+A reviewer rejection blocks the action in Auto (non-interactive). In Auto
+(interactive), Pi asks the user to decide on the exact action if the reviewer
+rejects it or leaves the decision open. A reviewer failure or an explicit local
+policy block keeps the action blocked in both modes.
 
 SANDBOX_NETWORK_MODE identifies the outer network: allowlist uses the supplied
 HTTP_PROXY/HTTPS_PROXY gateway; unrestricted uses ordinary container networking.

@@ -933,15 +933,34 @@ class ApplySettingsReview(Confirm):
 
 class ApprovalHelp(ModalScreen):
     BINDINGS = [('escape', 'close', 'Close')]
+    DEFAULT_CSS = '''
+    #approval-help { height: auto; max-height: 76vh; padding: 0 1 0 0; }
+    #approval-help .approval-mode-help { height: auto; margin: 0 1 1 0; }
+    #approval-help .approval-mode-help Label { width: 2; }
+    #approval-help .approval-mode-description { width: 1fr; }
+    '''
 
-    def __init__(self, title, explanation, next_step):
+    def __init__(self, *, editing):
         super().__init__()
-        self.title_text, self.explanation, self.next_step = title, explanation, next_step
+        self.editing = editing
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.title_text)
-            yield Static(f'{self.explanation}\n\n{self.next_step}', id='approval-help', markup=False)
+            yield Label('Approval modes')
+            with VerticalScroll(id='approval-help'):
+                for label, _, explanation in APPROVAL_MODES.values():
+                    with Horizontal(classes='approval-mode-help'):
+                        yield Label('•')
+                        yield Static(Text.assemble((label, 'bold'), ' ', explanation), classes='approval-mode-description')
+                yield Static('Pi can ask in its terminal or in Pendant. If the reviewer fails to respond, '
+                             'the action stays blocked in both Auto modes. Explicit sandbox and permission '
+                             'blocks and the container’s network rules apply in every mode.',
+                             classes='setting-help approval-help-note')
+                yield Static('In either Auto mode, use /auto-review-settings in Pi or Pendant to change the reviewer '
+                             'model or thinking effort for the current chat.', classes='setting-help approval-help-note')
+                yield Static('Select Apply and recreate to use these settings in Pi and Pendant.' if self.editing else
+                             f'Change these settings later in Settings → {CATEGORIES["approval-settings"].label}.',
+                             classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Close', id='close-approval-help', variant='primary')
 
@@ -2041,13 +2060,18 @@ class SettingsForm(Screen):
     def compose_approval_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section):
             with Vertical(classes='setting'):
+                yield Checkbox('Use inner command sandbox', value=selected['inner_sandbox'], id='inner-sandbox')
+                yield Static('', id='inner-sandbox-help', classes='setting-help checkbox-help', markup=False)
+            with Vertical(classes='setting'):
+                yield Checkbox('Protect common credential files', value=selected['protect_credentials'], id='protect-credentials')
+                yield Static('', id='protect-credentials-help', classes='setting-help checkbox-help', markup=False)
+            with Vertical(classes='setting'):
                 with Horizontal(id='approval-heading'):
                     yield Label('Approval mode')
                     yield Button('? Explain', id='explain-approval')
-                yield Select([(label, mode) for mode, label in APPROVAL_MODES.items()],
+                yield Select([(label, mode) for mode, (label, _, _) in APPROVAL_MODES.items()],
                              value=selected['approval'], allow_blank=False, id='approval')
-            yield Checkbox('Use inner command sandbox', value=selected['inner_sandbox'], id='inner-sandbox')
-            yield Checkbox('Protect common credential files', value=selected['protect_credentials'], id='protect-credentials')
+                yield Static('', id='selected-approval-help', classes='setting-help', markup=False)
 
     def compose_models(self, category, value, selected):
         configured=value.get('model_providers',{'local':{}})
@@ -2202,6 +2226,7 @@ class SettingsForm(Screen):
 
     def on_mount(self):
         self.approval_summary()
+        self.protected_files_changed()
         self.network_changed()
         self.local_models_changed()
         self.browser_changed()
@@ -2308,30 +2333,23 @@ class SettingsForm(Screen):
                 message.update('')
 
     def approval_summary(self):
-        mode_label = APPROVAL_MODES[self.query_one('#approval', Select).value]
+        mode = self.query_one('#approval', Select).value
+        mode_label, inline_help, _ = APPROVAL_MODES[mode]
         inner = self.query_one('#inner-sandbox', Checkbox).value
         category = CATEGORIES['approval-settings'].label
         self.query_one('#agent-section', Collapsible).title = (
             f'{category} · {mode_label} · Inner sandbox ' + ('on' if inner else 'off'))
+        self.query_one('#inner-sandbox-help', Static).update(
+            'Bash can edit the workspace within file and network limits.' if inner else
+            'Bash runs in the development container under the chosen mode.')
+        self.query_one('#selected-approval-help', Static).update(inline_help)
 
-    def explain_approval(self):
-        mode = self.query_one('#approval', Select).value
-        inner = self.query_one('#inner-sandbox', Checkbox).value
-        explanation = {
-            'automatic': ('The reviewer handles actions that need approval without asking you. When an action is blocked, '
-                          'the agent gets the reason and can try another permitted approach.'),
-            'assisted': ('The reviewer checks actions that need approval and asks you when it leaves a decision open. '
-                         'A denial or a reviewer failure blocks the action.'),
-            'manual': 'You decide whether to allow actions that need approval. There is no AI reviewer in this mode.',
-            'off': ('Commands inside the inner sandbox run without prompting. Requests beyond that sandbox are blocked.'
-                    if inner else 'Commands run inside the container without an approval prompt.'),
-        }[mode]
-        if inner and mode != 'off':
-            explanation += ' Commands inside the inner sandbox can run directly.'
-        explanation += ' The container’s network rules apply to every mode.'
-        next_step = ('Apply and recreate to use this mode in Pi and Pendant.' if self.editing else
-                     f'Change the mode later in Settings → {CATEGORIES["approval-settings"].label}.')
-        self.app.push_screen(ApprovalHelp(APPROVAL_MODES[mode], explanation, next_step))
+    @on(Checkbox.Changed, '#protect-credentials')
+    def protected_files_changed(self):
+        protected = self.query_one('#protect-credentials', Checkbox).value
+        self.query_one('#protect-credentials-help', Static).update(
+            'File tools and sandboxed Bash cannot read or write .env files, private keys or similar files.' if protected else
+            'The agent can read and change .env files and private keys in the workspace. Their contents can reach the model.')
 
     @on(Select.Changed, '#approval')
     @on(Checkbox.Changed, '#inner-sandbox')
@@ -2475,7 +2493,7 @@ class SettingsForm(Screen):
             if action == 'back':
                 self.action_back()
             elif action == 'explain-approval':
-                self.explain_approval()
+                self.app.push_screen(ApprovalHelp(editing=self.editing))
             elif action == 'apply':
                 self.query_one('#form-error', Static).update('')
                 draft, key = self.collect()
@@ -2623,6 +2641,8 @@ class Cockpit(App):
     .setting { height: auto; margin-bottom: 1; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 1 0 0; }
+    .compact-terminal ApprovalHelp #approval-help { max-height: 52vh; }
+    ApprovalHelp .approval-help-note { margin: 0 1 1 0; }
     .browser-vault-setting { margin: 0 0 1 2; }
     .browser-vault-setting.-browser-disabled { opacity: 50%; }
     GitIdentityFields #git-identity-fields > .setting:last-child { margin: 0 0 0 0; }
@@ -2659,7 +2679,8 @@ class Cockpit(App):
     .settings-review .form > WebAccessForm > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
     .compact-terminal .settings-review #review-project { margin: 0; }
-    Collapsible > Contents { padding: 1 3; }
+    Collapsible > Contents,
+    #agent-section.focused-setting > Contents { padding: 1 3; }
     Collapsible.focused-setting > CollapsibleTitle { display: none; }
     Collapsible.focused-setting > Contents { padding: 0; }
     Collapsible > Contents > *:last-child { margin-bottom: 0; }
@@ -2743,6 +2764,8 @@ class Cockpit(App):
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
     Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    ApprovalHelp #confirm-box { width: 84; }
+    .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
     #confirm-box Static { height: auto; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }

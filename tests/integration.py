@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import uuid
+from approval_mode_cases import cases_for
 
 ROOT=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
@@ -26,6 +27,7 @@ p.add_argument('--recall', action='store_true', help='Check conversation recall 
 p.add_argument('--approval-context', action='store_true', help='Check whole expanded skills in automatic approval through Pi and Pendant; requires workshop spikee profile and fixture port 18187')
 p.add_argument('--review-images', action='store_true', help='Check original screenshot instructions in reviewed Pi and Pendant actions')
 p.add_argument('--review-recovery', action='store_true', help='Check bounded reviewer rollover with omitted old instructions in both clients')
+p.add_argument('--approval-modes', action='store_true', help='Check exact approval prompts, results and reviewer calls in both clients')
 p.add_argument('--reviewer-settings', action='store_true', help='Check startup notices and reviewer settings in both clients')
 p.add_argument('--review-model', help='Explicitly authorized live provider/model for --review-recovery')
 p.add_argument('--review-models', type=Path, help='Model catalogue with placeholder credentials for the live reviewer')
@@ -66,6 +68,14 @@ fixture=RUNTIME/'fixture';fixture.mkdir(exist_ok=True)
 (fixture/'expected-subagents.json').write_text('false')
 saved_config=json.loads((a.state_dir/a.name/'config.json').read_text())
 (fixture/'expected-profile.txt').write_text('PROJECT_VIEWER_GUIDANCE' if a.browser_viewer else (Path(saved_config['profile']['path'])/'profile.md').read_text())
+if a.approval_modes:
+ cases = cases_for(saved_config['options']['approval'], saved_config['options']['inner_sandbox'])
+ (fixture/'approval-mode-cases.json').write_text(json.dumps(cases))
+ subprocess.run(['podman','exec','-i',DEV,'sh','-c','cat > /tmp/approval-mode-cases.json'],
+                input=json.dumps(cases),text=True,check=True)
+ subprocess.run(['podman','exec',DEV,'sh','-c',
+                 'printf PROTECTED_FIXTURE > /workspace/.env; printf EXTERNAL_FIXTURE > /tmp/factory-mode-external.txt'],
+                check=True)
 if a.recall: (fixture/'recall-mode.txt').write_text(saved_config['options']['compaction_recall'])
 if a.credential_files: (fixture/'credential-files-protected.json').write_text(json.dumps(saved_config['options']['protect_credentials']))
 source=(ROOT/'tests/mock_inference.py').read_text()
@@ -150,7 +160,7 @@ try:
   subprocess.run(['podman','exec','-i',DEV,'python3','/usr/local/lib/sandbox-communications.py'], input=json.dumps({'botToken':'xoxb-sandbox-fixture-only'}), text=True, check=True)
  if a.browser_viewer:
   subprocess.run(['podman','exec',DEV,'node','/opt/betterwright/check.mjs'],check=True)
- elif not a.review_recovery and not a.reviewer_settings and not a.review_images and not a.skill_workflow and not a.browser_shell and not a.approval_context and not a.web_access and not a.folders and not a.recall and not a.communications:
+ elif not a.review_recovery and not a.approval_modes and not a.reviewer_settings and not a.review_images and not a.skill_workflow and not a.browser_shell and not a.approval_context and not a.web_access and not a.folders and not a.recall and not a.communications:
   subprocess.run([sys.executable,str(ROOT/'sandbox.py'),'--state-dir',str(a.state_dir),'check',a.name,'--allowed-url',f'http://local-model.internal:{a.port}/v1/models'],check=True)
  if not a.credential_files:
   checks = [('check_security_rpc.py',['python3','-']),('check_automation_rpc.py',['python3','-']),('check_pendant_worker.cjs',['node','-'])]
@@ -160,6 +170,8 @@ try:
   checks = [('check_approval_context_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--approval-context'])]
  elif a.review_recovery:
   checks = [('check_review_images_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--review-recovery'])]
+ elif a.approval_modes:
+  checks = [('check_approval_modes_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--approval-modes'])]
  elif a.reviewer_settings:
   checks = [('check_reviewer_settings_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--reviewer-settings'])]
  elif a.review_images:
@@ -218,6 +230,15 @@ try:
   prompts = [json.loads(line) for line in (fixture/'recall-prompts.jsonl').read_text().splitlines()]
   assert any(p['hints'] for p in prompts) == (saved_config['options']['compaction_recall'] == 'full'), prompts
  reviews = fixture/'reviews.jsonl'
+ if a.approval_modes:
+  from collections import Counter
+  activity = fixture/'approval-mode-reviews.jsonl'
+  actual = Counter(json.loads(line) for line in activity.read_text().splitlines()) if activity.exists() else Counter()
+  expected = Counter({f'{client}_{name}': case['review_count']
+                      for client in ('pi', 'pendant') for name, case in cases.items()
+                      if case['review_count']})
+  assert actual == expected, (actual, expected)
+  print('PASS reviewer request counts for Pi and Pendant', dict(actual), flush=True)
  if a.reviewer_settings: assert not reviews.exists(), 'Reviewer settings must not invoke a review'
  if a.review_model:
   assert not reviews.exists(), 'Live reviewer unexpectedly used the synthetic review provider'
@@ -245,7 +266,7 @@ print(json.dumps(counts))"""
   prompts = [json.loads(line) for line in (fixture/'folder-prompts.jsonl').read_text().splitlines()]
   assert len(prompts) == 22, len(prompts)
   print('PASS both clients received the mounted-folder map with project prompt overrides', flush=True)
- print('PASS Pi/Pendant approval notices and reviewer settings' if a.reviewer_settings else 'PASS Pi/Pendant 46-operation automatic review integration' if a.review_recovery else 'PASS Pi/Pendant screenshot review integration' if a.review_images else 'PASS common credential-file protection through actual Pi tools' if a.credential_files else 'PASS Pi/Pendant browser shell routes' if a.browser_shell else 'PASS Pi/Pendant workflow cases' if a.skill_workflow else 'PASS Pi/Pendant expanded skill automatic approval' if a.approval_context else 'PASS Pi/Pendant Slack integration' if a.communications else 'PASS Pi/Pendant recall integration' if a.recall else 'PASS Pi/Pendant folder integration' if a.folders else 'PASS Pi/Pendant browser viewer integration' if a.browser_viewer else 'PASS Pendant startup and questions; no question review calls' if a.pendant_questions_only else 'PASS Pi/Pendant web access integration' if a.web_access else 'PASS real Pi/Pendant security, Goal, scheduling and transport using fixture replies',flush=True)
+ print('PASS Pi/Pendant approval modes' if a.approval_modes else 'PASS Pi/Pendant approval notices and reviewer settings' if a.reviewer_settings else 'PASS Pi/Pendant 46-operation automatic review integration' if a.review_recovery else 'PASS Pi/Pendant screenshot review integration' if a.review_images else 'PASS common credential-file protection through actual Pi tools' if a.credential_files else 'PASS Pi/Pendant browser shell routes' if a.browser_shell else 'PASS Pi/Pendant workflow cases' if a.skill_workflow else 'PASS Pi/Pendant expanded skill automatic approval' if a.approval_context else 'PASS Pi/Pendant Slack integration' if a.communications else 'PASS Pi/Pendant recall integration' if a.recall else 'PASS Pi/Pendant folder integration' if a.folders else 'PASS Pi/Pendant browser viewer integration' if a.browser_viewer else 'PASS Pendant startup and questions; no question review calls' if a.pendant_questions_only else 'PASS Pi/Pendant web access integration' if a.web_access else 'PASS real Pi/Pendant security, Goal, scheduling and transport using fixture replies',flush=True)
 except BaseException:
  if manifest is not None:
   manifest['status']='failed'

@@ -367,6 +367,16 @@ resource reload. The automatic modes also exercise the model and thinking
 selectors. The Pendant check opens two chats in one worker and verifies that
 each keeps its own reviewer settings. This check makes no live model calls.
 
+For changes to approval behavior, run the same recipe with
+`--approval-modes`. For each of the four approval modes, create a fresh
+sandbox with `inner_sandbox` set to `true` and another with it set to
+`false`. The fixture checks reviewer request counts, the selected one-time
+decision and actual file writes in both clients. It covers reviewer rejection,
+deferral, provider errors, typed confirmation for critical actions, a late
+answer after cancellation, repeated requests, and the end of a long command.
+It also checks that YOLO skips prompts while explicit credential file blocks
+still apply.
+
 For login/session policy changes, also run the extension's documented synthetic
 authentication matrix with the authorized live reviewer. It checks private
 same-service session reuse, advice, disclosure denials and unresolved helpers in

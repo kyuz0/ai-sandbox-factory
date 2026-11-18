@@ -62,6 +62,42 @@ worker.on('message', message => {
     try {
       const prompt = message.request;
       if (process.argv.includes('--reviewer-settings') && prompt.kind === 'notify') return;
+      if (process.argv.includes('--approval-modes')) {
+        if (!['select', 'input', 'confirm'].includes(prompt.kind)) return;
+        assert(session?.modeAnswers?.length, 'Unexpected approval prompt: ' + JSON.stringify(prompt));
+        const answer = session.modeAnswers.shift();
+        const promptText = JSON.stringify(prompt);
+        let result;
+        if (answer === 'APPROVE' || answer === 'wrong') {
+          assert.equal(prompt.kind, 'input', promptText);
+          assert(promptText.includes('Type APPROVE'), promptText);
+          result = { type: 'value', value: answer };
+        } else {
+          assert.equal(prompt.kind, 'select', promptText);
+          assert(promptText.includes(session.modeTarget), promptText);
+          if (message.sessionKey === 'long') {
+            assert(prompt.title.replace(/\s/g, '').includes('VISIBLE_END_MARKER'), promptText);
+          }
+          if (process.env.SANDBOX_APPROVAL_MODE === 'assisted') {
+            assert(promptText.includes('The synthetic reviewer checked this exact action.'), promptText);
+            assert.equal(prompt.options.length, 2, promptText);
+            assert(prompt.options.includes('Deny'), promptText);
+          }
+          const allow = prompt.options.find(option => !/session/i.test(option) && /^(Yes$|Allow|Approve)/.test(option));
+          assert(allow, promptText);
+          result = answer === 'cancel' ? { type: 'cancelled' }
+            : { type: 'value', value: answer === 'approve' || answer === 'abort' ? allow : 'Deny' };
+        }
+        const sendAnswer = () => request({ type: 'extension_ui_response', uiRequestId: message.uiRequestId, result }, message.sessionKey);
+        if (answer === 'abort') {
+          session.abortAndReply = request({ type: 'session_abort' }, message.sessionKey)
+            .then(sendAnswer).then(() => { session.modeAborted = true; });
+          session.abortAndReply.catch(fail);
+        } else {
+          sendAnswer().catch(fail);
+        }
+        return;
+      }
       assert(session?.allowDialog || session?.reviewerChoices?.length,
         'Unexpected permission dialog: ' + JSON.stringify(prompt));
       session.dialogs++;
@@ -110,10 +146,12 @@ async function waitForReply(key, marker) {
   let state;
   while (Date.now() < deadline) {
     state = await request({ type: 'session_get_state' }, key);
-    if (state.idle && state.messages.some(m => m.role === 'assistant' && JSON.stringify(m.content).includes(marker)))
+    if (state.idle && (marker === null ? sessions.get(key).modeAborted
+      : state.messages.some(m => m.role === 'assistant' && JSON.stringify(m.content).includes(marker))))
       return state;
     const last = state.messages.at(-1);
-    assert(last?.stopReason !== 'error', JSON.stringify(last));
+    const cancelled = marker === null && /aborted/i.test(last?.errorMessage ?? '');
+    assert(last?.stopReason !== 'error' || cancelled, JSON.stringify(last));
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error('Pendant did not finish ' + key + ': ' + JSON.stringify(state));
@@ -125,6 +163,32 @@ async function main() {
   assert.equal(handshake.compatibilityReport.compatible, true);
   assert.equal(handshake.compatibilityReport.piSdkVersion, sdkVersion);
   const inventory = await create('inventory');
+  if (process.argv.includes('--approval-modes')) {
+    const mode = process.env.SANDBOX_APPROVAL_MODE;
+    const cases = JSON.parse(fs.readFileSync('/tmp/approval-mode-cases.json', 'utf8'));
+    for (const [name, spec] of Object.entries(cases)) {
+      await create(name);
+      const session = sessions.get(name);
+      const target = 'pendant_' + name;
+      session.modeTarget = target;
+      session.modeAnswers = [...spec.answers];
+      const output = '/workspace/approval_' + target + '.txt';
+      assert(!fs.existsSync(output), output);
+      await request({ type: 'session_prompt', text: 'RUN_APPROVAL_MODE pendant ' + name,
+        images: [], source: 'interactive' }, name);
+      await waitForReply(name, name === 'abort' ? null : 'APPROVAL_MODE_FINISHED');
+      const results = session.events.filter(event => event.type === 'tool_execution_end');
+      if (name !== 'abort') {
+        assert.deepEqual(results.map(event => event.toolName), Array(name === 'repeat' ? 2 : 1).fill(spec.tool));
+      }
+      assert.deepEqual(session.modeAnswers, [], JSON.stringify(results));
+      assert.equal(fs.existsSync(output) ? fs.readFileSync(output, 'utf8') : '', target.repeat(spec.writes), JSON.stringify(results));
+      if (name === 'protected') assert(results[0].isError && !JSON.stringify(results).includes('PROTECTED_FIXTURE'));
+      if (name === 'external') assert(!results[0].isError && JSON.stringify(results).includes('EXTERNAL_FIXTURE'), JSON.stringify(results));
+      console.log('PASS Pendant:', mode, name);
+    }
+    return;
+  }
   if (process.argv.includes('--reviewer-settings')) {
     const mode = process.env.SANDBOX_APPROVAL_MODE;
     const automatic = ['automatic', 'assisted'].includes(mode);

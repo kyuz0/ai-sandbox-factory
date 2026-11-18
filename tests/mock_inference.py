@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import socket
 import ssl
 import time
@@ -67,6 +68,17 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get('Authorization') != 'Bearer fixture-key'):
             self.send_error(400)
             return
+        mode_case = re.search(r'RUN_APPROVAL_MODE (pi|pendant) ([a-z_]+)', content)
+        mode_fixture = None
+        if mode_case:
+            client, scenario = mode_case.groups()
+            mode_fixture = json.loads(Path('/fixture/approval-mode-cases.json').read_text())[scenario]
+            if reviewing:
+                with Path('/fixture/approval-mode-reviews.jsonl').open('a') as audit:
+                    audit.write(json.dumps(f'{client}_{scenario}') + '\n')
+                if mode_fixture['verdict'] == 'provider_error':
+                    self.send_error(400, 'Synthetic reviewer request rejection')
+                    return
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.end_headers()
@@ -109,7 +121,37 @@ class Handler(BaseHTTPRequestHandler):
             assert content.count('SKILL_CONTEXT_LINE ') == 1800, ('Skill repetitions', content.count('SKILL_CONTEXT_LINE '))
             assert 'SKILL_CONTEXT_END' in content, 'Skill tail missing from reviewer context'
             assert 'SYNTHETIC_PRIVATE_VALUE' not in content, 'Denied secret reached the reviewer'
-        if reviewing:
+        if mode_fixture and reviewing:
+            verdict = mode_fixture['verdict']
+            delta['content'] = json.dumps({
+                'outcome': 'deny' if verdict == 'critical' else verdict,
+                'risk_level': 'critical' if verdict == 'critical' else 'medium',
+                'user_authorization': 'high',
+                'rationale': 'The synthetic reviewer checked this exact action.',
+            })
+        elif mode_fixture:
+            outputs = [m for m in messages if m.get('role') == 'tool']
+            if len(outputs) >= (2 if scenario == 'repeat' else 1):
+                delta['content'] = 'APPROVAL_MODE_FINISHED'
+            else:
+                ident = f'{client}_{scenario}'
+                tool = mode_fixture['tool']
+                command = f'printf %s {ident} >> /workspace/approval_{ident}.txt'
+                if scenario == 'wrapped':
+                    command = f"env bash -c '{command}'"
+                if scenario == 'long':
+                    argument = ident + 'x' * 560 + 'VISIBLE_END_MARKER'
+                    command = f"printf %.{len(ident)}s '{argument}' >> /workspace/approval_{ident}.txt"
+                if tool == 'read':
+                    arguments = {'path': '/workspace/.env' if scenario == 'protected' else '/tmp/factory-mode-external.txt'}
+                else:
+                    arguments = {'command': command}
+                    if tool == 'bash_escalate':
+                        arguments['justification'] = 'Exercise an exact outer-container action.'
+                delta = {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': f'mode-{ident}-{len(outputs)}',
+                         'type': 'function', 'function': {'name': tool, 'arguments': json.dumps(arguments)}}]}
+                finish = 'tool_calls'
+        elif reviewing:
             with Path('/fixture/reviews.jsonl').open('a') as audit:
                 audit.write(json.dumps({'question': 'RUN_QUESTION_' in content,
                     **({'omitted': recovery_evidence['omittedUserMessages'], 'reset': current.get('reviewerHistoryReset', False)} if recovery_evidence else {})}) + '\n')
@@ -119,7 +161,6 @@ class Handler(BaseHTTPRequestHandler):
             delta['content'] = json.dumps({'outcome': outcome, 'risk_level': 'medium',
                                           'user_authorization': 'high', 'rationale': ('Synthetic integration review: ' + outcome) if not recovery_evidence else 'Synthetic read-only fixture approved. '*12})
         elif 'RUN_REVIEW_RECOVERY_' in content:
-            import re
             latest = max(i for i, m in enumerate(messages) if m.get('role') == 'user')
             text = '\n'.join(strings(messages[latest]))
             if 'RUN_REVIEW_RECOVERY_SEED' in text:
