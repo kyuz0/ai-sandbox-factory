@@ -68,7 +68,7 @@ not required. Projects under `~/Projects` have normal Linux permissions and file
 watching. You can also select a Windows project through `/mnt/c/...` or paste a
 `C:\...` path; use polling if a build tool needs to detect edits by Windows apps.
 
-For OpenRouter, Azure, Bedrock or Together, use **Settings → Models**; see
+For OpenRouter, Azure, Bedrock or Together, use **Settings → Model Providers**; see
 [model setup](providers.md#hosted-services).
 
 **Connect to models on this host** refers to WSL. Run the model there, or create

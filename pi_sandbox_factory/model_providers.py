@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from . import registry
+from .settings_catalog import LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH
 
 
 def selections(config):
@@ -130,7 +131,7 @@ def configure(config, state, action="refresh", provider=None, secret=None):
         raise ValueError("No matching provider is enabled")
     for row in rows:
         if row["name"] == "local" and not config.get("local_model_ports"):
-            print("Local models: select host ports in Configuration first.")
+            print(f"Select host model ports in {LOCAL_MODELS_PATH}.")
             continue
         request = {"id": row["name"], "action": action}
         route = row["manifest"].get("inference")
@@ -142,7 +143,7 @@ def configure(config, state, action="refresh", provider=None, secret=None):
                     'id':row['name'], 'origin':route['origin'], 'auth':route['auth']['type'],
                     'credentials':{'key':secret}})
             elif row['name'] not in inference.credentials(config, state, {'status': True})['configured']:
-                print(row['name'] + ': needs-auth — Enter the provider credential in Settings → Models.')
+                print(f"{row['name']}: needs-auth — Enter the provider credential in {MODEL_PROVIDERS_PATH}.")
                 continue
         elif secret is not None:
             request["secret"] = secret

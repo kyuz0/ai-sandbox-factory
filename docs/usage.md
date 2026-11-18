@@ -49,9 +49,9 @@ Settings show the effect before applying and the reconnect steps afterwards.
 | SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
-| Models: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
-| Models: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
-| Models: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
+| Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
+| Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
+| Model Providers: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
 | Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
 | Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
@@ -147,14 +147,14 @@ add each filesystem as its own folder if needed.
 
 ## Local models
 
-During creation or in **Settings → Models → Local models & provider plugins**,
+During creation or in **Settings → Model Providers → Local models & provider plugins**,
 enable **Connect to models on this computer** and enter the server ports, such as `8000` or `8000-8002`.
 Factory uses [Pi Local Model Manager](https://github.com/kyuz0/pi-local-model-manager)
 to discover models and configure their context, image and thinking support in
 Pi and Pendant.
 
 Choose a model in Pendant’s picker or with `/model`. After changing the running
-model, use `/local-models refresh` or **Settings → Models → Refresh**.
+model, use `/local-models refresh` or **Settings → Model Providers → Refresh**.
 
 ## CLI and storage
 
@@ -188,7 +188,7 @@ Packages whose install scripts fetch binaries elsewhere may need additional
 
 Choose **Apply rules** to update an existing sandbox. The gateway restarts and
 active requests may need to reconnect. Change the network mode in
-**Settings → Network → Change network mode…** or host model ports in **Settings → Models → Local models & provider plugins**.
+**Settings → Network → Change network mode…** or host model ports in **Settings → Model Providers → Local models & provider plugins**.
 
 CLI equivalent:
 

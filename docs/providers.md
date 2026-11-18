@@ -11,8 +11,8 @@ discovers models on the host ports you select. See [local setup](usage.md#local-
 
 ## Hosted services
 
-For OpenRouter, Together, Azure/Foundry and AWS Bedrock, use **Settings → Models →
-Connect provider…**, or **Models** during creation. Factory
+For OpenRouter, Together, Azure/Foundry and AWS Bedrock, use **Settings → Model Providers →
+Connect provider…**, or **Model Providers** during creation. Factory
 keeps their keys in a separate inference container and configures Pi/Pendant for you.
 See [hosted model setup](hosted-models.md) for deployment names and model selection.
 
@@ -40,7 +40,7 @@ During creation, enter the provider credential in its masked field, or leave it
 empty to configure later. Providers with isolated inference store it in the
 separate companion before discovery; the key is excluded from sandbox settings
 and workstation defaults. A missing credential does not prevent opening the editor.
-Use **Settings → Models** to check, preview, refresh or replace a credential.
+Use **Settings → Model Providers** to check, preview, refresh or replace a credential.
 
 For the CLI, put settings in a JSON file:
 
@@ -140,5 +140,5 @@ adapter where the API begins; it does not grant additional routes. Factory check
 all routes before starting or replacing the companion.
 
 An in-session extension must reuse the saved proxy endpoint and placeholder.
-Credential replacement belongs in Factory's **Settings → Models → Configure
+Credential replacement belongs in Factory's **Settings → Model Providers → Configure
 credentials**, rather than asking for a key inside Pi.

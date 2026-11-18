@@ -18,7 +18,7 @@ from . import sandbox, editor_settings
 from .creation import Creation, Cancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
-from .settings_catalog import CATEGORIES, EDIT_FORMS, OPEN_LABELS
+from .settings_catalog import CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH, OPEN_LABELS
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm
 from .models_ui import HostedProviders
@@ -1947,7 +1947,9 @@ class SettingsForm(Screen):
             elif self.setting != 'model-sources':
                 with Vertical(classes='setting'):
                     yield Label('Hosted model services', classes='group-title')
-                    yield Static('Configure hosted services in Settings → Models without recreating the sandbox.' if self.editing else 'Connect hosted services when creating a sandbox, or later in Settings → Models.', classes='setting-help')
+                    yield Static(f'Configure hosted services in {MODEL_PROVIDERS_PATH} without recreating the sandbox.'
+                                 if self.editing else f'Connect hosted services during creation or later in {MODEL_PROVIDERS_PATH}.',
+                                 classes='setting-help')
             if any(name != 'local' for name in available):
                 yield Label('Provider plugins', classes='group-title')
             for name,label in available.items():
@@ -1967,7 +1969,7 @@ class SettingsForm(Screen):
                                     password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
                         if secret:
                             yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
-                                         + 'Optional; configure later in Settings → Models.', classes='setting-help')
+                                         + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
                             yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
             yield Static('Install additional providers from the home screen’s Library… button.', classes='setting-help')
 
@@ -2265,7 +2267,7 @@ class SettingsForm(Screen):
             rules += [('local-model.internal', p) for p in sandbox.local_model_ports(draft['local_model_ports'])]
             if draft['network'] == 'unrestricted':
                 if self.setting == 'network-mode':
-                    raise ValueError('Turn off local models in Settings → Models → Local models & provider plugins before choosing Unrestricted.')
+                    raise ValueError(f'Turn off local models in {LOCAL_MODELS_PATH} before choosing Unrestricted.')
                 if self.setting == 'model-sources':
                     raise ValueError('Choose Restricted in Settings → Network before enabling local models.')
             if self.editing or self.defaults_mode:

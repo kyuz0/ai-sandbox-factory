@@ -1,6 +1,6 @@
 import {initializeModels} from '/opt/pi-local-model-manager/scripts/initialize-models.mjs';
 export async function run({action,agentDir}) {
-  if(action==='status')return {state:'ready',message:'Local model discovery uses the host ports selected in Settings → Models → Local models & provider plugins.'};
+  if(action==='status')return {state:'ready',message:'Local model discovery uses the host ports selected in Settings → Model Providers → Local models & provider plugins.'};
   const messages=[];
   try {
     const result=await initializeModels(agentDir,{preview:action==='preview',log:line=>messages.push(line)});

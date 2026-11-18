@@ -31,7 +31,7 @@ class ProviderCredentialsTests(unittest.TestCase):
                 run.assert_not_called()
                 credentials.assert_called_once_with(self.config(), Path('/tmp/fixture'), {'status': True})
                 self.assertIn('company: needs-auth', output.getvalue())
-                self.assertIn('Settings → Models', output.getvalue())
+                self.assertIn('Settings → Model Providers', output.getvalue())
 
     def test_configured_key_still_runs_discovery_and_preserves_errors(self):
         with patch.object(inference, 'credentials', return_value={'configured': ['company']}), \
