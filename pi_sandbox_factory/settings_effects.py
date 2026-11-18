@@ -1,6 +1,6 @@
 """User-facing effects of the settings update paths, without secret values."""
 from .sandbox_options import options
-from .settings_catalog import CATEGORIES, OPEN_LABELS
+from .settings_catalog import CATEGORIES, NETWORK_LABEL, OPEN_LABELS, WEB_SEARCH_LABEL
 
 def bullets(items):
     return '\n'.join('• ' + item for item in items)
@@ -34,7 +34,7 @@ OPTION_GROUPS = {
     'browser': 'Browser and saved vault protection',
     'goals': 'Agent tools and conversation recall', 'scheduling': 'Agent tools and conversation recall',
     'question_forms': 'Agent tools and conversation recall', 'compaction_recall': 'Agent tools and conversation recall',
-    'disabled_skills': 'Skills', 'web_access': 'Web search', 'website_groups': 'Network access',
+    'disabled_skills': 'Skills', 'web_access': WEB_SEARCH_LABEL, 'website_groups': NETWORK_LABEL,
     'communications': 'Slack tools', 'git_identity': 'Git commit identity',
 }
 
@@ -43,14 +43,14 @@ def configuration_changes(original, draft):
     """Describe changes to sandbox settings without credential values."""
     before, after = options(original.get('options')), options(draft.get('options'))
     groups = {title for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
-    for key, title in {'network': 'Network access', 'memory': 'Memory limit',
+    for key, title in {'network': NETWORK_LABEL, 'memory': 'Memory limit',
                        'subagents': 'Agent tools and conversation recall',
                        'local_model_ports': 'Local model access', 'env_file': 'Environment file'}.items():
         if (original.get(key) or None) != (draft.get(key) or None):
             groups.add(title)
     from .sandbox import parse_rules
     if set(parse_rules(original.get('allowlist', ''))) != set(parse_rules(draft.get('allowlist', ''))):
-        groups.add('Network access')
+        groups.add(NETWORK_LABEL)
     providers = original.get('model_providers', {'local': {}})
     if isinstance(providers, list):
         providers = {row['name']: row.get('settings', {}) for row in providers}

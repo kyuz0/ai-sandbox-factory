@@ -127,7 +127,17 @@ class SkillsUITests(unittest.TestCase):
                 search.value = 'no-such-skill'; await pilot.pause()
                 self.assertIn('No matching skills · 2 selected', str(screen.query_one('#skill-search-status').render()))
                 self.assertEqual(len(screen.rows), 1001)
-                search.value = 'invalid-skill'; await pilot.pause(0.1)
+                scrolled = asyncio.Event()
+                show_results = screen.show_search_results
+
+                def show_and_wait_for_layout():
+                    show_results()
+                    screen.call_after_refresh(scrolled.set)
+
+                with patch.object(screen, 'show_search_results', new=show_and_wait_for_layout):
+                    search.value = 'invalid-skill'
+                    await asyncio.wait_for(scrolled.wait(), timeout=10)
+                await pilot.pause()
                 invalid = screen.query_one('#candidate-1000', Checkbox)
                 self.assertTrue(invalid.disabled)
                 self.assertLessEqual(invalid.region.bottom, screen.query_one('VerticalScroll').content_region.bottom)

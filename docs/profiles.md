@@ -82,7 +82,7 @@ for the dependency; use `COPY source/ ...` in the Dockerfile. Git credentials an
 
 Keep service-specific setup in the profile's README and agent instructions.
 Use `pi-sandbox-factory exec NAME -- COMMAND ...` to configure a tool inside its sandbox;
-add required destinations through **Settings → Network** first.
+add required destinations through **Settings → Network and Web Search → Network** first.
 
 ## Check it
 

@@ -18,7 +18,7 @@ clone, fetch and push; cryptographic commit signing is configured separately.
 
 ## GitHub over HTTPS
 
-Enable **GitHub** under **Settings → Network → Website categories** for repository
+Enable **GitHub** under **Settings → Network and Web Search → Network → Website categories** for repository
 browsing, API requests, clones and release downloads over HTTPS.
 
 For authenticated Git operations with an isolated private key, use SSH.

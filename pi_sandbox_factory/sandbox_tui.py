@@ -18,7 +18,10 @@ from . import sandbox, editor_settings
 from .creation import Creation, Cancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
-from .settings_catalog import CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH, OPEN_LABELS
+from .settings_catalog import (
+    CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH,
+    NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS, WEB_SEARCH_LABEL,
+)
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm
 from .models_ui import HostedProviders
@@ -519,7 +522,7 @@ class CopyWebAccess(ModalScreen):
 
     def compose(self):
         with VerticalScroll(id='copy-web-dialog'):
-            yield Label('Copy web access', classes='title')
+            yield Label(f'Copy {WEB_SEARCH_LABEL}', classes='title')
             with Vertical(classes='setting'):
                 yield Label('Source sandbox')
                 yield Select([(name, name) for name in self.records], value=next(iter(self.records)), allow_blank=False, id='copy-web-source')
@@ -574,7 +577,6 @@ class CopyWebAccess(ModalScreen):
 
 
 class WebAccessForm(Vertical):
-    CATEGORY = CATEGORIES['web-access']
     DEFAULT_CSS = """
     WebAccessForm, #web-fields, #web-provider-list { height: auto; }
     .search-provider-row { height: auto; min-height: 4; margin-bottom: 1; max-width: 80; padding: 1 2; background: #343a42; border-left: solid #707780; }
@@ -589,20 +591,21 @@ class WebAccessForm(Vertical):
         self.keys = {}
 
     def compose(self):
-        with Collapsible(title=self.CATEGORY.label, collapsed=True, id=self.CATEGORY.section):
-            with Vertical(classes='setting'):
-                yield Checkbox('Enable pi-web-access', value=self.value['enabled'], id='web-enabled')
+        with Collapsible(title=WEB_SEARCH_LABEL, collapsed=True, id='web-section'):
+            with Vertical(classes='setting', id='web-enable-setting'):
+                yield Checkbox(f'Enable {WEB_SEARCH_LABEL}', value=self.value['enabled'], id='web-enabled')
                 yield Static('Search provider endpoints are allowed automatically. Reading pages uses your network rules and website categories.', classes='setting-help checkbox-help')
             with Vertical(id='web-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Search mode')
                     yield Select(self.mode_choices(), value=self.value['mode'], allow_blank=False, id='web-mode')
+                    yield Feedback('', id='web-config-error', markup=False)
                 yield Vertical(id='web-provider-list')
                 with Horizontal(classes='buttons'):
                     yield Button('Add provider', id='web-add')
                     yield Button('Copy from sandbox…', id='web-copy')
                 with Vertical(classes='setting', id='web-defaults-setting'):
-                    yield Button('Save as default web access', id='web-save-defaults')
+                    yield Button(f'Save as default {WEB_SEARCH_LABEL}', id='web-save-defaults')
                     yield Static('Includes API keys, stored privately on this workstation for new sandboxes.', classes='setting-help')
                 yield Static('', id='web-active', markup=False, classes='setting-help')
 
@@ -637,7 +640,7 @@ class WebAccessForm(Vertical):
         return [('Automatic fallback', 'auto')] + [('Only ' + web_access.SERVICES[name][0], name) for name in self.providers]
 
     async def on_mount(self):
-        if getattr(self.screen, 'setting', None) not in (None, 'web-access'):
+        if getattr(self.screen, 'setting', None) not in (None, 'network-settings'):
             return
         if not getattr(self.screen, 'editing', False):
             supplied = getattr(self.screen, 'search_keys', None)
@@ -684,7 +687,7 @@ class WebAccessForm(Vertical):
         enabled = self.query_one('#web-enabled', Checkbox).value
         self.query_one('#web-fields').display = enabled
         mode = self.query_one('#web-mode', Select).value
-        self.query_one('#' + self.CATEGORY.section, Collapsible).title = self.CATEGORY.label + ' · ' + (
+        self.query_one('#web-section', Collapsible).title = WEB_SEARCH_LABEL + ' · ' + (
             ('Automatic fallback' if mode == 'auto' else 'Only ' + web_access.SERVICES[mode][0]) if enabled else 'Off')
 
     @on(Select.Changed, '#web-mode')
@@ -703,7 +706,7 @@ class WebAccessForm(Vertical):
             try:
                 value, keys = await self.defaults_selection()
                 self.app.defaults = save_web_defaults(value, keys)
-                self.notify('Web access defaults saved, including API keys.')
+                self.notify(f'{WEB_SEARCH_LABEL} defaults saved, including API keys.')
             except (OSError, ValueError) as error:
                 self.notify(str(error), severity='error')
             return
@@ -750,11 +753,30 @@ class WebAccessForm(Vertical):
             raise ValueError('Enter API keys before saving defaults for: ' + ', '.join(missing))
         return value, keys
 
-    def collect(self):
-        value = web_access.settings({'enabled': self.query_one('#web-enabled', Checkbox).value,
+    def selection(self):
+        return web_access.settings({'enabled': self.query_one('#web-enabled', Checkbox).value,
             'mode': self.query_one('#web-mode', Select).value, 'providers': self.providers})
+
+    def has_changes(self, original):
+        current = self.selection()
+        if self.keys or (current['enabled'], current['mode']) != (original['enabled'], original['mode']):
+            return True
+        # The credential status probe can update badges without editing the form.
+        def provider_settings(value):
+            return {name: (row['endpoint'], row['model']) for name, row in value['providers'].items()}
+        return provider_settings(current) != provider_settings(original)
+
+    def collect(self):
+        value = self.selection()
         if value['enabled'] and not web_access.active(value):
-            raise ValueError('Configure a search provider with the required key or server URL.')
+            error = 'Configure a search provider with the required key or server URL.'
+            self.screen.query_one('#network-search-section', Collapsible).collapsed = False
+            self.query_one('#web-section', Collapsible).collapsed = False
+            feedback = self.query_one('#web-config-error', Feedback)
+            self.query_one('#web-mode', Select).focus()
+            feedback.update(error)
+            self.screen.call_after_refresh(feedback.scroll_visible, animate=False)
+            raise ValueError(error)
         return value, dict(self.keys)
 
 
@@ -768,6 +790,7 @@ class NetworkRulesFields(Vertical):
         with Vertical(classes='setting'):
             yield Label('Additional allowed destinations · hostname:port')
             yield TextArea(self.rules, id='allowlist')
+            yield Feedback('', id='network-error', markup=False)
         with Collapsible(title='Import or export rules', collapsed=True):
             with Vertical(classes='setting'):
                 yield Label('Allowlist file path')
@@ -806,82 +829,6 @@ class NetworkRulesFields(Vertical):
         except (OSError, ValueError) as error:
             feedback.update(str(error))
             feedback.scroll_visible(animate=False)
-
-
-class NetworkForm(Screen):
-    BINDINGS = [('escape', 'back', 'Cancel')]
-
-    def __init__(self, name, text, config=None):
-        super().__init__()
-        self.sandbox_name, self.rules = name, text
-        self.config = config or {}
-
-    def compose(self):
-        restricted = sandbox.network_mode(self.config) == 'allowlist'
-        yield Header()
-        yield Label(CATEGORIES['network-settings'].label + ' · ' + self.sandbox_name,
-                    classes='title focused-settings-title')
-        with VerticalScroll(classes='form'):
-            with Vertical(classes='setting'):
-                yield Label(EDIT_FORMS['network-mode'].label, classes='group-title')
-                yield Static('Restricted' if restricted else 'Unrestricted')
-                yield Button('Change network mode…', id='change-network-mode')
-                yield Static('Changing the mode recreates the sandbox.', classes='setting-help')
-            if restricted:
-                yield from self.compose_rules()
-            else:
-                yield Static('Choose Restricted to set network rules.')
-        with Horizontal(classes='wizard-actions'):
-            yield Button('Cancel', id='cancel-network')
-            if restricted:
-                yield Button('Apply rules', id='apply-network', variant='primary')
-        yield Footer()
-
-    def compose_rules(self):
-        yield Label('Network rules', classes='group-title')
-        yield Static(settings_effects.bullets(['Applying rules restarts the gateway. Development processes keep running.', 'Active connections may disconnect.']))
-        selected = options(self.config.get('options'))
-        yield NetworkRulesFields(self.rules, selected['website_groups'])
-        search = web_access.destinations(selected['web_access'])
-        if search:
-            yield Static('Search service also allows: ' + ', '.join(f'{host}:{port}' for host, port in search), markup=False)
-        channels = communications.destinations(selected['communications'])
-        if channels:
-            yield Static('Slack also allows: ' + ', '.join(f'{host}:{port}' for host, port in channels), markup=False)
-        yield Feedback('', id='network-error')
-
-    def on_mount(self):
-        self.query_one('#change-network-mode', Button).focus()
-
-    @on(Button.Pressed)
-    def pressed(self, event):
-        event.stop()
-        if event.button.id == 'cancel-network':
-            self.action_back()
-        elif event.button.id == 'change-network-mode':
-            self.app.perform('network-mode', record={'name': self.sandbox_name, 'config': self.config})
-        elif event.button.id == 'apply-network':
-            text = self.query_one('#allowlist', TextArea).text
-            try:
-                sandbox.parse_rules(text)
-            except ValueError as error:
-                feedback = self.query_one('#network-error', Feedback)
-                feedback.update(str(error))
-                feedback.scroll_visible(animate=False)
-                return
-            service = self.app.service
-            groups = self.query_one(WebsiteGroups).selected()
-            def apply(log):
-                with tempfile.TemporaryDirectory(prefix='sandbox-network-') as tmp:
-                    path = Path(tmp) / 'allowlist.txt'
-                    path.write_text(text)
-                    service.run(['network', self.sandbox_name, '--allowlist', str(path), '--website-groups', *groups], log)
-            self.app.pop_screen()
-            self.app.push_screen(Operation('Updating network rules · ' + self.sandbox_name, apply,
-                                           success_message=settings_effects.NETWORK, done_on_success=True))
-
-    def action_back(self):
-        self.app.pop_screen()
 
 
 class Confirm(ModalScreen[bool]):
@@ -2053,8 +2000,10 @@ class SettingsForm(Screen):
                            value=False if self.editing else value.get('open_editor', True), id='open-editor')
             with Horizontal(classes='action-buttons'):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
-                yield Button('Save defaults' if self.defaults_mode else
-                             ('Apply and recreate' if self.editing else 'Create and start'), id='apply', variant='primary')
+                apply_label = 'Save defaults' if self.defaults_mode else 'Create and start'
+                if self.editing:
+                    apply_label = 'Apply' if self.setting == 'network-settings' else 'Apply and recreate'
+                yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
 
     def compose_approval_settings(self, category, value, selected):
@@ -2148,16 +2097,33 @@ class SettingsForm(Screen):
 
     def compose_network_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section):
-            yield Label(EDIT_FORMS['network-mode'].label)
-            yield Select([('Restricted — only allowed destinations', 'allowlist'),
-                          ('Unrestricted — ordinary container network', 'unrestricted')],
-                         value=value['network'], allow_blank=False, id='network')
-            if self.editing and value['network'] == 'allowlist':
-                yield Static('Manage allowed destinations in Settings → ' + category.label + '.', classes='setting-help')
-            yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=self.profile_name)
-
-    def compose_web_access(self, category, value, selected):
-        yield WebAccessForm(selected['web_access'], self.defaults_mode)
+            with Collapsible(title=NETWORK_LABEL, collapsed=True, id='network-section'):
+                with Vertical(classes='setting'):
+                    yield Label(NETWORK_MODE_LABEL)
+                    yield Select([('Restricted — only allowed destinations', 'allowlist'),
+                                  ('Unrestricted — ordinary container network', 'unrestricted')],
+                                 value=value['network'], allow_blank=False, id='network')
+                    if self.editing:
+                        yield Static('Changing the network mode recreates the sandbox.', classes='setting-help')
+                with Vertical(id='network-rules-setting'):
+                    if self.editing and value['network'] == 'allowlist':
+                        yield Static(settings_effects.bullets([
+                            'Changing only the rules updates the gateway.',
+                            'Development processes keep running.',
+                            'Active connections may disconnect.',
+                        ]), classes='section-intro')
+                    profile = self.profile_name if not self.editing or value['network'] == 'unrestricted' else None
+                    yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=profile)
+                    if self.editing and value['network'] == 'allowlist':
+                        search = web_access.destinations(selected['web_access'])
+                        if search:
+                            yield Static(f'Current {WEB_SEARCH_LABEL} destinations · ' + ', '.join(
+                                f'{host}:{port}' for host, port in search), markup=False, classes='setting-help')
+                        channels = communications.destinations(selected['communications'])
+                        if channels:
+                            yield Static('Current Slack destinations · ' + ', '.join(
+                                f'{host}:{port}' for host, port in channels), markup=False, classes='setting-help')
+            yield WebAccessForm(selected['web_access'], self.defaults_mode)
 
     def compose_communications(self, category, value, selected):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
@@ -2238,14 +2204,15 @@ class SettingsForm(Screen):
             section.collapsed = False
             if self.setting:
                 for child in self.query_one('.form', VerticalScroll).children:
-                    if isinstance(child, (Collapsible, WebAccessForm, CommunicationsForm)):
+                    if isinstance(child, (Collapsible, CommunicationsForm)):
                         child.display = child is section or child in section.ancestors
                 section.add_class('focused-setting')
-                self.query_one('#' + EDIT_FORMS[self.setting].focus).focus()
+                focus = self.query_one('#' + EDIT_FORMS[self.setting].focus)
+                if isinstance(focus, Collapsible):
+                    focus = focus.query_one('CollapsibleTitle')
+                focus.focus()
                 return
             self.call_after_refresh(section.scroll_visible, top=True, animate=False)
-            if self.initial_section == 'web-section':
-                self.query_one('#web-enabled', Checkbox).focus()
         elif self.has_class('settings-review'):
             models = self.query_one('#' + CATEGORIES['models'].section, Collapsible)
             models.collapsed = False
@@ -2352,9 +2319,40 @@ class SettingsForm(Screen):
     @on(Select.Changed, '#network')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
-        self.query_one('#network-section', Collapsible).title = CATEGORIES['network-settings'].label + ' · ' + ('Restricted' if mode == 'allowlist' else 'Unrestricted')
-        self.query_one('#network-rules-fields').display = (mode == 'allowlist' and
-            (not self.editing or self.draft['network'] != 'allowlist'))
+        self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + (
+            'Restricted' if mode == 'allowlist' else 'Unrestricted')
+        self.query_one('#network-rules-setting').display = mode == 'allowlist'
+
+    def network_rules(self, text):
+        try:
+            return sandbox.parse_rules(text)
+        except ValueError as error:
+            if self.setting in (None, 'network-settings'):
+                self.query_one('#network-search-section', Collapsible).collapsed = False
+                self.query_one('#network-section', Collapsible).collapsed = False
+                feedback = self.query_one('#network-error', Feedback)
+                self.query_one('#allowlist', TextArea).focus()
+                feedback.update(str(error))
+                self.call_after_refresh(feedback.scroll_visible, animate=False)
+            raise
+
+    def apply_network_rules(self):
+        name = self.draft['name']
+        text = self.query_one('#allowlist', TextArea).text
+        self.network_rules(text)
+        groups = self.query_one(WebsiteGroups).selected()
+        service = self.app.service
+        def apply(log):
+            with tempfile.TemporaryDirectory(prefix='sandbox-network-') as tmp:
+                path = Path(tmp) / 'allowlist.txt'
+                path.write_text(text)
+                service.run(['network', name, '--allowlist', str(path), '--website-groups', *groups], log)
+        mode = editor_settings.load(self.app.state_root / name)['mode']
+        reopen = self.query_one('#open-editor', Checkbox).value
+        self.app.pop_screen()
+        self.app.push_screen(Operation('Updating network rules · ' + name, apply,
+            success_message=settings_effects.NETWORK, done_on_success=True,
+            on_success=(lambda: self.app.launch_client(name, mode)) if reopen else None))
 
     def collect(self):
         draft = dict(self.draft)
@@ -2403,8 +2401,10 @@ class SettingsForm(Screen):
             from .repository_ui import GitIdentityFields
             selected['git_identity'] = self.query_one(GitIdentityFields).collect()
         key = {}
-        if self.setting in (None, 'web-access'):
-            selected['web_access'], key = self.query_one(WebAccessForm).collect()
+        if self.setting in (None, 'network-settings'):
+            web_search = self.query_one(WebAccessForm)
+            if self.setting is None or web_search.has_changes(selected['web_access']):
+                selected['web_access'], key = web_search.collect()
         if self.setting in (None, 'communications'):
             selected['communications'], draft['_communication_keys'] = self.query_one(CommunicationsForm).collect()
         selected['website_groups'] = self.query_one(WebsiteGroups).selected()
@@ -2433,14 +2433,14 @@ class SettingsForm(Screen):
             draft['_advisor_imports'] = choices.imports()
         draft['allowlist'] = self.query_one('#allowlist', TextArea).text if draft['network'] == 'allowlist' else ''
         # Local model ports are controlled by their labelled field; other rules stay intact.
-        rules = [r for r in sandbox.parse_rules(draft['allowlist']) if r[0] != 'local-model.internal']
+        rules = [r for r in self.network_rules(draft['allowlist']) if r[0] != 'local-model.internal']
         if draft['local_model_ports']:
             rules += [('local-model.internal', p) for p in sandbox.local_model_ports(draft['local_model_ports'])]
             if draft['network'] == 'unrestricted':
-                if self.setting == 'network-mode':
+                if self.setting == 'network-settings':
                     raise ValueError(f'Turn off local models in {LOCAL_MODELS_PATH} before choosing Unrestricted.')
                 if self.setting == 'model-sources':
-                    raise ValueError('Choose Restricted in Settings → Network before enabling local models.')
+                    raise ValueError(f'Choose Restricted in {NETWORK_PATH} before enabling local models.')
             if self.editing or self.defaults_mode:
                 actual = sandbox.choose_engine(draft['engine'], quiet=True)
                 sandbox.configure_local_gateway({'engine':actual, 'network':draft['network']}, draft['local_model_ports'], rules)
@@ -2487,7 +2487,17 @@ class SettingsForm(Screen):
             elif action == 'explain-approval':
                 self.app.push_screen(ApprovalHelp(editing=self.editing))
             elif action == 'apply':
-                self.query_one('#form-error', Static).update('')
+                for feedback in self.query('#form-error, #network-error, #web-config-error'):
+                    feedback.update('')
+                if self.setting == 'network-settings':
+                    mode = self.query_one('#network', Select).value
+                    search = options(self.draft.get('options'))['web_access']
+                    if mode == self.draft['network'] and not self.query_one(WebAccessForm).has_changes(search):
+                        if mode == 'allowlist':
+                            self.apply_network_rules()
+                        else:
+                            self.notify('No changes to apply.')
+                        return
                 draft, key = self.collect()
                 draft['_search_keys_changed'] = bool(key)
                 if self.defaults_mode:
@@ -2517,7 +2527,8 @@ class SettingsForm(Screen):
             if self.query_one('#skill-selection-error').display:
                 self.query_one('#skill-library-section', Collapsible).collapsed = False
                 self.query_one('#skill-selection-error').scroll_visible(animate=False)
-            if not any(message.display for message in self.query('.provider-setting Feedback, #model-ports-error, SkillSelection Feedback')):
+            if not any(message.display for message in self.query(
+                    '.provider-setting Feedback, #model-ports-error, SkillSelection Feedback, #network-error, #web-config-error')):
                 feedback = self.query_one('#form-error', Static)
                 feedback.update(str(error))
                 feedback.scroll_visible(animate=False)
@@ -2557,8 +2568,6 @@ class SettingsForm(Screen):
                     log('Use Open on the sandbox list to try again.')
         if editing:
             self.app.pop_screen()
-            if self.setting == 'network-mode' and isinstance(self.app.screen, NetworkForm):
-                self.app.pop_screen()
         def open_after_models():
             if not draft.get('open_editor'): return
             if editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
@@ -2668,11 +2677,13 @@ class Cockpit(App):
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
     .settings-review .form > Collapsible.-collapsed,
-    .settings-review .form > WebAccessForm > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
     .compact-terminal .settings-review #review-project { margin: 0; }
     Collapsible > Contents,
-    #agent-section.focused-setting > Contents { padding: 1 3; }
+    #agent-section.focused-setting > Contents,
+    #network-search-section.focused-setting > Contents { padding: 1 3; }
+    #network-search-section #network-section,
+    #network-search-section #web-section { margin: 0; }
     Collapsible.focused-setting > CollapsibleTitle { display: none; }
     Collapsible.focused-setting > Contents { padding: 0; }
     Collapsible > Contents > *:last-child { margin-bottom: 0; }
@@ -2704,6 +2715,8 @@ class Cockpit(App):
     .key-dialog #remember-key { margin: 0 0 1 2; }
     .local-keys-action { margin: 0 0 1 2; }
     SSHScreen #ssh-hosts { height: 5; }
+    #web-enable-setting { margin: 0; }
+    #web-fields { margin: 1 0 0 0; }
     #web-fields > .buttons { margin: 0 0 1 0; }
     #slack-controls { width: auto; }
     #slack-controls Checkbox { width: auto; margin-bottom: 0; }
@@ -2716,10 +2729,9 @@ class Cockpit(App):
     .search-provider-row Button { margin-right: 0; }
     .model-fields, #slack-fields, #copy-sandbox-fields, #search-provider-fields { padding-right: 1; }
     OptionList > .option-list--option { padding: 0 1; }
-    #custom-profile-fields, #network-rules-fields, #provider-controls { height: auto; }
+    #custom-profile-fields, #network-rules-fields, #network-rules-setting, #provider-controls { height: auto; }
     #home > .buttons { margin: 0 0 1 0; }
     #home > .buttons Label { width: 1fr; }
-    #network-error { height: auto; color: #b75b52; }
     .path-row { height: 3; }
     .path-row Input { width: 1fr; margin-bottom: 0; }
     .path-row Button { height: 3; padding: 1 1; margin: 0; }
@@ -3091,8 +3103,6 @@ class Cockpit(App):
             self.push_screen(AdvisorsScreen(record))
         elif action == 'models':
             self.push_screen(ModelsScreen(record))
-        elif action == 'network-settings':
-            self.push_screen(NetworkForm(name, (self.state_root / name / 'allowlist.txt').read_text(), config))
         elif action in EDIT_FORMS:
             self.push_screen(SettingsForm(self.configuration_draft(record), editing=True, setting=action))
         elif action in ('preview-models', 'refresh-models'):

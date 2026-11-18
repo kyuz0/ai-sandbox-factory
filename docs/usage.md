@@ -42,7 +42,7 @@ Settings show the effect before applying and the reconnect steps afterwards.
 
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
-| Approvals & sandbox, Agent tools, Skills, Web access, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose Open in browser in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
+| Approvals & sandbox, Agent tools, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose Open in browser in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
 | Network rules: allowed hosts and website groups | The gateway reloads. Development processes continue; connections may disconnect. | Retry interrupted connections. No editor reload or new conversation is needed. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
@@ -205,20 +205,21 @@ before the command for a separate inventory. TUI defaults live in
 
 ### Package downloads and website categories
 
-During creation, under **Network → Website categories**, select **Python** for PyPI,
+During creation, under **Network and Web Search → Network → Website categories**, select **Python** for PyPI,
 **npm** for JavaScript packages, **GitHub** for repositories and release downloads,
 or **Hugging Face** for models and datasets.
 For Microsoft sign-in and MFA, select **Authentication → Microsoft Entra / Microsoft 365**.
-For an existing sandbox, use **Settings → Network → Website categories**.
-[Web access](web-access.md) describes the category sources and automatic updates.
+For an existing sandbox, use **Settings → Network and Web Search → Network → Website categories**.
+[Web Search](web-access.md) describes the category sources and automatic updates.
 
 Node.js and npm are already installed. Yarn and pnpm can use the same npm registry.
 Packages whose install scripts fetch binaries elsewhere may need additional
 `hostname:port` entries, as may private registries.
 
-Choose **Apply rules** to update an existing sandbox. The gateway restarts and
-active requests may need to reconnect. Change the network mode in
-**Settings → Network → Change network mode…** or host model ports in **Settings → Model Providers → Local models & provider plugins**.
+Choose **Apply** to save. When only destination rules or website categories
+change, Factory updates the gateway and active connections may need to reconnect.
+Changing **Network mode** or **Web Search** shows a confirmation before recreating
+the sandbox. Change host model ports in **Settings → Model Providers → Local models & provider plugins**.
 
 CLI equivalent:
 

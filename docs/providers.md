@@ -20,7 +20,7 @@ For another service, a provider package can declare its API routes and keep the
 same credential isolation. The adapter discovers models through a local proxy.
 Pendant's **Sign in → Custom** also supports manual endpoints, but credentials
 entered there live in the development container, and the endpoint must be allowed
-under **Settings → Network**.
+under **Settings → Network and Web Search → Network**.
 
 ## Install and select
 

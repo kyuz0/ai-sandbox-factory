@@ -22,8 +22,8 @@ from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
-from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, settings_effects, web_access
-from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog
+from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, settings_effects, web_access
+from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
@@ -75,6 +75,9 @@ async def capture(size):
                         await app.push_screen(screen)
                     if section:
                         s = app.screen.query_one(section)
+                        for parent in reversed(s.ancestors):
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
                         s.collapsed = False
                         await pilot.pause()
                         s.scroll_visible(top=True, animate=False)
@@ -199,6 +202,56 @@ async def capture(size):
                 await shot('new', NewSandbox())
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                 draft.update(name='demo', workspace=str(workspace), working_directory='.', extra_folders=[])
+                def network_form(text=None, config=None):
+                    value = copy.deepcopy(draft)
+                    if config is not None:
+                        value['options'] = options(config.get('options'))
+                        value['network'] = config.get('network', value['network'])
+                        value['local_model_ports'] = config.get('local_model_ports', value['local_model_ports'])
+                    value['allowlist'] = (state / 'allowlist.txt').read_text() if text is None else text
+                    return SettingsForm(value, editing=True, setting='network-settings')
+
+                if args.only and all(name.startswith('network-group-') for name in args.only):
+                    await shot('network-group-menu', SettingsMenu('demo'))
+                    await app.push_screen(SettingsForm(copy.deepcopy(draft)))
+                    app.screen.query_one('#hosted-section', Collapsible).collapsed = True
+                    await shot('network-group-create-order')
+                    await shot('network-group-create', section='#network-search-section')
+                    await shot('network-group-create-network', section='#network-section', focus='#network')
+                    app.screen.query_one('#network-section', Collapsible).collapsed = True
+                    await shot('network-group-create-search-off', section='#web-section', focus='#web-enabled')
+                    app.screen.query_one('#web-enabled', Checkbox).value = True
+                    await shot('network-group-create-search', section='#web-section', focus='#web-enabled')
+                    await app.pop_screen()
+                    await shot('network-group-edit', network_form())
+                    await shot('network-group-edit-network', network_form(), '#network-section', '#network')
+                    unrestricted = {**c, 'network': 'unrestricted', 'local_model_ports': None}
+                    await shot('network-group-edit-unrestricted', network_form(config=unrestricted), '#network-section')
+                    searchable = copy.deepcopy(c)
+                    searchable['options']['web_access'] = {'enabled': True, 'mode': 'auto', 'providers': {'exa': {}}}
+                    await shot('network-group-edit-search', network_form(config=searchable), '#web-section', '#web-mode')
+                    await app.push_screen(network_form('https://invalid.example.test/path'))
+                    app.screen.query_one('#apply', Button).press()
+                    await shot('network-group-rules-error')
+                    await app.pop_screen()
+                    await app.push_screen(network_form())
+                    web = app.screen.query_one('WebAccessForm')
+                    await web.provider_saved(('brave', {'endpoint': '', 'model': '', 'has_key': False}, None))
+                    app.screen.query_one('#web-mode', Select).value = 'brave'
+                    app.screen.query_one('#web-enabled', Checkbox).value = True
+                    app.screen.query_one('#apply', Button).press()
+                    await shot('network-group-search-error')
+                    await app.pop_screen()
+                    await app.push_screen(network_form())
+                    app.screen.query_one('#allowlist', TextArea).load_text('local-model.internal:8000\nexample.test:443')
+                    app.screen.query_one('#web-enabled', Checkbox).value = True
+                    with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                        app.screen.query_one('#apply', Button).press()
+                        await pilot.pause()
+                    await shot('network-group-edit-review')
+                    await app.pop_screen()
+                    await app.pop_screen()
+                    return
                 if args.only and all(name.startswith('settings-ux-') for name in args.only):
                     await shot('settings-ux-menu', SettingsMenu('demo'))
                     await shot('settings-ux-create', SettingsForm(copy.deepcopy(draft)))
@@ -230,8 +283,8 @@ async def capture(size):
                     await shot('settings-ux-create-network', SettingsForm(copy.deepcopy(draft)), '#network-section')
                     await shot('settings-ux-models', ModelsScreen(record))
                     await shot('settings-ux-editor', EditorScreen('demo'))
-                    await shot('settings-ux-network', NetworkForm('demo', 'local-model.internal:8000', c))
-                    await shot('settings-ux-network-unrestricted', NetworkForm('demo', '', {**c, 'network': 'unrestricted'}))
+                    await shot('settings-ux-network', network_form('local-model.internal:8000', c))
+                    await shot('settings-ux-network-unrestricted', network_form('', {**c, 'network': 'unrestricted', 'local_model_ports': None}))
                     await shot('settings-ux-folders', FoldersScreen(record))
                     await shot('settings-ux-ssh', SSHScreen(record))
                     await shot('settings-ux-advisors', AdvisorsScreen(record))
@@ -404,27 +457,26 @@ async def capture(size):
                 credentials_off = copy.deepcopy(draft)
                 credentials_off['options']['protect_credentials'] = False
                 await shot('credentials-unprotected', SettingsForm(credentials_off), '#agent-section', '#protect-credentials')
-                await shot('categories', NetworkForm('demo', 'local-model.internal:8000', c), 'WebsiteGroups Collapsible')
+                await shot('categories', network_form('local-model.internal:8000', c), 'WebsiteGroups Collapsible')
                 if not args.only or any(name.startswith('auth-') for name in args.only):
                     auth = copy.deepcopy(c)
                     auth['options']['website_groups'] = ['auth-microsoft']
-                    await shot('auth-selected', NetworkForm('demo', 'app.example.com:443', auth), 'WebsiteGroups Collapsible', '#category-auth-microsoft')
-                    await app.push_screen(NetworkForm('demo', 'https://invalid.example.com/path', auth))
-                    app.screen.query_one('#network-error', Static).update('Use hostname:port, for example app.example.com:443.')
-                    await pilot.pause()
-                    app.screen.query_one('#network-error').scroll_visible(animate=False)
-                    await shot('auth-error', focus='#apply-network')
+                    await shot('auth-selected', network_form('app.example.com:443', auth), 'WebsiteGroups Collapsible', '#category-auth-microsoft')
+                    await app.push_screen(network_form('https://invalid.example.com/path', auth))
+                    app.screen.query_one('#apply', Button).press()
+                    await shot('auth-error')
                     await app.pop_screen()
                     auth_draft = copy.deepcopy(draft)
                     auth_draft['options']['website_groups'] = ['auth-microsoft']
                     await app.push_screen(SettingsForm(auth_draft))
+                    app.screen.query_one('#network-search-section', Collapsible).collapsed = False
                     app.screen.query_one('#network-section', Collapsible).collapsed = False
                     app.screen.query_one('WebsiteGroups Collapsible').collapsed = False
                     await pilot.pause()
                     app.screen.query_one('#category-auth-microsoft').scroll_visible(top=True, animate=False)
                     await shot('auth-create', focus='#category-auth-microsoft')
                     await app.pop_screen()
-                await shot('network-edit', NetworkForm('demo', 'local-model.internal:8000', c))
+                await shot('network-edit', network_form('local-model.internal:8000', c))
                 await shot('folders', FoldersScreen(record))
                 await shot('folder-add', FolderEditor(None, [], str(workspace), root))
                 await shot('settings', SettingsMenu('demo'))
@@ -528,8 +580,9 @@ async def capture(size):
                 app.screen.query_one('#editor-private-key', Input).focus()
                 await shot('editor-tls')
                 await app.pop_screen()
-                await app.push_screen(NetworkForm('demo', 'example.com:443', c))
-                section = list(app.screen.query(Collapsible))[-1]
+                await app.push_screen(network_form('example.com:443', c))
+                app.screen.query_one('#network-section', Collapsible).collapsed = False
+                section = app.screen.query_one('#network-rules-fields').query(Collapsible)[-1]
                 section.collapsed = False
                 await pilot.pause()
                 section.scroll_visible(top=True, animate=False)
@@ -577,6 +630,7 @@ async def capture(size):
                 await shot('advisors-selected')
                 await app.pop_screen()
                 await app.push_screen(SettingsForm(copy.deepcopy(enabled)))
+                app.screen.query_one('#network-search-section', Collapsible).collapsed = False
                 section = app.screen.query_one('#web-section', Collapsible)
                 section.collapsed = False
                 await pilot.pause()

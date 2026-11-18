@@ -184,22 +184,32 @@ class TUILayoutTests(unittest.TestCase):
             await self.ready(app, pilot)
             await pilot.click('#settings')
             menu = app.screen.query_one('#settings-actions', OptionList)
-            menu.highlighted = next(i for i, (_, action) in enumerate(SettingsMenu.ACTIONS) if action == 'web-access')
+            menu.highlighted = next(i for i, (_, action) in enumerate(SettingsMenu.ACTIONS) if action == 'network-settings')
             menu.focus()
             await pilot.press('enter')
             await pilot.pause()
             form = app.screen
             self.assertIsInstance(form, SettingsForm)
             self.assertTrue(form.editing)
+            group = form.query_one('#network-search-section', Collapsible)
+            self.assertFalse(group.collapsed)
+            network = form.query_one('#network-section', Collapsible)
+            self.assertIs(app.focused, network.query_one('CollapsibleTitle'))
             section = form.query_one('#web-section', Collapsible)
+            self.assertLess(network.region.y, section.region.y)
+            self.assertEqual(section.title, 'Web Search · Off')
+            await pilot.press('tab', 'enter')
+            await pilot.pause()
             self.assertFalse(section.collapsed)
-            self.assertIn('Off', section.title)
             control = form.query_one('#web-enabled', Checkbox)
             self.assertGreaterEqual(control.region.y, 1)
             self.assertLess(control.region.bottom, form.query_one('.wizard-actions').region.y)
             control.value = True
             await pilot.pause()
             self.assertIn('Automatic fallback', section.title)
+            enable_group = form.query_one('#web-enable-setting')
+            mode_group = form.query_one('#web-mode', Select).parent
+            self.assertEqual(mode_group.region.y, enable_group.region.bottom + 1)
             web = form.query_one(WebAccessForm)
             self.assertTrue(web.collect()[0]['enabled'])
             await pilot.press('escape')
@@ -207,8 +217,8 @@ class TUILayoutTests(unittest.TestCase):
 
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
-        expected_order = ['Model Providers', 'Editor', 'Folders', 'Network', 'Approvals & sandbox',
-                          'Web access', 'Agent tools', 'SSH & Git', 'Advisors', 'Communications',
+        expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
+                          'Agent tools', 'SSH & Git', 'Advisors', 'Communications',
                           'Skills', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -295,6 +305,7 @@ class TUILayoutTests(unittest.TestCase):
             section.collapsed = False
             await pilot.pause()
             self.assertIn('local on', section.title)
+            form.query_one('#network-search-section', Collapsible).collapsed = False
             form.query_one('#network-section', Collapsible).collapsed = False
             await pilot.pause()
             categories = form.query_one('WebsiteGroups')
@@ -305,10 +316,10 @@ class TUILayoutTests(unittest.TestCase):
             self.assertTrue(form.query_one('#model-ports', Input).disabled)
             form.query_one('#network', Select).value = 'unrestricted'
             await pilot.pause()
-            self.assertFalse(form.query_one('#network-rules-fields').display)
+            self.assertFalse(form.query_one('#network-rules-setting').display)
             form.query_one('#network', Select).value = 'allowlist'
             await pilot.pause()
-            self.assertTrue(form.query_one('#network-rules-fields').display)
+            self.assertTrue(form.query_one('#network-rules-setting').display)
             form.query_one('#skills-section', Collapsible).collapsed = False
             await pilot.pause()
             recall = form.query_one('#compaction-recall', Select)
@@ -398,6 +409,7 @@ class TUILayoutTests(unittest.TestCase):
                     self.assertLess(choice.region.bottom, apply.region.y)
                     self.assertLess(apply.region.bottom, form.query_one('Footer').region.y)
                     self.assertGreater(choice.region.y, actions.region.y)
+                    form.query_one('#network-search-section', Collapsible).collapsed = False
                     form.query_one('#web-section', Collapsible).collapsed = False
                     form.query_one('#web-section').scroll_visible(top=True, animate=False)
                     await pilot.pause()

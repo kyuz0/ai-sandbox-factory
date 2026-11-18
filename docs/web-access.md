@@ -1,6 +1,6 @@
 # Web search and website access
 
-Enable **Web access** when creating a sandbox or through **Settings → Web access**. This installs
+Enable **Web Search** when creating a sandbox or through **Settings → Network and Web Search → Web Search**. This installs
 [pi-web-access](https://github.com/nicobailon/pi-web-access) and adds `web_search`
 and `fetch_content` to Pi and Pendant.
 
@@ -18,8 +18,8 @@ key field empty keeps it. Changing a custom endpoint requires its own key.
 
 Active search providers' endpoints are allowed automatically. Exa includes both
 `mcp.exa.ai` for keyless search and `api.exa.ai` for keyed search. To let the agent read
-websites directly, select **Network → Website categories** or add individual
-`hostname:port` entries. You can change these later in **Settings → Network**
+websites directly, select **Network and Web Search → Network → Website categories** or add individual
+`hostname:port` entries. You can change these later in **Settings → Network and Web Search → Network**
 without recreating the development container.
 
 For example, enable Exa and the **Python** category, then ask:
@@ -68,7 +68,7 @@ connection’s hostname and port, not individual pages or what the site returns.
 
 ## Reuse your configuration
 
-**Save as default web access** saves providers, search mode and API keys for new
+**Save as default Web Search** saves providers, search mode and API keys for new
 sandboxes.
 
 **Copy from sandbox…** loads another sandbox's web settings into the form.
@@ -91,7 +91,7 @@ providers, search mode, restricted-network proxy and direct page fetching. It pr
 advanced settings across ordinary restarts, but changing managed search settings
 replaces the generated configuration. Reload an open Pi/Pendant session after
 changing it. See the extension’s [configuration reference](https://github.com/nicobailon/pi-web-access#configuration)
-for additional providers. Add their endpoints in **Settings → Network**.
+for additional providers. Add their endpoints in **Settings → Network and Web Search → Network**.
 
 Each sandbox keeps its API keys in its private home. Saving reusable defaults
 also stores a private copy on the workstation; keys never appear in command arguments. The coding agent runs as the same user and can read them.

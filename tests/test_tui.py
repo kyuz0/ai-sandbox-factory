@@ -627,28 +627,72 @@ class TUITests(unittest.TestCase):
             self.assertEqual(len(app.query('#home Button')),8)
             app.save_screenshot(filename='sandbox-home-declutter.svg',path='/tmp')
             await self.settings_page(app,pilot,action="network-settings")
-            self.assertLessEqual(app.screen.query_one('#apply-network',Button).region.bottom,23)
+            self.assertLessEqual(app.screen.query_one('#apply',Button).region.bottom,23)
             app.save_screenshot(filename='sandbox-network-declutter.svg',path='/tmp')
             await pilot.press('escape');await pilot.pause()
             await pilot.press('q')
 
-    async def test_network_category_opens_mode_for_unrestricted_sandbox(self):
-        from pi_sandbox_factory.sandbox_tui import NetworkForm
-        from textual.widgets import Select
-        self.records[0]['config'].update(network='unrestricted', local_model_ports=None)
-        app = Cockpit(self.root, FakeService(self.records))
+    async def test_network_mode_recreates_from_grouped_settings(self):
+        from textual.widgets import Collapsible, Select
+        self.records[0]['config'].update(network='unrestricted', local_model_ports=None, options={
+            'web_access': {'enabled': True, 'mode': 'brave', 'providers': {'brave': {'has_key': True}}},
+        })
+        service = FakeService(self.records)
+        service.search_status = lambda name: {'brave': False}
+        app = Cockpit(self.root, service)
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             await self.settings_page(app, pilot, action='network-settings')
-            network = app.screen
-            self.assertIsInstance(network, NetworkForm)
-            self.assertFalse(network.query('#apply-network'))
-            self.assertTrue(await pilot.click('#change-network-mode'))
+            form = app.screen
+            self.assertIsInstance(form, SettingsForm)
+            await self.ready(app, pilot)
+            self.assertEqual(str(form.query_one('.focused-settings-title').render()), 'Network and Web Search · alpha')
+            form.query_one('#network-section', Collapsible).collapsed = False
+            mode = form.query_one('#network', Select)
+            self.assertEqual(mode.value, 'unrestricted')
+            self.assertFalse(form.query_one('#network-rules-setting').display)
+            mode.value = 'allowlist'
             await pilot.pause()
-            self.assertIsInstance(app.screen, SettingsForm)
-            self.assertEqual(app.screen.query_one('#network', Select).value, 'unrestricted')
-            await pilot.press('escape')
-            self.assertIs(app.screen, network)
+            self.assertTrue(form.query_one('#network-rules-setting').display)
+            form.query_one('#allowlist', TextArea).load_text('example.test:443')
+            form.query_one('#apply', Button).press()
+            await pilot.pause()
+            self.assertIsInstance(app.screen, Confirm)
+            self.assertIn('Recreates the sandbox', app.screen.message)
+            app.screen.query_one('#yes', Button).press()
+            await self.ready(app, pilot)
+            self.assertEqual(service.calls[0][0:2], ['update', 'alpha'])
+            updated = service.calls[0][2]
+            self.assertEqual(updated['network'], 'allowlist')
+            self.assertEqual(updated['options']['web_access']['mode'], 'brave')
+            self.assertTrue(updated['options']['web_access']['providers']['brave']['has_key'])
+
+    async def test_search_changes_use_recreation_and_keep_network_edits(self):
+        from textual.widgets import Collapsible
+        for edit_rules in (False, True):
+            service = FakeService(self.records)
+            app = Cockpit(self.root, service)
+            async with app.run_test(size=(120, 40)) as pilot:
+                await self.ready(app, pilot)
+                await self.settings_page(app, pilot, action='network-settings')
+                form = app.screen
+                form.query_one('#web-section', Collapsible).collapsed = False
+                form.query_one('#web-enabled', Checkbox).value = True
+                if edit_rules:
+                    form.query_one('#allowlist', TextArea).load_text('example.test:443')
+                await pilot.pause()
+                with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                    form.query_one('#apply', Button).press()
+                    await pilot.pause()
+                self.assertIsInstance(app.screen, Confirm)
+                self.assertIn('• Web Search', app.screen.message)
+                self.assertEqual('• Network\n' in app.screen.message, edit_rules)
+                app.screen.query_one('#yes', Button).press()
+                await self.ready(app, pilot)
+                self.assertEqual(service.calls[0][0:2], ['update', 'alpha'])
+                updated = service.calls[0][2]
+                self.assertTrue(updated['options']['web_access']['enabled'])
+                self.assertEqual('example.test:443' in updated['allowlist'], edit_rules)
 
     async def test_open_with_pi_uses_terminal_and_returns_to_manager(self):
         from contextlib import nullcontext
@@ -742,10 +786,15 @@ class TUITests(unittest.TestCase):
 
     async def test_network_action_applies_to_selected_sandbox(self):
         service=FakeService(self.records);app=Cockpit(self.root,service)
+        self.records[1]['config']['options'] = {
+            'web_access': {'enabled': True, 'mode': 'brave', 'providers': {'brave': {'has_key': True}}},
+        }
+        service.search_status = lambda name: {'brave': False}
         async with app.run_test(size=(100,42)) as pilot:
             await self.ready(app,pilot)
             app.query_one(DataTable).move_cursor(row=1)
             await self.settings_page(app,pilot,action="network-settings")
+            await self.ready(app, pilot)
             field=app.screen.query_one('#allowlist',TextArea)
             legacy='local-model.internal:8000\npypi.org:443\nregistry.npmjs.org:443\ngithub.com:443'
             field.load_text(legacy)
@@ -754,7 +803,7 @@ class TUITests(unittest.TestCase):
             await pilot.pause()
             self.assertEqual(field.text,legacy)
             self.assertFalse(app.screen.query('#pip-preset, #npm-preset, #github-preset'))
-            await pilot.click('#apply-network');await self.ready(app,pilot)
+            await pilot.click('#apply');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][:2],['network','beta'])
             self.assertEqual(service.calls[0][-4:],['--website-groups','dev-python','dev-npmjs','dev-github'])
             self.assertIsInstance(app.screen,Operation)
@@ -792,7 +841,8 @@ class TUITests(unittest.TestCase):
             menu = app.screen.query_one('#settings-actions', OptionList)
             labels = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
             self.assertIn('Approvals & sandbox', labels)
-            self.assertEqual(labels.count('Network'), 1)
+            self.assertEqual(labels.count('Network and Web Search'), 1)
+            self.assertNotIn('Web Search', labels)
             self.assertNotIn('Network mode', labels)
             self.assertNotIn('Configuration', labels)
             close = app.screen.query_one('#settings-back', Button)
@@ -806,7 +856,7 @@ class TUITests(unittest.TestCase):
             self.assertIs(app.focused, form.query_one('#inner-sandbox', Checkbox))
             self.assertFalse(form.query_one('#agent-section', Collapsible).collapsed)
             self.assertFalse(form.query_one('#hosted-section', Collapsible).display)
-            self.assertFalse(form.query_one('#web-section').parent.display)
+            self.assertFalse(form.query_one('#network-search-section', Collapsible).display)
             self.assertEqual(choice.value,'automatic')
             self.assertEqual(len(form.query('#approval-help')), 0)
             self.assertIn('without asking you', str(form.query_one('#selected-approval-help', Static).render()))
@@ -1123,7 +1173,7 @@ class WebAccessUITests(unittest.TestCase):
             app.perform_action('network-settings')
             await pilot.pause()
             app.screen.query_one('#category-ut1-press', Checkbox).value = True
-            app.screen.query_one('#apply-network', Button).press()
+            app.screen.query_one('#apply', Button).press()
             await pilot.pause()
             await app.workers.wait_for_complete()
             call = app.service.calls[-1]
@@ -1134,13 +1184,14 @@ class WebAccessUITests(unittest.TestCase):
             app = Cockpit(self.root, FakeService(self.records))
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
-                from pi_sandbox_factory.sandbox_tui import NetworkForm
-                config = {'options': {'website_groups': ['auth-microsoft'] if initial else []}}
-                await app.push_screen(NetworkForm('alpha', '', config))
+                record = copy.deepcopy(self.records[0])
+                record['config']['options'] = {'website_groups': ['auth-microsoft'] if initial else []}
+                app.perform_action('network-settings', record=record)
+                await pilot.pause()
                 checkbox = app.screen.query_one('#category-auth-microsoft', Checkbox)
                 self.assertEqual(checkbox.value, initial)
                 checkbox.value = not initial
-                app.screen.query_one('#apply-network', Button).press()
+                app.screen.query_one('#apply', Button).press()
                 await pilot.pause();await app.workers.wait_for_complete()
                 expected = ['--website-groups'] + ([] if initial else ['auth-microsoft'])
                 self.assertEqual(app.service.calls[-1][-len(expected):], expected)

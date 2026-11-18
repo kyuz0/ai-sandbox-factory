@@ -460,7 +460,7 @@ CI runs unit tests and wheel installation checks. Successful pushes to `main`
 create a release only when package code, bundled assets or packaging configuration
 changes. Documentation, tests and workflows alone must not trigger a release.
 
-## Web access
+## Web Search
 
 For a live check, create the disposable sandbox described above with an options
 file containing `{"web_access":{"enabled":true},"website_groups":["dev-python"]}`.
