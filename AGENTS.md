@@ -93,6 +93,12 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 - HARD GATE — clear, consistent labels: use plain, direct names for controls. The same concept must have the same label across screens and engines. Never expose an internal implementation term where an ordinary user-facing name exists. Keep a shared name for each repeated concept and regression-test rendered labels and errors. Review visible copy before release; inconsistent or opaque labels block release.
 
+- HARD GATE — stable checkbox copy: the label and help describe what checking
+  the box does. Keep both unchanged when the box is toggled. Explain the
+  unchecked behavior only when the checked behavior leaves a genuine ambiguity.
+  Keep any such explanation visible in both states. Test both states and
+  compare the rendered label and help before release.
+
 - Show only information that helps the user make the current decision or take the
   next required action. Derive change notices from the actual diff and selected
   client. Never show unrelated feature exceptions, credentials guidance or advice

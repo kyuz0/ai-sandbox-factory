@@ -476,11 +476,13 @@ class TUILayoutTests(unittest.TestCase):
             credentials = app.screen.query_one('#protect-credentials', Checkbox)
             self.assertLess(inner.region.y, credentials.region.y)
             self.assertLess(credentials.region.y, approval.region.y)
+            checkbox_copy = {}
             for checkbox in (inner, credentials):
                 help_text = app.screen.query_one('#' + checkbox.id + '-help', Static)
                 self.assertIs(help_text.parent, checkbox.parent)
                 self.assertEqual(help_text.region.y, checkbox.region.bottom)
                 self.assertTrue(str(help_text.render()))
+                checkbox_copy[checkbox.id] = (str(checkbox.label), str(help_text.render()))
             self.assertIs(approval.parent, explanation.parent.parent)
             self.assertEqual(approval.region.y, explanation.region.bottom)
             explanation.scroll_visible(animate=False)
@@ -510,11 +512,13 @@ class TUILayoutTests(unittest.TestCase):
             credentials = app.screen.query_one('#protect-credentials', Checkbox)
             self.assertTrue(credentials.value)
             self.assertIn(app.screen.query_one('#agent-section', Collapsible), credentials.ancestors)
-            credentials.value = False
+            inner.value = credentials.value = False
             await pilot.pause()
-            self.assertIn('Their contents can reach the model.',
-                          str(app.screen.query_one('#protect-credentials-help', Static).render()))
+            for checkbox in (inner, credentials):
+                help_text = app.screen.query_one('#' + checkbox.id + '-help', Static)
+                self.assertEqual((str(checkbox.label), str(help_text.render())), checkbox_copy[checkbox.id])
             self.assertFalse(app.screen.collect()[0]['options']['protect_credentials'])
+            self.assertFalse(app.screen.collect()[0]['options']['inner_sandbox'])
             self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Approvals & sandbox'))
 
     async def test_labels_controls_and_feedback_do_not_create_empty_rows(self):

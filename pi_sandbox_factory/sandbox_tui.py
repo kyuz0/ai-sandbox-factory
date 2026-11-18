@@ -2061,10 +2061,13 @@ class SettingsForm(Screen):
         with Collapsible(title=category.label, collapsed=True, id=category.section):
             with Vertical(classes='setting'):
                 yield Checkbox('Use inner command sandbox', value=selected['inner_sandbox'], id='inner-sandbox')
-                yield Static('', id='inner-sandbox-help', classes='setting-help checkbox-help', markup=False)
+                yield Static('Runs Bash with file and network limits. Bash can still edit the workspace.',
+                             id='inner-sandbox-help', classes='setting-help checkbox-help', markup=False)
             with Vertical(classes='setting'):
                 yield Checkbox('Protect common credential files', value=selected['protect_credentials'], id='protect-credentials')
-                yield Static('', id='protect-credentials-help', classes='setting-help checkbox-help', markup=False)
+                yield Static('Blocks file tools and sandboxed Bash from reading or writing .env files, private keys '
+                             'and similar files.',
+                             id='protect-credentials-help', classes='setting-help checkbox-help', markup=False)
             with Vertical(classes='setting'):
                 with Horizontal(id='approval-heading'):
                     yield Label('Approval mode')
@@ -2226,7 +2229,6 @@ class SettingsForm(Screen):
 
     def on_mount(self):
         self.approval_summary()
-        self.protected_files_changed()
         self.network_changed()
         self.local_models_changed()
         self.browser_changed()
@@ -2339,17 +2341,7 @@ class SettingsForm(Screen):
         category = CATEGORIES['approval-settings'].label
         self.query_one('#agent-section', Collapsible).title = (
             f'{category} · {mode_label} · Inner sandbox ' + ('on' if inner else 'off'))
-        self.query_one('#inner-sandbox-help', Static).update(
-            'Bash can edit the workspace within file and network limits.' if inner else
-            'Bash runs in the development container under the chosen mode.')
         self.query_one('#selected-approval-help', Static).update(inline_help)
-
-    @on(Checkbox.Changed, '#protect-credentials')
-    def protected_files_changed(self):
-        protected = self.query_one('#protect-credentials', Checkbox).value
-        self.query_one('#protect-credentials-help', Static).update(
-            'File tools and sandboxed Bash cannot read or write .env files, private keys or similar files.' if protected else
-            'The agent can read and change .env files and private keys in the workspace. Their contents can reach the model.')
 
     @on(Select.Changed, '#approval')
     @on(Checkbox.Changed, '#inner-sandbox')
