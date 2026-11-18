@@ -353,6 +353,14 @@ Run that repository's type checks and complete suite before publishing a new
 extension pin. Factory's tests below check the installed Pi RPC client and shipped
 Pendant worker, including their real session loading and permission events.
 
+For changes to the approval notice or `/auto-review-settings`, substitute
+`--reviewer-settings` for `--review-recovery` in the disposable sandbox recipe
+below. Repeat with approval in the options file set to `automatic`, `assisted`,
+`manual` and `off`. Both clients must show one notice on open and none on
+resource reload. The automatic modes also exercise the model and thinking
+selectors. The Pendant check opens two chats in one worker and verifies that
+each keeps its own reviewer settings. This check makes no live model calls.
+
 For login/session policy changes, also run the extension's documented synthetic
 authentication matrix with the authorized live reviewer. It checks private
 same-service session reuse, advice, disclosure denials and unresolved helpers in

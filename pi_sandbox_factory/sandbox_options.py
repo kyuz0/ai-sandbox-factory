@@ -7,6 +7,12 @@ from . import web_access, network_groups, communications, git_settings
 
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
+APPROVAL_MODES = {
+    'automatic': 'Automatic (non-interactive)',
+    'assisted': 'Automatic (interactive)',
+    'manual': 'Manual (ask me)',
+    'off': 'No approval prompts (YOLO)',
+}
 DEFAULTS = {'approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
@@ -22,7 +28,7 @@ def options(value=None):
     if not isinstance(value, dict) or set(value) - DEFAULTS.keys():
         raise ValueError('Unknown sandbox options')
     result = {**DEFAULTS, **value}
-    if result['approval'] not in ('automatic', 'assisted', 'manual', 'off'):
+    if result['approval'] not in APPROVAL_MODES:
         raise ValueError('Approval must be automatic, assisted, manual or off')
     for key in ('inner_sandbox', 'goals', 'scheduling', 'question_forms', 'browser', 'protect_credentials', 'protect_browser_credentials'):
         if type(result[key]) is not bool:

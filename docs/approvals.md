@@ -1,7 +1,7 @@
-# Automatic approval
+# Approvals
 
-Automatic mode uses the current Pi model to review commands that need broader
-access. The reviewer has its own conversation, separate from the agent doing
+Both automatic modes use the current chat model by default to review actions that
+need approval. The reviewer has its own conversation, separate from the agent doing
 the work. It receives the exact action, original user instructions from the
 active Pi branch and relevant tool evidence already available to Pi.
 
@@ -78,8 +78,9 @@ A review can produce up to 32,768 output tokens and has a ten-minute maximum
 deadline. Invalid replies, unexpected tool calls,
 timeouts and provider failures do not grant permission. Default failure handling
 returns the reason to the agent without opening a dialog. The agent can retry a failed
-review or choose an allowed alternative. Thinking
-is set to low, and its tokens share the output allowance.
+review or choose an allowed alternative. Thinking defaults to Low. If the model
+does not offer Low, the reviewer uses its lowest enabled level. Thinking tokens share
+the output allowance.
 
 ## Configuration and updates
 
@@ -89,20 +90,28 @@ For an existing sandbox, select it in the Factory manager, open
 This stops running processes, including tmux sessions, but preserves files and
 saved chats. Reopen Pi or Pendant to resume the conversation with the new settings.
 
-Pi has no slash command for these Factory settings. `/reload` does not change them.
-The extension's `/auto-review-approve` command in Pi's interactive TUI requests
-one retry of an exact denied action; it does not change the approval mode.
+- **Automatic (non-interactive)** is the default. The reviewer handles requests
+  without asking you. If it blocks an action, the agent gets the reason and can
+  try another permitted approach.
+- **Automatic (interactive)** asks you when the reviewer leaves a decision open
+  or a tool requires confirmation. Explicit denials and reviewer failures block
+  the action.
+- **Manual (ask me)** asks you to decide on requests that need approval.
+- **No approval prompts (YOLO)** turns off approval prompts. Commands stay inside
+  the inner sandbox when it is enabled. The outer container and its network
+  rules apply in every mode.
 
-The approval modes are:
+Pi and Pendant show the approval mode when you open a chat. In either automatic
+mode, use `/auto-review-settings` to change the reviewer model or thinking effort
+for that chat. Choose **Current chat model** to follow the model selected in Pi or
+Pendant. Choose **Off** under **Thinking effort** to send a review without
+requesting thinking. New chats and resource reloads restore the saved defaults.
 
-- **Automatic — never ask for approval** (default): returns failed or rejected operations to the agent with a reason.
-- **Automatic with human fallback**: asks you when automatic review cannot decide.
-- **Ask me — human approval**: sends approval requests to you.
-- **No approval prompts**: disables command approval; inner sandbox restrictions still apply.
+In Pi's interactive terminal, `/auto-review-approve` requests one retry of an
+exact denied action.
 
-The first two modes use the automatic reviewer. In automatic
-mode, `/opt/pi-security/config/auto-review.json` selects the current Pi model and
-enables `retainedContext` and `reviewerConversation`. Inspection tools cannot be
+In both automatic modes, `/opt/pi-security/config/auto-review.json` selects the
+current chat model and enables `retainedContext` and `reviewerConversation`. Inspection tools cannot be
 enabled. Project files cannot disable this context handling or choose another
 reviewer. Configure trusted settings through the image, not through agent-edited
 workspace files.

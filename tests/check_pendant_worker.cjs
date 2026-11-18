@@ -60,11 +60,20 @@ worker.on('message', message => {
   if (message.type === 'extension_ui_request') {
     const session = sessions.get(message.sessionKey);
     try {
-      assert(session?.allowDialog, 'Unexpected permission dialog: ' + JSON.stringify(message.request));
-      session.dialogs++;
       const prompt = message.request;
+      if (process.argv.includes('--reviewer-settings') && prompt.kind === 'notify') return;
+      assert(session?.allowDialog || session?.reviewerChoices?.length,
+        'Unexpected permission dialog: ' + JSON.stringify(prompt));
+      session.dialogs++;
       let result;
-      if (session.questionScenario) {
+      if (session.reviewerChoices?.length) {
+        assert.equal(prompt.kind, 'select');
+        session.reviewerPrompts.push(prompt);
+        const choice = session.reviewerChoices.shift();
+        assert(choice === null || prompt.options.includes(choice), JSON.stringify(prompt));
+        result = choice === null ? { type: 'cancelled' } : { type: 'value', value: choice };
+      }
+      else if (session.questionScenario) {
         assert.equal(prompt.kind, 'select');
         result = session.questionScenario === 'CANCEL' ? { type: 'cancelled' }
           : { type: 'value', value: session.questionScenario === 'CUSTOM' ? 'Markdown table' : prompt.options[0] };
@@ -116,6 +125,41 @@ async function main() {
   assert.equal(handshake.compatibilityReport.compatible, true);
   assert.equal(handshake.compatibilityReport.piSdkVersion, sdkVersion);
   const inventory = await create('inventory');
+  if (process.argv.includes('--reviewer-settings')) {
+    const mode = process.env.SANDBOX_APPROVAL_MODE;
+    const automatic = ['automatic', 'assisted'].includes(mode);
+    const notices = key => workerMessages.filter(message => message.sessionKey === key &&
+      JSON.stringify(message).includes('Approval mode is '));
+    await create('second-review-chat');
+    assert.equal(notices('inventory').length, 1, JSON.stringify(workerMessages));
+    assert.equal(notices('second-review-chat').length, 1);
+    assert.equal(JSON.stringify(notices('inventory')).includes('/auto-review-settings'), automatic);
+    async function settings(key, choices) {
+      const session = sessions.get(key);
+      session.reviewerChoices = choices;
+      session.reviewerPrompts = [];
+      await request({ type: 'session_prompt', text: '/auto-review-settings', images: [], source: 'interactive' }, key);
+      assert.equal(session.reviewerChoices.length, 0);
+      return session.reviewerPrompts;
+    }
+    if (automatic) {
+      const prompts = await settings('inventory', ['Thinking effort', 'Off']);
+      assert.deepEqual(prompts[1].options, ['Off', 'High', 'Max']);
+      const second = await settings('second-review-chat', [null]);
+      assert.match(second[0].title, /High \(Low requested\)/);
+      const updated = await settings('inventory', ['Reviewer model', 'fixture/second-model']);
+      assert.match(updated[0].title, /· Off$/);
+    }
+    await request({ type: 'session_reload_resources', reason: 'explicit', force: false }, 'inventory');
+    assert.equal(notices('inventory').length, 1);
+    if (automatic) assert.match((await settings('inventory', [null]))[0].title, /High \(Low requested\)/);
+    for (const key of ['inventory', 'second-review-chat']) {
+      assert.deepEqual((await request({ type: 'session_get_state' }, key)).messages, []);
+      await request({ type: 'session_dispose', reason: 'replacement' }, key);
+    }
+    console.log('PASS installed Pendant reviewer settings and approval notice for ' + mode);
+    return;
+  }
   if (process.argv.includes('--ssh')) {
     assert.deepEqual(inventory.diagnostics.filter(d => d.level === 'error'), []);
     await request({type:'session_set_model',provider:'fixture',modelId:'fixture-model',persist:false}, 'inventory');

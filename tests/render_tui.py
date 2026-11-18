@@ -122,7 +122,20 @@ async def capture(size):
                         app.screen.query_one('#hosted-section', Collapsible).collapsed = True
                         await shot('settings-ux-create-categories')
                         await app.pop_screen()
-                    await shot('settings-ux-create-approvals', SettingsForm(copy.deepcopy(draft)), '#agent-section')
+                    await shot('settings-ux-create-approvals', SettingsForm(copy.deepcopy(draft)), '#agent-section', '#approval')
+                    if args.only and 'settings-ux-create-approval-help' in args.only:
+                        await app.push_screen(SettingsForm(copy.deepcopy(draft)))
+                        section = app.screen.query_one('#agent-section', Collapsible)
+                        section.collapsed = False
+                        await pilot.pause()
+                        section.scroll_visible(top=True, animate=False)
+                        await pilot.pause()
+                        app.screen.query_one('#explain-approval').focus()
+                        await pilot.pause()
+                        await pilot.press('enter')
+                        await shot('settings-ux-create-approval-help')
+                        await app.pop_screen()
+                        await app.pop_screen()
                     await shot('settings-ux-create-network', SettingsForm(copy.deepcopy(draft)), '#network-section')
                     await shot('settings-ux-models', ModelsScreen(record))
                     await shot('settings-ux-editor', EditorScreen('demo'))
@@ -136,6 +149,13 @@ async def capture(size):
                         await shot('settings-ux-' + action, SettingsForm(copy.deepcopy(settings), editing=True, setting=action))
                     await shot('settings-ux-approval-choice', SettingsForm(
                         {**settings, 'options': options({'approval': 'assisted'})}, editing=True, setting='approval-settings'))
+                    if args.only and 'settings-ux-edit-approval-help' in args.only:
+                        await app.push_screen(SettingsForm(
+                            {**settings, 'options': options({'approval': 'assisted'})}, editing=True, setting='approval-settings'))
+                        await pilot.click('#explain-approval')
+                        await shot('settings-ux-edit-approval-help')
+                        await app.pop_screen()
+                        await app.pop_screen()
                     if 'settings-ux-model-error' in args.only:
                         form = SettingsForm(copy.deepcopy(settings), editing=True, setting='model-sources')
                         await app.push_screen(form)

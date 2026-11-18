@@ -73,9 +73,9 @@ Applying these settings stops running commands and tmux sessions. Workspace file
 private configuration and saved conversations are preserved. Finish active work
 before applying the change.
 
-These settings are managed by Factory; Pi has no slash command to switch them.
-`/reload` does not apply a different Factory approval mode or enable/disable the
-inner sandbox. When **Protect common credential files** is disabled, the agent
+Factory applies these settings at creation or recreation. In either automatic
+mode, `/auto-review-settings` changes the reviewer model or thinking effort for
+the open chat. When **Protect common credential files** is disabled, the agent
 can read and write those files like other workspace files. Changing defaults on the manager's home screen affects future
 sandboxes, not existing ones.
 
