@@ -68,14 +68,17 @@ class CreationTests(unittest.TestCase):
         self.assertFalse(self.state.exists())
 
     def test_cleanup_failure_retains_state_and_reports_failure(self):
-        job = creation.Creation()
         def worker(service, draft, key, token, log):
             (self.state / creation.READY).write_text(token)
-            job.cancel()
+            raise ValueError('engine unavailable during creation')
+
+        job = creation.Creation()
         with patch.object(job, '_worker', side_effect=worker), patch.object(self.service, 'run', side_effect=ValueError('engine unavailable')):
             with self.assertRaisesRegex(ValueError, 'cleanup failed.*engine unavailable'):
                 job.run(self.service, self.draft, None, self.logs.append)
-        self.assertTrue(self.state.exists())
+        self.assertTrue(job.retry_blocked)
+        self.assertTrue((self.state / creation.MARKER).is_file())
+        self.assertTrue((self.state / creation.READY).is_file())
 
     def test_ownership_change_refuses_cleanup(self):
         job = creation.Creation()
@@ -88,23 +91,35 @@ class CreationTests(unittest.TestCase):
         run.assert_not_called()
         self.assertTrue(self.state.exists())
 
-    def test_success_and_failure_preserve_state_and_reject_late_cancel(self):
-        for error in (None, ValueError('build failed')):
-            with self.subTest(error=error):
-                job = creation.Creation()
-                def worker(service, draft, key, token, log):
-                    (self.state / creation.READY).write_text(token)
-                    if error: raise error
-                with patch.object(job, '_worker', side_effect=worker):
-                    if error:
-                        with self.assertRaisesRegex(ValueError, 'build failed'):
-                            job.run(self.service, self.draft, None, self.logs.append)
-                    else:
-                        job.run(self.service, self.draft, None, self.logs.append)
-                self.assertTrue(self.state.exists())
-                self.assertFalse((self.state / creation.MARKER).exists())
-                self.assertFalse(job.cancel())
-                self.state.rmdir()
+    def test_build_failure_cleans_up_then_same_name_can_be_created(self):
+        def worker(service, draft, key, token, log):
+            (self.state / creation.READY).write_text(token)
+
+        def fail(*args):
+            worker(*args)
+            raise ValueError('build failed')
+
+        def delete(args, log):
+            self.assertEqual(args, ['delete', 'demo'])
+            import shutil
+            shutil.rmtree(self.state)
+
+        job = creation.Creation()
+        with patch.object(job, '_worker', side_effect=fail), patch.object(self.service, 'run', side_effect=delete) as run:
+            with self.assertRaisesRegex(ValueError, 'build failed'):
+                job.run(self.service, self.draft, None, self.logs.append)
+        run.assert_called_once()
+        self.assertFalse(job.retry_blocked)
+        self.assertFalse(job.cancel())
+        self.assertFalse(self.state.exists())
+
+        retry = creation.Creation()
+        with patch.object(retry, '_worker', side_effect=worker):
+            retry.run(self.service, self.draft, None, self.logs.append)
+        self.assertTrue(self.state.is_dir())
+        self.assertFalse((self.state / creation.MARKER).exists())
+        self.assertFalse((self.state / creation.READY).exists())
+        self.assertFalse(retry.cancel())
 
     def test_preflight_checks_all_companions_and_volumes_before_start(self):
         self.state.mkdir(parents=True)
@@ -164,6 +179,18 @@ except KeyboardInterrupt:
                 with self.assertRaisesRegex(ValueError, 'invalid workspace'):
                     job.run(self.service, self.draft, None, self.logs.append)
             self.assertFalse(self.state.exists())
+
+    def test_missing_podman_reports_install_hint_and_releases_name(self):
+        from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
+        workspace = self.root / 'project'
+        workspace.mkdir()
+        draft = preset('base', DEFAULT_SETTINGS)
+        draft.update(name='demo', workspace=str(workspace), engine='podman')
+        with patch.dict(os.environ, {'PATH': str(self.root)}):
+            with self.assertRaisesRegex(ValueError, 'Creation failed'):
+                self.service.create(draft, None, self.logs.append, cancellation=creation.Creation())
+        self.assertIn('Podman was not found', '\n'.join(self.logs))
+        self.assertFalse(self.state.exists())
 
     def test_unconfirmed_stop_preserves_state_without_cleanup(self):
         job = creation.Creation()

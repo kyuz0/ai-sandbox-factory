@@ -60,6 +60,7 @@ class Creation:
         self.requested = threading.Event()
         self.lock = threading.Lock()
         self.finished = False
+        self.retry_blocked = False
 
     def cancel(self):
         with self.lock:
@@ -77,38 +78,36 @@ class Creation:
         if self.requested.is_set():
             raise Cancelled('Creation cancelled before starting.')
         state.mkdir(parents=True, mode=0o700)  # Atomic reservation; never adopt existing state.
-        stop_failed = False
+        failure = None
         try:
             (state / MARKER).write_text(token)
-            try:
-                self._worker(service, draft, key, token, log)
-            except StopFailed:
-                stop_failed = True
-                raise
-            except Exception:
-                if not self.requested.is_set():
-                    raise
+            self._worker(service, draft, key, token, log)
+        except StopFailed:
+            self.retry_blocked = True  # The worker may still be running.
+            raise
+        except Exception as error:
+            failure = error
         finally:
             with self.lock:
                 cancelled = self.requested.is_set()
                 self.finished = True  # Accepted cancellation rolls back; later clicks do nothing.
-            if stop_failed:
-                pass  # The worker may still be running: never race it with cleanup.
-            elif cancelled:
-                log('Creation stopped. Removing its containers and private state…')
-                try:
-                    self.cleanup(service, state, token, log)
-                except Exception as error:
-                    raise ValueError('Creation stopped, but cleanup failed. Saved state was retained; '
-                                     'use Delete on this sandbox to retry. ' + str(error)) from error
-            elif owns(state, token):
-                if not (state / READY).exists():
-                    shutil.rmtree(state)  # Validation/preflight failed before any container launch.
-                else:
+            if not self.retry_blocked:
+                if cancelled or failure is not None:
+                    try:
+                        if cancelled or (state / READY).exists():
+                            log('Removing containers and private state from this creation attempt…')
+                        self.cleanup(service, state, token, log)
+                    except Exception as error:
+                        self.retry_blocked = True
+                        raise ValueError('Creation stopped, but cleanup failed. Saved state was retained. '
+                                         'Choose Actions… → Delete sandbox… from the sandbox list. ' + str(error)) from error
+                elif owns(state, token):
                     (state / MARKER).unlink()
                     (state / READY).unlink()
         if cancelled:
             raise Cancelled('Creation cancelled. Runtime containers and private state removed; project files and build cache preserved.')
+        if failure is not None:
+            raise failure
 
     @staticmethod
     def cleanup(service, state, token, log):
@@ -117,7 +116,9 @@ class Creation:
         if not owns(state, token):
             raise ValueError('Creation ownership changed; no resources were removed.')
         ready = state / READY
-        if ready.exists() and ready.read_text() == token:
+        if ready.exists() or ready.is_symlink():
+            if not ready.is_file() or ready.is_symlink() or ready.read_text() != token:
+                raise ValueError('Creation resource ownership changed; no resources were removed.')
             service.run(['delete', state.name], log)
         else:
             # No container launch was permitted before the resource checkpoint.
@@ -177,7 +178,7 @@ class Creation:
                     log(line)
             code = process.wait()
             if code and not self.requested.is_set():
-                raise ValueError('Creation failed. See the log above; any created sandbox is retained for retry.')
+                raise ValueError('Creation failed. See the output above.')
         except StopFailed:
             unsafe_stop = True
             raise
@@ -202,6 +203,9 @@ def main():
         service.create(draft, value['key'], lambda line: print(line, flush=True), creation_token=value['token'])
     except KeyboardInterrupt:
         raise SystemExit(130)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f'Error: {error}', file=sys.stderr, flush=True)
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

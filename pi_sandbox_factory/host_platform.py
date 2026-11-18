@@ -115,6 +115,29 @@ def control_path(state):
     return root / (name + '.sock')
 
 
+def find_engine(requested):
+    if requested not in ('auto', 'podman', 'docker'):
+        raise ValueError('Choose Automatic, Podman, or Docker as the container engine.')
+    if is_mac():
+        if requested == 'docker':
+            raise ValueError('On macOS, use rootless Podman Machine.')
+        if shutil.which('podman'):
+            return 'podman'
+        raise ValueError('Podman was not found. Install Podman and start a rootless Podman Machine.')
+    if requested == 'auto':
+        for engine in ('podman', 'docker'):
+            if shutil.which(engine):
+                return engine
+        raise ValueError('No container engine was found. Install rootless Podman, or install Docker for Pi CLI or VS Code on host.')
+    if shutil.which(requested):
+        return requested
+    if requested == 'podman':
+        if shutil.which('docker'):
+            raise ValueError('Podman was not found. Install rootless Podman, or select Docker for Pi CLI or VS Code on host.')
+        raise ValueError('Podman was not found. Install rootless Podman.')
+    raise ValueError('Docker was not found. Install Docker or select Podman as the container engine.')
+
+
 def check_engine(engine, expected=None, *, full=True):
     """Check the selected local Mac VM before touching any saved container."""
     if platform.system() != 'Darwin':

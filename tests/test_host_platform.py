@@ -82,6 +82,20 @@ class HostTests(unittest.TestCase):
             host.check_engine('podman')
             call.assert_not_called()
 
+    def test_engine_lookup_respects_platform_and_explicit_selection(self):
+        with patch('platform.system', return_value='Linux'), \
+                patch.object(host.shutil, 'which', side_effect=lambda name: '/usr/bin/docker' if name == 'docker' else None):
+            self.assertEqual(host.find_engine('auto'), 'docker')
+            self.assertEqual(host.find_engine('docker'), 'docker')
+            with self.assertRaisesRegex(ValueError, 'Podman was not found'):
+                host.find_engine('podman')
+        with patch('platform.system', return_value='Darwin'), \
+                patch.object(host.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'Install Podman and start a rootless Podman Machine'):
+                host.find_engine('auto')
+            with self.assertRaisesRegex(ValueError, 'On macOS'):
+                host.find_engine('docker')
+
     def test_model_route_and_archive_architecture(self):
         with patch('platform.system', return_value='Darwin'):
             self.assertEqual(host.model_gateway_args(), ['--env', 'SANDBOX_MODEL_HOST=host.containers.internal'])

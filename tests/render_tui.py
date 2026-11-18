@@ -19,8 +19,8 @@ root = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(root), str(root / 'tests')]
 from test_tui import FakeService
 from test_hosted_models_ui import ModelService
-from pi_sandbox_factory import sandbox, registry
-from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, web_access
+from pi_sandbox_factory import sandbox, registry, host_platform
+from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, NetworkForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, web_access
 from textual.widgets import Collapsible, Input, Static, OptionList, Select, RichLog
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
@@ -84,6 +84,28 @@ async def capture(size):
                     if screen:
                         await app.pop_screen()
                 await shot('home')
+                with patch.object(host_platform, 'is_mac', return_value=False), \
+                        patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/pipx' if name == 'pipx' else None), \
+                        patch('pi_sandbox_factory.updates.pipx_install', return_value=True):
+                    app.check_dependencies()
+                    app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown'}])
+                    await shot('home-missing-dependencies')
+                    app.show_update('2099.1.1.1')
+                    await shot('home-missing-dependencies-update')
+                    app.query_one('#application-update').display = False
+                if args.only and 'home-missing-dependencies-long-workspace' in args.only:
+                    with patch.object(host_platform, 'is_mac', return_value=False), \
+                            patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name if name in ('docker', 'pipx') else None), \
+                            patch('pi_sandbox_factory.updates.pipx_install', return_value=True):
+                        app.check_dependencies()
+                        app.show_update('2099.11.18.150000')
+                        app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown',
+                                                'workspace': '/work/' + 'nested-project-directory/' * 9}])
+                        await shot('home-missing-dependencies-long-workspace')
+                        app.query_one('#application-update').display = False
+                app.check_dependencies()
+                if args.only and all(name.startswith('home') for name in args.only):
+                    return
                 app.receive_inventory([])
                 await shot('empty')
                 app.receive_inventory([record])
@@ -273,32 +295,49 @@ async def capture(size):
                 await shot('operation', Operation('Creating sandbox', lambda log: log('Sandbox ready.')))
                 if not args.only or any(name.startswith('creation-') for name in args.only):
                     from pi_sandbox_factory.creation import Creation
-                    for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete'):
+                    for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete', 'failed'):
                         controller = Creation()
-                        screen = Operation('Creating example-project-with-a-long-name', lambda log: None,
-                                           cancellation=controller)
+                        name = 'example-project-with-a-long-name'
+                        screen = CreationOperation(root / name, lambda log: None, controller,
+                                                   retry=lambda: None, on_success=None)
                         with patch.object(Operation, 'execute'):
                             await app.push_screen(screen)
                         output = screen.query_one(RichLog)
                         for index in range(35):
                             output.write(f'STEP {index + 1}/39: preparing sandbox dependencies and cached image layers')
-                        if state_name != 'running' and state_name != 'complete':
+                        if state_name in ('cancelling', 'cancelled', 'cleanup-error'):
                             screen.action_cancel_creation()
                             output.write('Stopping creation…')
-                        if state_name in ('cancelled', 'cleanup-error', 'complete'):
-                            screen.failed = state_name == 'cleanup-error'
+                        if state_name in ('cancelled', 'cleanup-error', 'complete', 'failed'):
+                            screen.failed = state_name in ('cleanup-error', 'failed')
                             screen.cancelled = state_name == 'cancelled'
-                            screen.result = ('Creation stopped, but cleanup failed. Saved state was retained; use Delete on this sandbox to retry. Container engine unavailable.' if screen.failed else
-                                             'Creation cancelled. Runtime containers and private state removed; project files and build cache preserved.' if screen.cancelled else 'Sandbox ready.')
-                            output.write(('Error: ' if screen.failed else '') + screen.result)
+                            if state_name == 'failed':
+                                screen.result = 'Podman was not found. Install rootless Podman.'
+                            elif state_name == 'cleanup-error':
+                                screen.result = ('Creation stopped, but cleanup failed. Saved state was retained. '
+                                                 'Choose Actions… → Delete sandbox… from the sandbox list. Container engine unavailable.')
+                            elif state_name == 'cancelled':
+                                screen.result = ('Creation cancelled. Runtime containers and private state removed; '
+                                                 'project files and build cache preserved.')
+                            else:
+                                screen.result = 'Sandbox ready.'
+                            screen.write_log(('Error: ' if screen.failed else '') + screen.result)
                             screen.complete()
-                        await shot('creation-' + state_name, focus='#operation-back' if state_name != 'cancelling' else None)
+                        focus = '#operation-retry' if state_name == 'failed' else '#operation-back'
+                        await shot('creation-' + state_name, focus=focus if state_name != 'cancelling' else None)
                         await app.pop_screen()
-                    if args.only and all(name.startswith('creation-') for name in args.only):
+                    if args.only and all(name.startswith(('creation-', 'home')) for name in args.only):
                         return
 
                 for label, sel in [('editor', '#editor-section'), ('providers', '#hosted-section'), ('folders', '#folders-section'), ('advisors', '#new-advisors-section'), ('agent', '#agent-section'), ('communications', '#communications-section')]:
                     await shot('review-' + label, SettingsForm(copy.deepcopy(draft)), sel)
+                if args.only and 'review-error' in args.only:
+                    await app.push_screen(SettingsForm(copy.deepcopy(draft)))
+                    error = app.screen.query_one('#form-error', Static)
+                    error.update('Add an allowed destination or enable host-local models.')
+                    error.scroll_visible(animate=False)
+                    await shot('review-error', focus='#apply')
+                    await app.pop_screen()
                 await app.push_screen(SSHScreen(record))
                 for i, section in enumerate(app.screen.query(Collapsible)):
                     section.collapsed = False

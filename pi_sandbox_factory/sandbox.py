@@ -245,18 +245,12 @@ def validate_env(path):
 
 
 def choose_engine(requested, quiet=False):
-    if requested != 'auto':
-        if requested == 'docker':
-            version = run(['docker', '--version'], capture=True).stdout.lower()
-            if 'podman' in version:
-                if not quiet:
-                    print('The docker command is a Podman wrapper; using rootless Podman mode.')
-                return 'podman'
-        return requested
-    for engine in ('podman', 'docker'):
-        if shutil.which(engine):
-            return engine
-    raise ValueError('Install Podman or Docker first')
+    engine = host_platform.find_engine(requested)
+    if requested == 'docker' and 'podman' in run(['docker', '--version'], capture=True).stdout.lower():
+        if not quiet:
+            print('The docker command is a Podman wrapper; using rootless Podman mode.')
+        return host_platform.find_engine('podman')
+    return engine
 
 
 def names(config):

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import pyfiglet
 import shutil
+from rich.text import Text
 from typing import Optional
 
 from . import sandbox, editor_settings
@@ -142,7 +143,7 @@ class Service:
             for line in process.stdout:
                 log(safe_text(line.rstrip()))
             if process.wait():
-                raise ValueError('Operation failed. See the log above; saved state is retained for retry.')
+                raise ValueError('Command failed. See the output above.')
 
     def start(self, name, log):
         config = self.config(name)
@@ -1421,20 +1422,27 @@ class Operation(Screen):
             yield Static('', id='operation-next', markup=False)
             yield OperationLog(id='operation-log', markup=False, wrap=True, min_width=1)
         with Horizontal(classes='wizard-actions'):
-            yield Button('Cancel creation' if self.cancellation else 'Working…', id='operation-back', disabled=not bool(self.cancellation))
+            yield from self.compose_actions()
         yield Footer()
+
+    def compose_actions(self):
+        yield Button('Cancel creation' if self.cancellation else 'Working…', id='operation-back', disabled=not bool(self.cancellation))
 
     def on_mount(self):
         self.query_one('#operation-next').display = False
         self.query_one(RichLog).border_title = 'Output'
         self.execute()
 
+    def write_log(self, message):
+        content = safe_text(message)
+        self.query_one(RichLog).write(Text(content, style='bold') if content.startswith('Error: ') else content)
+
     @work(thread=True, exit_on_error=False)
     def execute(self):
         def log(message):
             if 'Model status: Not connected.' in str(message):
                 self.model_disconnected = True
-            self.app.call_from_thread(self.query_one(RichLog).write, safe_text(message))
+            self.app.call_from_thread(self.write_log, message)
         try:
             self.operation_task(log)
             log('Finished.')
@@ -1452,9 +1460,11 @@ class Operation(Screen):
 
     def complete(self):
         self.finished = True
+        cleanup_failed = self.failed and self.result.startswith('Creation stopped, but cleanup failed')
         if self.cancellation and self.title.startswith('Creating '):
             name = self.title.removeprefix('Creating ')
-            prefix = 'Creation failed: ' if self.failed else 'Creation cancelled: ' if self.cancelled else 'Created '
+            prefix = ('Cleanup failed: ' if cleanup_failed else 'Creation failed: ' if self.failed else
+                      'Creation cancelled: ' if self.cancelled else 'Created ')
             self.title = prefix + name
             self.query_one('#operation-title', Static).update(self.title)
         self.refresh_bindings()
@@ -1465,8 +1475,8 @@ class Operation(Screen):
                       '●  Complete · model not connected' if self.model_disconnected else '●  Complete')
         if self.cancelled:
             status.update('●  Cancelled · project files and build cache preserved')
-        elif self.failed and self.result.startswith('Creation stopped, but cleanup failed'):
-            status.update('●  Cleanup failed · saved state retained; use Delete to retry')
+        elif cleanup_failed:
+            status.update('●  From sandboxes, choose Actions… → Delete sandbox… to finish cleanup')
         status.add_class('failed' if self.failed else 'cancelled' if self.cancelled else 'disconnected' if self.model_disconnected else 'complete')
         output = self.query_one(RichLog)
         if not self.failed and not self.cancelled and self.success_message:
@@ -1478,7 +1488,7 @@ class Operation(Screen):
             callback, self.on_success = self.on_success, None
             self.app.call_later(callback)
 
-    @on(Button.Pressed)
+    @on(Button.Pressed, '#operation-back')
     def back(self, event):
         event.stop()
         if self.finished:
@@ -1504,6 +1514,50 @@ class Operation(Screen):
             button.disabled, button.label = True, 'Cancelling…'
             self.query_one('#operation-status', Static).update('●  Cancelling · stopping creation and removing containers')
             self.refresh_bindings()
+
+
+class CreationOperation(Operation):
+    def __init__(self, state, task, cancellation, *, retry, on_success):
+        super().__init__('Creating ' + state.name, task, cancellation=cancellation, on_success=on_success)
+        self.state = state
+        self.retry = retry
+        self.return_to_form = False
+
+    def compose_actions(self):
+        yield from super().compose_actions()
+        retry = Button('Retry creation', id='operation-retry', variant='primary')
+        retry.display = False
+        yield retry
+
+    def complete(self):
+        self.return_to_form = (self.failed and not self.cancellation.retry_blocked
+                               and not self.cancellation.requested.is_set())
+        if self.return_to_form:
+            self.back_label = 'Back to configuration'
+            self.query_one('#operation-retry', Button).display = not os.path.lexists(self.state)
+        super().complete()
+
+    @on(Button.Pressed, '#operation-retry')
+    def retry_pressed(self, event):
+        event.stop()
+        if self.finished and self.return_to_form and event.button.display:
+            self.app.pop_screen()
+            self.retry()
+
+    def leave_wizard(self):
+        self.app.pop_screen()  # Creation output
+        self.app.pop_screen()  # Review sandbox
+        if isinstance(self.app.screen, NewSandbox):
+            self.app.pop_screen()
+
+    def action_back(self):
+        if not self.finished:
+            return
+        if self.return_to_form:
+            self.app.pop_screen()
+        else:
+            self.leave_wizard()
+            self.app.action_refresh_inventory()
 
 
 class FolderPicker(ModalScreen[Optional[str]]):
@@ -2095,8 +2149,9 @@ class SettingsForm(Screen):
         rules = [r for r in sandbox.parse_rules(draft['allowlist']) if r[0] != 'local-model.internal']
         if draft['local_model_ports']:
             rules += [('local-model.internal', p) for p in sandbox.local_model_ports(draft['local_model_ports'])]
-            actual = sandbox.choose_engine(draft['engine'], quiet=True)
-            sandbox.configure_local_gateway({'engine':actual, 'network':draft['network']}, draft['local_model_ports'], rules)
+            if self.editing or self.defaults_mode:
+                actual = sandbox.choose_engine(draft['engine'], quiet=True)
+                sandbox.configure_local_gateway({'engine':actual, 'network':draft['network']}, draft['local_model_ports'], rules)
         if draft['network'] == 'allowlist':
             rules += [r for r in sandbox.parse_rules('\n'.join(provider_rules)) if r not in rules]
         if draft['network'] == 'allowlist' and not rules and not selected['website_groups'] and not selected['web_access']['enabled'] and not any(selected['communications'].values()) and not draft.get('_hosted_changes') and not draft.get('hosted_connections') and not any(self.provider_forms.get(name, {}).get('inference') for name in draft['model_providers']):
@@ -2151,6 +2206,7 @@ class SettingsForm(Screen):
                     search, keys = await self.query_one(WebAccessForm).defaults_selection()
                     self.app.defaults = save_defaults_with_search(saved, search, keys)
                     self.app.pop_screen()
+                    self.app.check_dependencies()
                     self.notify('Defaults saved for future sandboxes.')
                 elif self.editing and draft.get('_communication_keys') and not key and self.configuration_unchanged(draft):
                     service = self.app.service
@@ -2193,22 +2249,29 @@ class SettingsForm(Screen):
                 except (OSError, ValueError) as error:
                     log(f'Sandbox {"updated" if editing else "created"}, but the editor could not open: {error}')
                     log('Use Open on the sandbox list to try again.')
-        self.app.pop_screen()
-        if not editing:
+        if editing:
             self.app.pop_screen()
         def open_after_models():
             if not draft.get('open_editor'): return
             if editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
             else: self.app.push_screen(Operation('Opening '+draft['name'], lambda log: service.run(['open',draft['name']],log)))
         def choose_models():
-            self.app.pop_screen()
+            if editing:
+                self.app.pop_screen()
+            else:
+                operation.leave_wizard()
             self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
-        self.app.push_screen(Operation(('Updating ' if editing else 'Creating ') + draft['name'], task,
-            cancellation=cancellation,
-            success_message=(lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened))) if editing else '',
-            on_success=choose_models if draft.get('_hosted_changes') else
-            open_after_models if not editing and draft.get('open_editor') else
-            (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None))
+        if editing:
+            operation = Operation('Updating ' + draft['name'], task,
+                success_message=lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened)),
+                on_success=choose_models if draft.get('_hosted_changes') else
+                (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None)
+        else:
+            operation = CreationOperation(self.app.state_root / draft['name'], task, cancellation,
+                retry=lambda: self.submit(draft, key),
+                on_success=choose_models if draft.get('_hosted_changes') else
+                open_after_models if draft.get('open_editor') else None)
+        self.app.push_screen(operation)
 
     def action_back(self):
         self.app.pop_screen()
@@ -2327,10 +2390,14 @@ class Cockpit(App):
     .hosted-row > .buttons { margin: 1 0 0 0; }
     #iam-fields { margin-bottom: 1; }
     #title-banner { height: auto; padding: 1 3 0 3; }
-    #application-update { display: none; height: auto; margin: 0 2; }
+    #startup-dependencies { height: auto; margin: 0 3; color: #f2b544; }
+    Screen:nocolor #startup-dependencies { text-style: bold; }
+    #application-update { display: none; height: auto; margin: 0 3; }
     #application-update-message { width: 1fr; height: auto; }
-    #application-update-run { width: 14; margin: 0 0 0 1; }
-    #home { padding: 1 3; }
+    #application-update-run { width: 15; margin: 0 0 0 1; }
+    #home { width: 100%; padding: 1 3; }
+    .compact-terminal.missing-dependencies #home { padding: 0 3; }
+    .compact-terminal.missing-dependencies #details { padding: 0; min-height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
     #dashboard-filters { height: 4; margin: 0 0 1 0; }
     #dashboard-search { width: 1fr; }
     #dashboard-filters Input, #dashboard-filters Select { height: 3; margin: 0; }
@@ -2346,6 +2413,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: scroll; }
+    CreationOperation #operation-log { overflow-y: auto; scrollbar-gutter: stable; }
     Confirm, FolderPicker, MoreActions, SettingsMenu { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #confirm-box Static { height: auto; }
@@ -2377,6 +2445,7 @@ class Cockpit(App):
     def compose(self):
         yield Header()
         yield Static(banner(self.version, compact=True), id='title-banner')
+        yield Feedback('', id='startup-dependencies', markup=False)
         with Horizontal(id='application-update'):
             yield Static('', id='application-update-message', markup=False)
             yield Button('Upgrade now', id='application-update-run', variant='primary')
@@ -2407,7 +2476,7 @@ class Cockpit(App):
     def on_mount(self):
         for key, label in [('name', 'Name'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
             self.query_one(DataTable).add_column(label, key=key)
-        self.refresh_inventory()
+        self.action_refresh_inventory()
         self.check_update()
         self.resize_banner()
 
@@ -2417,6 +2486,7 @@ class Cockpit(App):
 
     def resize_banner(self):
         self.set_class(self.size.height >= 32, 'tall-terminal')
+        self.set_class(self.size.height < 32, 'compact-terminal')
         self.query_one('#title-banner', Static).update(banner(self.version, self.size.width < 100 or self.size.height < 32))
 
     @work(thread=True, exclusive=True, group='application-update', exit_on_error=False)
@@ -2428,7 +2498,7 @@ class Cockpit(App):
     def show_update(self, latest):
         self.available_version = latest
         self.query_one('#application-update-message', Static).update(
-            f'Version {latest} available. pipx upgrade pi-sandbox-factory')
+            f'v{latest} · Run pipx upgrade pi-sandbox-factory')
         button = self.query_one('#application-update-run', Button)
         button.disabled = not (updates.pipx_install() and shutil.which('pipx'))
         button.tooltip = 'Available for pipx installations.' if button.disabled else None
@@ -2461,7 +2531,20 @@ class Cockpit(App):
             self.call_from_thread(self.query_one('#home-error', Static).update, safe_text(error))
 
     def action_refresh_inventory(self):
+        self.check_dependencies()
         self.refresh_inventory()
+
+    def check_dependencies(self):
+        missing = []
+        try:
+            host_platform.find_engine(self.defaults['engine'])
+        except ValueError as error:
+            missing.append(str(error))
+        if not shutil.which('git'):
+            missing.append('Git was not found. Install Git to use Git repositories.')
+        self.screen_stack[0].query_one('#startup-dependencies', Feedback).update(
+            '\n'.join('• ' + message for message in missing))
+        self.set_class(bool(missing), 'missing-dependencies')
 
     def receive_inventory(self, records):
         self.records = records
@@ -2559,7 +2642,9 @@ class Cockpit(App):
             text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
             text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
             text += ' · Profile: ' + str(record['profile'])
-        self.query_one('#details', Static).update(safe_text(text))
+        details = self.query_one('#details', Static)
+        details.update(safe_text(text))
+        details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
         mode = editor_settings.load(self.state_root / record['name'])['mode'] if record else 'browser'
         self.query_one('#open', Button).label = {'browser': 'Open in browser', 'pi': 'Open Pi CLI', 'desktop': 'Open VS Code'}[mode]
         for action in ('open', 'launch-with', 'settings', 'more'):

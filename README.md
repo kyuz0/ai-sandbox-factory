@@ -41,9 +41,14 @@ Choose **Create and start** to open the editor. Use **Settings** to change the
 configuration and **Open with…** to launch Pi CLI. See [everyday use](docs/usage.md)
 for additional folders, skills and CLI commands.
 
+Factory reports missing host dependencies on startup. After a creation failure,
+choose **Retry creation** to reuse the current configuration or **Back to
+configuration** to edit it. If cleanup fails, use **Actions… → Delete sandbox…**
+from the sandbox list to finish removing the failed attempt.
+
 During creation, **Cancel creation** stops the operation and removes that sandbox's
-runtime containers, private volumes and saved settings. Your project files and
-reusable build cache are preserved. If cleanup fails, use **Delete** to retry it.
+runtime containers, private volumes and saved settings. Failure cleanup and
+cancellation both preserve your project files and reusable build cache.
 
 The manager offers **Upgrade now** when a new version is available. You can also
 run `pipx upgrade pi-sandbox-factory`. Update existing sandbox images through

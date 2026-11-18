@@ -97,6 +97,37 @@ class TUITests(unittest.TestCase):
                 self.assertIn('Upgrade failed',str(app.query_one('#application-update-message').render()))
                 self.assertFalse(app.query_one('#application-update-run',Button).disabled)
 
+    async def test_startup_reports_missing_dependencies_and_refresh_clears_notice(self):
+        from pi_sandbox_factory import host_platform
+        records = copy.deepcopy(self.records)
+        records[0]['workspace'] = '/work/' + 'nested-project-directory/' * 9
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = Cockpit(self.root, FakeService(records))
+            with patch.object(host_platform, 'is_mac', return_value=False), \
+                    patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/docker' if name == 'docker' else None) as which:
+                async with app.run_test(size=size) as pilot:
+                    await self.ready(app, pilot)
+                    warning = app.query_one('#startup-dependencies')
+                    self.assertTrue(warning.display)
+                    self.assertIn('Install rootless Podman', str(warning.render()))
+                    self.assertIn('Install Git', str(warning.render()))
+                    self.assertLessEqual(app.query_one('#more').region.bottom, size[1] - 1)
+                    self.assertTrue(await pilot.click('#settings'))
+                    await pilot.press('escape')
+                    app.show_update('2099.1.1.1')
+                    await pilot.pause()
+                    self.assertTrue(await pilot.click('#settings'))
+                    await pilot.press('escape')
+                    self.assertTrue(await pilot.click('#new'))
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, NewSandbox)
+                    await pilot.press('escape')
+                    which.side_effect = None
+                    which.return_value = '/usr/bin/dependency'
+                    app.action_refresh_inventory()
+                    await self.ready(app, pilot)
+                    self.assertFalse(warning.display)
+
     async def test_successful_update_relaunches_and_source_install_disables_button(self):
         from contextlib import nullcontext
         from pi_sandbox_factory import updates
@@ -504,6 +535,64 @@ class TUITests(unittest.TestCase):
             self.assertEqual(draft['advisors']['providers'], ['codex', 'claude', 'agy'])
             await pilot.press('q')
 
+    async def test_creation_failure_preserves_configuration_and_can_retry(self):
+        from textual.widgets import Footer, RichLog
+        service = FakeService([])
+        attempts = []
+        def create(draft, key, log, cancellation):
+            attempts.append((copy.deepcopy(draft), key, cancellation))
+            if len(attempts) < 3:
+                raise ValueError('Podman was not found. Install rootless Podman.')
+        service.create = create
+        app = Cockpit(self.root, service)
+        workspace = self.root / 'project'
+        workspace.mkdir()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await pilot.click('#new')
+            await pilot.pause()
+            new = app.screen
+            new.query_one('#workspace', Input).value = str(workspace)
+            await pilot.pause()
+            new.query_one('#name', Input).value = 'retry-fixture'
+            await pilot.click('#continue')
+            await pilot.pause()
+            form = app.screen
+            self.assertIsInstance(form, SettingsForm)
+            form.query_one('#model-ports', Input).value = '8002-8003'
+            form.query_one('#open-editor', Checkbox).value = False
+
+            await pilot.click('#apply')
+            await self.ready(app, pilot)
+            operation = app.screen
+            self.assertTrue(operation.failed)
+            self.assertIn('Install rootless Podman',
+                          '\n'.join(line.text for line in operation.query_one(RichLog).lines))
+            back = operation.query_one('#operation-back', Button)
+            retry = operation.query_one('#operation-retry', Button)
+            self.assertEqual(str(back.label), 'Back to configuration')
+            self.assertEqual(str(retry.label), 'Retry creation')
+            self.assertLessEqual(retry.region.bottom, operation.query_one(Footer).region.y)
+            self.assertEqual(retry.region.right, operation.query_one('.wizard-actions').content_region.right)
+            await pilot.press('escape')
+            self.assertIs(app.screen, form)
+            self.assertEqual(form.query_one('#model-ports', Input).value, '8002-8003')
+            self.assertEqual(new.query_one('#workspace', Input).value, str(workspace))
+            form.query_one('#model-ports', Input).value = '8004'
+
+            await pilot.click('#apply')
+            await self.ready(app, pilot)
+            self.assertTrue(await pilot.click('#operation-retry'))
+            await self.ready(app, pilot)
+            self.assertEqual(attempts[1][:2], attempts[2][:2])
+            self.assertEqual(attempts[2][0]['local_model_ports'], '8004')
+            self.assertIsNot(attempts[1][2], attempts[2][2])
+            self.assertFalse(app.screen.failed)
+            self.assertFalse(app.screen.query_one('#operation-retry', Button).display)
+            await pilot.click('#operation-back')
+            await self.ready(app, pilot)
+            self.assertEqual(len(app.screen_stack), 1)
+
     async def test_settings_and_models_follow_selection(self):
         service=FakeService(self.records);app=Cockpit(self.root,service)
         async with app.run_test(size=(100,42)) as pilot:
@@ -603,12 +692,12 @@ class TUITests(unittest.TestCase):
                     self.assertFalse(button.disabled)
                     self.assertEqual(str(button.label),'Back to sandboxes')
                     summary=str(operation.query_one('#operation-status',Static).render())
-                    self.assertIn('use Delete to retry' if failure else 'project files and build cache preserved',summary)
+                    self.assertIn('Delete sandbox…' if failure else 'project files and build cache preserved',summary)
                     self.assertLessEqual(operation.query_one('#operation-log').region.bottom,
                                          operation.query_one('.wizard-actions').region.y)
                     output=operation.query_one('#operation-log')
                     self.assertLessEqual(output.virtual_size.width,output.scrollable_content_region.width)
-                    self.assertEqual(operation.title,'Creation failed: fixture' if failure else 'Creation cancelled: fixture')
+                    self.assertEqual(operation.title,'Cleanup failed: fixture' if failure else 'Creation cancelled: fixture')
                     await pilot.press('escape')
                     await self.ready(app,pilot)
                     self.assertEqual(len(app.screen_stack),1)
