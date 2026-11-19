@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const suffix = 'FINAL_APPROVAL_ARGUMENT';
-const command = "printf '%s' '" + "command detail ".repeat(65) + suffix + "' > /workspace/approval-marker.txt";
+const command = "# Write a marker to the test workspace.\n" +
+  "printf '%s' '" + "command detail ".repeat(65) + suffix + "' > /workspace/approval-marker.txt";
 const choice = (name, args) => ({
   tool_calls: [{ index: 0, id: 'factory-' + name + '-' + Date.now(), type: 'function',
     function: { name, arguments: JSON.stringify(args) } }],
@@ -112,6 +113,8 @@ http.createServer((request, response) => {
       const outcome = answer.includes('User declined to answer questions')
         ? 'FACTORY QUESTION DISMISSED' : 'UNEXPECTED QUESTION RESULT: ' + answer;
       delta = { content: delivered ? 'FACTORY QUESTION ANSWERS RECEIVED' : outcome };
+    } else if (userText === 'Factory link fixture') {
+      delta = { content: '[Open link fixture](http://127.0.0.2:19382/fixture)' };
     } else if (userText.startsWith('Factory chat ')) {
       const label = userText.slice('Factory chat '.length);
       if (label === 'steering initial') await new Promise(resolve => setTimeout(resolve, 2500));

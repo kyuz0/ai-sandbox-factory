@@ -28,6 +28,44 @@ sys.path.insert(0, str(REPO))
 from pi_sandbox_factory import folders, sandbox
 
 
+def check_external_link(page, frame, send):
+    url = 'http://127.0.0.2:19382/fixture'
+    visits = []
+
+    def serve_fixture(route):
+        visits.append(route.request.url)
+        route.fulfill(body='<!doctype html><title>Link fixture</title><h1>Link fixture</h1>',
+                      content_type='text/html')
+
+    context = page.context
+    context.route(url, serve_fixture)
+    try:
+        send('Factory link fixture')
+        link = frame.get_by_role('link', name='Open link fixture', exact=True)
+        dialog = page.get_by_role('dialog').filter(
+            has_text='Do you want code-server to open the external website?')
+        original_pages = context.pages
+        link.click(timeout=25000)
+        expect(dialog).to_be_visible()
+        assert context.pages == original_pages and not visits, 'The link opened before the user answered'
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
+        expect(dialog).not_to_be_visible()
+        assert context.pages == original_pages and not visits, 'Cancel opened a tab'
+
+        link.click()
+        expect(dialog).to_be_visible()
+        with context.expect_page() as opened:
+            dialog.get_by_role('button', name='Open', exact=True).click()
+        tab = opened.value
+        expect(tab.get_by_role('heading', name='Link fixture')).to_be_visible()
+        expect(dialog).not_to_be_visible()
+        assert tab.url == url and context.pages == [*original_pages, tab] and visits == [url]
+        tab.close()
+    finally:
+        context.unroute(url, serve_fixture)
+    print('PASS FrostPi external links wait for confirmation, respect Cancel and open once.')
+
+
 def check_cli_goal(name, session, usage, output):
     with subprocess.Popen(['podman', 'exec', '-i', name, 'pi', '--mode', 'rpc', '--session', session],
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as pi:
@@ -520,9 +558,15 @@ p.write_text(json.dumps(v))
                 allow = frame.get_by_role('button', name='Allow this exact command once')
                 deny = frame.get_by_role('button', name='Deny', exact=True)
                 assert allow.is_visible() and deny.is_visible()
-                assert 'Working directory: /workspace' in card.inner_text()
-                assert 'FINAL_APPROVAL_ARGUMENT' in card.inner_text()
-                assert 'REVIEWER_REASON_AT_THE_END' in card.inner_text()
+                detail = card.inner_text()
+                assert 'Run this exact command outside the inner sandbox?' in detail
+                assert 'Working directory: /workspace' in detail
+                assert ('The reviewer rejected this command.\n'
+                        'The fixture declined this command. REVIEWER_REASON_AT_THE_END') in detail
+                assert '\n\nCommand\n# Write a marker to the test workspace.\nprintf ' in detail
+                assert 'FINAL_APPROVAL_ARGUMENT' in detail
+                assert '\n\nJustification\nCheck the full approval request' in detail
+                assert '\n\nExecution scope\nThis uses the outer container' in detail
                 assert card.evaluate('(e) => e.scrollHeight > e.clientHeight && e.scrollWidth <= e.clientWidth')
                 page.screenshot(path=str(output / 'approval-start.png'))
                 frame_height = frame.evaluate('window.innerHeight')
@@ -536,11 +580,9 @@ p.write_text(json.dumps(v))
                 while time.monotonic() < deadline and not card.evaluate(at_end):
                     page.wait_for_timeout(50)
                 assert card.evaluate(at_end)
-                reason = card.get_by_text(re.compile('REVIEWER_REASON_AT_THE_END'))
-                assert reason.count() == 1
                 assert card.evaluate('''(e) => {
                     const text = e.querySelector('p').firstChild;
-                    const marker = 'REVIEWER_REASON_AT_THE_END';
+                    const marker = 'FINAL_APPROVAL_ARGUMENT';
                     const offset = text.textContent.lastIndexOf(marker);
                     const range = document.createRange();
                     range.setStart(text, offset);
@@ -560,6 +602,7 @@ p.write_text(json.dumps(v))
                 allow.click()
                 frame.get_by_text('FACTORY FIXTURE READY', exact=True).nth(1).wait_for(timeout=25000)
                 assert marker.read_text().endswith('FINAL_APPROVAL_ARGUMENT')
+                check_external_link(page, frame, send)
                 send('/goal Factory goal fixture')
                 frame.get_by_text('FACTORY GOAL TURN', exact=True).first.wait_for(timeout=25000)
                 composer.fill('/goal pause')

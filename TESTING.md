@@ -50,8 +50,11 @@ and its Chromium installation.
 The test uses a network-disabled disposable container and synthetic local
 inference. It opens the installed editor on a fresh workspace, checks the
 approval mode before the first prompt, exercises a long reviewer rejection
-and verifies that keyboard scrolling reveals the full command and reason
-while both choices stay available. It confirms **Deny** blocks execution and **Allow this exact command once** runs the approved command.
+and verifies that the reason, full command, justification and execution scope
+appear in separate sections. The command can be scrolled with the keyboard while
+both choices stay available. **Deny** blocks execution and **Allow this exact
+command once** runs the approved command. External chat links wait for
+confirmation. **Cancel** opens no tab and **Open** opens exactly one.
 The test submits a choice, a custom answer and multiple choices through the shared
 question tool. It also dismisses a question and checks the result delivered to the model.
 It pauses and revises a goal in FrostPi, checks its objective and usage in standalone Pi,
