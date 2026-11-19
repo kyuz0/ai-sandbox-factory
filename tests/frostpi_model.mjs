@@ -131,6 +131,17 @@ http.createServer((request, response) => {
       const required = ['bash_escalate', 'ask_user_question'];
       if (!required.every(name => tools.includes(name))) throw new Error('Managed tools missing: ' + tools);
       delta = { content: 'FACTORY TOOLS READY' };
+    } else if (userText.startsWith('Factory deferred question fixture')) {
+      delta = choice('ask_user_question', { waitForAnswer: false, questions: [{
+        header: 'Preference', question: 'Which fruit should I use later?',
+        options: [{ label: 'Apple (Recommended)', description: 'First choice' },
+          { label: 'Pear', description: 'Second choice' }],
+      }] });
+    } else if (userText.startsWith('Answer to question ')) {
+      delta = { content: userText.includes('User declined')
+        ? 'FACTORY DEFERRED QUESTION DISMISSED'
+        : userText.includes('"Which fruit should I use later?"="Pear"')
+          ? 'FACTORY DEFERRED ANSWER RECEIVED' : 'FACTORY UNEXPECTED DEFERRED ANSWER' };
     } else if (last.role === 'user' && JSON.stringify(last.content).includes('Factory question fixture')) {
       if (!tools.includes('ask_user_question')) throw new Error('Managed question tool missing');
       const options = [
@@ -145,6 +156,14 @@ http.createServer((request, response) => {
       ] });
     } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-ask_user_question-')) {
       const answer = String(last.content);
+      if (answer.includes('is pending. Continue only work')) {
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        writeChunk(response, { role: 'assistant', content: 'FACTORY WORK CONTINUED' });
+        await new Promise(resolve => setTimeout(resolve, 3500));
+        writeChunk(response, {}, 'stop');
+        response.end('data: [DONE]\n\n');
+        return;
+      }
       const delivered = ['"Pick a fruit"="Pear"', '"Pick another fruit"="Dragon fruit"',
         '"Pick several fruits"="Apple, Pear"'].every(segment => answer.includes(segment));
       const outcome = answer.includes('User declined to answer questions')

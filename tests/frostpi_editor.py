@@ -160,7 +160,7 @@ def check_chat_workflows(page, frame, composer, send, inside, output):
     page.screenshot(path=str(output / 'fork.png'))
 
     send('Factory chat steering initial')
-    frame.get_by_role('button', name='Stop Pi', exact=True).wait_for()
+    frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).wait_for()
     composer.fill('Factory chat steer')
     frame.get_by_role('button', name='Choose streaming delivery').click()
     frame.get_by_role('option', name=re.compile('Steer')).click()
@@ -349,7 +349,7 @@ def check_folder_access(frame, send, inside, container):
 
 def check_streaming_metrics(frame, send, output):
     metrics = frame.locator('.response-metrics')
-    active = frame.get_by_role('button', name='Stop Pi', exact=True)
+    active = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
     answer = frame.get_by_text(re.compile(r'^FACTORY STREAMING ANSWER\.')).first
     live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s avg')
 
@@ -391,9 +391,43 @@ def check_streaming_metrics(frame, send, output):
 
 
 
+def check_pi_nonblocking_questions(inside, output):
+    def tmux(*args):
+        return inside('tmux', '-S', '/tmp/factory-question-test.sock', *args)
+
+    def wait_for_text(text):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            snapshot = tmux('capture-pane', '-p', '-t', 'pi')
+            if text in snapshot:
+                return snapshot
+            time.sleep(.2)
+        raise AssertionError(f'Expected {text!r} in the Pi terminal.\n{snapshot}')
+
+    def enter(prompt):
+        tmux('send-keys', '-t', 'pi', '-l', prompt)
+        tmux('send-keys', '-t', 'pi', 'Enter')
+
+    command = 'pi --provider fixture --model fixture --approve'
+    tmux('new-session', '-d', '-s', 'pi', '-c', '/workspace', '-x', '110', '-y', '36', command)
+    try:
+        wait_for_text('rpiv-ask-user-question')
+        enter('Factory deferred question fixture terminal')
+        wait_for_text('FACTORY WORK CONTINUED')
+        wait_for_text('Questions (1) · /questions')
+        enter('/questions')
+        wait_for_text('Which fruit should I use later?')
+        tmux('send-keys', '-t', 'pi', 'Down', 'Enter')
+        transcript = wait_for_text('FACTORY DEFERRED ANSWER RECEIVED')
+        (output / 'pi-nonblocking-questions.txt').write_text(transcript)
+        print('PASS Pi terminal continues work and accepts a deferred answer through /questions.')
+    finally:
+        tmux('kill-server')
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
-          subagent_case=None, subagent_client=None, subagent_compaction=None):
+          subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -632,6 +666,41 @@ p.write_text(json.dumps(v))
                     assert not errors, errors
                     browser.close()
                     return
+                if nonblocking_questions:
+                    send('Factory deferred question fixture')
+                    question = frame.get_by_role('region', name='Which fruit should I use later?')
+                    question.get_by_text('Answer when ready.', exact=True).wait_for()
+                    continued = frame.get_by_text('FACTORY WORK CONTINUED', exact=True)
+                    continued.first.wait_for()
+                    stop_turn = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
+                    assert stop_turn.is_visible()
+                    assert question.get_by_text('Recommended', exact=True).is_visible()
+                    question.screenshot(path=str(output / 'nonblocking-question.png'))
+                    question.get_by_role('button', name='Pear', exact=True).click()
+                    frame.get_by_text('FACTORY DEFERRED ANSWER RECEIVED', exact=True).wait_for()
+                    assert not question.count()
+
+                    send('Factory deferred question fixture again')
+                    question.wait_for()
+                    continued.nth(1).wait_for()
+                    stop_turn.click()
+                    stop_turn.wait_for(state='hidden')
+                    assert question.is_visible(), 'Stopping the turn discarded the pending question'
+                    request_label = question.get_attribute('aria-labelledby')
+                    frame.get_by_role('button', name='Session actions', exact=True).click()
+                    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
+                    page.get_by_role('button', name='Restart session', exact=True).click()
+                    expect(question).not_to_have_attribute('aria-labelledby', request_label, timeout=15000)
+                    question.get_by_role('button', name='Pear', exact=True).wait_for()
+                    assert question.count() == 1
+                    question.get_by_role('button', name='Cancel', exact=True).click()
+                    frame.get_by_text('FACTORY DEFERRED QUESTION DISMISSED', exact=True).wait_for()
+                    assert not question.count()
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS FrostPi deferred questions deliver answers and survive Stop and a Pi process restart.')
+                    check_pi_nonblocking_questions(inside, output)
+                    return
                 send('/auto-review-settings')
                 frame.get_by_role('button', name='Reviewer model', exact=True).wait_for(timeout=15000)
                 frame.get_by_role('button', name='Thinking effort', exact=True).wait_for(timeout=15000)
@@ -767,13 +836,14 @@ if __name__ == '__main__':
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
+    scope.add_argument('--nonblocking-questions', action='store_true', help='Check deferred questions while the model works, stops and reloads.')
     scope.add_argument('--profile-prompt', type=Path, help='Check a profile addendum in the model request from Pi CLI and FrostPi.')
     scope.add_argument('--subagents', choices=(*APPROVAL_LABELS, 'disabled'),
                        help='Check delegated tools and user approvals in installed Pi and FrostPi.')
     scope.add_argument('--subagent-compaction', choices=('lite', 'full', 'off'),
                        help='Check automatic child compaction and conversation recall in Pi and FrostPi.')
     parser.add_argument('--subagent-case', choices=('inline', 'context', 'background', 'mixed', 'parallel', 'named', 'specialist', 'nested', 'cancel',
-                                                    'nested-approval', 'critical', 'native', 'manual', 'off', 'disabled', 'web-tools'))
+                                                    'nested-approval', 'critical', 'native', 'manual', 'off', 'disabled', 'web-tools', 'interrupt-goal', 'stop-all'))
     parser.add_argument('--subagent-client', choices=('pi', 'frostpi'), help='Run only one client for diagnosis.')
     args = parser.parse_args()
     if args.subagent_case == 'web-tools' and args.subagents != 'automatic':
@@ -785,4 +855,4 @@ if __name__ == '__main__':
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
-          args.subagent_compaction)
+          args.subagent_compaction, args.nonblocking_questions)

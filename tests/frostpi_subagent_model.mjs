@@ -5,10 +5,10 @@ const native = '/workspace/subagents-inline.txt';
 const protectedFile = '/workspace/subagents-protected.env';
 const boundary = '/home/node/.pi/agent/subagents-boundary-fixture.txt';
 const acceptance = { level: 'none', reason: 'The fixture independently checks the tool results and workspace.' };
-const parentPrompt = /^Factory subagents (disabled|inline|context|background|mixed|parallel|named|specialist|nested|nested-approval|critical|native|cancel|manual|off)$/m;
-const childPrompt = /^(?:Task:\s*)?FACTORY_CHILD_(INLINE|CONTEXT|ALPHA|BETA|READ_ALPHA|READ_BETA|SPECIALIST|NESTED_APPROVAL|NESTED_ESCALATE|NESTED|LEAF|CRITICAL|NATIVE|CANCEL|MANUAL|OFF)\b/m;
+const parentPrompt = /^Factory subagents (disabled|inline|context|background|mixed|parallel|named|specialist|nested|nested-approval|critical|native|cancel|manual|off|inspect-worker|continue-worker|stop-all|stop-other)$/m;
+const childPrompt = /^(?:Task:\s*)?FACTORY_CHILD_(INLINE|CONTEXT|ALPHA|BETA|READ_ALPHA|READ_BETA|SPECIALIST|NESTED_APPROVAL|NESTED_ESCALATE|NESTED|HOLD_ONE|HOLD_TWO|HOLD_OTHER|HOLD_KEEP|HOLD_FOREGROUND|HOLD|LEAF|CRITICAL|NATIVE|CANCEL|MANUAL|OFF)\b/m;
 const denied = /deni|declin|reject|block|not approved|cancel|refus/i;
-const asyncId = /Async: (?:assistant|Atlas|Juniper) \[([^\]]+)\]/;
+const asyncId = /Async: (?:assistant|Atlas|Juniper|Birch|Alder|Elm|Maple|Ash) \[([^\]]+)\]/;
 
 function content(message) {
   return typeof message?.content === 'string' ? message.content
@@ -68,6 +68,15 @@ function scriptForChild(role) {
         [...escalation('ALLOW'), /^FACTORY_REVIEW_ALLOW\s*$/m],
         [...escalation('DENY'), denied],
       ];
+    case 'HOLD_FOREGROUND':
+      return [['bash', { command: 'cat /workspace/subagents-foreground.pipe' }, /FOREGROUND_RELEASE/]];
+    case 'HOLD_ONE':
+    case 'HOLD_TWO':
+    case 'HOLD_KEEP':
+    case 'HOLD_OTHER':
+      return [['fixture_echo', { text: role }, new RegExp(role)]];
+    case 'HOLD':
+      return [['fixture_echo', { text: 'HOLD_WORKER' }, /HOLD_WORKER/]];
     case 'READ_ALPHA':
     case 'READ_BETA':
       if (webFixture) return webFixture.webWorkerSteps(role);
@@ -104,6 +113,12 @@ function scriptForChild(role) {
 
 function scriptForParent(role) {
   switch (role) {
+    case 'STOP_ALL':
+      return [[...delegate('HOLD_ONE', true, 'assistant', 'Alder'), asyncId],
+        [...delegate('HOLD_TWO', true, 'assistant', 'Elm'), asyncId], [...delegate('HOLD_FOREGROUND')]];
+    case 'STOP_OTHER':
+      return [[...delegate('HOLD_OTHER', true, 'assistant', 'Maple'), asyncId],
+        [...delegate('HOLD_KEEP', true, 'assistant', 'Ash'), asyncId]];
     case 'DISABLED':
       return [];
     case 'BACKGROUND':
@@ -139,7 +154,8 @@ export function subagentReply({ messages, tools, choice }) {
     if (messages[index].role !== 'user') continue;
     const prompt = content(messages[index]);
     const task = prompt.match(childPrompt);
-    const parent = prompt.match(parentPrompt);
+    const objective = prompt.match(/<objective>\s*Factory (parent|child) worker goal\s*<\/objective>/);
+    const parent = objective ? [null, objective[1] + '_GOAL'] : prompt.match(parentPrompt);
     if (task || parent) {
       child = Boolean(task);
       role = (task ?? parent)[1].toUpperCase().replaceAll('-', '_');
@@ -153,7 +169,25 @@ export function subagentReply({ messages, tools, choice }) {
 
   const actor = child ? 'CHILD' : 'PARENT';
   const prefix = 'factory-sub-' + actor.toLowerCase() + '-' + role.toLowerCase() + '-';
-  const steps = child ? scriptForChild(role) : scriptForParent(role);
+  const receipt = messages.filter(message => message.role === 'tool').map(content)
+    .map(text => text.match(/Async: Birch \[([^\]]+)\]/)).find(Boolean);
+  let steps;
+  if (role === 'PARENT_GOAL' || role === 'CHILD_GOAL') {
+    const token = content(messages[start]).match(/Completion token: (\S+)\. Supply/)?.[1];
+    if (!token) throw new Error('Fixture goal has no current completion token');
+    steps = role === 'PARENT_GOAL' && !messages.slice(0, start).some(message => message.role === 'tool' && /Async: Birch/.test(content(message)))
+      ? [[...delegate('HOLD', true, 'assistant', 'Birch'), asyncId],
+        ['fixture_echo', { text: 'HOLD_PARENT' }]]
+      : [['goal_update', { token, status: 'complete', reason: 'Verified the fixture objective.' }, /Goal complete/i]];
+  } else if (role === 'INSPECT_WORKER' || role === 'CONTINUE_WORKER') {
+    if (!receipt) return { content: 'FACTORY SUBAGENT FIXTURE FAILED missing original worker receipt' };
+    steps = [['subagent', { action: 'status', id: receipt[1] }, role === 'INSPECT_WORKER' ? /^State: running$/m : /^State: complete$/m]];
+  } else {
+    steps = child ? scriptForChild(role) : scriptForParent(role);
+  }
+  if (child && role === 'HOLD' && (tools.includes('goal_update') || messages.some(message => content(message).includes('Completion token:')))) {
+    return { content: 'FACTORY SUBAGENT FIXTURE FAILED worker inherited parent goal' };
+  }
   const replies = messages.slice(start + 1).filter(message => message.role === 'tool'
     && message.tool_call_id?.startsWith(prefix));
   function failure(message) {

@@ -1,6 +1,10 @@
 """Checks against the installed Pi runtime, extension, and FrostPi webview."""
 
+from contextlib import contextmanager
 import json
+import errno
+import os
+import select
 from pathlib import Path
 from queue import Empty, Queue
 import re
@@ -12,7 +16,7 @@ from playwright.sync_api import TimeoutError as BrowserTimeout
 
 MODES = {
     'disabled': ('disabled',),
-    'automatic': ('inline', 'specialist', 'nested', 'parallel', 'context', 'named'),
+    'automatic': ('inline', 'specialist', 'nested', 'parallel', 'context', 'stop-all', 'named', 'interrupt-goal'),
     'assisted': ('inline', 'background', 'cancel', 'nested-approval', 'critical', 'native', 'mixed'),
     'manual': ('manual',),
     'off': ('off',),
@@ -58,14 +62,21 @@ Read the synthetic seed and report it.
     inside('tee', '/home/node/.pi/agent/FACTORY_NATIVE_REVIEW.txt', input='FACTORY_NATIVE_ACCESS_OK')
     inside('tee', '/home/node/.pi/agent/extensions/fixture-echo.ts', input='''import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { existsSync, writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'fixture_echo',
     label: 'Fixture echo',
     description: 'Echo a synthetic marker.',
     parameters: Type.Object({ text: Type.String() }),
-    async execute(_id, { text }) {
-      await new Promise(resolve => setTimeout(resolve, 2500));
+    async execute(_id, { text }, signal) {
+      if (['HOLD_WORKER', 'HOLD_PARENT', 'HOLD_ONE', 'HOLD_TWO', 'HOLD_OTHER', 'HOLD_KEEP'].includes(text)) {
+        writeFileSync('/workspace/' + text + '.ready', '');
+        while (!existsSync('/workspace/' + text + '.release')) await delay(100, undefined, { signal });
+      } else {
+        await delay(2500, undefined, { signal });
+      }
       return { content: [{ type: 'text', text }], details: {} };
     },
   });
@@ -303,8 +314,349 @@ def rpc_case(container, case, mode, workspace, inside, output):
     print(f'PASS Pi {mode}: {case}', flush=True)
 
 
+def prepare_interrupt(workspace):
+    for marker in ('HOLD_PARENT.ready', 'HOLD_WORKER.ready', 'HOLD_WORKER.release'):
+        (workspace / marker).unlink(missing_ok=True)
+
+
+def wait_for_markers(workspace, markers):
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        if all((workspace / marker).exists() for marker in markers):
+            return
+        time.sleep(.1)
+    raise AssertionError(f'Fixture tools did not reach {markers}')
+
+
+@contextmanager
+def fixture_rpc(container, output, label, session=None):
+    args = ['podman', 'exec', '-i', '--workdir', '/workspace', container,
+            'pi', '--mode', 'rpc', '--approve', '--provider', 'fixture', '--model', 'fixture']
+    if session is not None:
+        args.extend(['--session', session])
+    with (output / f'{label}.jsonl').open('w') as log, (output / f'{label}.stderr').open('w') as err:
+        proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True)
+        events = Queue()
+
+        def read():
+            for line in proc.stdout:
+                log.write(line)
+                log.flush()
+                events.put(json.loads(line))
+            events.put(None)
+
+        def send(**command):
+            proc.stdin.write(json.dumps(command) + '\n')
+            proc.stdin.flush()
+
+        def until(predicate):
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                try:
+                    event = events.get(timeout=max(0, deadline - time.monotonic()))
+                except Empty:
+                    break
+                assert event is not None, f'{label} exited early'
+                if predicate(event):
+                    return event
+            raise AssertionError(f'Expected RPC event missing. See {log.name}')
+
+        reader = Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            yield send, until
+        finally:
+            proc.stdin.close()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                proc.wait(timeout=10)
+            reader.join()
+
+
+def goal_notice(event, *terms):
+    body = event.get('message')
+    return event.get('method') == 'notify' and isinstance(body, str) and all(term in body for term in terms)
+
+
+def rpc_result(marker):
+    return lambda e: e.get('type') == 'agent_end' and marker in json.dumps(e.get('messages', [])[-1:])
+
+
+def new_birch(inside, before):
+    paths = [path for path, name in saved_worker_names(inside).items() if name == 'Birch' and path not in before]
+    assert len(paths) == 1, paths
+    return paths[0]
+
+
+def goal_completed(event):
+    return (event.get('type') == 'tool_execution_end' and event.get('toolName') == 'goal_update'
+            and not event.get('isError') and event['result']['details']['goal']['status'] == 'complete')
+
+
+def interrupt_rpc(container, workspace, inside, output):
+    prepare_interrupt(workspace)
+    before, names = async_statuses(inside), saved_worker_names(inside)
+    with fixture_rpc(container, output, 'pi-interrupt-parent') as (send, until):
+        send(type='prompt', message='/goal Factory parent worker goal')
+        wait_for_markers(workspace, ('HOLD_PARENT.ready', 'HOLD_WORKER.ready'))
+        send(type='abort')
+        until(lambda e: e.get('type') == 'agent_settled' and e.get('aborted'))
+        send(type='prompt', message='/goal status')
+        until(lambda e: goal_notice(e, 'paused', 'Factory parent worker goal'))
+        send(type='prompt', message='Factory subagents inspect-worker')
+        until(rpc_result('FACTORY SUBAGENTS INSPECT_WORKER OK'))
+        (workspace / 'HOLD_WORKER.release').touch()
+        wait_for_workers(inside, before, 1, timeout=45)
+        send(type='prompt', message='Factory subagents continue-worker')
+        until(rpc_result('FACTORY SUBAGENTS CONTINUE_WORKER OK'))
+        child = new_birch(inside, names)
+        with fixture_rpc(container, output, 'pi-interrupt-child', child) as (child_send, child_until):
+            child_send(type='prompt', message='/goal status')
+            child_until(lambda e: goal_notice(e, 'No goal.'))
+            child_send(type='prompt', message='/goal Factory child worker goal')
+            child_until(goal_completed)
+            child_send(type='prompt', message='/goal status')
+            child_until(lambda e: goal_notice(e, 'complete', 'Factory child worker goal'))
+        send(type='prompt', message='/goal status')
+        until(lambda e: goal_notice(e, 'paused', 'Factory parent worker goal'))
+        send(type='prompt', message='/goal resume')
+        until(goal_completed)
+        send(type='prompt', message='/goal status')
+        until(lambda e: goal_notice(e, 'complete', 'Factory parent worker goal'))
+    print('PASS Pi RPC: parent interruption, worker status and continuation, isolated session goals', flush=True)
+
+
+def interrupt_frostpi(page, frame, send, workspace, inside, output):
+    prepare_interrupt(workspace)
+    before = async_statuses(inside)
+    if frame.locator('.session-title').filter(has_text=re.compile(r'^Atlas$')).count():
+        frame.get_by_role('button', name='New or resume session').click()
+        frame.locator('button.launcher-create').click()
+        frame.locator('button.session-heading .session-title').filter(has_text=re.compile(r'^New session$')).wait_for()
+    send('/goal Factory parent worker goal')
+    wait_for_markers(workspace, ('HOLD_PARENT.ready', 'HOLD_WORKER.ready'))
+    frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).click()
+    worker = frame.get_by_role('button', name='View transcript for Birch')
+    worker.get_by_text(re.compile(r'^Running')).wait_for()
+    page.screenshot(path=str(output / 'frostpi-interrupted-worker-running.png'))
+    send('/goal status')
+    frame.get_by_text(re.compile(r'Goal:\s+paused[\s\S]+Factory parent worker goal')).first.wait_for()
+    send('Factory subagents inspect-worker')
+    frame.get_by_text('FACTORY SUBAGENTS INSPECT_WORKER OK', exact=True).last.wait_for(timeout=45_000)
+    (workspace / 'HOLD_WORKER.release').touch()
+    wait_for_workers(inside, before, 1, timeout=45)
+    worker.get_by_text(re.compile(r'^Complete')).wait_for()
+    send('Factory subagents continue-worker')
+    frame.get_by_text('FACTORY SUBAGENTS CONTINUE_WORKER OK', exact=True).last.wait_for(timeout=45_000)
+    send('/goal resume')
+    frame.locator('.extension-statuses').get_by_text(re.compile(r'goal complete')).wait_for(timeout=45_000)
+    send('/goal status')
+    frame.get_by_text(re.compile(r'Goal:\s+complete[\s\S]+Factory parent worker goal')).first.wait_for()
+    frame.get_by_role('button', name='New or resume session', exact=True).click()
+    frame.get_by_text('Resume session', exact=True).click()
+    page.locator('.quick-input-widget').get_by_text('Birch', exact=True).click(timeout=30_000)
+    frame.locator('.session-title').filter(has_text=re.compile(r'^Birch$')).wait_for(timeout=30_000)
+    send('/goal status')
+    frame.get_by_text(re.compile(r'No goal\. Usage:')).first.wait_for()
+    send('/goal Factory child worker goal')
+    frame.locator('.extension-statuses').get_by_text(re.compile(r'goal complete')).wait_for(timeout=45_000)
+    send('/goal status')
+    frame.get_by_text(re.compile(r'Goal:\s+complete[\s\S]+Factory child worker goal')).first.wait_for()
+    page.screenshot(path=str(output / 'frostpi-retained-child-goal.png'))
+    print('PASS FrostPi: parent interruption, worker status and continuation, isolated session goals', flush=True)
+
+
+STOP_READY = ('HOLD_ONE.ready', 'HOLD_TWO.ready')
+
+
+def prepare_stop(workspace):
+    fifo = workspace / 'subagents-foreground.pipe'
+    fifo.unlink(missing_ok=True)
+    os.mkfifo(fifo)
+    for name in (*STOP_READY, 'HOLD_OTHER.ready', 'HOLD_OTHER.release', 'HOLD_KEEP.ready', 'HOLD_KEEP.release'):
+        (workspace / name).unlink(missing_ok=True)
+
+
+@contextmanager
+def foreground_reader(workspace):
+    # Opening only succeeds after the worker opens the FIFO for reading.
+    fifo = workspace / 'subagents-foreground.pipe'
+    deadline = time.monotonic() + 45
+    while True:
+        try:
+            writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            break
+        except OSError as error:
+            if error.errno != errno.ENXIO or time.monotonic() >= deadline:
+                raise
+            time.sleep(.2)
+    try:
+        yield
+        # The stream stays open while the foreground command is alive.
+        poller = select.poll()
+        poller.register(writer, select.POLLERR)
+        assert poller.poll(45_000), 'Foreground worker still holds its input open after interruption'
+    finally:
+        os.close(writer)
+
+
+def active_pair(inside, before):
+    statuses = {k: v for k, v in async_statuses(inside).items() if k not in before}
+    assert len(statuses) == 2 and set(statuses.values()) == {'running'}, statuses
+    return set(statuses)
+
+
+def wait_for_stop(inside, ids):
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        states = {key: value for key, value in async_statuses(inside).items() if key in ids}
+        if set(states) == ids and set(states.values()) == {'stopped'}:
+            return
+        time.sleep(.2)
+    raise AssertionError(f'Expected stopped workers {ids}, saw {states}')
+
+
+def stop_rpc(container, workspace, inside, output):
+    prepare_stop(workspace)
+    baseline = async_statuses(inside)
+    with fixture_rpc(container, output, 'pi-stop-other') as (other_send, other_until):
+        other_send(type='prompt', message='Factory subagents stop-other')
+        other_until(rpc_result('FACTORY SUBAGENTS STOP_OTHER OK'))
+        wait_for_markers(workspace, ('HOLD_OTHER.ready', 'HOLD_KEEP.ready'))
+        before = async_statuses(inside)
+        other_ids = set(before) - set(baseline)
+        assert len(other_ids) == 2, other_ids
+        with fixture_rpc(container, output, 'pi-stop-all') as (send, until):
+            send(type='prompt', message='Factory subagents stop-all')
+            wait_for_markers(workspace, STOP_READY)
+            ids = active_pair(inside, before)
+
+            def pick(command, accept, parent_active):
+                send(type='prompt', id=f'pick-{accept}', message=command, streamingBehavior='steer')
+                choice = until(lambda e: e.get('method') == 'select' and e.get('title') == 'Choose workers to stop')
+                values = choice['options']
+                assert values[0] == 'Stop all 2 background workers', values
+                assert sorted(values[1:]) == ['Alder', 'Elm'], values
+                send(type='extension_ui_response', id=choice['id'], value=values[0])
+                confirm = until(lambda e: e.get('method') == 'confirm' and e.get('title') == values[0])
+                detail = 'Stop these 2 background workers in this session?'
+                if parent_active:
+                    detail += ' The parent turn will keep running.'
+                assert confirm['message'] == detail, confirm
+                send(type='extension_ui_response', id=confirm['id'], confirmed=accept)
+                until(lambda e: e.get('type') == 'response' and e.get('id') == f'pick-{accept}')
+
+            with foreground_reader(workspace):
+                pick('/subagents-stop-picker-rpc', False, parent_active=True)
+                assert active_pair(inside, before) == ids
+                send(type='abort')
+                until(lambda e: e.get('type') == 'agent_settled' and e.get('aborted'))
+            pick('/subagents-stop', True, parent_active=False)
+            wait_for_stop(inside, ids)
+            untouched = async_statuses(inside)
+            assert all(untouched[key] == 'running' for key in other_ids), untouched
+        other_send(type='prompt', message='/subagents-stop-picker-rpc')
+        choice = other_until(lambda e: e.get('method') == 'select' and e.get('title') == 'Choose workers to stop')
+        assert sorted(choice['options'][1:]) == ['Ash', 'Maple'], choice
+        named = {}
+        for run_id in other_ids:
+            path = f'/tmp/factory-subagent-runs/async-subagent-runs/{run_id}/status.json'
+            status = json.loads(inside('cat', path))
+            named[status['steps'][0]['label']] = run_id
+        assert set(named) == {'Ash', 'Maple'}, named
+        other_send(type='extension_ui_response', id=choice['id'], value='Maple')
+        confirm = other_until(lambda e: e.get('method') == 'confirm' and e.get('message') == 'Stop Maple in this session?')
+        other_send(type='extension_ui_response', id=confirm['id'], confirmed=True)
+        wait_for_stop(inside, {named['Maple']})
+        assert async_statuses(inside)[named['Ash']] == 'running'
+        (workspace / 'HOLD_KEEP.release').touch()
+        deadline = time.monotonic() + 45
+        while async_statuses(inside)[named['Ash']] != 'complete':
+            assert time.monotonic() < deadline, 'Untargeted worker did not complete'
+            time.sleep(.2)
+    print('PASS Pi RPC: stop all stays in its session and stopping Maple leaves Ash running', flush=True)
+
+
+def stop_tui(workspace, inside, output):
+    prepare_stop(workspace)
+    before = async_statuses(inside)
+    def tmux(*args):
+        return inside('tmux', '-S', '/tmp/factory-stop-tmux.sock', *args)
+
+    def screen(text):
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            content = tmux('capture-pane', '-p', '-J')
+            if text in content:
+                return content
+            time.sleep(.2)
+        raise AssertionError(f'Missing {text}: {content}')
+
+    tmux('new-session', '-d', '-c', '/workspace', '-x', '135', '-y', '35',
+         'pi', '--approve', '--provider', 'fixture', '--model', 'fixture')
+    try:
+        screen('subagents')
+        tmux('send-keys', '-l', 'Factory subagents stop-all')
+        tmux('send-keys', 'Enter')
+        wait_for_markers(workspace, STOP_READY)
+        with foreground_reader(workspace):
+            tmux('send-keys', 'Escape')
+            screen('background subagent runs are still active')
+        ids = active_pair(inside, before)
+        tmux('send-keys', '-l', '/subagents-stop')
+        tmux('send-keys', 'Enter')
+        (output / 'pi-stop-picker.txt').write_text(screen('stop all 2 async runs'))
+        tmux('send-keys', 'Enter')
+        (output / 'pi-stop-confirm.txt').write_text(screen('Confirm: stop all 2 async runs?'))
+        tmux('send-keys', 'Enter')
+        wait_for_stop(inside, ids)
+    finally:
+        tmux('kill-server')
+    print('PASS Pi terminal: Escape keeps two workers running and stop all ends both', flush=True)
+
+
+def stop_frostpi(page, frame, send, workspace, inside, output):
+    prepare_stop(workspace)
+    before = async_statuses(inside)
+    send('Factory subagents stop-all')
+    wait_for_markers(workspace, STOP_READY)
+    with foreground_reader(workspace):
+        frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).click()
+    ids = active_pair(inside, before)
+    for accept in (False, True):
+        stop_button = frame.get_by_role('button', name=re.compile(r'^Stop workers(?:…|\.\.\.)$'))
+        if accept and stop_button.count():
+            stop_button.click()
+        else:
+            composer = frame.get_by_role('textbox', name='Message Pi')
+            composer.fill('/subagents-stop')
+            composer.press('Control+Enter')
+        frame.get_by_role('button', name='Stop all 2 background workers', exact=True).click(timeout=30_000)
+        frame.get_by_text('Stop these 2 background workers in this session?', exact=True).wait_for()
+        if accept:
+            page.screenshot(path=str(output / 'frostpi-stop-confirm.png'))
+        frame.get_by_role('button', name='Yes' if accept else 'No', exact=True).click()
+        if not accept:
+            assert active_pair(inside, before) == ids
+    wait_for_stop(inside, ids)
+    for name in ('Alder', 'Elm'):
+        row = frame.get_by_role('button', name=f'View transcript for {name}')
+        row.get_by_text(re.compile('^Stopped')).wait_for(timeout=15_000)
+    page.screenshot(path=str(output / 'frostpi-workers-stopped.png'))
+    print('PASS FrostPi: cancelled and confirmed stopping both current-session workers', flush=True)
+
+
 def check_native_subagents(container, workspace, inside, output, mode, case=None):
     for item in cases(mode, case):
+        if item == 'stop-all':
+            stop_rpc(container, workspace, inside, output)
+            stop_tui(workspace, inside, output)
+            continue
+        if item == 'interrupt-goal':
+            interrupt_rpc(container, workspace, inside, output)
+            continue
         rpc_case(container, item, mode, workspace, inside, output)
         if item in ('manual', 'mixed'):
             check_terminal_approval(workspace, inside, output, item)
@@ -371,6 +723,12 @@ def check_terminal_approval(workspace, inside, output, case):
 
 def check_frostpi_subagents(page, frame, send, workspace, inside, output, mode, case=None):
     for item in cases(mode, case):
+        if item == 'stop-all':
+            stop_frostpi(page, frame, send, workspace, inside, output)
+            continue
+        if item == 'interrupt-goal':
+            interrupt_frostpi(page, frame, send, workspace, inside, output)
+            continue
         reset_files(workspace, item)
         offset = len(fixture_trace(inside))
         expected = expected_dialogs(mode, item)

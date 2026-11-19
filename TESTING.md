@@ -59,6 +59,9 @@ The test submits a choice, a custom answer and multiple choices through the shar
 question tool. It also dismisses a question and checks the result delivered to the model.
 It pauses and revises a goal in FrostPi, checks its objective and usage in standalone Pi,
 then resumes and completes it in the same session.
+Use `--nonblocking-questions` to verify a deferred answer reaches Pi while
+work continues. The FrostPi check stops and restarts the session with a question
+pending. The terminal check answers through `/questions`.
 Screenshots and the editor log remain in the output directory. Add
 `--startup-only automatic` to test first launch without a configured model. The
 same check accepts `assisted`, `manual`, and `off`.
@@ -157,6 +160,14 @@ elapsed time, the final transcript, and resuming a completed child through
 **New or resume session → Resume session**. The mixed-approval case opens a live
 worker at a shorter viewport while verifying that the parent approval and
 composer stay accessible.
+The `interrupt-goal` case stops a parent goal while a named worker is running.
+The same parent checks the running and completed worker by its original run ID,
+then resumes and completes its paused goal. Reopening the worker session lets
+the user start a separate goal there. FrostPi also checks the worker list after Stop.
+The `stop-all` case interrupts a parent with foreground and background workers.
+It uses `/subagents-stop` in Pi’s terminal and RPC and **Stop workers…** in
+FrostPi. It verifies confirmation and cancellation, then checks that stopping
+one or all selected workers leaves unrelated workers running.
 
 Both interfaces use the parent Pi session to show delegated Bash and file
 approvals. Approve a request from the session that launched the worker. The
