@@ -16,7 +16,7 @@ class DependencyMainTests(unittest.TestCase):
         pins = gate.dependency_pins(Path(__file__).resolve().parents[1])
         self.assertEqual(set(pins), {
             'kyuz0/pi-packages', 'kyuz0/pi-advisor', 'kyuz0/pi-local-model-manager',
-            'kyuz0/pi-slack', 'juicesharp/rpiv-mono', 'kyuz0/pi-vscode-ui',
+            'kyuz0/pi-slack', 'juicesharp/rpiv-mono', 'kyuz0/pi-vscode-ui', 'jmfederico/pi-web',
         })
 
     def test_main_ancestor_and_tip_pass_but_branch_only_commits_fail(self):

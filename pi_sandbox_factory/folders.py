@@ -125,6 +125,7 @@ def guidance(config):
     rows = ['\n## Mounted folders', '', 'The host has provided these container paths:']
     for path, read_only in roots(config):
         rows.append(f'- {json.dumps(path)}: ' + ('read-only' if read_only else 'read and write'))
-    rows += ['', 'Use the session working directory as the starting folder. The full project remains at /workspace.',
+    rows += ['', 'Use ordinary Bash inside the inner sandbox and Pi file tools for the listed access.',
+             'Use the session working directory as the starting folder. The full project remains at /workspace.',
              'Read-only mounts cannot be changed through command approval. Ask the user to change the folder settings if writing there is required.']
     return '\n'.join(rows) + '\n'

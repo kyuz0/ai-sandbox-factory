@@ -5,7 +5,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
 
 from . import host_platform, sandbox_ssh, git_settings
+from .settings_catalog import CATEGORIES
 from .tui_widgets import Feedback, Checkbox
+
+
+def git_identity_summary(enabled):
+    return 'Commit identity ' + ('set' if enabled else 'not set')
 
 
 class GitIdentityFields(Vertical):
@@ -52,8 +57,10 @@ class GitIdentityFields(Vertical):
         self.query_one('#git-identity-fields').set_class(not enabled, '-identity-disabled')
         section = next((node for node in self.ancestors if isinstance(node, Collapsible)), None)
         if section:
-            title = str(section.title).split(' · ')[0]
-            section.title = title + ' · ' + ('commit identity ' if title == 'SSH & Git' else '') + ('set' if enabled else 'not set')
+            if self.setup:
+                section.title = CATEGORIES['ssh-settings'].label + ' · ' + git_identity_summary(enabled)
+            else:
+                section.title = 'Git commit identity · ' + ('set' if enabled else 'not set')
 
     @on(Input.Changed)
     def clear_error(self, event):

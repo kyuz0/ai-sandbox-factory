@@ -65,6 +65,9 @@ COPY --from=pi-advisor / /opt/pi-advisor/
 COPY --from=rpiv-ask-user-question /packages/rpiv-ask-user-question/ /opt/rpiv-ask-user-question/
 COPY --from=rpiv-ask-user-question /packages/rpiv-config/ /opt/rpiv-ask-user-question/node_modules/@juicesharp/rpiv-config/
 COPY --from=rpiv-ask-user-question /source-commit /opt/rpiv-ask-user-question/source-commit
+COPY --from=pi-session-naming /pi-packages/session-naming/config.ts /pi-packages/session-naming/generator.ts /LICENSE /source-commit /opt/pi-session-naming/
+COPY --from=pi-session-naming /pi-packages/session-naming/extensions/index.ts /opt/pi-session-naming/extensions/
+COPY session-naming.mjs /opt/pi-session-naming/factory.mjs
 RUN rm -rf /opt/pi-security/node_modules/pi-goal
 COPY bootstrap.py /usr/local/lib/sandbox-bootstrap.py
 COPY ssh-status.py /usr/local/bin/sandbox-ssh-status

@@ -13,9 +13,19 @@
       "repository": "https://github.com/juicesharp/rpiv-mono.git",
       "commit": "46dbdfd78ab631bbf3ce41c2618bb173a5ec2725"
     },
+    "pi-session-naming": {
+      "repository": "https://github.com/jmfederico/pi-web.git",
+      "commit": "09d6e5fbb342f22f9abb32d18e83a2953ebd01d3",
+      "paths": [
+        "LICENSE",
+        "pi-packages/session-naming/config.ts",
+        "pi-packages/session-naming/extensions/index.ts",
+        "pi-packages/session-naming/generator.ts"
+      ]
+    },
     "frostpi": {
       "repository": "https://github.com/kyuz0/pi-vscode-ui.git",
-      "commit": "176db0578f2648decc5bbcc551611dd5f8b5a807"
+      "commit": "6895fa4beb110009f1d107e830689e2d40eeca2b"
     }
   }
 }

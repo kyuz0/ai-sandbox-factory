@@ -1,5 +1,7 @@
 // Synthetic inference for the disposable FrostPi editor regression.
 import http from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const suffix = 'FINAL_APPROVAL_ARGUMENT';
 const command = "printf '%s' '" + "command detail ".repeat(65) + suffix + "' > /workspace/approval-marker.txt";
@@ -7,6 +9,25 @@ const choice = (name, args) => ({
   tool_calls: [{ index: 0, id: 'factory-' + name + '-' + Date.now(), type: 'function',
     function: { name, arguments: JSON.stringify(args) } }],
 });
+const writeChunk = (response, delta, finishReason = null) => {
+  response.write('data: ' + JSON.stringify({ id: 'factory', model: 'fixture',
+    object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, delta, finish_reason: finishReason }] }) + '\n\n');
+};
+
+async function streamReasoningAndAnswer(response) {
+  response.writeHead(200, { 'content-type': 'text/event-stream' });
+  writeChunk(response, { role: 'assistant' });
+  for (const field of ['reasoning_content', 'content']) {
+    const text = field === 'reasoning_content' ? 'Planning how to stream this fixture. ' : 'FACTORY STREAMING ANSWER. ';
+    for (let index = 0; index < 12; index++) {
+      writeChunk(response, { [field]: text });
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
+  }
+  writeChunk(response, {}, 'stop');
+  response.end('data: [DONE]\n\n');
+}
+
 http.createServer((request, response) => {
   let body = '';
   request.on('data', chunk => body += chunk);
@@ -19,12 +40,52 @@ http.createServer((request, response) => {
       : '';
     const context = JSON.stringify(messages);
     const tools = input.tools?.map(tool => tool.function.name) ?? [];
+    const messageImages = message => Array.isArray(message?.content)
+      ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : [];
+    // A provider that cannot embed images in tool messages receives a follow-up user image.
+    const toolResult = last.role === 'tool' ? last : messageImages(last).length ? messages.at(-2) : undefined;
     let delta;
-    if (!tools.length && context.includes(suffix)) {
+    if (!tools.length && context.includes('Generate a concise title for a coding-agent chat session')) {
+      console.log('TITLE REQUEST');
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      if (userText.includes('Investigate the failing checkout request')) {
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: { message: 'Fixture cannot generate a title' } }));
+        return;
+      }
+      delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (tools.length && userText === 'Factory live token meter fixture') {
+      await streamReasoningAndAnswer(response);
+      return;
+    } else if (context.includes('RUN_FACTORY_FOLDER_ACCESS')) {
+      const cases = JSON.parse(readFileSync('/tmp/folder-access-cases.json', 'utf8'));
+      const step = messages.filter(message => message.role === 'tool').length;
+      if (step < cases.length) {
+        const test = cases[step];
+        if (!tools.includes(test.tool)) throw new Error('Folder fixture tool missing: ' + test.tool);
+        delta = choice(test.tool, test.args);
+      } else {
+        delta = { content: 'FACTORY FOLDER CHECK FINISHED' };
+      }
+    } else if (!tools.length && context.includes(suffix)) {
       delta = { content: JSON.stringify({
         outcome: 'deny', risk_level: 'medium', user_authorization: 'high',
         rationale: 'The fixture declined this command. REVIEWER_REASON_AT_THE_END',
       }) };
+    } else if (userText === 'Read the Factory image fixture.') {
+      if (!tools.includes('read')) throw new Error('Pi read tool missing');
+      delta = choice('read', { path: '/workspace/image-fixture.png' });
+    } else if (userText === 'Capture the Factory browser fixture.') {
+      if (!tools.includes('browser')) throw new Error('Betterwright browser tool missing');
+      delta = choice('browser', {
+        code: "await page.setContent('<title>Vision screenshot fixture</title><main style=\"padding:32px;background:#147d78;color:white;font:32px sans-serif\">Factory screenshot fixture</main>'); return await screenshot({kind:'proof', name:'factory-vision'})",
+      });
+    } else if (toolResult?.role === 'tool' &&
+        /^factory-(read|browser)-/.test(toolResult.tool_call_id)) {
+      const related = toolResult === last ? messageImages(toolResult) : messageImages(last);
+      const digest = url => createHash('sha256').update(Buffer.from(url.split(',')[1], 'base64')).digest('hex');
+      if (related.length) console.log('TOOL IMAGE', toolResult.tool_call_id, related.map(digest).join(' '));
+      delta = { content: related.length ? 'FACTORY TOOL IMAGE REACHED MODEL' : 'FACTORY TOOL IMAGE MISSING' };
     } else if (last.role === 'user' && JSON.stringify(last.content).includes('Factory approval fixture')) {
       if (!tools.includes('bash_escalate')) throw new Error('Factory escalation tool missing');
       delta = choice('bash_escalate', { command, justification: 'Check the full approval request in this disposable test.' });
@@ -69,13 +130,8 @@ http.createServer((request, response) => {
       delta = { content: 'FACTORY FIXTURE READY' };
     }
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    for (const data of [
-      { delta: { role: 'assistant', ...delta }, finish_reason: null },
-      { delta: {}, finish_reason: delta.tool_calls ? 'tool_calls' : 'stop' },
-    ]) {
-      response.write('data: ' + JSON.stringify({ id: 'factory', model: 'fixture',
-        object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, ...data }] }) + '\n\n');
-    }
+    writeChunk(response, { role: 'assistant', ...delta });
+    writeChunk(response, {}, delta.tool_calls ? 'tool_calls' : 'stop');
     response.end('data: [DONE]\n\n');
   });
 }).listen(19381, '127.0.0.1', () => console.log('READY'));

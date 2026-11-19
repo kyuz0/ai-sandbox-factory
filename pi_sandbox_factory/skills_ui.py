@@ -13,6 +13,10 @@ from . import skill_library
 from .tui_widgets import Checkbox, Feedback
 
 
+def saved_skills_summary(count):
+    return f'{count} saved'
+
+
 class SkillSelection(Vertical):
     class Changed(Message):
         pass
@@ -74,7 +78,7 @@ class SkillSelection(Vertical):
     def summary(self):
         saved = [row for row in self.existing if row['name'] not in self.removed]
         updates = sum(self.rows.get(row.get('library_id'), {}).get('digest', row['digest']) != row['digest'] for row in saved)
-        parts = [f'{len(self.chosen)} from library', f'{len(saved)} saved']
+        parts = [f'{len(self.chosen)} from library', saved_skills_summary(len(saved))]
         if updates:
             parts.append(f'{updates} update' + ('s' if updates != 1 else '') + ' available')
         return ' · '.join(parts)

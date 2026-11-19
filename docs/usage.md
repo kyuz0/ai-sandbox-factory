@@ -27,12 +27,20 @@ the current terminal; exit Pi to return to the manager. You can use it alongside
 the browser editor. Both share files and model settings, with separate conversations,
 and start in the folder configured under **Settings → Folders**.
 
+Pi names new conversations from the first prompt. It uses the current model for
+a short title and falls back to the first few words if the request fails. The
+name is saved with the chat in Pi and FrostPi. Use `/name` in Pi or **Rename**
+in FrostPi to set your own title.
+
 Use a separate sandbox for host VS Code after browser-editor use.
 See [browser editor setup](browser-editor.md) for connection settings and access boundaries.
 
 Use **Settings** for configuration and **Actions** for start/stop, shell, logs,
 rebuild and deletion. Press **D** on the home screen to configure defaults for
 new sandboxes.
+
+Open **Actions → Containers…** to see each container's name, status and purpose.
+The list includes stopped containers and reflects the last sandbox list refresh.
 
 Deleting a sandbox removes its containers, private home and editor state while preserving the workspace. Closing the manager or editor leaves containers running.
 
@@ -129,9 +137,11 @@ starting folder to the new workspace root.
 
 Pi and FrostPi receive the container paths and access modes through managed
 context in their private `~/.pi/agent/AGENTS.md`. Project instructions remain in
-place. Read-only access is enforced by the container, including for approved
-commands; writable folders also receive the inner sandbox’s usual protections
-for configuration and secret files.
+place. With the inner command sandbox enabled, ordinary Bash and Pi file tools
+can read the workspace and added folders without an approval prompt for the path.
+They can write to the workspace, folders mounted read/write, and the container's
+`/tmp`. Read-only mounts stay read-only even for approved commands, and
+configuration and credential files keep their usual protections.
 
 For CLI creation, use `--working-directory apps/api` and optionally
 `--folders-file folders.json`:

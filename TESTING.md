@@ -65,6 +65,14 @@ directory to test steering, switching between branches in one session, and
 forking into a separate session. The check continues the original after the fork
 and verifies that the new messages stay in their respective session files.
 
+Use `--session-naming` with the rebuilt image to check the generated title and
+the first-prompt fallback after a provider error. The check verifies both titles
+in FrostPi and in standalone Pi and confirms a later turn keeps the original name.
+
+With a Betterwright-enabled image, use `--tool-images` to verify that Pi's
+`read` tool and Betterwright deliver the same image bytes to the model and
+FrostPi. The check opens both thumbnails and reopens them after a session restart.
+
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.
 
@@ -84,6 +92,11 @@ check, start with the previous Factory release in disposable state, add a
 workspace file and save a Pi chat, then run `recreate NAME --profile base` from
 the new checkout. Verify that both survive and that the old shipped extensions
 are retired in the stable and Insiders server directories.
+
+For the browser migration, open a disposable Pendant sandbox using the new
+Factory launcher before recreating it. Verify the sandbox list offers the
+FrostPi update and the browser still opens Pendant. After recreation, open
+the browser again and verify FrostPi opens and the notice is gone.
 
 To try the branch without touching saved sandboxes, open the launcher with a
 fresh state directory.
@@ -571,6 +584,14 @@ is blocked. No saved sandbox is changed.
 
 ## Folder mounts and starting directory
 
+Run `tests/frostpi_editor.py --folder-access` with the image and code-server
+arguments from the [FrostPi check](#frostpi-editor-and-shared-pi-goals). The
+fixture starts Pi CLI and FrostPi in a workspace subfolder. It checks Bash and
+native file tools in the workspace, nested mounted folders, and `/tmp`. It
+copies a file from the read-only mount to the writable mount, verifies its
+contents, and checks that reverse copies, read-only writes, and protected
+credential reads remain blocked. Neither client should show an approval prompt.
+
 Create a disposable workspace with an `app` subfolder and two separate host
 folders. Mount them as `reference` (read-only) and `output` (writable), using
 `--folders-file` as shown in [Usage](docs/usage.md#workspace-and-additional-folders).
@@ -587,7 +608,7 @@ Set `--working-directory app` and allow fixture model port 18085. Put
   --name folders-check
 ```
 
-The fixture checks the actual model-request context in Pi and Pendant, their cwd,
+The historical fixture checks the actual model-request context in Pi and Pendant, their cwd,
 file tools, ordinary shell writes and read-only enforcement after escalation.
 The lifecycle check changes and removes mounts, checks host ownership and SELinux
 labels, and confirms that starting-folder edits preserve the running container.

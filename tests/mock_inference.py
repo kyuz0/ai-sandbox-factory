@@ -302,7 +302,7 @@ class Handler(BaseHTTPRequestHandler):
                 ('bash', {'command': 'pwd; printf PARENT_WRITE_OK > /workspace/parent-write.txt'}),
                 ('read', {'path': '/mnt/reference/readme.txt'}),
                 ('write', {'path': '/mnt/output/tool.txt', 'content': 'TOOL_WRITE_OK'}),
-                ('bash', {'command': 'cat /mnt/reference/readme.txt; printf SHELL_WRITE_OK > /mnt/output/shell.txt'}),
+                ('bash', {'command': 'cat /mnt/reference/readme.txt && printf SHELL_WRITE_OK > /mnt/output/shell.txt'}),
                 ('bash', {'command': 'printf NO > /mnt/reference/shell-denied.txt'}),
                 ('write', {'path': '/mnt/reference/tool-denied.txt', 'content': 'NO'}),
                 ('bash', {'command': 'printf NO > /workspace/.pi/pi-auto-review.json'}),

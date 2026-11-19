@@ -1,5 +1,7 @@
 """Exercise the shipped FrostPi webview and shared Pi tools in a disposable Factory container."""
 import argparse
+import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -13,7 +15,7 @@ import time
 from threading import Thread
 import uuid
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 REPO = Path(__file__).resolve().parents[1]
 DEV = REPO / 'pi_sandbox_factory/containers/dev'
@@ -23,7 +25,7 @@ APPROVAL_LABELS = {
     'manual': 'Manual approval (ask me)', 'off': 'YOLO (no approvals)',
 }
 sys.path.insert(0, str(REPO))
-from pi_sandbox_factory import sandbox
+from pi_sandbox_factory import folders, sandbox
 
 
 def check_cli_goal(name, session, usage, output):
@@ -138,10 +140,208 @@ def check_chat_workflows(page, frame, composer, send, inside, output):
     print('PASS Same-session branch and restore, separate fork, steering and independent continuation of the original chat.')
 
 
-def check(image, code_server, output, chromium, startup_only, chat_workflows):
+def check_session_naming(page, frame, send, inside, output):
+    title = frame.locator('button.session-heading .session-title')
+
+    def expect_title(name):
+        title.filter(has_text=re.compile('^' + re.escape(name) + '$')).wait_for(timeout=18000)
+
+    def new_session():
+        frame.get_by_role('button', name='New or resume session').click()
+        frame.locator('button.launcher-create').click()
+        expect_title('New session')
+
+    def expect_pi_name(name):
+        files = inside('find', '/home/node/.pi/agent/sessions', '-name', '*.jsonl').splitlines()
+        for path in files:
+            entries = [json.loads(line) for line in inside('cat', path).splitlines()]
+            names = [entry['name'] for entry in entries if entry['type'] == 'session_info']
+            if names and names[-1] == name:
+                messages = inside('pi', '--mode', 'rpc', '--session', path,
+                                  input='{"id":"name-check","type":"get_state"}\n').splitlines()
+                reply = next(json.loads(line) for line in messages if '"name-check"' in line)
+                assert reply['success'] and reply['data']['sessionName'] == name, reply
+                return
+        raise AssertionError('No saved Pi session with name ' + name)
+
+    send('Fix the sign-in errors in the authentication flow.')
+    frame.get_by_text('FACTORY FIXTURE READY', exact=True).wait_for()
+    expect_title('Fix sign-in errors')
+    expect_pi_name('Fix sign-in errors')
+    page.screenshot(path=str(output / 'generated-name.png'))
+    send('Check the same session again.')
+    frame.get_by_text('FACTORY FIXTURE READY', exact=True).last.wait_for()
+    expect_title('Fix sign-in errors')
+    new_session()
+    send('Investigate the failing checkout request when the payment gateway responds slowly.')
+    fallback = 'Investigate the failing checkout request when'
+    expect_title(fallback)
+    expect_pi_name(fallback)
+    page.screenshot(path=str(output / 'fallback-name.png'))
+
+    new_session()
+    frame.get_by_role('button', name='Session actions', exact=True).click()
+    frame.locator('button').filter(has_text=re.compile(r'^\s*Rename\s*$')).click()
+    name_input = frame.get_by_role('textbox', name='Session name')
+    name_input.fill('My checkout notes')
+    name_input.press('Enter')
+    expect_title('My checkout notes')
+    send('Check the checkout notes.')
+    frame.get_by_text('FACTORY FIXTURE READY', exact=True).wait_for()
+    expect_pi_name('My checkout notes')
+    assert inside('cat', '/tmp/fixture.log').count('TITLE REQUEST') == 2
+    print('PASS Generated, fallback and manual names appear in FrostPi and persist in Pi sessions.')
+
+
+def check_tool_images(page, frame, send, inside, output):
+    thumbnails = frame.locator('button.image-thumb')
+
+    def image_digest(locator):
+        image = locator.get_attribute('src')
+        assert image and image.startswith('data:image/'), image
+        assert locator.evaluate('async image => { await image.decode(); return image.naturalWidth > 0; }')
+        return hashlib.sha256(base64.b64decode(image.split(',', 1)[1])).hexdigest()
+
+    for index, prompt in enumerate(('Read the Factory image fixture.', 'Capture the Factory browser fixture.')):
+        send(prompt)
+        frame.get_by_text('FACTORY TOOL IMAGE REACHED MODEL', exact=True).nth(index).wait_for(timeout=60000)
+        frame.get_by_role('button', name='Send to Pi', exact=True).wait_for(timeout=15000)
+    logs = inside('cat', '/tmp/fixture.log').splitlines()
+    expected = [next(line.split()[3] for line in logs if line.startswith('TOOL IMAGE factory-' + name + '-'))
+                for name in ('read', 'browser')]
+    for index, digest in enumerate(expected):
+        thumbnail = thumbnails.nth(index)
+        thumbnail.wait_for(timeout=15000)
+        assert image_digest(thumbnail.locator('img')) == digest
+        thumbnail.click()
+        lightbox = frame.locator('.image-lightbox img')
+        lightbox.wait_for()
+        assert image_digest(lightbox) == digest
+        assert lightbox.evaluate('''image => {
+            const pane = image.closest('.image-lightbox').getBoundingClientRect();
+            const picture = image.getBoundingClientRect();
+            const left = picture.left - pane.left;
+            const right = pane.right - picture.right;
+            return left >= 7 && right >= 7 && Math.abs(left - right) < 2;
+        }'''), 'The lightbox should center the entire image inside the sidebar padding'
+        page.screenshot(path=str(output / f'tool-image-{index + 1}.png'))
+        page.keyboard.press('Escape')
+        lightbox.wait_for(state='hidden')
+    assert thumbnails.count() == len(expected)
+
+    frame.get_by_role('button', name='Session actions', exact=True).click()
+    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
+    frame.get_by_text('FACTORY TOOL IMAGE REACHED MODEL', exact=True).nth(1).wait_for(timeout=30000)
+    for index, digest in enumerate(expected):
+        thumbnail = thumbnails.nth(index)
+        thumbnail.wait_for(timeout=15000)
+        assert image_digest(thumbnail.locator('img')) == digest
+    page.screenshot(path=str(output / 'restored-tool-images.png'))
+    print('PASS Pi read and Betterwright screenshots match what the model received, open in FrostPi, and survive session restart.')
+
+
+def check_folder_access(frame, send, inside, container):
+    prompt = 'RUN_FACTORY_FOLDER_ACCESS'
+    cases = json.loads(Path(__file__).with_name('folder_access_cases.json').read_text())
+    send(prompt)
+    complete = frame.get_by_text('FACTORY FOLDER CHECK FINISHED', exact=True)
+    approval = frame.get_by_role('region', name='Prompt details')
+    complete.or_(approval).wait_for(timeout=120000)
+    assert complete.is_visible(), 'FrostPi asked for approval during the folder check'
+    frame.get_by_role('button', name='Send to Pi', exact=True).wait_for(timeout=15000)
+    session_file = inside('find', '/home/node/.pi/agent/sessions', '-type', 'f', '-name', '*.jsonl')
+    entries = [json.loads(line) for line in inside('cat', session_file).splitlines()]
+    frostpi = [entry['message'] for entry in entries if entry.get('message', {}).get('role') == 'toolResult']
+
+    pi_results = []
+    command = ['podman', 'exec', '-i', '--workdir', '/workspace/app', container, 'pi', '--mode', 'rpc',
+               '--no-session', '--approve', '--provider', 'fixture', '--model', 'fixture']
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as pi:
+        lines = Queue()
+
+        def read():
+            for line in pi.stdout:
+                lines.put(line)
+            lines.put(None)
+
+        Thread(target=read, daemon=True).start()
+        try:
+            pi.stdin.write(json.dumps({'id': 'folder-test', 'type': 'prompt', 'message': prompt}) + '\n')
+            pi.stdin.flush()
+            deadline = time.monotonic() + 120
+            while True:
+                line = lines.get(timeout=max(0, deadline - time.monotonic()))
+                assert line is not None, 'Pi stopped before completing the folder check'
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                assert not (event.get('type') == 'extension_ui_request'
+                            and event.get('method') in ('select', 'confirm', 'input')), event
+                if event.get('type') == 'tool_execution_end':
+                    pi_results.append(event)
+                if event.get('type') == 'agent_settled':
+                    break
+        finally:
+            pi.stdin.close()
+            try:
+                pi.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                pi.terminate()
+                pi.wait(timeout=15)
+    failures = []
+    for client, results in (('FrostPi', frostpi), ('Pi CLI', pi_results)):
+        assert len(results) == len(cases), (client, results)
+        for step, result in zip(cases, results):
+            assert step['tool'] == result['toolName'], (client, step, result)
+            content = result.get('result', result).get('content', [])
+            text = '\n'.join(item.get('text', '') for item in content)
+            assert 'FOLDER_TEST_TOKEN' not in text, (client, step['name'])
+            if bool(result.get('isError')) != step.get('denied', False) or step.get('text', '') not in text:
+                failures.append(f'{client} · {step["name"]}\n{text}')
+    assert not failures, '\n\n'.join(failures)
+    assert inside('cat', '/workspace/parent-native.txt') == 'NATIVE_WORKSPACE_OK'
+    assert inside('cat', '/mnt/output/nested/.env') == 'FOLDER_TEST_TOKEN=synthetic'
+    assert inside('find', '/mnt/reference/nested', '-type', 'f') == '/mnt/reference/nested/readme.txt'
+    assert inside('cat', '/mnt/reference/nested/readme.txt') == 'REFERENCE_OK'
+    assert inside('cat', '/mnt/output/nested/copied.txt') == 'REFERENCE_OK'
+    inside('test', '!', '-e', '/mnt/output/nested/denied-secret.txt')
+    print(f'PASS {len(cases)} folder-access checks in each client. No approvals requested.')
+
+
+def check_streaming_metrics(frame, send, output):
+    metrics = frame.locator('.response-metrics')
+    active = frame.get_by_role('button', name='Stop Pi', exact=True)
+    answer = frame.get_by_text(re.compile(r'^FACTORY STREAMING ANSWER\.')).first
+    live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s')
+
+    def read_live_count():
+        expect(active).to_be_visible()
+        expect(metrics).to_contain_text(live)
+        count, rate = live.search(metrics.inner_text()).groups()
+        assert float(rate) > 0
+        return int(count.replace(',', ''))
+
+    send('Factory live token meter fixture')
+    reasoning_count = read_live_count()
+    assert reasoning_count > 0
+    assert not answer.is_visible(), 'The token meter appeared after the answer started'
+    metrics.screenshot(path=str(output / 'reasoning-meter.png'))
+
+    expect(answer).to_be_visible(timeout=15000)
+    answer_count = read_live_count()
+    assert answer_count > reasoning_count
+    metrics.screenshot(path=str(output / 'answer-meter.png'))
+    expect(active).to_be_hidden(timeout=15000)
+    print(f'PASS live output count and rate during reasoning ({reasoning_count} tokens) '
+          f'and answer generation ({answer_count} tokens).')
+
+
+def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
+          folder_access=False, streaming_metrics=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
-    mode = startup_only or 'assisted'
+    mode = 'manual' if folder_access else startup_only or 'assisted'
 
     def podman(*args, **kwargs):
         return subprocess.check_output(['podman', *args], text=True, **kwargs).strip()
@@ -153,8 +353,26 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows):
         root = Path(tmp)
         for directory in ('workspace', 'editor'):
             (root / directory).mkdir()
+        if tool_images:
+            fixture = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nO3NQQkAAAgEsCtpODsZyhQ+hMH+S/WcikAgEAgEAoFAIPgSLCQx6Fu1gaoXAAAAAElFTkSuQmCC'
+            (root / 'workspace/image-fixture.png').write_bytes(base64.b64decode(fixture))
         (root / 'allowlist.txt').write_text('')
-        sandbox.prepare_options({'options': {'approval': mode}, 'common': {'path': str(DEV)}}, root)
+        config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
+                  'engine': 'podman'}
+        cwd = '/workspace'
+        if folder_access:
+            cwd = '/workspace/app'
+            (root / 'workspace/app').mkdir()
+            for directory in ('reference', 'output'):
+                (root / directory / 'nested').mkdir(parents=True)
+            (root / 'reference/nested/readme.txt').write_text('REFERENCE_OK')
+            (root / 'reference/nested/private-link').symlink_to('/mnt/output/nested/.env')
+            (root / 'output/nested/.env').write_text('FOLDER_TEST_TOKEN=synthetic')
+            config.update(workspace=str(root / 'workspace'), working_directory='app', extra_folders=[
+                {'name': name, 'source': str(root / name), 'read_only': name == 'reference'}
+                for name in ('reference', 'output')
+            ])
+        sandbox.prepare_options(config, root)
         mounts = [
             (root / 'workspace', '/workspace', 'rw'),
             (root / 'editor', '/home/node/.local/share/pi-browser-editor', 'rw'),
@@ -163,9 +381,16 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows):
             (code_server, '/opt/test-code-server', 'ro'),
             (Path(__file__).with_name('frostpi_model.mjs').resolve(), '/tmp/frostpi_model.mjs', 'ro'),
         ]
+        if folder_access:
+            mounts.append((Path(__file__).with_name('folder_access_cases.json').resolve(),
+                           '/tmp/folder-access-cases.json', 'ro'))
         args = ['run', '-d', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
-                '--user', '1000:1000', '--security-opt', 'label=disable', '--security-opt', 'seccomp=unconfined',
+                '--user', '1000:1000', '--security-opt', 'label=disable',
                 '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
+        if folder_access:
+            args += ['--cap-drop=ALL', '--security-opt=no-new-privileges'] + folders.mounts(config)
+        else:
+            args += ['--security-opt', 'seccomp=unconfined']
         for source, target, access in mounts:
             args += ['-v', f'{source}:{target}:{access}']
         podman(*args, image, 'infinity')
@@ -174,23 +399,26 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows):
             inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
             inside('test', '!', '-d', '/opt/pendant')
             if not startup_only:
-                model = {'id': 'fixture', 'name': 'Factory fixture', 'reasoning': False, 'input': ['text'],
+                model = {'id': 'fixture', 'name': 'Factory fixture', 'reasoning': streaming_metrics,
+                         'input': ['text', 'image'] if tool_images else ['text'],
                          'contextWindow': 131072, 'maxTokens': 8192, 'cost': dict.fromkeys(('input', 'output', 'cacheRead', 'cacheWrite'), 0)}
                 catalogue = {'providers': {'fixture': {'api': 'openai-completions',
                              'baseUrl': 'http://127.0.0.1:19381/v1', 'apiKey': 'fixture-only', 'models': [model]}}}
                 inside('tee', '/home/node/.pi/agent/models.json', input=json.dumps(catalogue))
-                inside('python3', '-c', """import json
+                inside('python3', '-c', """import json, sys
 from pathlib import Path
 p = Path('/home/node/.pi/agent/settings.json')
 v = json.loads(p.read_text())
 v.update(defaultProvider='fixture', defaultModel='fixture')
+if len(sys.argv) > 1:
+    v['defaultThinkingLevel'] = sys.argv[1]
 p.write_text(json.dumps(v))
-""")
+""", *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 address = f'127.0.0.1:{port.getsockname()[1]}'
-            settings = {'binary': '/opt/test-code-server/bin/code-server', 'cwd': '/workspace',
+            settings = {'binary': '/opt/test-code-server/bin/code-server', 'cwd': cwd,
                         'authority': address, 'password_hash': '', 'watch_fallback': (EDITOR / 'watch-fallback.cjs').read_text()}
             with (output / 'editor.log').open('w') as log, sync_playwright() as playwright:
                 supervisor = subprocess.Popen(['podman', 'exec', '-i', name, 'python3', '-u', '-c',
@@ -207,7 +435,7 @@ p.write_text(json.dumps(v))
                 page = browser.new_page(viewport={'width': 1440, 'height': 960})
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
-                page.goto(f'http://{address}/?folder=/workspace')
+                page.goto(f'http://{address}/?folder={cwd}')
                 page.locator('.monaco-workbench').wait_for(timeout=60000)
                 deadline = time.monotonic() + 40
                 while time.monotonic() < deadline:
@@ -235,6 +463,26 @@ p.write_text(json.dumps(v))
                     return
                 if chat_workflows:
                     check_chat_workflows(page, frame, composer, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if session_naming:
+                    check_session_naming(page, frame, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if tool_images:
+                    check_tool_images(page, frame, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if folder_access:
+                    check_folder_access(frame, send, inside, name)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if streaming_metrics:
+                    check_streaming_metrics(frame, send, output)
                     assert not errors, errors
                     browser.close()
                     return
@@ -351,5 +599,11 @@ if __name__ == '__main__':
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
+    scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
+    scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
+    scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
+    scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     args = parser.parse_args()
-    check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium, args.startup_only, args.chat_workflows)
+    check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
+          args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
+          args.streaming_metrics)

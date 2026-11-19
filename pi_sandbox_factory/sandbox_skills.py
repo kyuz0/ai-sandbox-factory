@@ -41,9 +41,8 @@ def snapshot(repo, folder, state, launcher):
         revision = launcher.run(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], capture=True).stdout.strip()
         digest = launcher.tree_digest(selected)
         target = state / 'skills' / digest
-        if not target.exists():
-            target.parent.mkdir(exist_ok=True)
-            shutil.copytree(selected, target, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+        from .sandbox import publish_snapshot
+        publish_snapshot(selected, target)
         return {'name': match[1], 'repo': repo, 'folder': folder, 'commit': revision,
                 'digest': digest, 'path': str(target)}
 

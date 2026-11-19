@@ -1,4 +1,5 @@
 from contextlib import closing, redirect_stderr, redirect_stdout
+import hashlib
 import importlib.util
 import io
 import json
@@ -448,6 +449,74 @@ class ListTests(unittest.TestCase):
                 self.assertEqual(output.getvalue().count('unknown'), 2)
                 self.assertNotIn('missing', output.getvalue())
                 self.assertIn('cannot query podman', errors.getvalue())
+
+    def test_structured_inventory_lists_owned_containers_with_purpose(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.save(root, 'demo')
+            self.save(root, 'empty')
+            self.save(root, 'offline', engine='docker')
+            sample = (
+                'pi-sandbox-factory-demo\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-proxy\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-advisor\texited\tdemo\n'
+                'pi-sandbox-factory-demo-advisor-proxy\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-inference\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-ssh\trunning\tother\n'
+                'another-owned-container\tpaused\tdemo\n'
+            )
+
+            def run(argv, **kwargs):
+                return subprocess.CompletedProcess(argv, 0, sample) if argv[0] == 'podman' else subprocess.CompletedProcess(argv, 1, '')
+
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(sandbox, 'run', side_effect=run) as commands:
+                sandbox.list_sandboxes(root, structured=True)
+            demo, empty, offline = json.loads(output.getvalue())
+            self.assertEqual([row['role'] for row in demo['containers']],
+                             ['Development', 'Network gateway', 'Model connections',
+                              'Advisors', 'Advisor network gateway', 'Additional container'])
+            self.assertEqual(demo['containers'][3]['status'], 'exited')
+            self.assertTrue(all(row['purpose'] for row in demo['containers']))
+            self.assertEqual(empty['containers'], [])
+            self.assertIsNone(offline['containers'])
+            self.assertEqual(commands.call_count, 2)
+
+    def test_pendant_notice_uses_saved_build_even_with_engine_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self.save(root, 'demo')
+            missing = self.save(root, 'missing')
+            fresh = self.save(root, 'new')
+            old_inputs = state / 'common'
+            old_inputs.mkdir()
+            (old_inputs / 'Dockerfile').write_text(
+                'ARG PI_VERSION=1.4.0\nARG PENDANT_VERSION=0.94.2\nRUN curl cdervis.vscode-pi-${PENDANT_VERSION}.vsix\n')
+            for folder, path in [(state, old_inputs), (missing, missing / 'absent'),
+                                 (fresh, sandbox.ROOT / 'containers/dev')]:
+                config_path = folder / 'config.json'
+                config = json.loads(config_path.read_text())
+                config.update(uid=1000, gid=1000, workspace=str(root),
+                              common={'path': str(path), 'digest': 'fixture'})
+                config_path.write_text(json.dumps(config))
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(
+                    sandbox, 'run', return_value=subprocess.CompletedProcess([], 1, '')) as commands:
+                sandbox.list_sandboxes(root, structured=True)
+            legacy, unknown, modern = json.loads(output.getvalue())
+            self.assertEqual(legacy['chat_editor'], 'pendant')
+            self.assertEqual(legacy['dev'], 'unknown')
+            self.assertNotIn('chat_editor', unknown)
+            self.assertNotIn('chat_editor', modern)
+            expected = hashlib.sha256(b'1.4.0-0.94.2-1000-1000-fixture').hexdigest()[:16]
+            self.assertEqual(sandbox.base_tag(legacy['config']), expected)
+            sandbox.write_attach(legacy['config'], state)
+            attach = json.loads((state / 'attached-container.json').read_text())
+            self.assertEqual(attach['extensions'], ['cdervis.vscode-pi'])
+            self.assertEqual(attach['settings'], {'pendant.agentDir': '/home/node/.pi/agent'})
+            sandbox.write_attach(modern['config'], fresh)
+            self.assertEqual(json.loads((fresh / 'attached-container.json').read_text())['extensions'], ['frostime.frostpi'])
+            commands.assert_called_once()
 
     def test_each_saved_engine_is_queried_and_foreign_container_ownership_is_visible(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -16,6 +16,7 @@ from typing import Optional
 
 from . import sandbox, editor_settings
 from .creation import Creation, Cancelled
+from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
@@ -24,14 +25,15 @@ from .settings_catalog import (
     PROVIDER_PLUGINS_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
-from .communications_ui import CommunicationsForm
+from .communications_ui import CommunicationsForm, communications_summary
 from .models_ui import HostedProviders, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
                              assigned_key_label, choice_key_caption, key_caption)
+from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
-from .skills_ui import SkillSelection, SkillLibraryScreen
+from .skills_ui import SkillSelection, SkillLibraryScreen, saved_skills_summary
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
@@ -151,6 +153,13 @@ class Service:
                 log(safe_text(line.rstrip()))
             if process.wait():
                 raise ValueError('Command failed. See the output above.')
+
+    def run_update(self, args, log, update):
+        if update is None:
+            self.run(args, log)
+        else:
+            log('› ' + ' '.join(args))
+            update.run(self.command(*args), log)
 
     def start(self, name, log):
         config = self.config(name)
@@ -338,7 +347,7 @@ class Service:
         from . import inference
         return inference.credentials(self.config(name), self.state / name, {'id': provider, 'remove': True})
 
-    def update(self, name, draft, key, log):
+    def update(self, name, draft, key, log, update=None):
         changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
         changes['local_model_ports'] = draft.get('local_model_ports')
         changes['model_providers'] = draft.get('model_providers', {'local':{}})
@@ -348,22 +357,22 @@ class Service:
         with tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, changes)
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
         self.setup(name, draft, key, log)
 
-    def folders(self, name, settings, log):
+    def folders(self, name, settings, log, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-folders-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, settings)
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
-    def ssh_settings(self, name, settings, log, git_identity):
+    def ssh_settings(self, name, settings, log, git_identity, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-ssh-') as temp:
             path = Path(temp) / 'settings.json'
             selected = options(self.config(name).get('options'))
             selected['git_identity'] = git_identity
             write_json(path, {'ssh': settings, 'options': options(selected)})
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
     def ssh_key(self, name, generate=False):
         result = subprocess.run(self.command('ssh-generate-key' if generate else 'ssh-public-key', name),
@@ -375,11 +384,11 @@ class Service:
             raise ValueError('The SSH companion did not return a public key')
         return rows[-1]
 
-    def advisors(self, name, settings, log):
+    def advisors(self, name, settings, log, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-advisors-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, {'advisors': settings})
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
     def models(self, name, mode, log):
         if mode not in ('preview', 'refresh'):
@@ -838,15 +847,16 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action):
+    def __init__(self, message, action, *, cancel_label='Cancel'):
         super().__init__()
         self.message, self.action = message, action
+        self.cancel_label = cancel_label
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Static(self.message, markup=False)
             with Horizontal(classes='buttons dialog-actions'):
-                yield Button('Cancel', id='cancel', variant='primary')
+                yield Button(self.cancel_label, id='cancel', variant='primary')
                 yield Button(self.action, id='yes', variant='error')
 
     @on(Button.Pressed)
@@ -926,7 +936,7 @@ class MoreActions(ModalScreen[Optional[str]]):
         self.sandbox_name = record['name']
         self.actions = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                         ('Container shell', 'shell'),
-                        ('Test MCP connections', 'connections'), ('Container logs', 'logs'),
+                        ('Test MCP connections', 'connections'), ('Container logs', 'logs'), ('Containers…', 'containers'),
                         ('Update sources and recreate…', 'rebuild'), ('Delete sandbox…', 'delete')]
         if browser_running:
             self.actions.append(('Stop browser editor', 'stop-editor'))
@@ -952,18 +962,86 @@ class MoreActions(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class ContainersScreen(Screen):
+    BINDINGS = [('escape', 'back', 'Back')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.record = record
+
+    def compose(self):
+        yield Header()
+        yield Label('Containers · ' + self.record['name'], classes='title focused-settings-title')
+        with VerticalScroll(classes='form', id='container-list'):
+            containers = self.record.get('containers')
+            if not self.record.get('engine'):
+                yield Static('Factory could not read this sandbox’s saved configuration.')
+            elif containers is None:
+                yield Static('Factory could not query the container engine. Once it’s available, press R on the sandbox list to refresh.')
+            elif not containers:
+                yield Static('There are no containers for this sandbox.')
+            else:
+                for container in containers:
+                    status = container['status']
+                    heading = Text(container['role'], style='bold')
+                    heading.append(' · ' + ('Stopped' if status == 'exited' else safe_text(status).capitalize()))
+                    with Vertical(classes='setting'):
+                        yield Static(heading)
+                        yield Static(safe_text(container['name']), markup=False)
+                        yield Static(container['purpose'], classes='setting-help', markup=False)
+        with Horizontal(classes='wizard-actions'):
+            yield Button('Back', id='containers-back')
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one('#containers-back').focus()
+
+    @on(Button.Pressed, '#containers-back')
+    def back_pressed(self, event):
+        event.stop()
+        self.action_back()
+
+    def action_back(self):
+        self.app.pop_screen()
+
+
 class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Close')]
     ACTIONS = [(category.label, action) for action, category in CATEGORIES.items()]
 
-    def __init__(self, name):
+    def __init__(self, name, config, editor_mode):
         super().__init__()
         self.sandbox_name = name
+        self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
+        if isinstance(config, dict) and config.get('engine'):
+            local = bool(config.get('local_model_ports'))
+            count = (int(local) + sum(row['name'] != 'local' for row in model_providers.selections(config))
+                     + len(config.get('hosted_connections', {})))
+            self.summaries['models'] = model_sources_summary(local, count)
+            self.summaries['skills'] = saved_skills_summary(len(config.get('extra_skills', [])))
+            try:
+                selected = options(config.get('options'))
+                network = sandbox.network_mode(config)
+            except ValueError:
+                return
+            self.summaries.update({
+                'network-settings': network_search_summary(network, selected['web_access']['enabled']),
+                'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
+                'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
+                'ssh-settings': git_identity_summary(selected['git_identity']),
+                'communications': communications_summary(selected['communications']['slack']),
+            })
 
     def compose(self):
+        prompts = []
+        for label, action in self.ACTIONS:
+            prompt = Text(label)
+            if summary := self.summaries.get(action):
+                prompt.append(' · ' + summary, style='dim')
+            prompts.append(prompt)
         with Vertical(id='confirm-box'):
             yield Label('Settings · ' + self.sandbox_name)
-            yield OptionList(*[label for label, _ in self.ACTIONS], id='settings-actions')
+            yield OptionList(*prompts, id='settings-actions')
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='settings-back')
 
@@ -979,6 +1057,31 @@ class SettingsMenu(ModalScreen[Optional[str]]):
 
     def action_cancel(self):
         self.dismiss(None)
+
+
+def model_sources_summary(local, count):
+    enabled = f'{count} enabled' if count else 'None enabled'
+    return f"{LOCAL_MODELS_LABEL} {on_off(local)} · {enabled}"
+
+
+def on_off(enabled):
+    return 'on' if enabled else 'off'
+
+
+def network_mode_label(mode):
+    return 'Restricted' if mode == 'allowlist' else 'Unrestricted'
+
+
+def network_search_summary(mode, search):
+    return f'{network_mode_label(mode)} · {WEB_SEARCH_LABEL} {on_off(search)}'
+
+
+def approval_mode_summary(mode, inner):
+    return f'{APPROVAL_MODES[mode][0]} · Inner sandbox {on_off(inner)}'
+
+
+def agent_tools_summary(recall, browser, goals):
+    return f'Recall {recall.capitalize()} · Browser {on_off(browser)} · Goals {on_off(goals)}'
 
 
 class FoldersScreen(Screen):
@@ -1011,11 +1114,14 @@ class FoldersScreen(Screen):
                 service = self.app.service
                 def apply():
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('Updating folders', lambda log: service.folders(self.record['name'], selected, log),
+                    self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.folders(self.record['name'], selected, log, update),
                         done_on_success=True,
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
-                    self.app.push_screen(Confirm('Apply folder mounts? This recreates the sandbox and interrupts running processes.', 'Apply and recreate'), lambda yes: apply() if yes else None)
+                    notes = ['This recreates the sandbox and interrupts running processes.',
+                             *settings_effects.editor_migration(self.record['config'])]
+                    self.app.push_screen(Confirm('Apply folder mounts?\n' + settings_effects.bullets(notes),
+                                                 'Apply and recreate'), lambda yes: apply() if yes else None)
                 else:
                     apply()
             except (ValueError, OSError) as error:
@@ -1122,10 +1228,12 @@ class SSHScreen(Screen):
                 def apply(yes):
                     if not yes: return
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('SSH & Git settings · ' + name, lambda log: service.ssh_settings(name, settings, log, identity),
+                    self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
                         done_on_success=True,
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity != options(self.record['config'].get('options'))['git_identity'] else []))))
-                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(['Active sandbox processes restart.', 'Workspace and private key are preserved.']), 'Apply'), apply)
+                notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
+                         *settings_effects.editor_migration(self.record['config'])]
+                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.notify(safe_text(error), severity='error')
 
@@ -1246,14 +1354,17 @@ class AdvisorsScreen(Screen):
                 if not yes:
                     return
                 self.app.pop_screen()
-                def setup(log):
-                    service.advisors(name, settings, log)
+                def setup(log, update):
+                    service.advisors(name, settings, log, update)
                     for provider in imports:
                         service.run(['advisor-import', name, provider], log)
-                self.app.push_screen(Operation('Advisors · ' + name, setup, done_on_success=True,
+                self.app.push_screen(UpdateOperation('Advisors · ' + name, setup, done_on_success=True,
                     success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']))))
-            self.app.push_screen(Confirm('Apply advisor settings?\nActive sandbox processes restart. Workspace and private home are preserved.'
-                                         + ('\nSelected host sign-ins replace the saved advisor logins.' if imports else ''), 'Apply'), apply)
+            notes = ['Active sandbox processes restart.', 'Workspace and private home are preserved.',
+                     *settings_effects.editor_migration(self.record['config'])]
+            if imports:
+                notes.append('Selected host sign-ins replace the saved advisor logins.')
+            self.app.push_screen(Confirm('Apply advisor settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
 
     def action_back(self):
         self.app.pop_screen()
@@ -1631,10 +1742,11 @@ class Operation(Screen):
             self.operation_task(log)
             if not self.done_on_success:
                 log('Finished.')
-        except Cancelled as error:
+        except (Cancelled, UpdateCancelled) as error:
             self.cancelled = True
             self.result = str(error)
-            log(str(error))
+            if self.result:
+                log(self.result)
         except Exception as error:
             self.failed = True
             self.result = str(error)
@@ -1664,7 +1776,7 @@ class Operation(Screen):
         status = self.query_one('#operation-status', Static)
         status.update('●  Failed · see output below' if self.failed else '●  Cancelled' if self.cancelled else
                       '●  Complete · model not connected' if self.model_disconnected else '●  Complete')
-        if self.cancelled:
+        if self.cancelled and self.cancellation:
             status.update('●  Cancelled · project files and build cache preserved')
         elif cleanup_failed:
             status.update('●  From sandboxes, choose Actions… → Delete sandbox… to finish cleanup')
@@ -1685,15 +1797,13 @@ class Operation(Screen):
         if self.finished:
             self.action_back()
         else:
-            self.action_cancel_creation()
+            self.action_cancel()
 
     def check_action(self, action, parameters):
         if action == 'back':
             return self.finished and not (self.succeeded and self.done_on_success)
         if action == 'done':
             return self.succeeded and self.done_on_success
-        if action == 'cancel_creation':
-            return bool(self.cancellation) and not self.finished and not self.cancellation.requested.is_set()
         return True
 
     def action_done(self):
@@ -1704,12 +1814,76 @@ class Operation(Screen):
             self.app.pop_screen()
             self.app.refresh_inventory()
 
-    def action_cancel_creation(self):
+    def action_cancel(self):
         if self.cancellation and self.cancellation.cancel():
             button = self.query_one('#operation-back', Button)
             button.disabled, button.label = True, 'Cancelling…'
             self.query_one('#operation-status', Static).update('●  Cancelling · stopping creation and removing containers')
             self.refresh_bindings()
+
+
+class UpdateOperation(Operation):
+    BINDINGS = [*Operation.BINDINGS, Binding('escape', 'cancel', show=False)]
+
+    def __init__(self, title, task, **completion):
+        self.update = Update()
+        self.confirmation = None
+        super().__init__(title, lambda log: task(log, self.update), **completion)
+
+    def compose_actions(self):
+        yield Button('Cancel update', id='operation-back')
+
+    def on_mount(self):
+        self.query_one('#operation-status', Static).update('●  Preparing update')
+        self.phase_timer = self.set_interval(0.15, self.check_phase)
+
+    def check_phase(self):
+        if self.update.applying:
+            self.phase_timer.stop()
+            self.close_confirmation()
+            self.query_one('#operation-back', Button).disabled = True
+            self.query_one('#operation-status', Static).update('●  Applying changes · please wait for the sandbox update to finish')
+            self.refresh_bindings()
+
+    def close_confirmation(self):
+        if self.confirmation is not None and self.app.screen is self.confirmation:
+            self.confirmation.dismiss(False)
+
+    def check_action(self, action, parameters):
+        if action == 'cancel':
+            return not self.finished and self.update.can_cancel
+        return super().check_action(action, parameters)
+
+    def action_cancel(self):
+        if not self.update.can_cancel:
+            self.check_phase()
+            return
+        self.confirmation = Confirm('Cancel this update? The sandbox will keep its current settings and containers.',
+                                    'Cancel update', cancel_label='Keep updating')
+        self.app.push_screen(self.confirmation, self.confirm_cancel)
+
+    def confirm_cancel(self, confirmed):
+        self.confirmation = None
+        if confirmed and not self.finished and self.update.cancel():
+            self.query_one('#operation-back', Button).disabled = True
+            self.query_one('#operation-status', Static).update('●  Cancelling update')
+            self.refresh_bindings()
+        elif not self.finished:
+            self.check_phase()
+
+    def complete(self):
+        self.phase_timer.stop()
+        self.close_confirmation()
+        super().complete()
+        if self.failed or self.cancelled:
+            result = 'Update cancelled' if self.cancelled else 'Update failed'
+            self.title = result + ' · ' + self.title.removeprefix('Updating ')
+            self.query_one('#operation-title', Static).update(self.title)
+        if self.cancelled:
+            self.query_one('#operation-status', Static).update('●  Update cancelled · current sandbox preserved')
+        button = self.query_one('#operation-back', Button)
+        button.variant = 'default'
+        button.focus()
 
 
 class CreationOperation(Operation):
@@ -2203,11 +2377,11 @@ class SettingsForm(Screen):
         if not self.editing and not self.defaults_mode:
             from .repository_ui import GitIdentityFields
             identity = selected['git_identity']
-            with Collapsible(title=category.label + ' · commit identity ' + ('set' if identity else 'not set'), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(identity), collapsed=True, id=category.section):
                 yield GitIdentityFields(identity, setup=True)
         if self.defaults_mode:
             from .repository_ui import GitIdentityFields
-            with Collapsible(title=category.label + ' · commit identity ' + ('set' if selected['git_identity'] else 'not set'), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(selected['git_identity']), collapsed=True, id=category.section):
                 yield GitIdentityFields(selected['git_identity'], defaults=True, setup=True)
 
     def compose_advisors(self, category, value, selected):
@@ -2293,11 +2467,12 @@ class SettingsForm(Screen):
 
     @on(HostedProviders.Changed)
     def models_summary(self):
-        count = int(self.query_one('#local-models', Checkbox).value)
+        local = self.query_one('#local-models', Checkbox).value
+        count = int(local)
         count += sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
         count += sum(len({**group.saved, **group.changes}) for group in self.query(HostedProviders))
         self.query_one('#hosted-section', Collapsible).title = (
-            CATEGORIES['models'].label + (f' · {count} enabled' if count else ' · None enabled'))
+            CATEGORIES['models'].label + ' · ' + model_sources_summary(local, count))
 
     @on(SkillSelection.Changed)
     def skills_summary(self):
@@ -2307,10 +2482,11 @@ class SettingsForm(Screen):
     @on(Checkbox.Changed, '#goals')
     @on(Select.Changed, '#compaction-recall')
     def tools_summary(self):
-        browser = 'on' if self.query_one('#browser', Checkbox).value else 'off'
-        goals = 'on' if self.query_one('#goals', Checkbox).value else 'off'
-        recall = str(self.query_one('#compaction-recall', Select).value).capitalize()
-        self.query_one('#skills-section', Collapsible).title = CATEGORIES['agent-tools'].label + f' · Recall {recall} · Browser {browser} · Goals {goals}'
+        browser = self.query_one('#browser', Checkbox).value
+        goals = self.query_one('#goals', Checkbox).value
+        recall = self.query_one('#compaction-recall', Select).value
+        self.query_one('#skills-section', Collapsible).title = (
+            CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(recall, browser, goals))
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -2349,11 +2525,11 @@ class SettingsForm(Screen):
 
     def approval_summary(self):
         mode = self.query_one('#approval', Select).value
-        mode_label, inline_help, _ = APPROVAL_MODES[mode]
+        _, inline_help, _ = APPROVAL_MODES[mode]
         inner = self.query_one('#inner-sandbox', Checkbox).value
         category = CATEGORIES['approval-settings'].label
         self.query_one('#agent-section', Collapsible).title = (
-            f'{category} · {mode_label} · Inner sandbox ' + ('on' if inner else 'off'))
+            category + ' · ' + approval_mode_summary(mode, inner))
         self.query_one('#selected-approval-help', Static).update(inline_help)
 
     @on(Select.Changed, '#approval')
@@ -2363,10 +2539,14 @@ class SettingsForm(Screen):
         self.browser_changed()
 
     @on(Select.Changed, '#network')
+    @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
-        self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + (
-            'Restricted' if mode == 'allowlist' else 'Unrestricted')
+        search = self.query_one('#web-enabled', Checkbox).value
+        category = CATEGORIES['network-settings']
+        self.query_one('#' + category.section, Collapsible).title = (
+            category.label + ' · ' + network_search_summary(mode, search))
+        self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
         self.query_one('#network-rules-setting').display = mode == 'allowlist'
 
     def network_rules(self, text):
@@ -2597,12 +2777,12 @@ class SettingsForm(Screen):
         cancellation = None if editing else Creation()
         editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
         opened = False
-        def task(log):
+        def task(log, update=None):
             nonlocal opened
             if draft.get('mkdir'):
                 Path(draft['workspace']).mkdir(parents=True, exist_ok=True)
             if editing:
-                service.update(draft['name'], draft, key, log)
+                service.update(draft['name'], draft, key, log, update)
             else:
                 service.create(draft, key, log, cancellation=cancellation)
             if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
@@ -2625,7 +2805,7 @@ class SettingsForm(Screen):
                 operation.leave_wizard()
             self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
         if editing:
-            operation = Operation('Updating ' + draft['name'], task,
+            operation = UpdateOperation('Updating ' + draft['name'], task,
                 done_on_success=True, completed_title='Updated ' + draft['name'],
                 success_message=lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened)),
                 on_success=choose_models if draft.get('_hosted_changes') else
@@ -2673,6 +2853,9 @@ class Cockpit(App):
     .form > Static { height: auto; margin-bottom: 1; }
     .form > Label { margin-bottom: 0; }
     .form > .title, .form > .group-title { margin-bottom: 1; }
+    #container-list { padding: 1 2 0 3; scrollbar-size-vertical: 1; }
+    #container-list > .setting { margin: 0 1 1 0; }
+    #container-list:focus { outline: tall $primary; scrollbar-color: $primary; }
     #package-list, #library-list, #skill-candidates { height: auto; }
     SkillLibraryScreen .setting > .buttons { margin: 1 0 0 0; }
     #skill-discover { margin: 0 0 0 0; }
@@ -2836,7 +3019,7 @@ class Cockpit(App):
     #confirm-box Static { height: auto; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
-    SettingsMenu #confirm-box { height: 95%; max-height: 24; }
+    SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 24; }
     SettingsMenu #settings-actions { height: 1fr; }
     #folder-box { width: 85%; height: 85%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #folders { height: 1fr; padding-right: 1; }
@@ -3061,6 +3244,8 @@ class Cockpit(App):
             text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
             text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
             text += ' · Profile: ' + str(record['profile'])
+            if record.get('chat_editor') == 'pendant':
+                text += '\nUpdate Pendant to FrostPi · Actions → Update sources and recreate…'
         details = self.query_one('#details', Static)
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
@@ -3079,14 +3264,14 @@ class Cockpit(App):
         self.perform(event.button.id)
 
     def action_quit(self):
-        if isinstance(self.screen, Operation) and not self.screen.finished:
+        if not self.check_action('quit', ()):
             self.notify('Wait for the current operation to finish before closing the cockpit.')
             return
         self.exit()
 
     def check_action(self, action, parameters):
-        if action == 'quit' and isinstance(self.screen, Operation):
-            return self.screen.finished
+        if action == 'quit':
+            return not any(isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
         if action in ('new', 'search', 'refresh_inventory', 'defaults'):
             return self.screen is self.screen_stack[0]
         return True
@@ -3155,9 +3340,18 @@ class Cockpit(App):
             self.operation('Stopping browser editor', ['browser-editor', name, '--stop'])
         elif action == 'more':
             from .browser_editor import runtime
-            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))), lambda choice: self.perform(choice) if choice else None)
+            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))),
+                             lambda choice: self.perform(choice, record=record) if choice else None)
+        elif action == 'containers':
+            self.push_screen(ContainersScreen(record))
         elif action == 'settings':
-            self.push_screen(SettingsMenu(name), lambda choice: self.perform(choice) if choice else None)
+            state = self.state_root / name
+            try:
+                saved = self.service.config(name) if config.get('engine') else config
+            except (OSError, ValueError):
+                saved = {}
+            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode']),
+                             lambda choice: self.perform(choice) if choice else None)
         elif action == 'folders':
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':
@@ -3189,11 +3383,18 @@ class Cockpit(App):
                 log(result.stdout + result.stderr)
             self.push_screen(Operation('Container logs · ' + name, logs))
         elif action == 'rebuild':
-            self.push_screen(Confirm('Fetch current profile sources, build and recreate ' + name + '?\n'
-                                     'Active processes are interrupted after the build. Saved files and home persist.', 'Update and recreate'),
-                lambda yes: self.operation('Updating ' + name, ['recreate', name, '--profile',
-                    config.get('profile', {}).get('registry_name', config.get('profile', {}).get('name', 'base')) if config.get('profile', {}).get('registry_name',config.get('profile', {}).get('name')) in profile_titles()
-                    else config['profile']['path']], done_on_success=True, completed_title='Updated ' + name) if yes else None)
+            profile = config.get('profile', {})
+            source = profile.get('registry_name', profile.get('name', 'base'))
+            args = ['recreate', name, '--profile', source if source in profile_titles() else profile['path']]
+            migration = settings_effects.editor_migration(config)
+            question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
+            notes = ['Workspace files, private home and saved chats are kept.']
+            if record.get('dev') == 'running':
+                notes.insert(0, 'Active processes stop after the build.')
+            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), 'Update sources and recreate'),
+                lambda yes: self.push_screen(UpdateOperation('Updating ' + name,
+                    lambda log, update: self.service.run_update(args, log, update),
+                    done_on_success=True, completed_title='Updated ' + name)) if yes else None)
         elif action == 'start':
             self.push_screen(Operation('Starting ' + name, lambda log: self.service.start(name, log)))
         elif action == 'stop':

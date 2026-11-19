@@ -1,4 +1,5 @@
 """Fetch immutable extension sources on the host, outside image build contexts."""
+import errno
 import hashlib
 import io
 import json
@@ -21,12 +22,19 @@ def read_lock(common_path):
     for name, source in value['extensions'].items():
         if not re.fullmatch(r'[a-z][a-z0-9-]+', name) or not isinstance(source, dict):
             raise ValueError('Invalid extension name')
-        if set(source) != {'repository', 'commit'}:
+        if set(source) - {'repository', 'commit', 'paths'} or not {'repository', 'commit'} <= set(source):
             raise ValueError('Extension source needs repository and commit')
         if not re.fullmatch(r'[0-9a-f]{40}', source['commit']):
             raise ValueError('Extension sources require full commit IDs')
         if not re.fullmatch(r'(?:git@github\.com:|https://github\.com/)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git', source['repository']):
             raise ValueError('Extension repository must be a GitHub Git URL')
+        if 'paths' in source:
+            paths = source['paths']
+            if not isinstance(paths, list) or not paths or any(
+                not isinstance(path, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', path)
+                or any(part in ('.', '..', '.git') for part in path.split('/')) for path in paths
+            ):
+                raise ValueError('Extension paths must be repository-relative Git paths')
     return value['extensions']
 
 
@@ -45,9 +53,17 @@ def archive(source, cache=None):
         return subprocess.run(['git', '-C', str(repo), *args], env=env, check=True,
                               stdout=subprocess.PIPE if capture else None)
     if not repo.exists():
-        repo.mkdir(mode=0o700)
-        git('init', '--bare', '--quiet')
-        git('remote', 'add', 'origin', source['repository'])
+        with tempfile.TemporaryDirectory(prefix='.extension-', dir=root) as temporary:
+            staged = Path(temporary) / 'repository'
+            staged.mkdir(mode=0o700)
+            subprocess.run(['git', '-C', str(staged), 'init', '--bare', '--quiet'], env=env, check=True)
+            subprocess.run(['git', '-C', str(staged), 'remote', 'add', 'origin', source['repository']],
+                           env=env, check=True)
+            try:
+                staged.rename(repo)
+            except OSError as error:
+                if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                    raise
     if repo.is_symlink() or not repo.is_dir():
         raise ValueError('Extension cache must be a directory')
     remote = git('remote', 'get-url', 'origin', capture=True).stdout.decode().strip()
@@ -61,7 +77,7 @@ def archive(source, cache=None):
     actual = git('rev-parse', commit + '^{commit}', capture=True).stdout.decode().strip()
     if actual != commit:
         raise ValueError('Extension revision did not match its lock')
-    return git('archive', '--format=tar', commit, capture=True).stdout
+    return git('archive', '--format=tar', commit, '--', *source.get('paths', []), capture=True).stdout
 
 
 def unpack(blob, destination):

@@ -10,6 +10,10 @@ from .settings_catalog import CATEGORIES
 from . import communications
 
 
+def communications_summary(slack):
+    return 'Slack' if slack else 'Off'
+
+
 class SlackCredentials(ModalScreen):
     BINDINGS = [Binding('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = '''
@@ -92,7 +96,8 @@ class CommunicationsForm(Vertical):
         self.status = {}
 
     def compose(self):
-        with Collapsible(title=self.CATEGORY.label + ' · Off', collapsed=True, id=self.CATEGORY.section):
+        with Collapsible(title=self.CATEGORY.label + ' · ' + communications_summary(self.value['slack']),
+                         collapsed=True, id=self.CATEGORY.section):
             with Vertical(classes='setting'):
                 with Horizontal(id='slack-controls'):
                     yield Checkbox('Slack', value=self.value['slack'], id='slack-enabled')
@@ -121,7 +126,7 @@ class CommunicationsForm(Vertical):
     @on(Checkbox.Changed, '#slack-enabled')
     def sync(self):
         enabled = self.query_one('#slack-enabled', Checkbox).value
-        self.query_one('#' + self.CATEGORY.section, Collapsible).title = self.CATEGORY.label + ' · ' + ('Slack' if enabled else 'Off')
+        self.query_one('#' + self.CATEGORY.section, Collapsible).title = self.CATEGORY.label + ' · ' + communications_summary(enabled)
         self.query_one('#slack-configure', Button).disabled = self.defaults or (not enabled and not getattr(self.screen, 'editing', False))
         status = dict(self.status or {})
         status.update({key: bool(value) for key, value in self.changes.items()})

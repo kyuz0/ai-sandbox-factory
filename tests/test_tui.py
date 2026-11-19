@@ -7,18 +7,20 @@ import unittest
 from unittest.mock import patch
 
 from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, DEFAULT_SETTINGS, Service, SettingsMenu
+from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
 from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList
 
 class FakeService:
     def __init__(self,records): self.records=records;self.calls=[]
     def inventory(self):return copy.deepcopy(self.records)
+    def config(self, name):
+        return copy.deepcopy(next(record['config'] for record in self.records if record['name'] == name))
     def start(self,name,log):self.calls.append(['start',name]);log('ready')
     def run(self,args,log):
         self.calls.append(args);log('done')
         if args[0]=='delete':self.records=[r for r in self.records if r['name']!=args[1]]
     def create(self,draft,key,log,cancellation=None):self.calls.append(['create',draft]);log('created')
-    def update(self,name,draft,key,log):self.calls.append(['update',name,draft]);log('updated')
+    def update(self,name,draft,key,log,update=None):self.calls.append(['update',name,draft]);log('updated')
     def provider(self,name,provider,mode,key,log):self.calls.append(['provider',name,provider,mode,key]);log('Provider ready')
     def models(self,name,mode,log):self.calls.append(['models',name,mode]);log('Model catalogue')
 
@@ -54,7 +56,7 @@ class TUITests(unittest.TestCase):
     async def delete_menu(self, app, pilot):
         await pilot.click('#more');await pilot.pause()
         menu=app.screen.query_one('#more-actions',OptionList)
-        menu.highlighted=5;menu.focus()
+        menu.highlighted=next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'delete');menu.focus()
         await pilot.press('enter');await pilot.pause()
 
     async def test_banner_and_update_notice_fit_small_and_large_terminals(self):
@@ -174,7 +176,7 @@ class TUITests(unittest.TestCase):
     async def test_advisors_live_in_settings_and_allow_initial_setup(self):
         from pi_sandbox_factory.sandbox_tui import AdvisorsScreen
         service=FakeService(self.records)
-        service.advisors=lambda name,settings,log:service.calls.append(['advisors',name,settings])
+        service.advisors=lambda name,settings,log,update=None:service.calls.append(['advisors',name,settings])
         app=Cockpit(self.root,service)
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot)
@@ -199,7 +201,7 @@ class TUITests(unittest.TestCase):
     async def test_advisor_worker_can_start_after_settings_screen_closes(self):
         from pi_sandbox_factory.sandbox_tui import AdvisorsScreen
         service = FakeService(self.records)
-        service.advisors = lambda name, settings, log: service.calls.append(['advisors', name])
+        service.advisors = lambda name, settings, log, update=None: service.calls.append(['advisors', name])
         app = Cockpit(self.root, service)
         # Hold the worker until Textual has removed the settings screen.
         with patch.object(Operation, 'on_mount', return_value=None):
@@ -273,7 +275,7 @@ class TUITests(unittest.TestCase):
         from textual.widgets import Select
         self.records[0]['config']['advisors'] = {'providers':['claude']}
         service=FakeService(self.records)
-        service.advisors=lambda name,settings,log:service.calls.append(['advisors',name,settings])
+        service.advisors=lambda name,settings,log,update=None:service.calls.append(['advisors',name,settings])
         app=Cockpit(self.root,service)
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot)
@@ -348,7 +350,7 @@ class TUITests(unittest.TestCase):
         from textual.widgets import Collapsible
         for size in ((80, 24), (120, 40), (220, 50)):
             service = FakeService(self.records)
-            service.ssh_settings = lambda name, settings, log, identity: service.calls.append(['ssh-git', identity])
+            service.ssh_settings = lambda name, settings, log, identity, update=None: service.calls.append(['ssh-git', identity])
             app = Cockpit(self.root, service)
             async with app.run_test(size=size) as pilot:
                 await self.ready(app, pilot)
@@ -776,6 +778,59 @@ class TUITests(unittest.TestCase):
                     await self.ready(app,pilot)
                     self.assertEqual(len(app.screen_stack),1)
 
+    async def test_update_cancel_confirmation_and_preserved_sandbox(self):
+        import threading
+        from textual.widgets import Footer, Static
+        from pi_sandbox_factory.updating import UpdateCancelled
+
+        app = Cockpit(self.root, FakeService(self.records))
+        success = []
+        starts = []
+        release = threading.Event()
+
+        def task(log, update):
+            starts.append(True)
+            release.wait(10)
+            raise UpdateCancelled()
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            screen = UpdateOperation('Updating fixture', task, on_success=lambda: success.append(True))
+            await app.push_screen(screen)
+            try:
+                await pilot.pause()
+                button = screen.query_one('#operation-back', Button)
+                self.assertFalse(button.disabled)
+                self.assertEqual(str(button.label), 'Cancel update')
+                self.assertLessEqual(button.region.bottom, screen.query_one(Footer).region.y)
+                await pilot.press('escape')
+                await pilot.pause()
+                self.assertIsInstance(app.screen, Confirm)
+                self.assertFalse(app.check_action('quit', ()))
+                self.assertEqual(str(app.screen.query_one('#cancel', Button).label), 'Keep updating')
+                await pilot.click('#cancel')
+                await pilot.pause()
+                self.assertIs(app.screen, screen)
+                self.assertTrue(screen.update.can_cancel)
+                await pilot.click('#operation-back')
+                await pilot.pause()
+                await pilot.click('#yes')
+                await pilot.pause()
+                self.assertFalse(screen.update.can_cancel)
+            finally:
+                release.set()
+                await self.ready(app, pilot)
+            self.assertTrue(screen.cancelled)
+            self.assertFalse(screen.failed)
+            self.assertFalse(button.disabled)
+            self.assertEqual(str(button.label), 'Back to sandboxes')
+            self.assertIn('current sandbox preserved', str(screen.query_one('#operation-status', Static).render()))
+            self.assertEqual(starts, [True])
+            self.assertEqual(success, [])
+            await pilot.press('escape')
+            await self.ready(app, pilot)
+            self.assertEqual(len(app.screen_stack), 1)
+
     async def test_missing_model_is_completed_with_warning(self):
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
@@ -832,6 +887,70 @@ class TUITests(unittest.TestCase):
                 self.assertTrue(app.query_one('#'+name,Button).disabled)
             self.assertFalse(app.query_one('#new',Button).disabled)
 
+    async def test_containers_action_opens_selected_sandbox_and_scrolls(self):
+        from textual.widgets import Static
+        record = self.records[1]
+        prefix = 'pi-sandbox-factory-' + record['name']
+        names = [prefix, *(prefix + '-' + kind for kind in ('proxy', 'inference', 'ssh', 'advisor', 'advisor-proxy'))]
+        record['containers'] = sandbox.describe_containers(record['config'], dict.fromkeys(names, 'exited'))
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            app.query_one(DataTable).move_cursor(row=1)
+            await pilot.click('#more')
+            menu = app.screen.query_one('#more-actions', OptionList)
+            menu.highlighted = next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'containers')
+            menu.focus()
+            await pilot.press('enter')
+            listing = app.screen.query_one('#container-list')
+            back = app.screen.query_one('#containers-back')
+            self.assertIs(app.focused, back)
+            await pilot.press('tab')
+            self.assertIs(app.focused, listing)
+            strings = [str(widget.render()) for widget in listing.query(Static)]
+            heading = app.screen.query_one('.title')
+            self.assertEqual(str(heading.render()), 'Containers · beta')
+            self.assertIn('Development · Stopped', strings)
+            self.assertIn(prefix + '-advisor-proxy', strings)
+            self.assertIn('Runs Pi, the editor backend and development tools.', strings)
+            await pilot.press('end')
+            await pilot.pause()
+            self.assertGreater(listing.scroll_y, 0)
+            self.assertLess(heading.region.bottom, listing.region.bottom)
+            self.assertLess(back.region.bottom, app.size.height)
+            await pilot.click('#containers-back')
+            self.assertIs(app.screen, app.screen_stack[0])
+            self.assertEqual(service.calls, [])
+
+    async def test_pendant_upgrade_notice_follows_selection_and_cancels_safely(self):
+        from textual.widgets import Static
+        old = self.records[0]
+        common = self.root / 'legacy-common'
+        common.mkdir()
+        (common / 'Dockerfile').write_text(
+            'ARG PI_VERSION=1.4.0\nARG PENDANT_VERSION=0.94.2\nRUN curl cdervis.vscode-pi-${PENDANT_VERSION}.vsix\n')
+        old.update(chat_editor='pendant', dev='exited')
+        old['config']['common'] = {'path': str(common)}
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one(DataTable)
+            details = app.query_one('#details', Static)
+            self.assertIn('Update Pendant to FrostPi · Actions → Update sources and recreate…', str(details.render()))
+            await pilot.click('#more')
+            menu = app.screen.query_one('#more-actions', OptionList)
+            menu.highlighted = next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'rebuild')
+            menu.focus()
+            await pilot.press('enter')
+            self.assertIn('Update alpha to FrostPi?', app.screen.message)
+            await pilot.press('escape')
+            table.move_cursor(row=1)
+            await pilot.pause()
+            self.assertNotIn('Update Pendant to FrostPi', str(details.render()))
+            self.assertEqual(service.calls, [])
+
 
     async def test_automatic_approval_default_and_human_fallback_selection(self):
         from textual.widgets import Select, Static, Collapsible
@@ -846,7 +965,8 @@ class TUITests(unittest.TestCase):
             await self.ready(app, pilot)
             await pilot.click('#settings')
             menu = app.screen.query_one('#settings-actions', OptionList)
-            labels = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
+            labels = [str(menu.get_option_at_index(i).prompt).split(' · ', 1)[0]
+                      for i in range(menu.option_count)]
             self.assertIn('Approvals & sandbox', labels)
             self.assertEqual(labels.count('Network and Web Search'), 1)
             self.assertNotIn('Web Search', labels)
