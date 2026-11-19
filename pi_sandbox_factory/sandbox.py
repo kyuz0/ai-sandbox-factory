@@ -917,6 +917,10 @@ def prepare_options(config, state):
     temporary.replace(identity_file)
     target = state / 'runtime-config'
     target.mkdir(exist_ok=True, mode=0o700)
+    profile = selected_profile(config)
+    write_json(target / 'profile-system-prompt.json', {
+        'text': registry.profile_system_prompt(profile['path'], profile['name']),
+    })
     write_json(target / 'web-providers.json', selected['web_access'])
     write_json(target / 'web-search.json', web_access.extension_config(selected['web_access'], network_mode(config) == 'allowlist'))
     source = Path(config['common']['path']) / 'security/config'

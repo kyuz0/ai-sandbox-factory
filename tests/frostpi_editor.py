@@ -392,7 +392,7 @@ def check_streaming_metrics(frame, send, output):
 
 
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
-          folder_access=False, streaming_metrics=False):
+          folder_access=False, streaming_metrics=False, profile_prompt=None):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     mode = 'manual' if folder_access else startup_only or 'assisted'
@@ -414,6 +414,12 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
                   'engine': 'podman'}
         cwd = '/workspace'
+        if profile_prompt:
+            config['profile'] = sandbox.load_profile(str(profile_prompt.resolve()))
+            project_config = root / 'workspace/.pi'
+            project_config.mkdir()
+            (project_config / 'APPEND_SYSTEM.md').write_text('FACTORY PROJECT APPEND MARKER\n')
+            (root / 'workspace/AGENTS.md').write_text('FACTORY PROJECT CONTEXT MARKER\n')
         if folder_access:
             cwd = '/workspace/app'
             (root / 'workspace/app').mkdir()
@@ -451,6 +457,14 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         supervisor = relay = None
         try:
             inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
+            if profile_prompt:
+                inside('python3', '-c', '''
+from pathlib import Path
+file = Path('/home/node/.pi/agent/AGENTS.md')
+file.write_text('FACTORY USER CONTEXT MARKER\\n' + file.read_text())
+file.with_name('trust.json').write_text('{"/workspace":true}')
+''')
+                inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
             inside('test', '!', '-d', '/opt/pendant')
             if not startup_only:
                 model = {'id': 'fixture', 'name': 'Factory fixture', 'reasoning': streaming_metrics,
@@ -469,6 +483,11 @@ if len(sys.argv) > 1:
 p.write_text(json.dumps(v))
 """, *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
+                if profile_prompt:
+                    cli = podman('exec', '-i', '--workdir', cwd, name, 'pi', '--print', '--no-session',
+                                 '--approve', '--provider', 'fixture', '--model', 'fixture',
+                                 'Factory profile prompt fixture')
+                    assert 'FACTORY PROFILE PROMPT VERIFIED' in cli, cli
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 address = f'127.0.0.1:{port.getsockname()[1]}'
@@ -534,6 +553,18 @@ p.write_text(json.dumps(v))
                     check_folder_access(frame, send, inside, name)
                     assert not errors, errors
                     browser.close()
+                    return
+                if profile_prompt:
+                    send('Factory profile prompt fixture')
+                    verified = frame.get_by_text('FACTORY PROFILE PROMPT VERIFIED', exact=True)
+                    counts = frame.get_by_text(re.compile(r'^FACTORY PROFILE PROMPT COUNTS'))
+                    response = verified.or_(counts)
+                    response.wait_for(timeout=20000)
+                    page.screenshot(path=str(output / 'profile-prompt.png'))
+                    assert verified.is_visible(), response.inner_text()
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS The real Pi CLI and FrostPi model requests each include the profile, user and project context once.')
                     return
                 if streaming_metrics:
                     check_streaming_metrics(frame, send, output)
@@ -669,7 +700,8 @@ if __name__ == '__main__':
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
+    scope.add_argument('--profile-prompt', type=Path, help='Check a profile addendum in the model request from Pi CLI and FrostPi.')
     args = parser.parse_args()
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
-          args.streaming_metrics)
+          args.streaming_metrics, args.profile_prompt)

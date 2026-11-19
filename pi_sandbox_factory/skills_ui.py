@@ -101,7 +101,9 @@ class SkillSelection(Vertical):
     @on(Button.Pressed, '#manage-skills')
     def manage(self, event):
         event.stop()
-        self.app.push_screen(SkillLibraryScreen(), self.refresh_choices)
+        from .sandbox_tui import PackagesScreen
+
+        self.app.push_screen(PackagesScreen(initial='skills'), self.refresh_choices)
 
     def collect(self):
         for feedback in self.query('Feedback'):
@@ -124,23 +126,15 @@ class SkillSelection(Vertical):
         return {'library_skills': sorted(self.chosen), 'remove_skills': sorted(self.removed)}
 
 
-class SkillLibraryScreen(Screen):
-    BINDINGS = [('escape', 'back', 'Back')]
-
+class SkillLibrary(Vertical):
     def compose(self):
-        yield Header()
-        with VerticalScroll(classes='form'):
-            yield Label('Skill library', classes='title')
-            yield Static('Import and validate skills once, then select them for any sandbox.', classes='setting-help')
-            yield Vertical(id='library-list')
-            yield Feedback('', id='library-error', markup=False)
-        with Horizontal(classes='wizard-actions'):
-            yield Button('Back', id='library-back')
-            yield Button('Add skills…', id='library-add', variant='primary')
-        yield Footer()
+        yield Static('Skills give Pi reusable instructions for specific tasks. Import and validate a skill once, '
+                     'then select it for any sandbox.', classes='section-intro')
+        yield Vertical(id='library-list')
+        yield Feedback('', id='library-error', markup=False)
 
-    async def on_mount(self):
-        await self.refresh_library()
+    def add_skills(self):
+        self.app.push_screen(ImportSkills())
 
     async def refresh_library(self, _=None):
         listing = self.query_one('#library-list', Vertical)
@@ -149,12 +143,14 @@ class SkillLibraryScreen(Screen):
         if not rows:
             await listing.mount(Static('Your skill library is empty. Use Add skills… to import a Git repository or local folder.'))
         for key, row in sorted(rows.items(), key=lambda pair: pair[1]['name']):
-            box = Vertical(classes='setting')
+            box = Vertical(classes='package-row')
             await listing.mount(box)
-            await box.mount(Label(row['name'], markup=False),
+            folder = 'Source root' if row['folder'] == '.' else row['folder']
+            await box.mount(Label(row['name'], classes='package-title', markup=False),
                             Static(row['description'], markup=False, classes='setting-help'),
-                            Static(row['source'] + ' · ' + row['folder'] + ' · ' + row['commit'][:12], markup=False, classes='setting-help'))
-            actions = Horizontal(classes='buttons')
+                            Static(' · '.join((row['source'], folder, row['commit'][:12])),
+                                   markup=False, classes='setting-help'))
+            actions = Horizontal(classes='buttons package-actions')
             await box.mount(actions)
             await actions.mount(Button('Update…', id='update-' + key), Button('Remove', id='remove-' + key))
 
@@ -162,18 +158,14 @@ class SkillLibraryScreen(Screen):
     def pressed(self, event):
         event.stop()
         identifier = event.button.id or ''
-        if identifier == 'library-back':
-            self.action_back()
-        elif identifier == 'library-add':
-            self.app.push_screen(ImportSkills(), self.refresh_library)
-        elif identifier.startswith('update-'):
+        if identifier.startswith('update-'):
             entries = skill_library.entries()
             row = entries.get(identifier.removeprefix('update-'))
             if row is None:
                 self.query_one('#library-error', Feedback).update('Error: this skill was removed in another window. Reopen the library.')
                 return
             selected = {key for key, item in entries.items() if item['source'] == row['source']}
-            self.app.push_screen(ImportSkills(row['source'], row.get('ref') or '', selected), self.refresh_library)
+            self.app.push_screen(ImportSkills(row['source'], row.get('ref') or '', selected))
         elif identifier.startswith('remove-'):
             from .sandbox_tui import Confirm
             key = identifier.removeprefix('remove-')
@@ -187,9 +179,6 @@ class SkillLibraryScreen(Screen):
         except (ValueError, OSError) as error:
             self.app.call_from_thread(self.query_one('#library-error', Feedback).update, 'Error: ' + str(error))
         self.app.call_from_thread(self.refresh_library)
-
-    def action_back(self):
-        self.dismiss(None)
 
 
 class ImportSkills(Screen):

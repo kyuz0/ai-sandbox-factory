@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
 KINDS = {"profile": "profile.json", "provider": "provider.json"}
+PROFILE_PROMPT_FILE = "system-prompt.md"
 
 
 def root():
@@ -60,6 +61,29 @@ def safe_tree(path):
             raise ValueError("Package files must be regular files: " + str(f))
 
 
+def profile_system_prompt(path, name):
+    """Render the profile intent shown by Factory and included in Pi's system prompt."""
+    file = Path(path) / PROFILE_PROMPT_FILE
+    if file.is_symlink() or (file.exists() and not file.is_file()):
+        raise ValueError(f"{PROFILE_PROMPT_FILE} must be a regular file")
+    if not file.is_file():
+        return ""
+    try:
+        text = file.read_text(encoding="utf-8").strip()
+    except UnicodeError as error:
+        raise ValueError(f"{PROFILE_PROMPT_FILE} must be valid UTF-8") from error
+    if "<!-- sandbox-profile -->" in text or "<!-- /sandbox-profile -->" in text:
+        raise ValueError(f"{PROFILE_PROMPT_FILE} uses a reserved Factory marker")
+    if not text:
+        return ""
+    title = "Default Developer Sandbox" if name == "base" else name
+    return (
+        f'This sandbox was created from the "{title}" profile.'
+        f"\n\n{text}\n\n"
+        "This is the sandbox’s starting purpose. Follow the user’s request if it takes the work in a different direction."
+    )
+
+
 def manifest(kind, path):
     if kind not in KINDS:
         raise ValueError("Choose profile or provider")
@@ -76,7 +100,9 @@ def manifest(kind, path):
             or not (Path(path) / file).is_file()
         ):
             raise ValueError("Missing or unsafe package entry: " + filename)
-    if kind == "provider":
+    if kind == "profile":
+        profile_system_prompt(path, data["name"])
+    else:
         settings = data.get("settings", {})
         if not isinstance(settings, dict) or any(
             not isinstance(spec, dict) for spec in settings.values()

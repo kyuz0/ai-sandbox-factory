@@ -100,7 +100,7 @@ The outer container and its network policy still apply when the inner sandbox is
 question forms, goals, scheduled prompts and optional subagents. Its collapsed
 heading shows the current recall, browser and goals settings.
 
-Use **Library… → Open skill library… → Add skills…** to import a Git repository
+Use **Library… → Skills → Add skills…** to import a Git repository
 or local folder. GitHub folder and `SKILL.md` links are accepted too.
 **Find and validate skills** lists the discovered skills and any validation errors.
 Use **Search skills** to filter by name, description or folder; selections stay
@@ -109,7 +109,7 @@ reads frontmatter and checks files without running skill code. Git sources use
 host authentication; local Git folders import committed content.
 
 During creation or in **Settings → Skills**, select any number
-of library skills. **Manage skill library…** opens the same library without
+of library skills. **Manage skill library…** opens the Library on the Skills tab without
 losing the form. Profile skills appear alongside the library selection.
 
 Each sandbox keeps its own skill snapshots. Updating or removing a library entry

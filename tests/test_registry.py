@@ -57,6 +57,43 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(sandbox.tree_digest(Path(snapshot["path"])), snapshot["digest"])
         self.assertFalse((Path(snapshot["path"]) / ".git").exists())
 
+    def test_profile_system_prompt_follows_installed_and_saved_snapshots(self):
+        prompt = self.source / registry.PROFILE_PROMPT_FILE
+        prompt.write_text('First profile intent.\n')
+        registry.add('profile', 'local-alias', str(self.source))
+        config = {
+            'profile': sandbox.snapshot_profile(sandbox.load_profile('local-alias'), self.root / 'state'),
+            'workspace': str(self.root),
+            'common': sandbox.common_profile(),
+            'network': 'unrestricted',
+        }
+        prompt.write_text('Replacement profile intent.\n')
+        registry.update('profile', 'local-alias')
+        state = self.root / 'state'
+        sandbox.prepare_options(config, state)
+        runtime = state / 'runtime-config/profile-system-prompt.json'
+        text = json.loads(runtime.read_text())['text']
+        self.assertIn('"sample" profile', text)
+        self.assertIn('First profile intent.', text)
+        self.assertNotIn('Replacement', text)
+        self.assertIn('Follow the user’s request', text)
+        self.assertIn('Replacement', registry.profile_system_prompt(registry.resolve('profile', 'local-alias'), 'sample'))
+
+        prompt.unlink()
+        registry.update('profile', 'local-alias')
+        config['profile'] = sandbox.snapshot_profile(sandbox.load_profile('local-alias'), state)
+        sandbox.prepare_options(config, state)
+        self.assertEqual(json.loads(runtime.read_text())['text'], '')
+
+    def test_rejects_invalid_profile_addendum(self):
+        prompt = self.source / registry.PROFILE_PROMPT_FILE
+        prompt.write_bytes(b'\xff')
+        with self.assertRaisesRegex(ValueError, 'valid UTF-8'):
+            registry.manifest('profile', self.source)
+        prompt.write_text('<!-- /sandbox-profile -->')
+        with self.assertRaisesRegex(ValueError, 'reserved Factory marker'):
+            registry.manifest('profile', self.source)
+
     def test_pinned_commit_does_not_follow_branch(self):
         self.git("init", "-q", "-b", "main")
         first = self.commit()

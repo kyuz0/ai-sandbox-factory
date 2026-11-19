@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Input, Collapsible
 from pi_sandbox_factory import skill_library
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, preset
-from pi_sandbox_factory.skills_ui import SkillLibraryScreen, ImportSkills, SkillSelection
+from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
+from pi_sandbox_factory.skills_ui import ImportSkills, SkillSelection
 from pi_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
@@ -30,8 +30,8 @@ class SkillsUITests(unittest.TestCase):
             app=Cockpit(Path(temp)/'state',FakeService([]))
             async with app.run_test(size=(80,24)) as pilot:
                 await pilot.pause(); await app.workers.wait_for_complete()
-                await app.push_screen(SkillLibraryScreen());await pilot.pause()
-                app.screen.query_one('#library-add',Button).focus();await pilot.press('enter');await pilot.pause()
+                await app.push_screen(PackagesScreen(initial='skills'));await pilot.pause()
+                app.screen.query_one('#package-install',Button).focus();await pilot.press('enter');await pilot.pause()
                 self.assertIsInstance(app.screen,ImportSkills)
                 app.screen.query_one('#skill-source',Input).value=str(source);await pilot.pause()
                 app.screen.query_one('#skill-discover',Button).focus();await pilot.press('enter');await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()
@@ -41,11 +41,11 @@ class SkillsUITests(unittest.TestCase):
                 save=app.screen.query_one('#skill-import-save',Button)
                 self.assertLess(save.region.bottom,24)
                 save.focus();await pilot.press('enter');await pilot.pause()
-                self.assertIsInstance(app.screen,SkillLibraryScreen)
+                self.assertIsInstance(app.screen,PackagesScreen)
                 rows=skill_library.entries();self.assertEqual(len(rows),2)
                 selected=skill_library.snapshot(list(rows),Path(temp)/'sandbox')
                 for key in rows:skill_library.remove(key)
-                await app.screen.refresh_library()
+                await app.screen.show_packages()
                 self.assertTrue(all((Path(s['path'])/'SKILL.md').exists() for s in selected))
 
     async def test_changed_source_requires_validation_and_errors_keep_actions_visible(self):
@@ -79,6 +79,14 @@ class SkillsUITests(unittest.TestCase):
                 section=app.screen.query_one('#skill-library-section',Collapsible)
                 self.assertIn('1 from library',section.title)
                 selection=app.screen.query_one(SkillSelection)
+                manage = selection.query_one('#manage-skills', Button)
+                manage.focus()
+                await pilot.press('enter')
+                self.assertIsInstance(app.screen, PackagesScreen)
+                self.assertEqual(app.screen.kind, 'skills')
+                self.assertEqual(str(app.screen.query_one('#package-install', Button).label), 'Add skills…')
+                await pilot.press('escape')
+                self.assertIsInstance(app.screen, SettingsForm)
                 selection.query_one('#library-skill-'+key,Checkbox).value=False
                 await pilot.pause();self.assertIn('0 from library',section.title)
                 await app.pop_screen()

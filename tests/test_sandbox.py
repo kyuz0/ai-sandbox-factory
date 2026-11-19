@@ -1141,6 +1141,28 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(prompt.count('Profile guidance'), 1)
             self.assertEqual((agent / 'APPEND_SYSTEM.md').read_text().strip(), 'User append')
 
+    def test_profile_addendum_is_replaced_without_changing_user_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared').mkdir()
+            runtime = root / 'security/config/profile-system-prompt.json'
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text(json.dumps({'text': 'Profile intent marker'}))
+            self.bootstrap(root)
+            agent = root / 'home/.pi/agent'
+            context = agent / 'AGENTS.md'
+            context.write_text('User instructions\n' + context.read_text())
+            user_append = agent / 'APPEND_SYSTEM.md'
+            user_append.write_text('User append remains\n')
+            self.bootstrap(root)
+            self.assertEqual(context.read_text().count('Profile intent marker'), 1)
+            runtime.write_text(json.dumps({'text': ''}))
+            self.bootstrap(root)
+            self.assertNotIn('Profile intent marker', context.read_text())
+            self.assertIn('User instructions', context.read_text())
+            self.assertIn('Profile guidance', context.read_text())
+            self.assertEqual(user_append.read_text(), 'User append remains\n')
+
     def test_seed_and_legacy_models_links_become_private_without_host_transactions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

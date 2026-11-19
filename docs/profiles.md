@@ -48,7 +48,8 @@ home. Close the editor first. Updating a pinned commit keeps that commit.
 
 `pi-sandbox-factory profile remove reporting` removes the registration while
 preserving existing sandboxes and their snapshots.
-**Packages** provides the same install, update and remove operations in the TUI.
+**Library → Profiles** provides the same install, update and remove operations in the TUI.
+Choose **Details…** on a profile to read its system prompt addendum.
 
 ## Write a profile
 
@@ -59,8 +60,14 @@ Copy [examples/profile](../examples/profile) into a new repository. It contains:
 | `profile.json` | `version: 1`, a lowercase `name`, and a short `description`. |
 | `Dockerfile` | Extends `ARG BASE_IMAGE` / `FROM ${BASE_IMAGE}`; finishes as `USER node`. |
 | `profile.md` | Instructions for the agent, copied to `/opt/sandbox/profile.md`. |
+| `system-prompt.md` | Optional UTF-8 Markdown describing what the profile is intended for. Factory includes it in the Pi system prompt. |
 | `check.py` | Optional tool checks, copied to `/opt/sandbox/profile-check.py`. |
 | `resources.json` | Skills, prompts and extensions registered with Pi. |
+
+Keep the addendum short. Factory identifies the profile and explains that the user
+can take the work in another direction. The addendum comes from the saved profile
+snapshot and is included with the existing instructions in Pi CLI and FrostPi.
+Factory reads it directly from the profile, so its Dockerfile can stay as it is.
 
 Install dependencies during the image build. Put profile resources under `/opt`
 and copy `resources.json` to `/opt/sandbox/resources.json`, for example:

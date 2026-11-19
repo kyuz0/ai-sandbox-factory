@@ -34,7 +34,7 @@ from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
-from .skills_ui import SkillSelection, SkillLibraryScreen, saved_skills_summary
+from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
@@ -49,7 +49,8 @@ try:
     from textual.theme import Theme
     from textual.worker import get_current_worker
     from textual.widgets import (Button, Collapsible, DataTable, Footer, Header,
-                                 Input, Label, RichLog, Select, Static, TextArea, OptionList)
+                                 Input, Label, RichLog, Select, Static, TextArea, OptionList,
+                                 TabbedContent, TabPane, Tabs)
 except ImportError as error:
     raise SystemExit('Install Pi Sandbox Factory with pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git.') from error
 
@@ -1644,91 +1645,164 @@ class ModelsScreen(Screen):
 
 
 class PackageRow(Vertical):
-    def __init__(self, name, description, record=None):
+    def __init__(self, kind, name, description, record=None):
         super().__init__(classes='package-row')
-        self.package_name, self.description, self.record = name, description, record
+        self.kind, self.package_name, self.description, self.record = kind, name, description, record
 
     def compose(self):
-        yield Static(self.description or self.package_name, classes='package-title', markup=False)
         if self.record is None:
+            yield Static(self.description or self.package_name, classes='package-title', markup=False)
             yield Static('Included with Pi Sandbox Factory', markup=False)
         else:
-            yield Static('Local name: ' + self.package_name, markup=False)
+            yield Static('Local name · ' + self.package_name, classes='package-title', markup=False)
+            if self.description:
+                yield Static(self.description, markup=False)
             source = self.record['source']
             if self.record.get('subdir', '.') != '.':
                 source += ' · ' + self.record['subdir']
             if self.record.get('ref'):
                 source += ' · ' + self.record['ref']
             yield Static(source, markup=False)
-            with Horizontal(classes='package-actions'):
-                yield Button('Update', name='update')
-                yield Button('Remove', name='remove')
+        if self.kind == 'profile' or self.record is not None:
+            with Horizontal(classes='buttons package-actions'):
+                if self.kind == 'profile':
+                    yield Button('Details…', name='details')
+                if self.record is not None:
+                    yield Button('Update', name='update')
+                    yield Button('Remove', name='remove')
+
+
+class ProfileDetails(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, name, description, prompt):
+        super().__init__()
+        self.profile_name = name
+        self.description = description
+        self.prompt = prompt
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('Profile · ' + self.profile_name, markup=False)
+            with VerticalScroll(id='profile-details-body'):
+                if self.description and self.description != self.profile_name:
+                    yield Static(safe_text(self.description), classes='section-intro', markup=False)
+                yield Label('System prompt addendum', classes='group-title')
+                yield Static(safe_text(self.prompt) if self.prompt else 'This profile has no system prompt addendum.',
+                             id='profile-system-prompt', markup=False)
+            with Horizontal(classes='buttons dialog-actions'):
+                yield Button('Close', id='profile-details-close', variant='primary')
+
+    @on(Button.Pressed, '#profile-details-close')
+    def action_close(self):
+        self.dismiss()
 
 
 class PackagesScreen(Screen):
-    BINDINGS=[('escape','back','Back')]
+    BINDINGS = [('escape', 'back', 'Back')]
+    INTRO = {
+        'profile': ('A profile’s Dockerfile adds software dependencies to Factory’s base image. '
+                    'It can also include skills, tools and instructions for Pi.'),
+        'provider': ('Providers connect Pi to models. A provider plugin configures a model service or local server '
+                     'and makes its models available in Pi.'),
+    }
+
+    def __init__(self, initial='profile'):
+        super().__init__()
+        self.initial_tab = initial
+
     def compose(self):
         yield Header()
-        with VerticalScroll(classes='form'):
-            yield Label('Profiles, providers and skills',classes='title')
-            with Vertical(classes='setting'):
-                yield Static('Profiles add tools and instructions. Providers configure models. Skills are reusable agent instructions.')
-            yield Button('Open skill library…', id='package-skills')
-            with Vertical(classes='setting'):
-                yield Label('Show installed')
-                yield Select([('Profiles','profile'),('Providers','provider')],value='profile',allow_blank=False,id='package-kind')
-            yield Vertical(id='package-list')
-            yield Static('Package updates apply when you create a sandbox or update its sources.', classes='setting-help')
+        with Vertical(classes='form', id='packages-page'):
+            yield Label('Library', classes='title')
+            with TabbedContent(initial=self.initial_tab, id='package-kind'):
+                for kind, label in (('profile', 'Profiles'), ('provider', 'Providers')):
+                    with TabPane(label, id=kind):
+                        with VerticalScroll(classes='package-pane'):
+                            yield Static(self.INTRO[kind], classes='section-intro', markup=False)
+                            yield Vertical(id=f'{kind}-packages', classes='package-list')
+                            yield Static('Package updates apply when you create a sandbox or update its sources.',
+                                         classes='setting-help')
+                with TabPane('Skills', id='skills'):
+                    with VerticalScroll(classes='package-pane'):
+                        yield SkillLibrary()
         with Horizontal(classes='wizard-actions'):
-            yield Button('Back',id='packages-back')
-            yield Button('Install profile…',id='package-install',variant='primary')
+            yield Button('Back', id='packages-back')
+            yield Button('Install profile…', id='package-install', variant='primary')
         yield Footer()
+
+    @property
+    def kind(self):
+        return self.query_one('#package-kind', TabbedContent).active
 
     async def on_mount(self):
         await self.show_packages()
+        self.query_one(Tabs).focus()
 
     async def on_screen_resume(self):
         if self.is_mounted:
             await self.show_packages()
 
-    @on(Select.Changed,'#package-kind')
+    @on(TabbedContent.TabActivated, '#package-kind')
     async def changed(self):
         await self.show_packages()
 
     async def show_packages(self):
-        kind=self.query_one('#package-kind',Select).value
-        if kind is Select.NULL:return
-        self.query_one('#package-install',Button).label='Install '+kind+'…'
-        listing=self.query_one('#package-list',Vertical)
+        kind = self.kind
+        if not kind:
+            return
+        install = self.query_one('#package-install', Button)
+        if kind == 'skills':
+            install.label = 'Add skills…'
+            await self.query_one(SkillLibrary).refresh_library()
+            return
+        install.label = 'Install ' + kind + '…'
+        listing = self.query_one(f'#{kind}-packages', Vertical)
         await listing.remove_children()
-        installed=registry.installed(kind)
-        await listing.mount(*(PackageRow(name, description, installed.get(name))
+        installed = registry.installed(kind)
+        await listing.mount(*(PackageRow(kind, name, description, installed.get(name))
                               for name, description in registry.choices(kind).items()))
 
     def run_package_action(self, kind, action, name):
-        service=self.app.service
-        self.app.push_screen(Operation(action.capitalize()+' '+kind+' · '+name,
-                                       lambda log:service.run([kind,action,name],log),
-                                       back_label='Back to profiles and providers'))
+        service = self.app.service
+        self.app.push_screen(Operation(action.capitalize() + ' ' + kind + ' · ' + name,
+                                       lambda log: service.run([kind, action, name], log),
+                                       back_label='Back to Library'))
 
     @on(Button.Pressed)
-    def pressed(self,event):
+    def pressed(self, event):
         event.stop()
-        if event.button.id=='packages-back':self.action_back();return
-        if event.button.id=='package-skills':self.app.push_screen(SkillLibraryScreen());return
-        kind=self.query_one('#package-kind',Select).value
-        if event.button.id=='package-install':
-            self.app.push_screen(InstallPackage(kind));return
-        row=event.button.parent.parent
-        if not isinstance(row,PackageRow):return
-        name,action=row.package_name,event.button.name
-        if action=='remove':
-            self.app.push_screen(Confirm('Remove '+kind+' “'+name+'”? Existing sandboxes keep their saved copy.', 'Remove'),
-                                 lambda yes:self.run_package_action(kind,action,name) if yes else None)
-        elif action=='update':
-            self.run_package_action(kind,action,name)
+        if event.button.id == 'packages-back':
+            self.action_back()
+            return
+        if event.button.id == 'package-install':
+            if self.kind == 'skills':
+                self.query_one(SkillLibrary).add_skills()
+            else:
+                self.app.push_screen(InstallPackage(self.kind))
+            return
+        row = event.button.parent.parent
+        if not isinstance(row, PackageRow):
+            return
+        kind, name, action = row.kind, row.package_name, event.button.name
+        if action == 'details':
+            try:
+                path = registry.resolve('profile', name)
+                metadata = registry.manifest('profile', path)
+                prompt = registry.profile_system_prompt(path, metadata['name'])
+            except (OSError, ValueError) as error:
+                self.notify(safe_text(error), severity='error')
+            else:
+                title = row.description if row.record is None and row.description else name
+                self.app.push_screen(ProfileDetails(title, row.description, prompt))
+        elif action == 'remove':
+            self.app.push_screen(Confirm('Remove ' + kind + ' “' + name + '”? Existing sandboxes keep their saved copy.', 'Remove'),
+                                 lambda yes: self.run_package_action(kind, action, name) if yes else None)
+        elif action == 'update':
+            self.run_package_action(kind, action, name)
 
-    def action_back(self):self.app.pop_screen()
+    def action_back(self):
+        self.dismiss()
 
 
 class InstallPackage(Screen):
@@ -1781,15 +1855,17 @@ class InstallPackage(Screen):
             if ref.startswith('-') or any(c.isspace() for c in ref):
                 raise ValueError('Enter a Git tag, branch or commit without spaces.')
         except ValueError as error:
-            message=self.query_one('#package-error',Static)
-            message.update(str(error));message.scroll_visible();return
+            message = self.query_one('#package-error', Feedback)
+            message.update('Error: ' + str(error))
+            self.call_after_refresh(message.scroll_visible, animate=False)
+            return
         args=[self.kind,'add',name,source]
         if ref:args+=['--ref',ref]
         if subdir:args+=['--subdir',subdir]
         service=self.app.service
         self.app.pop_screen()
         self.app.push_screen(Operation('Install '+self.kind+' · '+name,lambda log:service.run(args,log),
-                                       back_label='Back to profiles and providers'))
+                                       back_label='Back to Library'))
 
     def action_back(self):self.app.pop_screen()
 
@@ -2970,8 +3046,24 @@ class Cockpit(App):
     #container-list { padding: 1 2 0 3; scrollbar-size-vertical: 1; }
     #container-list > .setting { margin: 0 1 1 0; }
     #container-list:focus { outline: tall $primary; scrollbar-color: $primary; }
-    #package-list, #library-list, #skill-candidates { height: auto; }
-    SkillLibraryScreen .setting > .buttons { margin: 1 0 0 0; }
+    .package-list, SkillLibrary, #library-list, #skill-candidates { height: auto; }
+    #packages-page, #package-kind, #package-kind ContentSwitcher { height: 1fr; }
+    #package-kind TabPane { height: 1fr; padding: 0; }
+    #package-kind Tabs { border-bottom: solid #454a51; }
+    #package-kind Underline { display: none; }
+    #package-kind Tab.-active { color: #f2b544; background: #493b24; text-style: bold; }
+    #package-kind Tabs:focus Tab.-active { color: #17191b; background: #f2b544; text-style: bold underline; }
+    Screen:nocolor #package-kind Tab.-active { color: black; background: #d6d6d6; text-style: bold; }
+    Screen:nocolor #package-kind Tabs:focus Tab.-active { color: black; background: white; text-style: bold underline; }
+    #package-install { min-width: 22; }
+    Screen:nocolor PackagesScreen .title, Screen:nocolor InstallPackage .title,
+    Screen:nocolor ImportSkills .title, Screen:nocolor ProfileDetails #confirm-box > Label {
+        color: white; text-style: bold;
+    }
+    .package-pane { height: 1fr; padding: 1 1 0 0; }
+    ProfileDetails #confirm-box { height: auto; max-height: 90%; }
+    #profile-details-body { height: auto; max-height: 60vh; padding: 0 1 0 0; }
+    .compact-terminal #profile-details-body { max-height: 52vh; }
     #skill-discover { margin: 0 0 0 0; }
     #skill-import-error, #skill-selection-error, #library-error { color: #f1f3f5; text-style: bold; }
     SkillSelection Feedback.error { color: #f1f3f5; text-style: bold; }
@@ -2980,8 +3072,13 @@ class Cockpit(App):
     ImportSkills Input:focus { border: solid $primary; }
     .package-row { height: auto; padding: 1 2; margin-bottom: 1; background: #24292f; }
     .package-title { text-style: bold; }
-    .package-actions { height: 1; margin-top: 1; }
-    #package-error { color: $error; height: auto; }
+    .package-row > .package-actions { margin: 1 0 0 0; }
+    .package-actions Button { margin: 0 2 0 0; }
+    .package-actions Button:last-child { margin: 0; }
+    InstallPackage Input { border: solid #707780; }
+    InstallPackage Input:focus { border: solid $primary; }
+    #package-error { color: #ef9a91; text-style: bold; height: auto; }
+    Screen:nocolor #package-error { color: white; text-style: bold reverse; }
     .setting { height: auto; margin-bottom: 1; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 1 0 0; }
@@ -3004,7 +3101,6 @@ class Cockpit(App):
     Screen:nocolor #model-ports-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #managed-provider-key, ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
-    #package-skills { margin: 0 0 1 0; }
     .provider-setting Input.-invalid-credential { border: tall $error; }
     .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
     .setting > Button, .setting > .buttons, .setting > .path-row { margin: 0; }
@@ -3133,7 +3229,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }

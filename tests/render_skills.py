@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 from pi_sandbox_factory import skill_library, sandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, PackagesScreen, preset
-from pi_sandbox_factory.skills_ui import ImportSkills, SkillLibraryScreen
+from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
+from pi_sandbox_factory.skills_ui import ImportSkills
 from pi_sandbox_factory.tui_widgets import Checkbox
 from textual.widgets import Button, Collapsible, Input
 from test_tui import FakeService
@@ -41,7 +41,7 @@ async def render(size):
                 if screen:await app.pop_screen()
             await shot('home-library')
             await shot('package-library',PackagesScreen())
-            await shot('library-empty',SkillLibraryScreen())
+            await shot('library-empty',PackagesScreen(initial='skills'))
             await shot('import-empty',ImportSkills(), '#skill-source')
             screen=ImportSkills(str(source), 'main');await app.push_screen(screen);await pilot.pause()
             await screen.show_failure('No SKILL.md files were found in this source')
@@ -63,9 +63,9 @@ async def render(size):
             screen.query_one('#skill-library-section',Collapsible).collapsed=False
             await shot('selection-empty',focus='#manage-skills');await app.pop_screen()
             skill_library.install(rows)
-            await shot('library-populated',SkillLibraryScreen(), '#update-'+rows[0]['id'])
-            await shot('library-back-focus',SkillLibraryScreen(), '#library-back')
-            await app.push_screen(SkillLibraryScreen());await pilot.pause()
+            await shot('library-populated',PackagesScreen(initial='skills'), '#update-'+rows[0]['id'])
+            await shot('library-back-focus',PackagesScreen(initial='skills'), '#packages-back')
+            await app.push_screen(PackagesScreen(initial='skills'));await pilot.pause()
             await shot('library-bottom',focus='#remove-'+rows[-1]['id']);await app.pop_screen()
             draft=preset('base',copy.deepcopy(DEFAULT_SETTINGS));draft.update(name='demo',workspace=str(root),library_skills=[rows[0]['id'],rows[1]['id']])
             for context in ('create','defaults','existing','missing'):

@@ -67,6 +67,15 @@ http.createServer((request, response) => {
         return;
       }
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (userText === 'Factory profile prompt fixture') {
+      const { text } = JSON.parse(readFileSync('/opt/pi-security/config/profile-system-prompt.json', 'utf8'));
+      const system = messages.filter(message => message.role === 'system')
+        .flatMap(message => typeof message.content === 'string' ? [message.content] : message.content.map(part => part.text))
+        .join('\n');
+      const markers = [text, 'FACTORY USER CONTEXT MARKER', 'FACTORY PROJECT CONTEXT MARKER', 'FACTORY PROJECT APPEND MARKER'];
+      const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
+      delta = { content: count.every(value => value === 1)
+        ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
     } else if (tools.length && userText === 'Factory live token meter fixture') {
       await streamReasoningAndAnswer(response);
       return;

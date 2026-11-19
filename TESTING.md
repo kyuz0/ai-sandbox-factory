@@ -804,6 +804,16 @@ Windows 11, WSL 2.7.10, Ubuntu 26.04, Podman 5.7 and Windows Edge 157;
 
 Model replies in these checks came from synthetic fixtures.
 
+## Profile library and system prompt addenda
+
+Run `tests/test_packages_ui.py` and the registry and bootstrap suites. Check all three
+Library tabs and the read-only profile details at the three terminal review sizes.
+Run `tests/frostpi_editor.py --profile-prompt examples/profile` with the image and
+code-server arguments from the [FrostPi check](#frostpi-editor-and-shared-pi-goals).
+The synthetic model verifies that Pi CLI and FrostPi send the addendum once after
+a repeated bootstrap, alongside private agent instructions, project instructions
+and the project’s `APPEND_SYSTEM.md`.
+
 ## Repository SSH access
 
 Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion.
