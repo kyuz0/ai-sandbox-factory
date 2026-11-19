@@ -624,6 +624,7 @@ def stop_frostpi(page, frame, send, workspace, inside, output):
     wait_for_markers(workspace, STOP_READY)
     with foreground_reader(workspace):
         frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).click()
+    frame.get_by_text('Turn stopped', exact=True).wait_for(timeout=15000)
     ids = active_pair(inside, before)
     for accept in (False, True):
         stop_button = frame.get_by_role('button', name=re.compile(r'^Stop workers(?:…|\.\.\.)$'))
