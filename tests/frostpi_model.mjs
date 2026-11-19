@@ -170,7 +170,7 @@ http.createServer((request, response) => {
         ? 'FACTORY QUESTION DISMISSED' : 'UNEXPECTED QUESTION RESULT: ' + answer;
       delta = { content: delivered ? 'FACTORY QUESTION ANSWERS RECEIVED' : outcome };
     } else if (userText === 'Factory link fixture') {
-      delta = { content: '[Open link fixture](http://127.0.0.2:19382/fixture)' };
+      delta = { content: '![Image fixture](http://127.0.0.2:19382/image.png)\n\n[Open link fixture](http://127.0.0.2:19382/fixture)' };
     } else if (userText.startsWith('Factory chat ')) {
       const label = userText.slice('Factory chat '.length);
       if (label === 'steering initial') await new Promise(resolve => setTimeout(resolve, 2500));

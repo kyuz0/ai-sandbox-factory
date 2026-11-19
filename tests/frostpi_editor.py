@@ -30,6 +30,7 @@ from pi_sandbox_factory import folders, sandbox
 
 def check_external_link(page, frame, send):
     url = 'http://127.0.0.2:19382/fixture'
+    image_url = 'http://127.0.0.2:19382/image.png'
     visits = []
 
     def serve_fixture(route):
@@ -39,14 +40,20 @@ def check_external_link(page, frame, send):
 
     context = page.context
     context.route(url, serve_fixture)
+    context.route(image_url, serve_fixture)
     try:
         send('Factory link fixture')
         link = frame.get_by_role('link', name='Open link fixture', exact=True)
         dialog = page.get_by_role('dialog').filter(
+            has_text='Open this link in your browser?')
+        trusted_domains = page.get_by_role('dialog').filter(
             has_text='Do you want code-server to open the external website?')
         original_pages = context.pages
+        expect(frame.get_by_text('Remote image blocked · 127.0.0.2', exact=True)).to_be_visible()
         link.click(timeout=25000)
         expect(dialog).to_be_visible()
+        expect(dialog).to_contain_text('opening the link may bypass its network restrictions')
+        expect(dialog).to_contain_text(url)
         assert context.pages == original_pages and not visits, 'The link opened before the user answered'
         dialog.get_by_role('button', name='Cancel', exact=True).click()
         expect(dialog).not_to_be_visible()
@@ -54,16 +61,29 @@ def check_external_link(page, frame, send):
 
         link.click()
         expect(dialog).to_be_visible()
+        dialog.get_by_role('button', name='Open in browser', exact=True).click()
+        expect(trusted_domains).to_be_visible()
+        assert context.pages == original_pages and not visits, 'The link opened before the editor confirmed it'
+        trusted_domains.get_by_role('button', name='Cancel', exact=True).click()
+        expect(trusted_domains).not_to_be_visible()
+        assert context.pages == original_pages and not visits, 'Cancelling the editor confirmation opened a tab'
+
+        link.click()
+        expect(dialog).to_be_visible()
+        dialog.get_by_role('button', name='Open in browser', exact=True).click()
+        expect(trusted_domains).to_be_visible()
         with context.expect_page() as opened:
-            dialog.get_by_role('button', name='Open', exact=True).click()
+            trusted_domains.get_by_role('button', name='Open', exact=True).click()
         tab = opened.value
         expect(tab.get_by_role('heading', name='Link fixture')).to_be_visible()
         expect(dialog).not_to_be_visible()
+        expect(trusted_domains).not_to_be_visible()
         assert tab.url == url and context.pages == [*original_pages, tab] and visits == [url]
         tab.close()
     finally:
         context.unroute(url, serve_fixture)
-    print('PASS FrostPi external links wait for confirmation, respect Cancel and open once.')
+        context.unroute(image_url, serve_fixture)
+    print('PASS FrostPi blocks remote Markdown images and opens external links once after confirmation.')
 
 
 def check_cli_goal(name, session, usage, output):

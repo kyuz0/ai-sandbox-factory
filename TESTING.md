@@ -53,8 +53,10 @@ approval mode before the first prompt, exercises a long reviewer rejection
 and verifies that the reason, full command, justification and execution scope
 appear in separate sections. The command can be scrolled with the keyboard while
 both choices stay available. **Deny** blocks execution and **Allow this exact
-command once** runs the approved command. External chat links wait for
-confirmation. **Cancel** opens no tab and **Open** opens exactly one.
+command once** runs the approved command. Remote Markdown images stay blocked.
+External chat links display the full URL and warn about sandbox network restrictions.
+Code-server may also prompt for an untrusted domain. Cancelling either confirmation
+opens no tab. Confirming in both opens exactly one.
 The test submits a choice, a custom answer and multiple choices through the shared
 question tool. It also dismisses a question and checks the result delivered to the model.
 It pauses and revises a goal in FrostPi, checks its objective and usage in standalone Pi,
