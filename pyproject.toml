@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pi-sandbox-factory"
-version = "2026.11.18.220034"
+version = "2026.11.19.151205"
 description = "Manage isolated Pi and FrostPi workspaces with installable profiles and model providers"
 readme = "README.md"
 requires-python = ">=3.10"
