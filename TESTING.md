@@ -126,6 +126,49 @@ matching checkout (`v2026.11.18.220034`). They remain reproducible historical
 coverage. Use the FrostPi check above for the new editor. Standalone Pi and
 client-independent container checks below also apply to this branch.
 
+## Subagents in Pi and FrostPi
+
+Use the image, code-server directory and Playwright setup from the
+[FrostPi check](#frostpi-editor-and-shared-pi-goals). Run each mode on its own
+so a failure in one mode does not skip the rest.
+
+```sh
+.venv/bin/python tests/frostpi_editor.py \
+  --image FACTORY_IMAGE --code-server /path/to/code-server-4.145.2-linux-amd64 \
+  --subagents automatic --output /tmp/factory-subagents-automatic
+```
+
+| Mode | Required result in both clients |
+| --- | --- |
+| `disabled` | The parent model has no delegation tools. |
+| `automatic` | A foreground assistant reads, writes and edits a workspace file and reads it with Bash. Native file tools reject a protected fixture. The reviewer allows one escalation and denies another with zero human prompts. A read-only role receives only `read`. A nested assistant delegates a read. Two background assistants overlap, inherit a custom tool and finish in separate runs. FrostPi displays both statuses and expandable tool results. A child escalation review receives the original parent user prompt. |
+| `assisted` | An inline reviewer rejection opens one parent prompt. Two overlapping background requests display the exact command and reason. Allowing one and denying the other affects only the matching worker. Dismissing a third request leaves its file unwritten. |
+| `manual` | One child escalation reaches the parent for a one-time decision without a model review. The approved marker is written. |
+| `off` | Escalation is absent. Regular Bash writes its marker while the inner sandbox hides a synthetic private file. There is no model review or human prompt. |
+
+Use `--subagent-client pi` or `--subagent-client frostpi` to isolate one
+client. `--subagent-case` selects one scenario within the chosen mode. Inspect
+the browser screenshots, Pi RPC events and fixture trace in the output
+directory. The trace identifies model requests and tool results. Workspace
+markers and saved run statuses verify what actually happened.
+
+For the live check, create a fresh restricted sandbox with `--subagents`,
+select only your installed Chaucer provider and configure its key through
+Factory. Give the test a disposable workspace and select
+`chaucer/eu-deepseek-v4-flash` as the default model. Start its browser editor
+with `browser-editor NAME --background --no-open`.
+
+```sh
+.venv/bin/python tests/subagents_live.py \
+  --state-dir /path/to/disposable/state --name NAME --output /tmp/factory-subagents-live
+```
+
+The live check uses a real Pi terminal and the shipped FrostPi webview. Each
+launches two background assistants with distinct seed and result files.
+The script verifies both results and each worker's actual read and write in
+its own saved Pi session. It captures terminal output and browser screenshots.
+Delete the disposable sandbox when finished.
+
 ## Container and Pendant integration
 
 Check process headroom with a cached Factory image:

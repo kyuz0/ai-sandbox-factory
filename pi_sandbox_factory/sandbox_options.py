@@ -180,7 +180,7 @@ def guidance(selected, subagents=False):
                          'not permission to read the vault. Keep session values out of output, logs and Git.')
     lines.append('Explicit permission denials must be respected. Commands cannot execute on the physical host. '
                  'Use inherited proxy settings in restricted network mode.')
-    lines.append('Standard pi-subagents are enabled with the same selected capabilities and approval rules.' if subagents
+    lines.append('Standard pi-subagents are enabled and load the sandbox permission rules.' if subagents
                  else 'Subagents are disabled. Work in the current agent; do not start extra Pi processes for delegation.')
     if selected['goals']:
         lines.append('The shared Pi goal extension continues work in the current session. '

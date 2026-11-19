@@ -2,6 +2,7 @@
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { subagentReply } from './frostpi_subagent_model.mjs';
 
 const suffix = 'FINAL_APPROVAL_ARGUMENT';
 const command = "# Write a marker to the test workspace.\n" +
@@ -14,6 +15,13 @@ const writeChunk = (response, delta, finishReason = null, usage) => {
   response.write('data: ' + JSON.stringify({ id: 'factory', model: 'fixture',
     object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, delta, finish_reason: finishReason }], usage }) + '\n\n');
 };
+
+function sendReply(response, delta) {
+  response.writeHead(200, { 'content-type': 'text/event-stream' });
+  writeChunk(response, { role: 'assistant', ...delta });
+  writeChunk(response, {}, delta.tool_calls ? 'tool_calls' : 'stop');
+  response.end('data: [DONE]\n\n');
+}
 
 async function streamReasoningAndAnswer(response) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -57,6 +65,11 @@ http.createServer((request, response) => {
       ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : [];
     // A provider that cannot embed images in tool messages receives a follow-up user image.
     const toolResult = last.role === 'tool' ? last : messageImages(last).length ? messages.at(-2) : undefined;
+    const delegatedReply = subagentReply({ messages, tools, choice });
+    if (delegatedReply) {
+      sendReply(response, delegatedReply);
+      return;
+    }
     let delta;
     if (!tools.length && context.includes('Generate a concise title for a coding-agent chat session')) {
       console.log('TITLE REQUEST');
@@ -157,9 +170,6 @@ http.createServer((request, response) => {
     } else {
       delta = { content: 'FACTORY FIXTURE READY' };
     }
-    response.writeHead(200, { 'content-type': 'text/event-stream' });
-    writeChunk(response, { role: 'assistant', ...delta });
-    writeChunk(response, {}, delta.tool_calls ? 'tool_calls' : 'stop');
-    response.end('data: [DONE]\n\n');
+    sendReply(response, delta);
   });
 }).listen(19381, '127.0.0.1', () => console.log('READY'));

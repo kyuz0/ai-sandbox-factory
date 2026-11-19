@@ -26,10 +26,11 @@ Subagents are disabled by default. SANDBOX_SUBAGENTS=1 means the user explicitly
 enabled delegation through the launcher. Otherwise work in the current agent;
 do not start extra Pi processes as a substitute for disabled delegation.
 When enabled, delegation uses standard pi-subagents, not pi-sandbox's bundled worker.
-Use its assistant role for the parent's tools, skills and context, with the same
-review and Bash sandbox policy. Background mode retains ambient extensions.
-Specialist roles may declare narrower tools; select those only when that is the
-intended task. No extra OS sandbox surrounds the entire Pi child process.
+The assistant role inherits project context and skills. Foreground workers use
+Pi's native tools and explicitly loaded extensions. Background workers can load
+ambient extensions. Specialist roles may declare a smaller tool list. Child
+sessions load the same managed permission and Bash sandbox policy. The inner OS
+sandbox applies to Bash commands.
 
 # Goals and scheduled prompts
 

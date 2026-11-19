@@ -392,10 +392,11 @@ def check_streaming_metrics(frame, send, output):
 
 
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
-          folder_access=False, streaming_metrics=False, profile_prompt=None):
+          folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
+          subagent_case=None, subagent_client=None):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
-    mode = 'manual' if folder_access else startup_only or 'assisted'
+    mode = 'manual' if folder_access else startup_only or (subagents if subagents != 'disabled' else None) or 'assisted'
 
     def podman(*args, **kwargs):
         return subprocess.check_output(['podman', *args], text=True, **kwargs).strip()
@@ -413,6 +414,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         (root / 'allowlist.txt').write_text('')
         config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
                   'engine': 'podman'}
+        if subagents:
+            config['subagents'] = subagents != 'disabled'
         cwd = '/workspace'
         if profile_prompt:
             config['profile'] = sandbox.load_profile(str(profile_prompt.resolve()))
@@ -433,6 +436,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 for name in ('reference', 'output')
             ])
         sandbox.prepare_options(config, root)
+        if subagents:
+            policy = root / 'runtime-config/permissions.json'
+            permissions = json.loads(policy.read_text())
+            permissions['permission']['fixture_echo'] = 'allow'
+            policy.write_text(json.dumps(permissions))
         mounts = [
             (root / 'workspace', '/workspace', 'rw'),
             (root / 'editor', '/home/node/.local/share/pi-browser-editor', 'rw'),
@@ -440,6 +448,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             (root / 'runtime-config', '/opt/pi-security/config', 'ro'),
             (code_server, '/opt/test-code-server', 'ro'),
             (Path(__file__).with_name('frostpi_model.mjs').resolve(), '/tmp/frostpi_model.mjs', 'ro'),
+            (Path(__file__).with_name('frostpi_subagent_model.mjs').resolve(), '/tmp/frostpi_subagent_model.mjs', 'ro'),
         ]
         if folder_access:
             mounts.append((Path(__file__).with_name('folder_access_cases.json').resolve(),
@@ -447,6 +456,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         args = ['run', '-d', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
                 '--user', '1000:1000', '--security-opt', 'label=disable',
                 '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
+        if subagents:
+            args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
+                     '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
         if folder_access:
             args += ['--cap-drop=ALL', '--security-opt=no-new-privileges'] + folders.mounts(config)
         else:
@@ -466,6 +478,10 @@ file.with_name('trust.json').write_text('{"/workspace":true}')
 ''')
                 inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
             inside('test', '!', '-d', '/opt/pendant')
+            if subagents:
+                from frostpi_subagents import check_native_subagents, prepare_subagent_fixtures
+                prepare_subagent_fixtures(root / 'workspace', inside)
+
             if not startup_only:
                 model = {'id': 'fixture', 'name': 'Factory fixture', 'reasoning': streaming_metrics,
                          'input': ['text', 'image'] if tool_images else ['text'],
@@ -483,6 +499,9 @@ if len(sys.argv) > 1:
 p.write_text(json.dumps(v))
 """, *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
+                if subagents and subagent_client == 'pi':
+                    check_native_subagents(name, root / 'workspace', inside, output, subagents, subagent_case)
+                    return
                 if profile_prompt:
                     cli = podman('exec', '-i', '--workdir', cwd, name, 'pi', '--print', '--no-session',
                                  '--approve', '--provider', 'fixture', '--model', 'fixture',
@@ -529,6 +548,15 @@ p.write_text(json.dumps(v))
                 assert notice.count() == 1
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if subagents:
+                    from frostpi_subagents import check_frostpi_subagents
+                    check_frostpi_subagents(page, frame, send, root / 'workspace', inside,
+                                            output, subagents, subagent_case)
+                    assert not errors, errors
+                    browser.close()
+                    if subagent_client != 'frostpi':
+                        check_native_subagents(name, root / 'workspace', inside, output, subagents, subagent_case)
+                    return
                 if startup_only:
                     assert not errors, errors
                     browser.close()
@@ -671,10 +699,16 @@ p.write_text(json.dumps(v))
             check_cli_goal(name, sessions[0], usage, output)
             print('PASS Startup notice, question answers, full approval, deny and allow once in FrostPi, with revised goal restored and completed in the Pi CLI.')
         except Exception:
-            log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'], text=True, capture_output=True)
-            (output / 'fixture.log').write_text(log.stdout + log.stderr)
+            if not subagents:
+                log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'],
+                                     text=True, capture_output=True)
+                (output / 'fixture.log').write_text(log.stdout + log.stderr)
             raise
         finally:
+            if subagents:
+                log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'],
+                                     text=True, capture_output=True)
+                (output / 'fixture.log').write_text(log.stdout + log.stderr)
             if relay:
                 relay.terminate()
                 relay.wait(timeout=10)
@@ -701,7 +735,14 @@ if __name__ == '__main__':
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     scope.add_argument('--profile-prompt', type=Path, help='Check a profile addendum in the model request from Pi CLI and FrostPi.')
+    scope.add_argument('--subagents', choices=(*APPROVAL_LABELS, 'disabled'),
+                       help='Check delegated tools and user approvals in installed Pi and FrostPi.')
+    parser.add_argument('--subagent-case', choices=('inline', 'context', 'background', 'parallel', 'specialist', 'nested', 'cancel',
+                                                    'manual', 'off', 'disabled'))
+    parser.add_argument('--subagent-client', choices=('pi', 'frostpi'), help='Run only one client for diagnosis.')
     args = parser.parse_args()
+    if not args.subagents and (args.subagent_case or args.subagent_client):
+        parser.error('--subagent-case and --subagent-client require --subagents')
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
-          args.streaming_metrics, args.profile_prompt)
+          args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client)

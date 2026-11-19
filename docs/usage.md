@@ -100,6 +100,12 @@ The outer container and its network policy still apply when the inner sandbox is
 question forms, goals, scheduled prompts and optional subagents. Its collapsed
 heading shows the current recall, browser and goals settings.
 
+Select **Enable optional subagents** to let Pi delegate work in either the
+terminal or FrostPi. Pi chooses a role for each task. An assistant can use Pi's
+native tools, while a specialist can declare a smaller tool list. Background
+workers can also load enabled Pi extensions. Workers share the sandbox's
+workspace and load its managed permission rules.
+
 Use **Library… → Skills → Add skills…** to import a Git repository
 or local folder. GitHub folder and `SKILL.md` links are accepted too.
 **Find and validate skills** lists the discovered skills and any validation errors.
