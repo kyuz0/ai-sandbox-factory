@@ -40,6 +40,17 @@ Each group has an **Allow all** checkbox that selects every category listed in
 that group. Clear it to deselect them together, or use the individual checkboxes.
 Factory saves the selected categories by name.
 
+Under **Developer services**, select **VS Code extensions** to allow extension
+catalogue requests and downloads from Open VSX for the browser editor and the
+Visual Studio Marketplace for desktop VS Code. An extension that downloads
+additional tools or data may need another allowed destination.
+[code-server FAQ](https://coder.com/docs/code-server/FAQ) ·
+[VS Code network connections](https://code.visualstudio.com/docs/setup/network)
+
+The other developer categories come from
+[V2Fly domain-list-community](https://github.com/v2fly/domain-list-community):
+Python, npm, Rust, GitHub, Hugging Face, Stack Exchange and Read the Docs.
+
 Under **Authentication**, select **Microsoft Entra / Microsoft 365** for Microsoft
 public-cloud sign-in, MFA, password reset and authentication CDN hosts. This
 includes `login.microsoftonline.com`, `login.live.com` and the `aadcdn` hosts under
@@ -50,19 +61,24 @@ and the authentication entries in its
 It is updated with Factory releases. Add your application's host and any
 company-specific federation/ADFS host as individual allowed destinations.
 
-Under **Developer services**, select **VS Code extensions** to allow extension
-catalogue requests and downloads from Open VSX for the browser editor and the
-Visual Studio Marketplace for desktop VS Code. An extension that downloads
-additional tools or data may need another allowed destination.
-[code-server FAQ](https://coder.com/docs/code-server/FAQ) ·
-[VS Code network connections](https://code.visualstudio.com/docs/setup/network)
+The other **Authentication** categories are also opt-in and ship with Factory.
 
-The other developer categories come from
-[V2Fly domain-list-community](https://github.com/v2fly/domain-list-community):
-Python, npm, Rust, GitHub, Hugging Face, Stack Exchange and Read the Docs. Broader categories
-come from [UT1 Toulouse](https://dsi.ut-capitole.fr/blacklists/), through its
-[public mirror](https://github.com/olbat/ut1-blacklists): news, financial
-information, banking and library resources.
+- **Google sign-in** allows Google Account sign-in and Sign in with Google. [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid)
+- **Gmail** adds webmail and attachment hosts and includes the Google sign-in
+  hosts. Remote images, add-ons and other Workspace services can require
+  additional destinations. [Gmail firewall settings](https://knowledge.workspace.google.com/admin/gmail/advanced/gmail-firewall-settings) · [Gmail attachment help](https://support.google.com/mail/answer/6584)
+- **GitHub sign-in** allows the browser login and consent pages on `github.com`
+  and their assets. [GitHub login documentation](https://docs.github.com/en/apps/creating-github-apps/writing-code-for-a-github-app/building-a-login-with-github-button-with-a-github-app)
+- **Facebook and Meta sign-in** allows Facebook Login and the Meta account
+  sign-in site. [Facebook Login endpoints](https://developers.facebook.com/docs/graph-api/guides/versioning) · [Meta account help](https://www.meta.com/help/connected-experiences/1613279052885559/)
+
+Add the destination app and any organization-specific login hosts separately.
+The GitHub and Facebook sign-in grants also allow other pages on `github.com`
+and `www.facebook.com`, which share the login hostnames.
+
+Under **Topics**, news, financial information, banking and library categories
+come from [UT1 Toulouse](https://dsi.ut-capitole.fr/blacklists/) through its
+[public mirror](https://github.com/olbat/ut1-blacklists).
 
 Selected V2Fly and UT1 categories update automatically on sandbox start or network changes,
 at most once a day. If the source is unavailable, the manager uses its cached or

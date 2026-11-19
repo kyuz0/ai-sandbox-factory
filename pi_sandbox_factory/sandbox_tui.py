@@ -411,8 +411,8 @@ class WebsiteGroups(Vertical):
     .website-category-heading > Checkbox { width: auto; margin: 0; }
     """
     GROUPS = (
-        ('auth', 'Authentication'),
         ('dev', 'Developer services'),
+        ('auth', 'Authentication'),
         ('ut1', 'Topics'),
     )
 

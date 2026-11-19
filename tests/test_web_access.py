@@ -180,6 +180,40 @@ class WebAccessTests(unittest.TestCase):
             self.assertNotIn(domain, restricted)
         self.assertIn('http_access deny category_hosts category_private', with_extensions)
 
+    def test_new_authentication_categories_bundle_only_selected_hosts(self):
+        expected = {
+            'auth-google': {'accounts.google.com', 'www.gstatic.com'},
+            'auth-gmail': {'gmail.com', 'mail.google.com', 'mail-attachment.google.com',
+                          'mail-attachment.googleusercontent.com', 'accounts.google.com'},
+            'auth-github': {'github.com', 'github.githubassets.com'},
+            'auth-meta': {'auth.meta.com', 'www.facebook.com', 'static.xx.fbcdn.net',
+                          'connect.facebook.net'},
+        }
+        catalog = groups.catalog()
+        google_domains = set(catalog['auth-google']['domains'])
+        self.assertLess(google_domains, set(catalog['auth-gmail']['domains']))
+        self.assertTrue(expected.keys().isdisjoint(options()['website_groups']))
+        self.assertNotIn('acl category_hosts', sandbox.squid_config([]))
+        with patch.object(groups, 'fetch', side_effect=AssertionError('Bundled categories must stay offline')):
+            for name, required in expected.items():
+                with self.subTest(category=name):
+                    selected = groups.snapshots(options({'website_groups': [name]})['website_groups'])
+                    self.assertEqual(list(selected), [name])
+                    policy = sandbox.squid_config([], selected)
+                    domains = next(line.split()[4:] for line in policy.splitlines()
+                                   if line.startswith('acl category_hosts '))
+                    self.assertTrue(required.issubset(domains))
+                    self.assertTrue(all(not domain.startswith('.') for domain in domains))
+                    other_hosts = set().union(*(hosts for key, hosts in expected.items() if key != name))
+                    if name in ('auth-google', 'auth-gmail'):
+                        other_hosts -= google_domains
+                    self.assertTrue(other_hosts.isdisjoint(domains))
+                    self.assertTrue({
+                        'drive.google.com', 'calendar.google.com', 'raw.githubusercontent.com',
+                        'api.github.com', 'graph.facebook.com', 'www.instagram.com',
+                    }.isdisjoint(domains))
+                    self.assertIn('http_access deny category_hosts category_private', policy)
+
     def test_microsoft_auth_is_opt_in_and_keeps_login_rules_focused(self):
         self.assertNotIn('auth-microsoft', options()['website_groups'])
         self.assertEqual(options({'website_groups': ['auth-microsoft']})['website_groups'], ['auth-microsoft'])

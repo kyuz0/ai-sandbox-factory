@@ -37,6 +37,79 @@
         "passwordreset.microsoftonline.com"
       ]
     },
+    "auth-google": {
+      "title": "Google sign-in",
+      "description": "Google Account sign-in and Sign in with Google.",
+      "source": "Google Identity Services (curated)",
+      "url": "https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid",
+      "references": [
+        "https://developers.google.com/identity/gsi/web/guides/migration"
+      ],
+      "reviewed_at": "2026-11-19",
+      "refresh": "bundled",
+      "domains": [
+        "accounts.google.com",
+        "apis.google.com",
+        "ssl.gstatic.com",
+        "www.gstatic.com"
+      ]
+    },
+    "auth-gmail": {
+      "title": "Gmail",
+      "description": "Gmail in the browser, including Google sign-in and attachments.",
+      "source": "Google Workspace and Gmail Help (curated)",
+      "url": "https://knowledge.workspace.google.com/admin/gmail/advanced/gmail-firewall-settings",
+      "references": [
+        "https://support.google.com/mail/answer/6584"
+      ],
+      "reviewed_at": "2026-11-19",
+      "refresh": "bundled",
+      "domains": [
+        "accounts.google.com",
+        "apis.google.com",
+        "gmail.com",
+        "mail-attachment.google.com",
+        "mail-attachment.googleusercontent.com",
+        "mail.google.com",
+        "ogs.google.com",
+        "ssl.gstatic.com",
+        "www.gmail.com",
+        "www.gstatic.com"
+      ]
+    },
+    "auth-github": {
+      "title": "GitHub sign-in",
+      "description": "Sign in with GitHub using github.com and its login assets.",
+      "source": "GitHub Docs and sign-in page (curated)",
+      "url": "https://docs.github.com/en/apps/creating-github-apps/writing-code-for-a-github-app/building-a-login-with-github-button-with-a-github-app",
+      "references": [
+        "https://github.com/login"
+      ],
+      "reviewed_at": "2026-11-19",
+      "refresh": "bundled",
+      "domains": [
+        "github.com",
+        "github.githubassets.com"
+      ]
+    },
+    "auth-meta": {
+      "title": "Facebook and Meta sign-in",
+      "description": "Continue with Facebook and sign in to a Meta account.",
+      "source": "Meta Developers and Meta Help Center (curated)",
+      "url": "https://developers.facebook.com/docs/graph-api/guides/versioning",
+      "references": [
+        "https://developers.facebook.com/docs/facebook-business-extension/fbe/get-started/business-login/",
+        "https://www.meta.com/help/connected-experiences/1613279052885559/"
+      ],
+      "reviewed_at": "2026-11-19",
+      "refresh": "bundled",
+      "domains": [
+        "auth.meta.com",
+        "connect.facebook.net",
+        "static.xx.fbcdn.net",
+        "www.facebook.com"
+      ]
+    },
     "dev-vscode-extensions": {
       "title": "VS Code extensions",
       "description": "Find and install extensions from Open VSX or the Visual Studio Marketplace.",

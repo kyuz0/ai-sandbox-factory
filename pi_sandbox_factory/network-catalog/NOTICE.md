@@ -20,6 +20,10 @@ public-cloud authentication documentation and Microsoft 365 endpoint sets 56, 59
 and 97. Source URLs and the review date are recorded in groups.json. This group
 is updated with Factory releases rather than downloaded from V2Fly or UT1.
 
+The Google, Gmail, GitHub and Facebook/Meta categories use exact hostnames from
+provider documentation and public sign-in pages. Factory releases update these
+bundled lists. Source URLs are recorded in groups.json.
+
 The VS Code extensions group bundles the Open VSX registry and download host,
 and Microsoft's Visual Studio Marketplace and gallery download domains. The
 source URLs are recorded in groups.json.

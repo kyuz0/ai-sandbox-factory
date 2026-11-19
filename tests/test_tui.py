@@ -1473,6 +1473,13 @@ class WebAccessUITests(unittest.TestCase):
             marketplace = groups.query_one('#category-dev-vscode-extensions', Checkbox)
             label = developers.label
             self.assertEqual(label.plain, 'Allow all')
+            self.assertEqual([heading.query_one(Label).render().plain
+                              for heading in groups.query('.website-category-heading')],
+                             ['Developer services', 'Authentication', 'Topics'])
+            self.assertEqual([item.label.plain for item in
+                              groups.query('#website-category-auth .website-category-member')],
+                             ['Microsoft Entra / Microsoft 365', 'Google sign-in', 'Gmail',
+                              'GitHub sign-in', 'Facebook and Meta sign-in'])
             for heading in groups.query('.website-category-heading'):
                 title = heading.query_one(Label)
                 control = heading.query_one(Checkbox)
@@ -1503,6 +1510,9 @@ class WebAccessUITests(unittest.TestCase):
             await toggle(developers)
             self.assertEqual(groups.selected(), [])
             await toggle(marketplace)
+            await toggle(groups.query_one('#category-auth-google', Checkbox))
+            self.assertFalse(groups.query_one('#category-auth-gmail', Checkbox).value)
+            self.assertFalse(groups.query_one('#category-all-auth', Checkbox).value)
             rules = app.screen.query_one('#allowlist', TextArea)
             rules.load_text('bad-host')
             await pilot.pause()
@@ -1517,7 +1527,7 @@ class WebAccessUITests(unittest.TestCase):
             app.screen.query_one('#apply', Button).press()
             await pilot.pause()
             await app.workers.wait_for_complete()
-            self.assertEqual(app.service.calls[-1][-2:], ['--website-groups', 'dev-vscode-extensions'])
+            self.assertEqual(app.service.calls[-1][-3:], ['--website-groups', 'auth-google', 'dev-vscode-extensions'])
 
     async def test_microsoft_auth_category_can_be_selected_and_removed(self):
         for initial in (False, True):
