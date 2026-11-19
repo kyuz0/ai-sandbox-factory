@@ -141,9 +141,9 @@ so a failure in one mode does not skip the rest.
 | Mode | Required result in both clients |
 | --- | --- |
 | `disabled` | The parent model has no delegation tools. |
-| `automatic` | A foreground assistant reads, writes and edits a workspace file and reads it with Bash. Native file tools reject a protected fixture. The reviewer allows one escalation and denies another with zero human prompts. A read-only role receives only `read`. A nested assistant delegates a read. Two background assistants overlap, inherit a custom tool and finish in separate runs. FrostPi displays both statuses and expandable tool results. A child escalation review receives the original parent user prompt. |
-| `assisted` | An inline reviewer rejection opens one parent prompt. Two overlapping background requests display the exact command and reason. Allowing one and denying the other affects only the matching worker. Dismissing a third request leaves its file unwritten. |
-| `manual` | One child escalation reaches the parent for a one-time decision without a model review. The approved marker is written. |
+| `automatic` | A foreground assistant reads, writes and edits a workspace file and reads it with Bash. Native file tools reject a protected fixture. The reviewer allows one escalation and denies another with zero human prompts. A read-only role receives only `read`. A nested assistant delegates a read. Two background assistants overlap, inherit a custom tool and finish in separate runs. FrostPi displays both statuses and expandable tool results. A child escalation review receives the original parent user prompt. Explicit worker names appear in status and the saved transcripts. |
+| `assisted` | The parent receives inline and nested requests with the worker identity, exact command and reviewer reason. Two overlapping background requests can receive opposite decisions. Native and Bash prompts queue without replacing each other. Dismissing a request leaves its file unwritten. A critical decision requires typing `APPROVE`. A native file approval carries the original user prompt and excludes the delegated task from user authorization evidence. |
+| `manual` | One child escalation reaches the parent for a one-time decision without a model review. The approved marker is written. The fixture also checks the approval in Pi's terminal UI. |
 | `off` | Escalation is absent. Regular Bash writes its marker while the inner sandbox hides a synthetic private file. There is no model review or human prompt. |
 
 Use `--subagent-client pi` or `--subagent-client frostpi` to isolate one
@@ -151,6 +151,28 @@ client. `--subagent-case` selects one scenario within the chosen mode. Inspect
 the browser screenshots, Pi RPC events and fixture trace in the output
 directory. The trace identifies model requests and tool results. Workspace
 markers and saved run statuses verify what actually happened.
+The named-worker case also opens a completed child's transcript from
+**New or resume session → Resume session** in FrostPi.
+
+Both interfaces use the parent Pi session to show delegated Bash and file
+approvals. Approve a request from the session that launched the worker. The
+reviewer uses the original user's messages on that branch, and the approval
+applies to the exact action and worker. Reopening the session or changing
+branches invalidates approvals from the previous session instance or branch.
+
+Run `--subagent-compaction lite`, `--subagent-compaction full` and
+`--subagent-compaction off` with the same image and editor options. The local
+model fixture reports large usage counters. Each worker continues below the
+compaction threshold, then compacts and continues when it reaches its context
+reserve. The test checks that the checkpoint stays in the child's session,
+that Lite and Full expose their configured recall tools, and that the
+read-only specialist keeps its tool list.
+
+Use `--subagents automatic --subagent-case web-tools` with an image containing
+Web search and Browser. The fixture selects Only SearXNG and supplies local
+search results and a Chromium test page. It checks foreground and nested tool
+access, concurrent background search and navigation, independent page storage,
+and the read-only specialist's tool list.
 
 For the live check, create a fresh restricted sandbox with `--subagents`,
 select only your installed Chaucer provider and configure its key through
@@ -164,7 +186,8 @@ with `browser-editor NAME --background --no-open`.
 ```
 
 The live check uses a real Pi terminal and the shipped FrostPi webview. Each
-launches two background assistants with distinct seed and result files.
+launches two background workers with distinct seed and result files and a role
+limited to read and write.
 The script verifies both results and each worker's actual read and write in
 its own saved Pi session. It captures terminal output and browser screenshots.
 Delete the disposable sandbox when finished.

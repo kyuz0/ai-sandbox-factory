@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pi_sandbox_factory import browser_editor, sandbox
 
 MODEL = 'eu-deepseek-v4-flash'
+WORKER_ROLE = 'fixture-arithmetic'
 
 
 def probe_workspace(state, name):
@@ -39,7 +40,7 @@ def prompt_for(workspace, prefix):
             f'Add 3 and use the write tool to save only the result to /workspace/{name}-result.txt. '
             f'Reply {name}-done with your result. Use no other tools, network, or escalation.'
         )
-        workers.append({'agent': 'assistant', 'task': task,
+        workers.append({'agent': WORKER_ROLE, 'task': task,
                         'options': {'acceptance': {'level': 'none', 'reason': 'The test verifies both files.'}}})
     arguments = [{**worker, 'async': True} for worker in workers]
     return (
@@ -79,6 +80,15 @@ def main():
 
     def inside(*command):
         return subprocess.check_output(['podman', 'exec', '--workdir', '/workspace', container, *command], text=True)
+
+    # Make the live tool contract explicit so the model cannot substitute Bash
+    # for the read and write we are checking.
+    agent_dir = '/home/node/.pi/agent/agents'
+    inside('mkdir', '-p', agent_dir)
+    subprocess.run(['podman', 'exec', '-i', container, 'tee', f'{agent_dir}/{WORKER_ROLE}.md'],
+                   input=f'---\nname: {WORKER_ROLE}\ndescription: Read and write a disposable arithmetic fixture\n'
+                         'tools: read, write\n---\nFollow the assigned test task. Do the arithmetic mentally.\n',
+                   text=True, stdout=subprocess.DEVNULL, check=True)
 
     terminal = '/tmp/' + run + '.sock'
     inside('tmux', '-S', terminal, 'new-session', '-d', '-x', '135', '-y', '35',

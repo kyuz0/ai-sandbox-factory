@@ -393,10 +393,13 @@ def check_streaming_metrics(frame, send, output):
 
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
-          subagent_case=None, subagent_client=None):
+          subagent_case=None, subagent_client=None, subagent_compaction=None):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
+    if subagent_compaction:
+        subagents = 'automatic'
     mode = 'manual' if folder_access else startup_only or (subagents if subagents != 'disabled' else None) or 'assisted'
+    web_workers = subagent_case == 'web-tools'
 
     def podman(*args, **kwargs):
         return subprocess.check_output(['podman', *args], text=True, **kwargs).strip()
@@ -416,6 +419,15 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                   'engine': 'podman'}
         if subagents:
             config['subagents'] = subagents != 'disabled'
+        if subagent_compaction:
+            config['options']['compaction_recall'] = subagent_compaction
+        if web_workers:
+            # Both services run on loopback inside the network-disabled test container.
+            config['network'] = 'unrestricted'
+            config['options'].update(browser=True, web_access={
+                'enabled': True, 'mode': 'searxng',
+                'providers': {'searxng': {'endpoint': 'http://localhost:19382'}},
+            })
         cwd = '/workspace'
         if profile_prompt:
             config['profile'] = sandbox.load_profile(str(profile_prompt.resolve()))
@@ -441,13 +453,14 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             permissions = json.loads(policy.read_text())
             permissions['permission']['fixture_echo'] = 'allow'
             policy.write_text(json.dumps(permissions))
+        model_script = 'subagent_compaction_model.mjs' if subagent_compaction else 'frostpi_model.mjs'
         mounts = [
             (root / 'workspace', '/workspace', 'rw'),
             (root / 'editor', '/home/node/.local/share/pi-browser-editor', 'rw'),
             (root / 'options.json', '/opt/sandbox/options.json', 'ro'),
             (root / 'runtime-config', '/opt/pi-security/config', 'ro'),
             (code_server, '/opt/test-code-server', 'ro'),
-            (Path(__file__).with_name('frostpi_model.mjs').resolve(), '/tmp/frostpi_model.mjs', 'ro'),
+            (Path(__file__).with_name(model_script).resolve(), '/tmp/frostpi_model.mjs', 'ro'),
             (Path(__file__).with_name('frostpi_subagent_model.mjs').resolve(), '/tmp/frostpi_subagent_model.mjs', 'ro'),
         ]
         if folder_access:
@@ -459,6 +472,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if subagents:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
+        if subagent_compaction:
+            args += ['-e', 'COMPACTION_RECALL_MODE=' + ('full' if subagent_compaction == 'full' else 'lite')]
+        if web_workers:
+            args += ['-e', 'FACTORY_SUBAGENT_WEB_TOOLS=1']
+            mounts.append((Path(__file__).with_name('subagent_web_tools.mjs').resolve(), '/tmp/subagent_web_tools.mjs', 'ro'))
         if folder_access:
             args += ['--cap-drop=ALL', '--security-opt=no-new-privileges'] + folders.mounts(config)
         else:
@@ -481,6 +499,9 @@ file.with_name('trust.json').write_text('{"/workspace":true}')
             if subagents:
                 from frostpi_subagents import check_native_subagents, prepare_subagent_fixtures
                 prepare_subagent_fixtures(root / 'workspace', inside)
+            if subagent_compaction:
+                import subagent_compaction as compact_fixture
+                compact_fixture.prepare(root / 'workspace', inside)
 
             if not startup_only:
                 model = {'id': 'fixture', 'name': 'Factory fixture', 'reasoning': streaming_metrics,
@@ -488,6 +509,8 @@ file.with_name('trust.json').write_text('{"/workspace":true}')
                          'contextWindow': 131072, 'maxTokens': 8192, 'cost': dict.fromkeys(('input', 'output', 'cacheRead', 'cacheWrite'), 0)}
                 catalogue = {'providers': {'fixture': {'api': 'openai-completions',
                              'baseUrl': 'http://127.0.0.1:19381/v1', 'apiKey': 'fixture-only', 'models': [model]}}}
+                if subagent_compaction:
+                    model['contextWindow'] = 1_048_576
                 inside('tee', '/home/node/.pi/agent/models.json', input=json.dumps(catalogue))
                 inside('python3', '-c', """import json, sys
 from pathlib import Path
@@ -499,6 +522,9 @@ if len(sys.argv) > 1:
 p.write_text(json.dumps(v))
 """, *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
+                if subagent_compaction and subagent_client == 'pi':
+                    compact_fixture.check_pi(inside, output, subagent_compaction)
+                    return
                 if subagents and subagent_client == 'pi':
                     check_native_subagents(name, root / 'workspace', inside, output, subagents, subagent_case)
                     return
@@ -548,6 +574,13 @@ p.write_text(json.dumps(v))
                 assert notice.count() == 1
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if subagent_compaction:
+                    compact_fixture.check_frostpi(page, frame, send, inside, output, subagent_compaction)
+                    assert not errors, errors
+                    browser.close()
+                    if subagent_client != 'frostpi':
+                        compact_fixture.check_pi(inside, output, subagent_compaction)
+                    return
                 if subagents:
                     from frostpi_subagents import check_frostpi_subagents
                     check_frostpi_subagents(page, frame, send, root / 'workspace', inside,
@@ -737,12 +770,19 @@ if __name__ == '__main__':
     scope.add_argument('--profile-prompt', type=Path, help='Check a profile addendum in the model request from Pi CLI and FrostPi.')
     scope.add_argument('--subagents', choices=(*APPROVAL_LABELS, 'disabled'),
                        help='Check delegated tools and user approvals in installed Pi and FrostPi.')
-    parser.add_argument('--subagent-case', choices=('inline', 'context', 'background', 'parallel', 'specialist', 'nested', 'cancel',
-                                                    'manual', 'off', 'disabled'))
+    scope.add_argument('--subagent-compaction', choices=('lite', 'full', 'off'),
+                       help='Check automatic child compaction and conversation recall in Pi and FrostPi.')
+    parser.add_argument('--subagent-case', choices=('inline', 'context', 'background', 'mixed', 'parallel', 'named', 'specialist', 'nested', 'cancel',
+                                                    'nested-approval', 'critical', 'native', 'manual', 'off', 'disabled', 'web-tools'))
     parser.add_argument('--subagent-client', choices=('pi', 'frostpi'), help='Run only one client for diagnosis.')
     args = parser.parse_args()
-    if not args.subagents and (args.subagent_case or args.subagent_client):
-        parser.error('--subagent-case and --subagent-client require --subagents')
+    if args.subagent_case == 'web-tools' and args.subagents != 'automatic':
+        parser.error('--subagent-case web-tools requires --subagents automatic')
+    if args.subagent_case and not args.subagents:
+        parser.error('--subagent-case requires --subagents')
+    if args.subagent_client and not (args.subagents or args.subagent_compaction):
+        parser.error('--subagent-client requires --subagents or --subagent-compaction')
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
-          args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client)
+          args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
+          args.subagent_compaction)
