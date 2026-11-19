@@ -10,9 +10,9 @@ const choice = (name, args) => ({
   tool_calls: [{ index: 0, id: 'factory-' + name + '-' + Date.now(), type: 'function',
     function: { name, arguments: JSON.stringify(args) } }],
 });
-const writeChunk = (response, delta, finishReason = null) => {
+const writeChunk = (response, delta, finishReason = null, usage) => {
   response.write('data: ' + JSON.stringify({ id: 'factory', model: 'fixture',
-    object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, delta, finish_reason: finishReason }] }) + '\n\n');
+    object: 'chat.completion.chunk', created: 1, choices: [{ index: 0, delta, finish_reason: finishReason }], usage }) + '\n\n');
 };
 
 async function streamReasoningAndAnswer(response) {
@@ -26,6 +26,18 @@ async function streamReasoningAndAnswer(response) {
     }
   }
   writeChunk(response, {}, 'stop');
+  response.end('data: [DONE]\n\n');
+}
+
+async function streamOutputBurst(response) {
+  response.writeHead(200, { 'content-type': 'text/event-stream' });
+  await new Promise(resolve => setTimeout(resolve, 2_400));
+  writeChunk(response, { role: 'assistant' });
+  writeChunk(response, { reasoning_content: 'abc '.repeat(200) });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  writeChunk(response, { content: 'def '.repeat(220) });
+  await new Promise(resolve => setTimeout(resolve, 850));
+  writeChunk(response, {}, 'stop', { prompt_tokens: 40, completion_tokens: 360, total_tokens: 400 });
   response.end('data: [DONE]\n\n');
 }
 
@@ -57,6 +69,9 @@ http.createServer((request, response) => {
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
     } else if (tools.length && userText === 'Factory live token meter fixture') {
       await streamReasoningAndAnswer(response);
+      return;
+    } else if (tools.length && userText === 'Factory burst token meter fixture') {
+      await streamOutputBurst(response);
       return;
     } else if (context.includes('RUN_FACTORY_FOLDER_ACCESS')) {
       const cases = JSON.parse(readFileSync('/tmp/folder-access-cases.json', 'utf8'));

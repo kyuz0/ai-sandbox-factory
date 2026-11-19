@@ -351,7 +351,7 @@ def check_streaming_metrics(frame, send, output):
     metrics = frame.locator('.response-metrics')
     active = frame.get_by_role('button', name='Stop Pi', exact=True)
     answer = frame.get_by_text(re.compile(r'^FACTORY STREAMING ANSWER\.')).first
-    live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s')
+    live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s avg')
 
     def read_live_count():
         expect(active).to_be_visible()
@@ -373,6 +373,22 @@ def check_streaming_metrics(frame, send, output):
     expect(active).to_be_hidden(timeout=15000)
     print(f'PASS live output count and rate during reasoning ({reasoning_count} tokens) '
           f'and answer generation ({answer_count} tokens).')
+
+    send('Factory burst token meter fixture')
+    burst = re.compile(r'≈420 output tokens · ≈([\d.]+) tok/s avg')
+    expect(metrics).to_contain_text(burst, timeout=15000)
+    live_rate = float(burst.search(metrics.inner_text())[1])
+    assert 0 < live_rate <= 420 / 2.4, live_rate
+    metrics.screenshot(path=str(output / 'burst-meter.png'))
+
+    expect(active).to_be_hidden(timeout=15000)
+    final = re.compile(r'^360 output tokens · ([\d.]+) tok/s avg$')
+    expect(metrics).to_contain_text(final)
+    final_rate = float(final.search(metrics.inner_text().strip())[1])
+    assert 0 < final_rate <= 360 / 3.25, final_rate
+    metrics.screenshot(path=str(output / 'final-meter.png'))
+    print(f'PASS buffered output averaged {live_rate} tok/s live and {final_rate} tok/s with reported usage.')
+
 
 
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,

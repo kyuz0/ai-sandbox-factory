@@ -76,6 +76,10 @@ With a Betterwright-enabled image, use `--tool-images` to verify that Pi's
 `read` tool and Betterwright deliver the same image bytes to the model and
 FrostPi. The check opens both thumbnails and reopens them after a session restart.
 
+Use `--streaming-metrics` to verify the running count and average rate during
+reasoning and answer generation. The fixture also sends 420 estimated tokens in
+a burst after a delay and checks the final average uses the reported count.
+
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.
 
