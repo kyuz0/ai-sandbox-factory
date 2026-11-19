@@ -807,9 +807,9 @@ Model replies in these checks came from synthetic fixtures.
 ## Repository SSH access
 
 Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion.
-When reviewing the dashboard, use adjacent sandbox rows and check for a blank
-line between their inline actions. The TUI suite checks that clicking this gap
-only selects the row and that every sandbox remains reachable by keyboard.
+When reviewing the dashboard, check that each row’s text and actions share
+the middle line, with equal space above and below. The TUI suite checks that
+clicking the padding only selects the row and every sandbox is reachable by keyboard.
 
 ```sh
 .venv/bin/python tests/repository_ssh_container.py --dev-image YOUR_FACTORY_DEV_IMAGE

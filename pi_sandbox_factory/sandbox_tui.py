@@ -1149,8 +1149,11 @@ def sandbox_alerts(record):
 
 
 class SandboxTable(DataTable):
-    # Each sandbox occupies two terminal lines, with one blank line between actions.
-    ROW_HEIGHT = 2
+    ROW_HEIGHT = 3
+
+    @staticmethod
+    def centered_cell(value):
+        return Text.assemble('\n', value, '\n', no_wrap=True)
 
     @staticmethod
     def action_cell(label, *, primary=False):
@@ -3100,6 +3103,7 @@ class Cockpit(App):
     .hosted-row > .buttons { margin: 1 0 0 0; }
     #iam-fields { margin-bottom: 1; }
     #title-banner { height: auto; padding: 1 3 0 3; }
+    .compact-terminal #title-banner { display: none; }
     #startup-dependencies { height: auto; margin: 0 3; color: #f2b544; }
     Screen:nocolor #startup-dependencies { text-style: bold; }
     #application-update { display: none; height: auto; margin: 0 3; }
@@ -3107,8 +3111,7 @@ class Cockpit(App):
     #application-update-run { width: 15; margin: 0 0 0 1; }
     #home { width: 100%; padding: 1 3; }
     .compact-terminal #home { padding: 1 3 0 3; }
-    .compact-terminal.missing-dependencies #home { padding: 0 3; }
-    .compact-terminal.missing-dependencies #details { padding: 0; min-height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    .compact-terminal.missing-dependencies #details { padding: 0; min-height: 2; }
     #dashboard-filters { height: 4; margin: 0 0 1 0; }
     #dashboard-search { width: 1fr; }
     #dashboard-filters Input, #dashboard-filters Select { height: 3; margin: 0; }
@@ -3208,7 +3211,8 @@ class Cockpit(App):
     def resize_banner(self):
         self.set_class(self.size.height >= 32, 'tall-terminal')
         self.set_class(self.size.height < 32, 'compact-terminal')
-        self.query_one('#title-banner', Static).update(banner(self.version, self.size.width < 100 or self.size.height < 32))
+        self.screen_stack[0].sub_title = f'v{self.version}' if self.size.height < 32 else ''
+        self.query_one('#title-banner', Static).update(banner(self.version, self.size.width < 100))
         self.render_records()
 
     @work(thread=True, exclusive=True, group='application-update', exit_on_error=False)
@@ -3299,12 +3303,17 @@ class Cockpit(App):
             if self.size.width < 100 and len(name) > 32:
                 name = name[:31] + '…'
             alert_count = len(sandbox_alerts(record))
-            table.add_row(name, SandboxTable.action_cell('Open', primary=True),
-                          SandboxTable.action_cell(f'Show Alerts ({alert_count})') if alert_count else '',
-                          *[safe_text(x) for x in (record['dev'].capitalize(),
-                          *[activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')],
-                          ', '.join(sources) or 'Not configured',
-                          'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted')], height=SandboxTable.ROW_HEIGHT, key=record['name'])
+            cells = (
+                name,
+                SandboxTable.action_cell('Open', primary=True),
+                SandboxTable.action_cell(f'Show Alerts ({alert_count})') if alert_count else '',
+                safe_text(record['dev'].capitalize()),
+                *(activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')),
+                safe_text(', '.join(sources)) or 'Not configured',
+                'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted',
+            )
+            table.add_row(*(SandboxTable.centered_cell(cell) if cell else '' for cell in cells),
+                          height=SandboxTable.ROW_HEIGHT, key=record['name'])
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
         self.update_details()
