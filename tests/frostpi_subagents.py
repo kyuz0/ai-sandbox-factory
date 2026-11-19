@@ -377,25 +377,38 @@ def check_frostpi_subagents(page, frame, send, workspace, inside, output, mode, 
         before = async_statuses(inside) if item in TERMINAL_CASES else {}
         if item == 'named':
             names_before = saved_worker_names(inside)
+        if item == 'mixed':
+            page.set_viewport_size({'width': 1050, 'height': 720})
         send('Factory subagents ' + item)
         acted = set()
         try:
             if item in ('parallel', 'named'):
-                widget = frame.locator('.extension-widget pre').filter(has_text=re.compile(
-                    r'^Subagents(?:\n|$)|^PI_SUBAGENT_ASYNC_JSON:'))
+                widget = frame.get_by_role('list', name='Worker status')
                 if item == 'named':
-                    widget.filter(has_text='Juniper').wait_for(timeout=30_000)
+                    widget.get_by_role('button', name='View transcript for Juniper').wait_for(timeout=30_000)
                 else:
                     widget.wait_for(timeout=15_000)
                 page.wait_for_timeout(500)
                 page.screenshot(path=str(output / f'frostpi-{item}-running.png'))
                 label = widget.inner_text()
                 assert 'PI_SUBAGENT_ASYNC_JSON:' not in label, 'FrostPi displayed raw subagent status JSON'
-                pattern = r'^(Atlas|Juniper) · (?:queued|running|complete)$' if item == 'named' else (
-                    r'^assistant \(([0-9a-f]{8})\) · (?:queued|running|complete)$')
+                pattern = r'^(Atlas|Juniper)\s+(?:Queued|Running|Complete)' if item == 'named' else (
+                    r'^assistant \(([0-9a-f]{8})\)\s+(?:Queued|Running|Complete)')
                 two_workers = re.findall(pattern, label, re.M)
-                assert len(set(two_workers)) == 2 and len(label.splitlines()) == 3, label
+                assert len(two_workers) == 2 and len(set(two_workers)) == 2, label
                 assert widget.evaluate('(node) => node.scrollWidth <= node.clientWidth'), label
+                if item == 'named':
+                    assert re.search(r'Running\s*·\s*(?:<1s|\d+s)', label), label
+                    widget.get_by_role('button', name='View transcript for Atlas').click()
+                    atlas = frame.get_by_role('region', name='Transcript for Atlas')
+                    atlas.get_by_text('FACTORY_CHILD_READ_ALPHA', exact=False).first.wait_for(timeout=8_000)
+                    assert not atlas.get_by_text('FACTORY_CHILD_READ_BETA', exact=False).count()
+                    page.screenshot(path=str(output / 'frostpi-atlas-live.png'))
+                    widget.get_by_role('button', name='View transcript for Juniper').click()
+                    juniper = frame.get_by_role('region', name='Transcript for Juniper')
+                    juniper.get_by_text('FACTORY_CHILD_READ_BETA', exact=False).first.wait_for(timeout=8_000)
+                    assert not atlas.count()
+                    assert not juniper.get_by_text('FACTORY_CHILD_READ_ALPHA', exact=False).count()
             card = frame.get_by_role('region', name='Prompt details')
             while len(acted) < len(expected):
                 deadline = time.monotonic() + 45
@@ -421,6 +434,20 @@ def check_frostpi_subagents(page, frame, send, workspace, inside, output, mode, 
                         assert f'Synthetic decision for the {tag} workspace marker.' in detail, detail
                 else:
                     assert re.search(r'subagent\s*:\s*assistant\s*·\s*session\s+[0-9a-f-]{36}', detail, re.I), detail
+                if item == 'mixed' and not acted:
+                    frame.get_by_role('list', name='Worker status').get_by_role('button').first.click()
+                    panel = frame.get_by_role('region', name=re.compile(r'^Transcript for '))
+                    panel.get_by_text(re.compile(r'FACTORY_CHILD_(NATIVE|ALPHA)')).first.wait_for(timeout=8_000)
+                    assert card.is_visible(), 'Opening worker details hid the parent approval'
+                    assert panel.evaluate('(node) => node.scrollWidth <= node.clientWidth')
+                    assert panel.get_by_role('region', name='Recent worker activity').evaluate('(node) => node.clientHeight >= 65'), (
+                        'Opening worker details left too little room to read the transcript')
+                    assert frame.locator('.composer-box').evaluate('(node) => node.getBoundingClientRect().bottom <= innerHeight'), (
+                        'Opening worker details clipped the composer')
+                    page.screenshot(path=str(output / 'frostpi-worker-and-approval.png'))
+                    panel.get_by_role('button', name='Close worker transcript').click()
+                    assert not panel.count()
+                    assert card.is_visible(), 'Closing worker details dismissed the approval'
                 page.screenshot(path=str(output / f'frostpi-{item}-{tag.lower()}.png'))
                 if item == 'cancel':
                     frame.get_by_role('button', name='Cancel', exact=True).click()
@@ -451,6 +478,12 @@ def check_frostpi_subagents(page, frame, send, workspace, inside, output, mode, 
                 wait_for_workers(inside, before, len(worker_markers(item)))
             if item == 'named':
                 assert_named_workers(inside, names_before)
+                juniper.get_by_text('FACTORY CHILD READ_BETA OK', exact=True).last.wait_for(timeout=12_000)
+                juniper.get_by_text('complete', exact=True).wait_for(timeout=12_000)
+                assert not juniper.get_by_text('FACTORY CHILD READ_ALPHA OK', exact=True).count()
+                page.screenshot(path=str(output / 'frostpi-juniper-complete.png'))
+                juniper.get_by_role('button', name='Close worker transcript').click()
+                assert not juniper.count()
             if item in ('inline', 'specialist', 'nested'):
                 worked = frame.get_by_role('button', name=re.compile(r'^Expand work trace:'))
                 if worked.count():

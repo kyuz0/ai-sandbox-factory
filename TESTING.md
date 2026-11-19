@@ -151,8 +151,12 @@ client. `--subagent-case` selects one scenario within the chosen mode. Inspect
 the browser screenshots, Pi RPC events and fixture trace in the output
 directory. The trace identifies model requests and tool results. Workspace
 markers and saved run statuses verify what actually happened.
-The named-worker case also opens a completed child's transcript from
-**New or resume session → Resume session** in FrostPi.
+The named-worker case opens two live transcripts in succession and verifies
+that each shows its own worker’s instructions and output. It also checks
+elapsed time, the final transcript, and resuming a completed child through
+**New or resume session → Resume session**. The mixed-approval case opens a live
+worker at a shorter viewport while verifying that the parent approval and
+composer stay accessible.
 
 Both interfaces use the parent Pi session to show delegated Bash and file
 approvals. Approve a request from the session that launched the worker. The
