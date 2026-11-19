@@ -1,8 +1,10 @@
 """Exercise authenticated discovery and chat in a disposable Factory sandbox."""
 from contextlib import ExitStack, contextmanager
+import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -13,7 +15,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pi_sandbox_factory import inference, provider_credentials, sandbox
+from pi_sandbox_factory import browser_editor, inference, provider_credentials, sandbox
 from pi_sandbox_factory.sandbox_tui import Service
 
 
@@ -72,7 +74,42 @@ def model_server(model, key):
             thread.join()
 
 
+def check_frostpi(config, state, archive, expected):
+    from playwright.sync_api import sync_playwright
+
+    browser_editor.open_browser_editor(config, state, archive=archive, background=True, open_tab=False)
+    try:
+        url = browser_editor.runtime(state)['url']
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page(viewport={'width': 1440, 'height': 960})
+            page.goto(url.rstrip('/') + '/?folder=/workspace')
+            page.locator('.monaco-workbench').wait_for(timeout=60000)
+            for attempt in range(200):
+                frame = next((item for item in page.frames if item.get_by_label('Message Pi', exact=True).count()), None)
+                if frame:
+                    break
+                page.wait_for_timeout(150)
+            else:
+                raise AssertionError('Factory did not open FrostPi')
+            for provider, model in expected:
+                selector = '[title=' + json.dumps(f'{provider}/{model}') + ']'
+                frame.locator('.model-picker-trigger').click()
+                frame.get_by_role('textbox', name=re.compile(r'^Search .* models$')).fill(model)
+                frame.locator('.model-option' + selector).click(timeout=15000)
+                frame.locator('.model-picker-trigger' + selector).wait_for()
+                frame.get_by_label('Message Pi', exact=True).fill('Return the synthetic response.')
+                frame.get_by_role('button', name='Send to Pi', exact=True).click()
+                frame.get_by_text('LOCAL_MODEL_KEY_OK_' + model, exact=True).wait_for(timeout=25000)
+            browser.close()
+    finally:
+        browser_editor.stop(state)
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--code-server-archive', type=Path, help='Local copy of the pinned code-server archive.')
+    args = parser.parse_args()
     with ExitStack() as cleanup:
         root = Path(cleanup.enter_context(TemporaryDirectory(prefix='factory-local-key-check-')))
         servers = [cleanup.enter_context(model_server(model, key)) for model, key in
@@ -85,11 +122,11 @@ def main():
         service = Service(state)
         def log(message):
             print(message, flush=True)
-        args = ['create', name, '--engine', 'podman', '--workspace', str(workspace),
-                '--local-model-ports', ','.join(map(str, ports))]
+        create = ['create', name, '--engine', 'podman', '--workspace', str(workspace),
+                  '--local-model-ports', ','.join(map(str, ports))]
         for port in ports:
-            args += ['--allow-domain', f'local-model.internal:{port}']
-        service.run(args, log)
+            create += ['--allow-domain', f'local-model.internal:{port}']
+        service.run(create, log)
         cleanup.callback(service.run, ['delete', name], log)
         service.run(['build', name], log)
         service.run(['up', name], log)
@@ -146,11 +183,8 @@ def main():
             result = inside('pi', '--no-session', '--provider', provider, '--model', server.model, '-p', 'Return the synthetic response.')
             assert 'LOCAL_MODEL_KEY_OK_' + server.model in result, result
         log('PASS actual Pi chat with separate authenticated and public ports')
-        subprocess.run(['podman', 'cp', str(ROOT / 'tests/check_pendant_worker.cjs'), dev + ':/tmp/check-local-keys.cjs'], check=True)
-        subprocess.run(['podman', 'cp', str(ROOT / 'pi_sandbox_factory/containers/editor/watch-fallback.cjs'),
-                        dev + ':/tmp/local-key-watch-fallback.cjs'], check=True)
-        log(inside('node', '/tmp/check-local-keys.cjs', '--local-server-keys',
-                   env={'TEST_LOCAL_MODELS': json.dumps(expected), 'NODE_OPTIONS': '--require=/tmp/local-key-watch-fallback.cjs'}).strip())
+        check_frostpi(config, state / name, args.code_server_archive, expected)
+        log('PASS FrostPi model picker and chat with separate authenticated and public ports')
         assert {header for _, header in servers[0].requests} == {None, 'Bearer synthetic-local-one',
                                                                'Bearer synthetic-bad', 'Bearer synthetic-replacement'}
         assert {header for _, header in servers[1].requests} == {None, 'Bearer synthetic-local-two'}

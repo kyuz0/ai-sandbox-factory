@@ -802,6 +802,28 @@ class BootstrapTests(unittest.TestCase):
         subprocess.run(['python3', '-c', script], check=True,
                        env=dict(os.environ, SANDBOX_SUBAGENTS='1' if subagents else '0'))
 
+    def test_bootstrap_retires_legacy_editor_copies_and_preserves_other_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared').mkdir()
+            legacy = ('cdervis.vscode-pi-0.94.2', 'pi-sandbox-factory.editor-startup-1.0.0')
+            for server in ('.vscode-server', '.vscode-server-insiders'):
+                extensions = root / 'home' / server / 'extensions'
+                for name in (*legacy, 'fixture.user-extension-1.0.0'):
+                    target = extensions / name
+                    target.mkdir(parents=True)
+                    (target / 'fixture.txt').write_text(name)
+            self.bootstrap(root)
+            self.bootstrap(root)
+            for server in ('.vscode-server', '.vscode-server-insiders'):
+                base = root / 'home' / server
+                self.assertTrue((base / 'extensions/fixture.user-extension-1.0.0/fixture.txt').is_file())
+                self.assertTrue((base / 'extensions/pi-sandbox-factory.editor-startup-1.1.0').is_symlink())
+                backup, = (base / 'factory-retired-extensions').iterdir()
+                for name in legacy:
+                    self.assertFalse((base / 'extensions' / name).exists())
+                    self.assertEqual((backup / name / 'fixture.txt').read_text(), name)
+
     def test_managed_ssh_guidance_tracks_saved_destinations_without_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

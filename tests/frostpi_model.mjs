@@ -14,6 +14,9 @@ http.createServer((request, response) => {
     const input = JSON.parse(body);
     const messages = input.messages;
     const last = messages.at(-1);
+    const userText = last.role === 'user'
+      ? (typeof last.content === 'string' ? last.content : last.content?.map(part => part.text ?? '').join('') ?? '')
+      : '';
     const context = JSON.stringify(messages);
     const tools = input.tools?.map(tool => tool.function.name) ?? [];
     let delta;
@@ -44,7 +47,19 @@ http.createServer((request, response) => {
       const answer = String(last.content);
       const delivered = ['"Pick a fruit"="Pear"', '"Pick another fruit"="Dragon fruit"',
         '"Pick several fruits"="Apple, Pear"'].every(segment => answer.includes(segment));
-      delta = { content: delivered ? 'FACTORY QUESTION ANSWERS RECEIVED' : 'UNEXPECTED QUESTION RESULT: ' + answer };
+      const outcome = answer.includes('User declined to answer questions')
+        ? 'FACTORY QUESTION DISMISSED' : 'UNEXPECTED QUESTION RESULT: ' + answer;
+      delta = { content: delivered ? 'FACTORY QUESTION ANSWERS RECEIVED' : outcome };
+    } else if (userText.startsWith('Factory chat ')) {
+      const label = userText.slice('Factory chat '.length);
+      if (label === 'steering initial') await new Promise(resolve => setTimeout(resolve, 2500));
+      delta = { content: 'CHAT REPLY ' + label };
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-goal_update-')) {
+      delta = { content: 'FACTORY GOAL COMPLETE' };
+    } else if (userText.includes('Revised Factory objective')) {
+      const token = userText.match(/Completion token: (\S+)\. Supply/)?.[1];
+      if (!token || !tools.includes('goal_update')) throw new Error('Resumed goal instructions missing');
+      delta = choice('goal_update', { token, status: 'complete', reason: 'Verified the revised synthetic objective.' });
     } else if (context.includes('Factory goal fixture')) {
       // Leave the goal running until the user exercises the pause command.
       if (!tools.includes('goal_update')) throw new Error('Goal tool missing from active session');

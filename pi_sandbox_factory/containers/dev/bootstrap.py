@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 os.umask(0o077)
 agent = Path('/home/node/.pi/agent')
@@ -254,6 +255,18 @@ for server in ('.vscode-server', '.vscode-server-insiders'):
     base = Path('/home/node') / server
     extensions = base / 'extensions'
     extensions.mkdir(parents=True, exist_ok=True)
+    # Previous Factory versions copied both extensions into the remote host.
+    # Preserve those copies outside VS Code's search directory for rollback.
+    legacy = [extensions / name for name in (
+        'cdervis.vscode-pi-0.94.2', 'pi-sandbox-factory.editor-startup-1.0.0',
+    )]
+    legacy = [target for target in legacy if target.is_dir() and not target.is_symlink()]
+    if legacy:
+        retired = base / 'factory-retired-extensions'
+        retired.mkdir(exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix='pendant-', dir=retired))
+        for target in legacy:
+            target.rename(backup / target.name)
     managed_editors = Path('/opt/editor-extensions')
     for target in extensions.iterdir():
         if target.is_symlink() and target.readlink().parent == managed_editors and not target.exists():

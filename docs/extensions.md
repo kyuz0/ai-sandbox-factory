@@ -23,6 +23,9 @@ Fixes and unit tests belong in the extension repositories. This repository manag
 
 Use `/goal revise <new objective>` while paused to edit the objective and keep the goal's accumulated usage.
 
+Use `/goal --turns 10 <objective>` to set a turn limit or `/goal --cost 1 <objective>`
+to set a limit in US dollars. Omit these options to start without a limit.
+
 Pause a goal before moving between clients, close the original chat, and resume the same Pi session in the other client. Previous Pendant chats can still be opened. To continue a Pendant goal, use its objective to create a goal in the shared extension.
 
 ## Questions in Pi and FrostPi

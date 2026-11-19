@@ -53,11 +53,92 @@ def check_cli_goal(name, session, usage, output):
                 break
         else:
             raise AssertionError('Pi CLI did not report the paused FrostPi goal')
+
+        send({'type': 'prompt', 'id': 'goal-resume', 'message': '/goal resume'})
+        deadline = time.monotonic() + 45
+        finished = False
+        while time.monotonic() < deadline:
+            event = events.get(timeout=max(0, deadline - time.monotonic()))
+            if event.get('type') == 'tool_execution_end' and event.get('toolName') == 'goal_update':
+                assert not event.get('isError') and 'Goal complete.' in json.dumps(event), event
+                finished = True
+            if event.get('type') == 'agent_settled' and finished:
+                break
+        assert finished, 'Resuming the revised goal did not complete it'
+        send({'type': 'prompt', 'id': 'goal-status-after-resume', 'message': '/goal status'})
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            event = events.get(timeout=max(0, deadline - time.monotonic()))
+            body = event.get('message', '')
+            if event.get('method') == 'notify' and isinstance(body, str) and 'Revised Factory objective' in body:
+                assert re.search(r'Goal:\s+complete', body), body
+                (output / 'cli-goal-complete.txt').write_text(body + '\n')
+                break
+        else:
+            raise AssertionError('Pi CLI did not retain the completed goal')
         pi.stdin.close()
         assert pi.wait(timeout=15) == 0
 
 
-def check(image, code_server, output, chromium, startup_only):
+def check_chat_workflows(page, frame, composer, send, inside, output):
+    def reply(text):
+        frame.get_by_text('CHAT REPLY ' + text, exact=True).wait_for(timeout=25000)
+        frame.get_by_role('button', name='Send to Pi', exact=True).wait_for(timeout=15000)
+
+    def sessions():
+        paths = inside('find', '/home/node/.pi/agent/sessions', '-type', 'f', '-name', '*.jsonl').splitlines()
+        return {path: inside('cat', path) for path in paths}
+
+    send('Factory chat original')
+    reply('original')
+    send('Factory chat original leaf')
+    reply('original leaf')
+    original = next(iter(sessions()))
+    message = frame.locator('article').filter(has_text='Factory chat original leaf').first
+    message.hover()
+    message.get_by_role('button', name='Branch from this prompt in the same session').click()
+    page.locator('.quick-input-list .monaco-list-row').filter(has_text='No summary').first.click()
+    frame.get_by_text('CHAT REPLY original leaf', exact=True).wait_for(state='hidden', timeout=15000)
+    send('Factory chat branch')
+    reply('branch')
+    assert list(sessions()) == [original]
+    frame.get_by_role('button', name=re.compile('Switch conversation branch')).last.click()
+    page.locator('.quick-input-list .monaco-list-row').filter(has_text='Factory chat original leaf').last.click()
+    page.locator('.quick-input-list .monaco-list-row').filter(has_text='No summary').first.click()
+    reply('original leaf')
+    assert not frame.get_by_text('CHAT REPLY branch', exact=True).count()
+
+    message.hover()
+    message.get_by_role('button', name='Fork session from this message').click()
+    frame.get_by_text('CHAT REPLY original leaf', exact=True).wait_for(state='hidden', timeout=15000)
+    send('Factory chat fork')
+    reply('fork')
+    histories = sessions()
+    assert len(histories) == 2, list(histories)
+    assert 'CHAT REPLY fork' not in histories[original]
+    assert 'CHAT REPLY fork' in next(history for path, history in histories.items() if path != original)
+    page.screenshot(path=str(output / 'fork.png'))
+
+    send('Factory chat steering initial')
+    frame.get_by_role('button', name='Stop Pi', exact=True).wait_for()
+    composer.fill('Factory chat steer')
+    frame.get_by_role('button', name='Choose streaming delivery').click()
+    frame.get_by_role('option', name=re.compile('Steer')).click()
+    frame.get_by_role('button', name='Send as Steer').click()
+    reply('steer')
+
+    frame.locator('button.session-heading').click()
+    session_list = frame.get_by_role('listbox', name='Open sessions', exact=True)
+    session_list.get_by_role('option', selected=False).click(timeout=15000)
+    frame.get_by_text('CHAT REPLY fork', exact=True).wait_for(state='hidden', timeout=15000)
+    reply('original')
+    send('Factory chat original continued')
+    reply('original continued')
+    assert 'CHAT REPLY original continued' in sessions()[original]
+    print('PASS Same-session branch and restore, separate fork, steering and independent continuation of the original chat.')
+
+
+def check(image, code_server, output, chromium, startup_only, chat_workflows):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     mode = startup_only or 'assisted'
@@ -152,6 +233,11 @@ p.write_text(json.dumps(v))
                     browser.close()
                     print(f'PASS {mode} mode notice before the first prompt without a configured model.')
                     return
+                if chat_workflows:
+                    check_chat_workflows(page, frame, composer, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
                 send('/auto-review-settings')
                 frame.get_by_role('button', name='Reviewer model', exact=True).wait_for(timeout=15000)
                 frame.get_by_role('button', name='Thinking effort', exact=True).wait_for(timeout=15000)
@@ -171,6 +257,11 @@ p.write_text(json.dumps(v))
                 frame.get_by_role('textbox', name=re.compile(r'Pick several fruits')).fill('1,2')
                 frame.get_by_role('button', name='Submit', exact=True).click()
                 frame.get_by_text('FACTORY QUESTION ANSWERS RECEIVED', exact=True).wait_for(timeout=25000)
+                send('Factory question fixture again')
+                pear.wait_for(timeout=25000)
+                frame.get_by_role('button', name='Cancel', exact=True).click()
+                frame.get_by_text('FACTORY QUESTION DISMISSED', exact=True).wait_for(timeout=25000)
+                assert not pear.is_visible()
                 send('Factory approval fixture')
                 card = frame.get_by_role('region', name='Prompt details')
                 card.wait_for(timeout=25000)
@@ -233,7 +324,7 @@ p.write_text(json.dumps(v))
             sessions = inside('find', '/home/node/.pi/agent/sessions', '-type', 'f', '-name', '*.jsonl').splitlines()
             assert len(sessions) == 1, sessions
             check_cli_goal(name, sessions[0], usage, output)
-            print('PASS Startup notice, question answers, full approval, deny and allow once in FrostPi, with revised goal restored in the Pi CLI.')
+            print('PASS Startup notice, question answers, full approval, deny and allow once in FrostPi, with revised goal restored and completed in the Pi CLI.')
         except Exception:
             log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'], text=True, capture_output=True)
             (output / 'fixture.log').write_text(log.stdout + log.stderr)
@@ -257,6 +348,8 @@ if __name__ == '__main__':
     parser.add_argument('--code-server', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
-    parser.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
+    scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     args = parser.parse_args()
-    check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium, args.startup_only)
+    check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium, args.startup_only, args.chat_workflows)
