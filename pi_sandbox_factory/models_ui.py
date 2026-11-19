@@ -323,7 +323,7 @@ class ModelDialog(ModalScreen):
         results.highlighted = None
         self.query_one('#model-test',Button).disabled = True
         self.query_one('#model-save',Button).disabled = True
-        self.query_one('#model-details',Static).update('Select a model to see its limits.' if self.filtered else 'No matching model. Refresh the catalogue or configure an unlisted model in Pendant.')
+        self.query_one('#model-details',Static).update('Select a model to see its limits.' if self.filtered else 'No matching model. Refresh the catalogue or add the model to Pi’s models.json.')
 
     @on(OptionList.OptionHighlighted,'#model-results')
     def highlighted(self,event):

@@ -14,7 +14,10 @@ spec.loader.exec_module(gate)
 class DependencyMainTests(unittest.TestCase):
     def test_shipped_git_dependencies_are_covered(self):
         pins = gate.dependency_pins(Path(__file__).resolve().parents[1])
-        self.assertEqual(set(pins), {'kyuz0/pi-packages', 'kyuz0/pi-advisor', 'kyuz0/pi-local-model-manager', 'kyuz0/pi-slack', 'juicesharp/rpiv-mono'})
+        self.assertEqual(set(pins), {
+            'kyuz0/pi-packages', 'kyuz0/pi-advisor', 'kyuz0/pi-local-model-manager',
+            'kyuz0/pi-slack', 'juicesharp/rpiv-mono', 'kyuz0/pi-vscode-ui',
+        })
 
     def test_main_ancestor_and_tip_pass_but_branch_only_commits_fail(self):
         for status in ('ahead', 'identical', 'behind', 'diverged', None):

@@ -6,7 +6,7 @@ project folder, choose your models and create a sandbox from the terminal UI.
 Network access is restricted by default; commands needing broader permissions
 go through approval and still run inside the container.
 
-The default editor runs in your browser with Pendant, the Pi chat extension.
+The default editor runs in your browser with FrostPi, the Pi chat extension.
 You can also use Pi CLI or host VS Code. Each sandbox keeps its own tools, model
 settings and conversations.
 
@@ -26,7 +26,7 @@ pi-sandbox-factory
 ```
 
 Open a new terminal if the command is not found. The first build downloads Pi,
-Pendant and their dependencies.
+FrostPi and their dependencies.
 
 ## Create a sandbox
 

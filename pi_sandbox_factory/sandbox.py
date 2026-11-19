@@ -29,7 +29,6 @@ from .sandbox_options import options, memory_limit, permissions, write_json, gui
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 PI_VERSION = '1.4.0'
-PENDANT_VERSION = '0.94.2'
 RUNTIME_ENV = {
     'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
     'http_proxy': 'http://127.0.0.1:3128', 'https_proxy': 'http://127.0.0.1:3128',
@@ -282,7 +281,7 @@ def network_mode(config):
 
 def base_tag(config):
     digest = config.get('common', {}).get('digest') or tree_digest(ROOT / 'containers/dev')
-    identity = f'{PI_VERSION}-{PENDANT_VERSION}-{config["uid"]}-{config["gid"]}-' + digest
+    identity = f'{PI_VERSION}-{config["uid"]}-{config["gid"]}-' + digest
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
@@ -301,7 +300,7 @@ def build(config):
     with sandbox_extensions.build_contexts(common['path']) as contexts:
         run([engine, 'build', '-t', base, *contexts, '--build-arg', f'USER_UID={config["uid"]}',
              '--build-arg', f'USER_GID={config["gid"]}', '--build-arg', f'PI_VERSION={PI_VERSION}',
-             '--build-arg', f'PENDANT_VERSION={PENDANT_VERSION}', common['path']])
+             common['path']])
     browser = options(config.get('options'))['browser']
     has_providers = 'model_providers' in config
     web = options(config.get('options'))['web_access']['enabled']
@@ -805,8 +804,8 @@ def create(args, state):
 
 def write_attach(config, state):
     attach = {'workspaceFolder': folders.container_cwd(config), 'remoteUser': 'node',
-              'extensions': ['cdervis.vscode-pi'],
-              'settings': {'pendant.agentDir': '/home/node/.pi/agent'},
+              'extensions': ['frostime.frostpi'],
+              'settings': {'frostpi.pi.executable': '/usr/local/bin/pi'},
               'remoteEnv': {'SSH_AUTH_SOCK': '', 'GIT_ASKPASS': '',
                             'SSH_ASKPASS': ''}}
     (state / 'attached-container.json').write_text(json.dumps(attach, indent=2) + '\n')
@@ -1053,7 +1052,7 @@ def open_editor(config, state):
             database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
             database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
                              ('views.customizations', json.dumps({
-                                 'viewContainerLocations': {'workbench.view.extension.pendant-container': 2},
+                                 'viewContainerLocations': {'workbench.view.extension.frostpi': 2},
                                  'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
                              })))
             # Equivalent to "Got It" for attaching in this dedicated profile.
@@ -1373,7 +1372,7 @@ def main():
             if result.returncode:
                 raise ValueError('Search key saved, but configuration refresh failed')
             activity.record(state, 'edited')
-            print('Search keys updated. Reload an open Pi or Pendant session.')
+            print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':
         update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups)
     elif args.command == 'policy':

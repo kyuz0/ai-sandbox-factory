@@ -13,13 +13,13 @@ discovers models on the host ports you select. See [local setup](usage.md#local-
 
 For OpenRouter, Together, Azure/Foundry and AWS Bedrock, use **Settings → Model Providers →
 Connect provider…**, or **Model Providers** during creation. Factory
-keeps their keys in a separate inference container and configures Pi/Pendant for you.
+keeps their keys in a separate inference container and configures Pi/FrostPi for you.
 See [hosted model setup](hosted-models.md) for deployment names and model selection.
 
 For another service, a provider package can declare its API routes and keep the
 same credential isolation. The adapter discovers models through a local proxy.
-Pendant's **Sign in → Custom** also supports manual endpoints, but credentials
-entered there live in the development container, and the endpoint must be allowed
+Pi’s `models.json` also supports manual endpoints. Its credentials live in the
+development container, and the endpoint must be allowed
 under **Settings → Network and Web Search → Network**.
 
 ## Install and select
@@ -67,7 +67,7 @@ saved model entries and credentials are preserved when a source is disabled.
 Local discovery adopts model entries at the selected host ports. Give each
 endpoint one provider package to avoid competing catalogue owners.
 
-Reload an open Pi/Pendant session after a launcher refresh, or use the provider's
+Reload an open Pi/FrostPi session after a launcher refresh, or use the provider's
 in-session refresh command.
 
 `provider update NAME` fetches its registered source. **Actions → Update sources
@@ -114,7 +114,7 @@ Preserve other providers and user customizations. Validate responses before
 writing, retain the old catalogue on failure, and replace files atomically.
 The runner serializes adapter calls and supplied extension commands using a shared
 lock. Use those paths for catalogue changes; background writers must coordinate
-with the same lock. Provider extensions load inside Pi/Pendant, never on the host.
+with the same lock. Provider extensions load inside Pi/FrostPi, never on the host.
 
 The example configures one text-only model. Replace its explicit context/output
 limits, input capabilities and API compatibility with your service's documented

@@ -32,6 +32,55 @@ python3 -m venv /tmp/pi-sandbox-package-check
 (cd /tmp && /tmp/pi-sandbox-package-check/bin/pi-sandbox-factory profile list)
 ```
 
+## FrostPi editor and shared Pi goals
+
+Build the Factory image from the current checkout in a disposable sandbox.
+Use the code-server archive pinned in `pi_sandbox_factory/browser_editor.py`.
+Extract it before the test. The browser check needs Podman, socat, Playwright,
+and its Chromium installation.
+
+```sh
+.venv/bin/pip install playwright
+.venv/bin/python -m playwright install chromium
+.venv/bin/python tests/frostpi_editor.py \
+  --image FACTORY_IMAGE --code-server /path/to/code-server-4.145.2-linux-amd64 \
+  --output /tmp/factory-frostpi
+```
+
+The test uses a network-disabled disposable container and synthetic local
+inference. It opens the installed editor on a fresh workspace, checks the
+approval mode before the first prompt, exercises a long reviewer rejection
+and verifies that keyboard scrolling reveals the full command and reason
+while both choices stay available. It confirms **Deny** blocks execution and **Allow this exact command once** runs the approved command.
+The test submits a choice, a custom answer and multiple choices through the shared
+question tool and checks the result delivered to the model.
+It also checks the installed goal tools, pauses and revises a goal in FrostPi, and
+checks the revised objective and usage after opening the same session in standalone Pi.
+Screenshots and the editor log remain in the output directory. Add
+`--startup-only automatic` to test first launch without a configured model. The
+same check accepts `assisted`, `manual`, and `off`.
+
+To try the branch without touching saved sandboxes, open the launcher with a
+fresh state directory.
+
+```sh
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/factory-frostpi.XXXXXX")
+mkdir "$test_root/workspace"
+.venv/bin/pi-sandbox-factory --state-dir "$test_root/state"
+```
+
+Select the new workspace, enable **Goals** and
+**Auto (interactive)**, and open it in the browser editor. Confirm the mode
+notice appears immediately. Use `/auto-review-settings` to view the current
+reviewer. Ask an action that triggers approval and inspect the command before
+choosing. To switch clients, pause your goal with `/goal pause`, close the chat,
+open Pi CLI, resume the same session, and run `/goal status` before resuming work.
+
+The checks below that reference Pendant require the earlier Pendant image and
+matching checkout (`v2026.11.18.220034`). They remain reproducible historical
+coverage. Use the FrostPi check above for the new editor. Standalone Pi and
+client-independent container checks below also apply to this branch.
+
 ## Container and Pendant integration
 
 Check process headroom with a cached Factory image:

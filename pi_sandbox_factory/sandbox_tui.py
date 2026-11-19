@@ -305,7 +305,7 @@ class Service:
         if result.returncode:raise ValueError('Provider operation failed. Check its settings and network access.')
         log(safe_text(result.stdout))
         if action not in ('status','preview'):
-            log('Reload an open Pi/Pendant session before selecting newly discovered models.')
+            log('Reload an open Pi/FrostPi session before selecting newly discovered models.')
 
     def provider_key_status(self, name, *, local=False):
         config = self.config(name)
@@ -386,7 +386,7 @@ class Service:
         self.start(name, log)
         self.run(['configure', name] + (['--preview'] if mode == 'preview' else []), log)
         if mode == 'refresh':
-            log('In an already open Pi/Pendant session, refresh there too before selecting a model with /model.')
+            log('In an already open Pi/FrostPi session, refresh there too before selecting a model with /model.')
 
 
 class WebsiteGroups(Vertical):
@@ -899,13 +899,13 @@ class ApprovalHelp(ModalScreen):
                     with Horizontal(classes='approval-mode-help'):
                         yield Label('•')
                         yield Static(Text.assemble((label, 'bold'), ' ', explanation), classes='approval-mode-description')
-                yield Static('Pi can ask in its terminal or in Pendant. If the reviewer fails to respond, '
+                yield Static('Pi can ask in its terminal or in FrostPi. If the reviewer fails to respond, '
                              'the action stays blocked in both Auto modes. Explicit sandbox and permission '
                              'blocks and the container’s network rules apply in every mode.',
                              classes='setting-help approval-help-note')
-                yield Static('In either Auto mode, use /auto-review-settings in Pi or Pendant to change the reviewer '
+                yield Static('In either Auto mode, use /auto-review-settings in Pi or FrostPi to change the reviewer '
                              'model or thinking effort for the current chat.', classes='setting-help approval-help-note')
-                yield Static('Select Apply and recreate to use these settings in Pi and Pendant.' if self.editing else
+                yield Static('Select Apply and recreate to use these settings in Pi and FrostPi.' if self.editing else
                              f'Change these settings later in Settings → {CATEGORIES["approval-settings"].label}.',
                              classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
@@ -2147,8 +2147,11 @@ class SettingsForm(Screen):
                 yield Static('Not isolation from malicious editor or Pi extensions with the same user permissions. Active browser sessions remain accessible to browser automation.', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
                 yield Checkbox('Question forms', value=selected['question_forms'], id='question-forms')
-                yield Static('Let Pi and Pendant ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
-            yield Checkbox('Pendant goals', value=selected['goals'], id='goals')
+                yield Static('Let Pi and FrostPi ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
+            with Vertical(classes='setting'):
+                yield Checkbox('Goals', value=selected['goals'], id='goals')
+                yield Static('Use /goal to save an objective and keep working toward it across turns.',
+                             classes='setting-help checkbox-help')
             yield Checkbox('Scheduled prompts in the current chat', value=selected['scheduling'], id='scheduling')
 
     def compose_skills(self, category, value, selected):
@@ -2608,7 +2611,7 @@ class SettingsForm(Screen):
 
 def banner(version, compact=False):
     title = 'Pi Sandbox Factory' if compact else pyfiglet.figlet_format('Pi Sandbox Factory', font='big', width=120).rstrip()
-    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Pi and Pendant development environments · v{version}[/]'
+    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Pi and FrostPi development environments · v{version}[/]'
 
 
 class Cockpit(App):
@@ -2673,6 +2676,7 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on > .toggle--button { color: white; text-style: bold; }
     Checkbox:focus > .toggle--label { color: #171a1d; background: #f2b544; text-style: bold underline; }
     Checkbox:focus > .toggle--button { color: #171a1d; background: #f2b544; }
+    Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }

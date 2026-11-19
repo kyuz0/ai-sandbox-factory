@@ -356,6 +356,10 @@ async def capture(size):
                         for part in ('browser', 'goals', 'compaction-recall'):
                             screen.query_one('#skills-section', Collapsible).collapsed = False
                             await shot('model-settings-' + context + '-tools-' + part, focus='#' + part)
+                        goals_off = 'model-settings-' + context + '-tools-goals-off'
+                        if args.only and goals_off in args.only:
+                            screen.query_one('#goals', Checkbox).value = False
+                            await shot(goals_off, focus='#goals')
                         await app.pop_screen()
                     await shot('model-settings-open-with', EditorScreen('demo'))
                     await shot('model-settings-menu', SettingsMenu('demo'))

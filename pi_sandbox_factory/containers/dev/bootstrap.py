@@ -16,7 +16,7 @@ for source in sorted(shared.iterdir()):
         continue
     # Sessions, OAuth refreshes, trust decisions, and settings need writable storage.
     if source.name in {'sessions', 'models.json',
-                       'auth.json', 'web-search.json', 'settings.json', 'trust.json', 'APPEND_SYSTEM.md', 'pendant-goals.json'}:
+                       'auth.json', 'web-search.json', 'settings.json', 'trust.json', 'APPEND_SYSTEM.md'}:
         target = agent / source.name
         # Migrate writable configuration links created by older versions.
         migrate = (source.name in {'models.json', 'web-search.json', 'APPEND_SYSTEM.md'} and target.is_symlink()
@@ -72,7 +72,7 @@ settings = json.loads(settings_file.read_text())
 # Replace legacy registrations with the image-managed versions. Pi rejects
 # duplicate Bash tools; a raw scheduler would expose an independent-agent path.
 managed_packages = ('pi-sandbox', '@erichll/pi-sandbox', '@erichll/pi-auto-review',
-                    '@gotgenes/pi-permission-system', 'pi-goal', 'pi-schedule-prompt', 'betterwright', 'pi-web-access', '@dreki-gg/pi-slack', 'pi-compaction-recall', '@juicesharp/rpiv-ask-user-question')
+                    '@gotgenes/pi-permission-system', 'pi-goal', '@ethanthoma/pi-goal', 'pi-schedule-prompt', 'betterwright', 'pi-web-access', '@dreki-gg/pi-slack', 'pi-compaction-recall', '@juicesharp/rpiv-ask-user-question')
 
 def managed_package(resource):
     source = resource.get('source') if isinstance(resource, dict) else resource
@@ -132,6 +132,10 @@ resource_state.write_text(json.dumps(image_resources))
 resource_state.chmod(0o600)
 managed['extensions'].add('/opt/pi-security/node_modules/pi-goal/.pi/extensions/pi-goal/index.ts')
 managed['skills'].add('/opt/pi-security/node_modules/pi-goal/skills')
+goal_extension = '/opt/pi-goal/index.js'
+managed['extensions'].add(goal_extension)
+if goals_enabled:
+    image_resources['extensions'].append(goal_extension)
 managed['extensions'].add('/opt/pi-advisor/extensions/advisor.js')
 managed['skills'].add('/opt/pi-advisor/skills/advisor')
 managed['extensions'].update(['/opt/pi-security/approval-mode.ts', '/opt/pi-security/packages/pi-auto-review/src/container-approval-mode.ts'])
@@ -188,16 +192,6 @@ if subagents_enabled and Path(subagent_extensions[-1]).exists():
     if '/opt/pi-security/agents' not in scan_dirs:
         scan_dirs.append('/opt/pi-security/agents')
 settings_file.write_text(json.dumps(settings, indent=2) + '\n')
-
-# The launcher Goals switch controls Pendant's built-in goals.
-goal_file = agent / 'pendant-goals.json'
-goal_settings = json.loads(goal_file.read_text()) if goal_file.exists() else {}
-goal_settings['enabled'] = goals_enabled
-temporary = agent / '.pendant-goals.json.new'
-temporary.unlink(missing_ok=True)
-temporary.write_text(json.dumps(goal_settings, indent=2) + '\n')
-temporary.chmod(0o600)
-temporary.replace(goal_file)
 
 # Pi natively reads this file; preserve user instructions around the managed block.
 profile = Path('/opt/sandbox/profile.md')
@@ -260,18 +254,20 @@ for server in ('.vscode-server', '.vscode-server-insiders'):
     base = Path('/home/node') / server
     extensions = base / 'extensions'
     extensions.mkdir(parents=True, exist_ok=True)
-    for source in [*Path('/opt/pendant').iterdir(), *Path('/opt/editor-extensions').glob('*')]:
+    managed_editors = Path('/opt/editor-extensions')
+    for target in extensions.iterdir():
+        if target.is_symlink() and target.readlink().parent == managed_editors and not target.exists():
+            target.unlink()
+    for source in managed_editors.glob('*'):
         target = extensions / source.name
-        if not target.exists():
-            shutil.copytree(source, target)
+        if not target.exists() and not target.is_symlink():
+            target.symlink_to(source, target_is_directory=True)
     machine = base / 'data/Machine/settings.json'
     machine.parent.mkdir(parents=True, exist_ok=True)
     settings = json.loads(machine.read_text()) if machine.exists() else {}
-    # Pendant embeds Pi; these removed settings no longer select a runtime.
-    for obsolete in ('pendant.runtimeSource', 'pendant.binaryPath', 'pendant.nodePath'):
-        settings.pop(obsolete, None)
     settings.update({
-        'pendant.agentDir': str(agent),
+        'frostpi.pi.executable': '/usr/local/bin/pi',
+        'frostpi.questionTool.enabled': False,
         'python.defaultInterpreterPath': (os.environ['VIRTUAL_ENV'] + '/bin/python'
                                           if os.environ.get('VIRTUAL_ENV') else '/usr/bin/python3'),
         'http.proxy': ('http://127.0.0.1:3128' if os.environ.get('SANDBOX_NETWORK_MODE') != 'unrestricted' else ''),

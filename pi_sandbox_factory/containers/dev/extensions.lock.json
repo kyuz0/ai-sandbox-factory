@@ -12,6 +12,10 @@
     "rpiv-ask-user-question": {
       "repository": "https://github.com/juicesharp/rpiv-mono.git",
       "commit": "46dbdfd78ab631bbf3ce41c2618bb173a5ec2725"
+    },
+    "frostpi": {
+      "repository": "https://github.com/kyuz0/pi-vscode-ui.git",
+      "commit": "4c1deda1c15d45c159b0a557734972e916aefb6d"
     }
   }
 }

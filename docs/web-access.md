@@ -2,7 +2,7 @@
 
 Enable **Web Search** when creating a sandbox or through **Settings → Network and Web Search → Web Search**. This installs
 [pi-web-access](https://github.com/nicobailon/pi-web-access) and adds `web_search`
-and `fetch_content` to Pi and Pendant.
+and `fetch_content` to Pi and FrostPi.
 
 **Search mode** starts with **Automatic fallback** and keyless Exa. Add OpenAI,
 Brave, Tavily or a SearXNG server with **Add provider**. Exa accepts an optional
@@ -84,12 +84,12 @@ matched to the provider and endpoint and are never included in `cockpit.json`,
 profile packages or exported options. Removing a key and saving defaults again
 removes it from the reusable configuration.
 
-## Pi and Pendant settings
+## Pi and FrostPi settings
 
 Both use the sandbox’s `~/.pi/agent/web-search.json`. The manager sets the chosen
 providers, search mode, restricted-network proxy and direct page fetching. It preserves manual
 advanced settings across ordinary restarts, but changing managed search settings
-replaces the generated configuration. Reload an open Pi/Pendant session after
+replaces the generated configuration. Reload an open Pi/FrostPi session after
 changing it. See the extension’s [configuration reference](https://github.com/nicobailon/pi-web-access#configuration)
 for additional providers. Add their endpoints in **Settings → Network and Web Search → Network**.
 

@@ -2,7 +2,7 @@
 
 ## Files and processes
 
-The terminal manager runs on the host and manages rootless Podman containers. The default browser editor runs its backend, Pendant and Pi inside the development container. Optional desktop VS Code runs on the host and attaches through Dev Containers. The selected host folder is mounted at `/workspace`, so edits are real changes to that folder.
+The terminal manager runs on the host and manages rootless Podman containers. The default browser editor runs its backend, FrostPi and Pi inside the development container. Optional desktop VS Code runs on the host and attaches through Dev Containers. The selected host folder is mounted at `/workspace`, so edits are real changes to that folder.
 
 Desktop VS Code and its extensions remain trusted host software. A remote extension
 can use VS Code APIs that request client-side resources; Dev Containers alone is
@@ -30,7 +30,7 @@ Updating allowed destinations restarts only the gateway. Existing network reques
 
 ```mermaid
 flowchart LR
-    PI[Pi / Pendant / browser-editor extensions] -->|local API, placeholder token| SOCKET[Read-only Unix socket mount]
+    PI[Pi / FrostPi / browser-editor extensions] -->|local API, placeholder token| SOCKET[Read-only Unix socket mount]
     SOCKET --> PROXY[Inference companion]
     KEYS[Private credential volume] --> PROXY
     PROXY -->|HTTPS with real authentication| API[Configured provider API]
@@ -75,7 +75,7 @@ The inner sandbox restricts shell commands. Pi and its extensions run outside it
 inside the development container. Disabling it leaves the outer container and
 network restrictions in place.
 
-Skills supply task instructions. Extensions add capabilities such as model discovery, questions and scheduled prompts. Pendant provides built-in goals. Browser support and subagents are optional. Scheduled prompts run only while their originating Pi session is open.
+Skills supply task instructions. Extensions add capabilities such as model discovery, questions and scheduled prompts. The shared Pi goal extension is available in both clients. Browser support and subagents are optional. Scheduled prompts run only while their originating Pi session is open.
 
 ## Packages
 
@@ -86,7 +86,7 @@ only after the new image builds successfully.
 
 A profile adds tools and Pi resources. A provider adds a small adapter run inside
 the development container, plus optional Pi extensions and skills. Both Pi and
-Pendant use the private home catalogue. A shared lock serializes model updates;
+FrostPi use the private home catalogue. A shared lock serializes model updates;
 credentials enter through stdin and are never included in image layers.
 
 ## Browser access

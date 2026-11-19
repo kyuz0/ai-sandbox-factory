@@ -5,7 +5,7 @@ and [platform setup](platforms.md) for prerequisites. `--version` prints the
 installed version. Pipx installations can update from the manager; source checkouts
 use Git and a package reinstall.
 
-Select **New sandbox**, choose a name and workspace, review settings, then create the sandbox. The base profile includes Pi, Pendant with built-in goals, and document tools. Install additional profiles through **Library…**, or select a custom profile folder.
+Select **New sandbox**, choose a name and workspace, review settings, then create the sandbox. The base profile includes Pi, the FrostPi editor, goal tools, and document tools. Install additional profiles through **Library…**, or select a custom profile folder.
 
 **Create from existing…**, beside **New sandbox**, lets you reuse a saved setup.
 Choose the source, enter a new name and workspace, then review its profile, model
@@ -70,7 +70,7 @@ For a sandbox you have already created:
    then choose **Approval mode**. **Explain** compares all four modes. Leave
    credential protection enabled unless the agent may read and change `.env`,
    private keys and similar workspace files.
-4. Select **Apply and recreate**, then reopen Pi or Pendant and resume your saved chat.
+4. Select **Apply and recreate**, then reopen Pi or FrostPi and resume your saved chat.
 
 Applying these settings stops running commands and tmux sessions. Workspace files,
 private configuration and saved conversations are preserved. Finish active work
@@ -127,7 +127,7 @@ open Pi or VS Code. Removing a folder disconnects it without deleting its files.
 **Create from existing…** includes the extra folders for review and resets the
 starting folder to the new workspace root.
 
-Pi and Pendant receive the container paths and access modes through managed
+Pi and FrostPi receive the container paths and access modes through managed
 context in their private `~/.pi/agent/AGENTS.md`. Project instructions remain in
 place. Read-only access is enforced by the container, including for approved
 commands; writable folders also receive the inner sandbox’s usual protections
@@ -165,7 +165,7 @@ until you change or disconnect their assignments.
 
 The workstation index stores names and endpoints. The inference companion
 stores its active keys in a permission-restricted, unencrypted file in its
-private volume. Pi and Pendant connect through the inference proxy with
+private volume. Pi and FrostPi connect through the inference proxy with
 placeholder credentials.
 
 ## Local models
@@ -174,7 +174,7 @@ During creation or in **Settings → Model Providers → Local models & provider
 enable **Connect to models on this computer** and enter the server ports, such as `8000` or `8000-8002`.
 Factory uses [Pi Local Model Manager](https://github.com/kyuz0/pi-local-model-manager)
 to discover models and configure their context, image and thinking support in
-Pi and Pendant.
+Pi and FrostPi.
 
 If a local server requires a bearer API key, open **Local server keys…** and
 choose its port. Enter a key or pick a saved key for that port. Leave the other
@@ -183,7 +183,7 @@ with that server's `/v1/models` endpoint and supplies it for discovery and chat.
 For a sandbox created before this feature, use **Actions → Update sources and
 recreate…** once. Later key changes take effect on the next request.
 
-Choose a model in Pendant’s picker or with `/model`. After changing the running
+Choose a model in FrostPi’s picker or with `/model`. After changing the running
 model, use `/local-models refresh` or **Settings → Model Providers → Refresh**.
 
 ## CLI and storage
@@ -246,7 +246,7 @@ an allowed endpoint to check connectivity in that mode.
 ## See and interact with the agent’s browser
 
 Enable **Browser** when creating the sandbox, then open it normally. Ask Pi or
-Pendant to show its browser. Its local link opens the live browser window,
+FrostPi to show its browser. Its local link opens the live browser window,
 including the tab bar and popup windows. Type, click, navigate and switch tabs
 normally. When you have finished, tell the agent to continue; it keeps the same
 browser state.
@@ -275,7 +275,7 @@ Lite adds no automatic history hints.
 Choose **Conversation recall** under **Agent tools** during creation
 or under **Settings → Agent tools** for an existing sandbox. **Full**
 adds automatic hints and may reduce prefix-cache reuse. **Off** disables recall.
-The selection applies to both Pi CLI and Pendant.
+The selection applies to both Pi CLI and FrostPi.
 For CLI creation, use `"compaction_recall": "lite"`, `"full"` or `"off"` in the
 JSON passed to `--options-file`.
 

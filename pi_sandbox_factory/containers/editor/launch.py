@@ -36,7 +36,7 @@ extensions.mkdir(exist_ok=True)
 for target in extensions.iterdir():
     if target.is_symlink() and str(target.readlink()).startswith(('/opt/pendant/', '/opt/editor-extensions/')) and not target.exists():
         target.unlink()
-for source in [*Path('/opt/pendant').iterdir(), *Path('/opt/editor-extensions').glob('*')]:
+for source in Path('/opt/editor-extensions').glob('*'):
     target = extensions / source.name
     if not target.exists():
         target.symlink_to(source, target_is_directory=True)
@@ -61,7 +61,7 @@ with sqlite3.connect(storage) as database:
     database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
     database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
                      ('views.customizations', json.dumps({
-                         'viewContainerLocations': {'workbench.view.extension.pendant-container': 2},
+                         'viewContainerLocations': {'workbench.view.extension.frostpi': 2},
                          'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
                      })))
 # The selected workspace is trusted; other container folders keep normal trust checks.

@@ -876,7 +876,7 @@ class TUITests(unittest.TestCase):
             await pilot.press('end')
             await pilot.pause(0.35)
             self.assertLessEqual(list(help_box.query(Static))[-1].region.bottom, help_box.content_region.bottom)
-            self.assertIn('Apply and recreate to use these settings in Pi and Pendant.',
+            self.assertIn('Apply and recreate to use these settings in Pi and FrostPi.',
                           str(list(help_box.query(Static))[-1].render()))
             close = app.screen.query_one('#close-approval-help', Button)
             self.assertLess(close.region.bottom, app.size.height)

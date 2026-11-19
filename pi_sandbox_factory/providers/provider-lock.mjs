@@ -5,7 +5,7 @@ export async function locked(agentDir,fn){
   await mkdir(agentDir,{recursive:true,mode:0o700});
   const path=join(agentDir,'models.refresh.lock');
   let file;
-  try{file=await open(path,'wx',0o600)}catch(e){if(e.code==='EEXIST')throw Error('A model refresh is already running. If it was interrupted, close Pi/Pendant and remove models.refresh.lock from the private agent directory.');throw e}
+  try{file=await open(path,'wx',0o600)}catch(e){if(e.code==='EEXIST')throw Error('A model refresh is already running. If it was interrupted, close Pi/FrostPi and remove models.refresh.lock from the private agent directory.');throw e}
   try{await file.writeFile(String(process.pid));return await fn()}finally{await file.close();await unlink(path)}
 }
 export function guard(pi){

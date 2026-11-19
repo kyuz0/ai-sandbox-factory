@@ -83,8 +83,8 @@ models = Path('/home/node/.pi/agent/models.json')
 require(models.is_file() and not models.is_symlink() and os.access(models, os.W_OK),
         'models.json is a private writable regular file')
 require(models.stat().st_mode & 0o077 == 0, 'models.json permissions are owner-only')
-require(bool(list(Path('/home/node/.vscode-server/extensions').glob('cdervis.vscode-pi-*/package.json'))),
-        'Pendant extension preloaded')
+require(bool(list(Path('/home/node/.vscode-server/extensions').glob('frostime.frostpi-*/package.json'))),
+        'FrostPi extension preloaded')
 pi_package = Path('/usr/local/lib/node_modules/@earendil-works/pi-coding-agent')
 pi_binary = json.loads((pi_package / 'package.json').read_text())['bin']['pi']
 require(Path('/usr/local/bin/pi').resolve() == pi_package / pi_binary,

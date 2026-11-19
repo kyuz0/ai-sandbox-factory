@@ -53,7 +53,7 @@ class EditorFields(Vertical):
                         yield Button('Generate', id='editor-generate')
                     yield Checkbox('Show password', id='editor-show-password')
             with Vertical(id='editor-tls-fields'):
-                yield Static('Access from another computer requires a password and HTTPS for Pendant to work.', classes='section-intro')
+                yield Static('Access from another computer requires a password and HTTPS for FrostPi to work.', classes='section-intro')
                 with Vertical(classes='setting'):
                     yield Label('HTTPS certificate file on this host')
                     yield Input(self.value.get('certificate', ''), id='editor-certificate')

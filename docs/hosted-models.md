@@ -15,14 +15,13 @@ selected editor.
 
 Pi’s catalogue supplies context limits, output limits, image support and reasoning
 settings. Bedrock profile ARNs must use the configured AWS
-region. For models absent from the catalogue, use Pendant’s custom-provider form
-or Pi’s `models.json`; see [custom providers](providers.md#hosted-services).
+region. For models absent from the catalogue, use Pi’s `models.json`; see [custom providers](providers.md#hosted-services).
 
 Use **Test selected model** to check the connection with a short prompt.
 
 ## Credential isolation
 
-Factory stores these credentials in a separate inference container. Pi, Pendant
+Factory stores these credentials in a separate inference container. Pi, FrostPi
 and browser-editor extensions receive a local API endpoint and a placeholder token.
 The companion adds the real key, or signs AWS requests, before sending them to the
 configured service.
@@ -34,11 +33,11 @@ route and authentication controls.
 
 Code inside the sandbox can use the configured models and consume account quota.
 Use provider-side budgets and account permissions to limit that access. Keys entered
-manually in Pendant, Pi or workspace files remain readable inside the sandbox; use
+manually in FrostPi, Pi or workspace files remain readable inside the sandbox; use
 Factory's connection form for isolated credentials.
 
 Replacing a key keeps both containers running. Changing endpoints or routes restarts
-the inference companion. Reopen Pi/Pendant after changing models or endpoints; an
+the inference companion. Reopen Pi/FrostPi after changing models or endpoints; an
 existing chat retains its selected model.
 
 Use **Connection…** to replace a key or expired AWS session. Leave credential fields
