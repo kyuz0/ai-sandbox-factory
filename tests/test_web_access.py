@@ -163,6 +163,23 @@ class WebAccessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             options({'website_groups': ['dev-python', 'dev-python']})
 
+    def test_extension_marketplaces_are_an_opt_in_bundled_category(self):
+        name = 'dev-vscode-extensions'
+        self.assertNotIn(name, options()['website_groups'])
+        with patch.object(groups, 'fetch', side_effect=AssertionError('Bundled extension routes must stay offline')):
+            selected = groups.snapshots([name])
+        domains = selected[name]['domains']
+        self.assertEqual(set(domains), {
+            'open-vsx.org', 'openvsx.eclipsecontent.org', 'marketplace.visualstudio.com',
+            '.gallery.vsassets.io', '.gallerycdn.vsassets.io',
+        })
+        restricted = sandbox.squid_config([])
+        with_extensions = sandbox.squid_config([], selected)
+        for domain in domains:
+            self.assertIn(domain, with_extensions)
+            self.assertNotIn(domain, restricted)
+        self.assertIn('http_access deny category_hosts category_private', with_extensions)
+
     def test_microsoft_auth_is_opt_in_and_keeps_login_rules_focused(self):
         self.assertNotIn('auth-microsoft', options()['website_groups'])
         self.assertEqual(options({'website_groups': ['auth-microsoft']})['website_groups'], ['auth-microsoft'])

@@ -36,6 +36,10 @@ including when networking is unrestricted.
 
 ## Website categories
 
+Each group has an **Allow all** checkbox that selects every category listed in
+that group. Clear it to deselect them together, or use the individual checkboxes.
+Factory saves the selected categories by name.
+
 Under **Authentication**, select **Microsoft Entra / Microsoft 365** for Microsoft
 public-cloud sign-in, MFA, password reset and authentication CDN hosts. This
 includes `login.microsoftonline.com`, `login.live.com` and the `aadcdn` hosts under
@@ -46,7 +50,14 @@ and the authentication entries in its
 It is updated with Factory releases. Add your application's host and any
 company-specific federation/ADFS host as individual allowed destinations.
 
-Developer groups come from
+Under **Developer services**, select **VS Code extensions** to allow extension
+catalogue requests and downloads from Open VSX for the browser editor and the
+Visual Studio Marketplace for desktop VS Code. An extension that downloads
+additional tools or data may need another allowed destination.
+[code-server FAQ](https://coder.com/docs/code-server/FAQ) ·
+[VS Code network connections](https://code.visualstudio.com/docs/setup/network)
+
+The other developer categories come from
 [V2Fly domain-list-community](https://github.com/v2fly/domain-list-community):
 Python, npm, Rust, GitHub, Hugging Face, Stack Exchange and Read the Docs. Broader categories
 come from [UT1 Toulouse](https://dsi.ut-capitole.fr/blacklists/), through its

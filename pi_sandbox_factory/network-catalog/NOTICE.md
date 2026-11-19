@@ -1,6 +1,6 @@
 # Category data
 
-Developer groups are derived from V2Fly domain-list-community, copyright
+V2Fly developer groups are derived from V2Fly domain-list-community, copyright
 2018–2019 V2Ray, under the MIT license in V2FLY-LICENSE.
 https://github.com/v2fly/domain-list-community
 
@@ -19,3 +19,7 @@ The Microsoft authentication group is a curated list of hostnames from Microsoft
 public-cloud authentication documentation and Microsoft 365 endpoint sets 56, 59
 and 97. Source URLs and the review date are recorded in groups.json. This group
 is updated with Factory releases rather than downloaded from V2Fly or UT1.
+
+The VS Code extensions group bundles the Open VSX registry and download host,
+and Microsoft's Visual Studio Marketplace and gallery download domains. The
+source URLs are recorded in groups.json.

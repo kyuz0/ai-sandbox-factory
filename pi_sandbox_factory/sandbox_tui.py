@@ -404,7 +404,17 @@ class Service:
 
 
 class WebsiteGroups(Vertical):
-    DEFAULT_CSS = "WebsiteGroups { height: auto; }"
+    DEFAULT_CSS = """
+    WebsiteGroups, .website-category-group { height: auto; }
+    .website-category-heading { height: 1; margin: 0 0 1 0; }
+    .website-category-heading > Label { width: 22; }
+    .website-category-heading > Checkbox { width: auto; margin: 0; }
+    """
+    GROUPS = (
+        ('auth', 'Authentication'),
+        ('dev', 'Developer services'),
+        ('ut1', 'Topics'),
+    )
 
     def __init__(self, names):
         super().__init__()
@@ -412,19 +422,40 @@ class WebsiteGroups(Vertical):
 
     def compose(self):
         with Collapsible(title='Website categories · optional', collapsed=True):
-            yield Static('Categories allow HTTP/HTTPS access. Authentication lists ship with Factory; V2Fly and UT1 lists refresh automatically.', classes='section-intro')
-            for prefix, title in [('auth-', 'Authentication · curated'), ('dev-', 'Developer services · V2Fly'), ('ut1-', 'Topics · UT1 Toulouse')]:
-                yield Label(title, classes='group-title')
-                for name, group in network_groups.catalog().items():
-                    if name.startswith(prefix):
+            yield Static('Allow all selects every category in its group for HTTP and HTTPS access.', classes='section-intro')
+            yield Static('Authentication and VS Code extension lists ship with Factory. Other developer lists refresh automatically from V2Fly, and topic lists from UT1 Toulouse.', classes='section-intro')
+            catalog = network_groups.catalog()
+            for prefix, title in self.GROUPS:
+                entries = [(name, group) for name, group in catalog.items() if name.startswith(prefix + '-')]
+                with Vertical(id='website-category-' + prefix, classes='website-category-group'):
+                    with Horizontal(classes='website-category-heading'):
+                        yield Label(title, classes='group-title')
+                        yield Checkbox('Allow all', value=all(name in self.names for name, _ in entries),
+                                       id='category-all-' + prefix)
+                    for name, group in entries:
                         with Vertical(classes='setting'):
-                            yield Checkbox(group['title'], value=name in self.names, id='category-' + name)
+                            yield Checkbox(group['title'], value=name in self.names, id='category-' + name,
+                                           classes='website-category-member')
                             yield Static(group['description'], classes='setting-help checkbox-help')
 
     def on_mount(self):
         self.update_title()
 
     @on(Checkbox.Changed)
+    def selection_changed(self, event):
+        control = event.checkbox
+        group = control.query_ancestor('.website-category-group')
+        bulk = group.query_one('.website-category-heading Checkbox', Checkbox)
+        members = group.query('Checkbox.website-category-member')
+        if control is bulk:
+            for member in members:
+                with member.prevent(Checkbox.Changed):
+                    member.value = event.value
+        else:
+            with bulk.prevent(Checkbox.Changed):
+                bulk.value = all(member.value for member in members)
+        self.update_title()
+
     def update_title(self):
         count = len(self.selected())
         self.query_one(Collapsible).title = 'Website categories · ' + (f'{count} selected' if count else 'optional')
@@ -815,6 +846,11 @@ class NetworkRulesFields(Vertical):
                 if self.profile:
                     yield Button('Profile defaults', id='reset-rules')
             yield Feedback('', id='network-file-error')
+
+    @on(TextArea.Changed, '#allowlist')
+    def clear_destination_error(self, event):
+        event.text_area.remove_class('-invalid')
+        self.query_one('#network-error', Feedback).update('')
 
     @on(Button.Pressed, '#network-import, #network-export, #reset-rules')
     def import_export(self, event):
@@ -2747,8 +2783,10 @@ class SettingsForm(Screen):
                 self.query_one('#network-search-section', Collapsible).collapsed = False
                 self.query_one('#network-section', Collapsible).collapsed = False
                 feedback = self.query_one('#network-error', Feedback)
-                self.query_one('#allowlist', TextArea).focus()
-                feedback.update(str(error))
+                field = self.query_one('#allowlist', TextArea)
+                field.add_class('-invalid')
+                field.focus()
+                feedback.update(str(error).replace('Allowlist line ', 'Line ', 1))
                 self.call_after_refresh(feedback.scroll_visible, animate=False)
             raise
 
@@ -3096,9 +3134,10 @@ class Cockpit(App):
     .provider-details > *:last-child { margin-bottom: 0; }
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
-    #model-ports-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
-    #model-ports.-invalid, #model-ports.-invalid:focus { border: double $error; }
-    Screen:nocolor #model-ports-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
+    #model-ports-error, #network-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports.-invalid, #model-ports.-invalid:focus,
+    #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
+    Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #managed-provider-key, ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     .provider-setting Input.-invalid-credential { border: tall $error; }

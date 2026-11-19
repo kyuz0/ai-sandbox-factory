@@ -1449,6 +1449,76 @@ class WebAccessUITests(unittest.TestCase):
             call = app.service.calls[-1]
             self.assertEqual(call[-2:], ['--website-groups', 'ut1-press'])
 
+    async def test_allow_all_is_scoped_and_saves_explicit_categories(self):
+        from pi_sandbox_factory.sandbox_tui import WebsiteGroups, network_groups
+        from textual.widgets import Label
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            record = copy.deepcopy(self.records[0])
+            record['config']['options'] = {'website_groups': ['dev-python']}
+            app.perform_action('network-settings', record=record)
+            await pilot.pause()
+            app.screen.query_one('#network-section', Collapsible).collapsed = False
+            groups = app.screen.query_one(WebsiteGroups)
+            groups.query_one(Collapsible).collapsed = False
+            await pilot.pause()
+
+            async def toggle(control):
+                control.focus()
+                await pilot.press('space')
+                await pilot.pause()
+
+            developers = groups.query_one('#category-all-dev', Checkbox)
+            marketplace = groups.query_one('#category-dev-vscode-extensions', Checkbox)
+            label = developers.label
+            self.assertEqual(label.plain, 'Allow all')
+            for heading in groups.query('.website-category-heading'):
+                title = heading.query_one(Label)
+                control = heading.query_one(Checkbox)
+                self.assertEqual(title.region.y, control.region.y)
+                self.assertGreaterEqual(control.region.x - title.region.x - len(title.render().plain), 2)
+                self.assertLessEqual(control.region.right, heading.region.right)
+            developer_names = [name for name in network_groups.catalog() if name.startswith('dev-')]
+            self.assertFalse(developers.value)
+            self.assertEqual(groups.selected(), ['dev-python'])
+            await toggle(developers)
+            self.assertTrue(developers.value)
+            self.assertEqual(developers.label, label)
+            self.assertEqual(groups.selected(), developer_names)
+            await toggle(marketplace)
+            self.assertFalse(developers.value)
+            self.assertEqual(groups.selected(), [name for name in developer_names if name != 'dev-vscode-extensions'])
+            await toggle(marketplace)
+            self.assertTrue(developers.value)
+
+            for prefix in ('auth', 'ut1'):
+                control = groups.query_one(f'#category-all-{prefix}', Checkbox)
+                names = [name for name in network_groups.catalog() if name.startswith(prefix + '-')]
+                await toggle(control)
+                self.assertEqual(set(groups.selected()), set(developer_names + names))
+                await toggle(control)
+                self.assertEqual(groups.selected(), developer_names)
+
+            await toggle(developers)
+            self.assertEqual(groups.selected(), [])
+            await toggle(marketplace)
+            rules = app.screen.query_one('#allowlist', TextArea)
+            rules.load_text('bad-host')
+            await pilot.pause()
+            app.screen.query_one('#apply', Button).press()
+            await pilot.pause()
+            self.assertTrue(rules.has_class('-invalid'))
+            self.assertIn('Line 1:', app.screen.query_one('#network-error').render().plain)
+            rules.load_text('example.com:443')
+            await pilot.pause()
+            self.assertFalse(rules.has_class('-invalid'))
+            self.assertFalse(app.screen.query_one('#network-error').display)
+            app.screen.query_one('#apply', Button).press()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            self.assertEqual(app.service.calls[-1][-2:], ['--website-groups', 'dev-vscode-extensions'])
+
     async def test_microsoft_auth_category_can_be_selected_and_removed(self):
         for initial in (False, True):
             app = Cockpit(self.root, FakeService(self.records))

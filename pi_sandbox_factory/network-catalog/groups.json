@@ -37,6 +37,24 @@
         "passwordreset.microsoftonline.com"
       ]
     },
+    "dev-vscode-extensions": {
+      "title": "VS Code extensions",
+      "description": "Find and install extensions from Open VSX or the Visual Studio Marketplace.",
+      "source": "Coder and Microsoft (curated)",
+      "url": "https://coder.com/docs/code-server/FAQ",
+      "references": [
+        "https://code.visualstudio.com/docs/setup/network"
+      ],
+      "reviewed_at": "2026-11-19",
+      "refresh": "bundled",
+      "domains": [
+        ".gallery.vsassets.io",
+        ".gallerycdn.vsassets.io",
+        "marketplace.visualstudio.com",
+        "open-vsx.org",
+        "openvsx.eclipsecontent.org"
+      ]
+    },
     "dev-python": {
       "title": "Python",
       "description": "Python documentation, PyPI and hosted Python projects.",
