@@ -450,6 +450,38 @@ class ListTests(unittest.TestCase):
                 self.assertNotIn('missing', output.getvalue())
                 self.assertIn('cannot query podman', errors.getvalue())
 
+    def test_dashboard_probes_only_running_owned_ssh_companions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ('active', 'stopped', 'other', 'plain'):
+                path = self.save(root, name) / 'config.json'
+                if name != 'plain':
+                    config = json.loads(path.read_text())
+                    config['ssh'] = {'hosts': [{'alias': 'repository'}]}
+                    path.write_text(json.dumps(config))
+            engine_output = (
+                'pi-sandbox-factory-active\trunning\tactive\n'
+                'pi-sandbox-factory-active-ssh\trunning\tactive\n'
+                'pi-sandbox-factory-stopped\texited\tstopped\n'
+                'pi-sandbox-factory-stopped-ssh\trunning\tstopped\n'
+                'pi-sandbox-factory-other\trunning\tother\n'
+                'pi-sandbox-factory-other-ssh\trunning\tforeign\n'
+                'pi-sandbox-factory-plain\trunning\tplain\n'
+            )
+            output = io.StringIO()
+            with redirect_stdout(output), patch.object(sandbox, 'run', side_effect=[
+                subprocess.CompletedProcess([], 0, engine_output),
+                subprocess.CompletedProcess([], 0, 'locked'),
+            ]) as run:
+                sandbox.list_sandboxes(root, structured=True)
+            records = {row['name']: row for row in json.loads(output.getvalue())}
+            self.assertEqual(records['active']['ssh_key_state'], 'locked')
+            self.assertEqual(records['other']['ssh_key_state'], 'unavailable')
+            self.assertNotIn('ssh_key_state', records['plain'])
+            self.assertNotIn('ssh_key_state', records['stopped'])
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.args[0][:3], ['podman', 'exec', 'pi-sandbox-factory-active-ssh'])
+
     def test_structured_inventory_lists_owned_containers_with_purpose(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

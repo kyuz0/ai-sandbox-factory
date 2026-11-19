@@ -806,7 +806,10 @@ Model replies in these checks came from synthetic fixtures.
 
 ## Repository SSH access
 
-Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion:
+Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion.
+When reviewing the dashboard, use adjacent sandbox rows and check for a blank
+line between their inline actions. The TUI suite checks that clicking this gap
+only selects the row and that every sandbox remains reachable by keyboard.
 
 ```sh
 .venv/bin/python tests/repository_ssh_container.py --dev-image YOUR_FACTORY_DEV_IMAGE
@@ -820,12 +823,15 @@ volumes afterward.
 The client uses the image's default SSH configuration without a test-only
 `GIT_SSH_COMMAND` override. It also unloads the agent identity, checks
 `sandbox-ssh-status`, verifies authentication fails and restores access by unlocking
-the companion key. Bootstrap tests verify configured aliases and the SSH recovery
+the encrypted companion key. Applying the saved SSH settings afterward must keep
+both containers running and allow a push. The fixture also checks a short custom
+lifetime expires and unlocking for two days restores Git. Bootstrap tests verify configured aliases and the SSH recovery
 instructions enter the managed agent context without host-key material.
-Actual Pi and Pendant workers receive that context and run the status check through
-reviewed escalation with synthetic model replies and no human dialog. Both status
+Actual Pi receives that context and runs the status check through
+reviewed escalation with synthetic model replies and no human dialog. Images that
+include Pendant also run its worker through the same check. Both status
 and Git are checked with `SSH_AUTH_SOCK` empty, matching attached desktop VS Code.
-Both clients also create a commit through ordinary inner Bash and verify its
+Each client also creates a commit through ordinary inner Bash and verifies its
 author name and email. Run `tests/test_git_settings.py` and the bootstrap suite
 for identity validation, quoting, local overrides, disabling and repeated startup.
 The TUI identity fixtures cover disabled, populated and error states for creation,

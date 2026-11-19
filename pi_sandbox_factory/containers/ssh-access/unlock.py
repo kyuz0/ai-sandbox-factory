@@ -6,7 +6,10 @@ import subprocess
 import sys
 
 settings = json.loads(Path('/etc/ssh-access/targets.json').read_text())
-args = ['ssh-add', '-H', '/etc/ssh-access/known_hosts', '-t', '8h']
+lifetime = int(sys.argv[1]) if len(sys.argv) > 1 else 8 * 3600
+if not 0 < lifetime < 2**31:
+    raise SystemExit('Invalid SSH key lifetime')
+args = ['ssh-add', '-H', '/etc/ssh-access/known_hosts', '-t', str(lifetime)]
 for host in settings:
     args += ['-h', host['user'] + '@' + host['alias']]
 if not settings:

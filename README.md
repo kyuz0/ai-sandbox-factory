@@ -40,9 +40,10 @@ Choose **New sandbox**, select your project folder and configure a model:
 - **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model Providers → Built-in hosted providers → Connect hosted provider…**. Factory keeps credentials outside Pi and
   editor extensions; see [hosted model setup](docs/hosted-models.md).
 
-Choose **Create and start** to open the editor. Use **Settings** to change the
-configuration and **Open with…** to launch Pi CLI. See [everyday use](docs/usage.md)
-for additional folders, skills and CLI commands.
+Choose **Create and start** to open the editor. To reopen a sandbox, select its row
+and choose **Open** next to its name. Use **Settings** to change the
+configuration and **Open with…** to choose a different client, such as Pi CLI.
+See [everyday use](docs/usage.md) for additional folders, skills and CLI commands.
 
 Factory reports missing host dependencies on startup. After a creation failure,
 choose **Retry creation** to reuse the current configuration or **Back to
@@ -81,7 +82,7 @@ Open existing Pendant sandboxes as usual until you're ready to switch. Update
 Factory, select the sandbox, then choose **Actions → Update sources and recreate…**.
 Factory builds the replacement first, then restarts the sandbox. Your workspace
 and saved Pi chats are kept. Reopen the editor and resume a chat.
-The sandbox list points to the update for sandboxes saved with Pendant.
+Choose **Show Alerts** on a sandbox row to find the update for a sandbox saved with Pendant.
 The previous Factory release is preserved on the [Pendant branch](https://github.com/kyuz0/pi-sandbox-factory/tree/pendant).
 
 ## Profiles and providers

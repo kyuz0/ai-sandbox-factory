@@ -44,13 +44,17 @@ checking. Inner-shell DNS and TCP probes cannot test the companion's socket rout
 
 Generate creates an unencrypted key inside the private companion volume and refuses to replace an existing key. Import replaces the companion’s saved key.
 
-Keys are loaded for eight hours. Use **Unlock existing key** after expiry or after restarting a companion with an encrypted key. Unencrypted keys load automatically when the companion starts.
+Keys unlock for eight hours by default. Set **Keep SSH key unlocked for** before
+importing or unlocking a key to use a different duration. When the dashboard shows
+a locked-key alert, open **Show Alerts → Unlock existing key**. Restarting the SSH
+companion can lock an encrypted key early. Unencrypted keys load automatically
+when the companion starts.
 
 CLI key management after configuring destinations:
 
 ```sh
 pi-sandbox-factory ssh-import-key NAME --key-file ~/.ssh/id_ed25519
-pi-sandbox-factory ssh-unlock NAME
+pi-sandbox-factory ssh-unlock NAME --duration 2d
 pi-sandbox-factory ssh-generate-key NAME
 pi-sandbox-factory ssh-public-key NAME
 ```

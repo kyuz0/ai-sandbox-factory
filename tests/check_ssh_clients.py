@@ -97,8 +97,9 @@ try:
     process.terminate()
     process.wait(timeout=15)
     process = None
-    subprocess.run(['node', '/tmp/check-ssh-pendant.cjs', '--ssh'], check=True, timeout=240)
-    assert len(reviews) == 2 and len(contexts) == 6, (reviews, contexts)
+    if Path('/opt/pendant').is_dir():
+        subprocess.run(['node', '/tmp/check-ssh-pendant.cjs', '--ssh'], check=True, timeout=240)
+        assert len(reviews) == 2 and len(contexts) == 6, (reviews, contexts)
 finally:
     if process:
         process.terminate()

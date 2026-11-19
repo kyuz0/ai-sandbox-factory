@@ -11,10 +11,11 @@ import sys
 import tempfile
 import pyfiglet
 import shutil
+from rich.style import Style
 from rich.text import Text
 from typing import Optional
 
-from . import sandbox, editor_settings
+from . import sandbox, editor_settings, sandbox_ssh
 from .creation import Creation, Cancelled
 from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
@@ -39,12 +40,14 @@ from . import host_platform, registry, model_providers, updates, web_access, net
 from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
 
 try:
-    from textual import on, work
+    from textual import events, on, work
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical, VerticalScroll
+    from textual.coordinate import Coordinate
     from textual.screen import ModalScreen, Screen
     from textual.theme import Theme
+    from textual.worker import get_current_worker
     from textual.widgets import (Button, Collapsible, DataTable, Footer, Header,
                                  Input, Label, RichLog, Select, Static, TextArea, OptionList)
 except ImportError as error:
@@ -1131,14 +1134,89 @@ class FoldersScreen(Screen):
         self.app.pop_screen()
 
 
+def sandbox_alerts(record):
+    alerts = []
+    ssh_alert = {
+        'locked': ('SSH key locked', 'Unlock existing key…', 'ssh-key-alert'),
+        'missing': ('SSH key missing', 'Set up an SSH key', 'ssh-key-alert'),
+        'unavailable': ('SSH service unavailable', 'View containers', 'containers'),
+    }.get(record.get('ssh_key_state'))
+    if ssh_alert:
+        alerts.append(ssh_alert)
+    if record.get('chat_editor') == 'pendant':
+        alerts.append(('Pendant editor', 'Update to FrostPi…', 'rebuild'))
+    return alerts
+
+
+class SandboxTable(DataTable):
+    # Each sandbox occupies two terminal lines, with one blank line between actions.
+    ROW_HEIGHT = 2
+
+    @staticmethod
+    def action_cell(label, *, primary=False):
+        style = Style(color='#17191b' if primary else '#f1f3f5',
+                      bgcolor='#f2b544' if primary else '#494f57', bold=True,
+                      meta={'sandbox_action': True})
+        return Text.assemble(('  ' + label + '  ', style), no_wrap=True)
+
+    def on_click(self, event: events.Click):
+        # Textual normally activates an already-selected cell on click. Keep all
+        # data-cell clicks selection-only unless they hit the painted action.
+        meta = event.style.meta
+        row, column = meta.get('row', -1), meta.get('column', -1)
+        if meta.get('out_of_bounds') or not (0 <= row < self.row_count and 0 <= column < len(self.columns)):
+            return
+        event.prevent_default()
+        event.stop()
+        if event.button != 1:
+            return
+        coordinate = Coordinate(row, column)
+        self.focus()
+        self.move_cursor(row=row, column=column, animate=False)
+        if event.chain == 1 and meta.get('sandbox_action'):
+            self.post_message(DataTable.CellSelected(self, self.get_cell_at(coordinate),
+                coordinate=coordinate, cell_key=self.coordinate_to_cell_key(coordinate)))
+
+
+class SandboxAlerts(ModalScreen[Optional[str]]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.name_label = record['name']
+        self.alerts = sandbox_alerts(record)
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('Alerts · ' + self.name_label)
+            entries = []
+            for label, action, _ in self.alerts:
+                if entries:
+                    entries.append(None)
+                entries.append(Text.assemble((label, 'bold'), '\n', action))
+            yield OptionList(*entries, id='sandbox-alerts-list')
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-alerts')
+
+    @on(OptionList.OptionSelected)
+    def selected(self, event):
+        event.stop()
+        self.dismiss(self.alerts[event.option_index][2])
+
+    @on(Button.Pressed, '#close-alerts')
+    def action_close(self):
+        self.dismiss(None)
+
+
 class SSHScreen(Screen):
     DEFAULT_CSS = 'SSHScreen #ssh-hosts { height: 5; }'
     BINDINGS = [('escape', 'back', 'Back')]
 
-    def __init__(self, record):
+    def __init__(self, record, *, key_focus=None):
         super().__init__()
         self.record = record
         self.imported = None
+        self.key_focus = key_focus
 
     def compose(self):
         hosts = self.record['config'].get('ssh', {}).get('hosts', [])
@@ -1148,7 +1226,7 @@ class SSHScreen(Screen):
         with VerticalScroll(classes='form'):
             yield Label(CATEGORIES['ssh-settings'].label + ' · ' + self.record['name'], classes='title')
             yield Static('Keys stay in a separate SSH container. The remote account or deploy key determines what the sandbox can do.', classes='section-intro')
-            yield Static('Apply restarts sandbox processes. Review the confirmation before applying.', classes='section-intro')
+            yield Static('Applying changes to destinations or commit identity restarts the sandbox.', classes='section-intro')
             with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True, id='git-identity-section'):
                 yield GitIdentityFields(identity)
             with Vertical(classes='setting'):
@@ -1181,17 +1259,27 @@ class SSHScreen(Screen):
                         yield Button('Import and unlock', id='ssh-import-key', disabled=not hosts)
                     yield Static('Import replaces this sandbox’s key and keeps its server permissions. Encrypted keys ask for their passphrase in the terminal.', classes='setting-help')
                 with Vertical(classes='setting'):
+                    yield Label('Keep SSH key unlocked for')
+                    yield Input(sandbox_ssh.DEFAULT_UNLOCK_DURATION, id='ssh-duration', disabled=not hosts)
+                    yield Static('Enter 8h for eight hours or 2d for two days. Applies when you import or unlock a key.', classes='setting-help')
+                    yield Feedback('', id='ssh-duration-error', markup=False)
+                with Vertical(classes='setting'):
                     yield Button('Unlock existing key', id='ssh-unlock', disabled=not hosts)
-                    yield Static('Keys stay unlocked for eight hours. Unlock again after expiry or restart.', classes='setting-help')
+                    yield Static('Unlock takes effect immediately. Restarting the SSH service can lock the key early.', classes='setting-help')
+                    yield Feedback('', id='ssh-key-feedback', markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='ssh-back')
             yield Button('Apply', id='ssh-apply', variant='primary')
         yield Footer()
 
+    def on_mount(self):
+        if self.key_focus:
+            self.query_one('#ssh-key-section', Collapsible).collapsed = False
+            self.call_after_refresh(self.query_one(self.key_focus).focus)
+
     @on(Button.Pressed)
     def pressed(self, event):
         event.stop()
-        from . import sandbox_ssh
         action = event.button.id
         name = self.record['name']
         try:
@@ -1209,13 +1297,30 @@ class SSHScreen(Screen):
                 self.imported = (text, settings)
                 self.notify('Imported destinations and existing trusted host keys. No private key imported.')
             elif action in ('ssh-import-key', 'ssh-unlock'):
+                field = self.query_one('#ssh-duration', Input)
+                duration = field.value.strip().lower()
+                error = self.query_one('#ssh-duration-error', Feedback)
+                feedback = self.query_one('#ssh-key-feedback', Feedback)
+                feedback.update('')
+                try:
+                    sandbox_ssh.unlock_seconds(duration)
+                except ValueError as invalid:
+                    error.update(str(invalid))
+                    field.focus()
+                    return
+                error.update('')
                 args = ['ssh-unlock', name]
                 if action == 'ssh-import-key':
                     path = self.query_one('#ssh-key-file', Input).value.strip()
                     if not path: raise ValueError('Choose a private key file')
                     args = ['ssh-import-key', name, '--key-file', path]
                 with self.app.suspend():
-                    subprocess.run(self.app.service.command(*args), check=False)
+                    result = subprocess.run(self.app.service.command(*args, '--duration', duration), check=False)
+                feedback.set_class(bool(result.returncode), 'error')
+                feedback.set_class(not result.returncode, 'unlock-succeeded')
+                feedback.update('Could not unlock the SSH key. Check the SSH service and passphrase.'
+                                if result.returncode else f'SSH key unlocked for {duration}. Git can use it now.')
+                feedback.scroll_visible(animate=False)
             elif action == 'ssh-apply':
                 from .repository_ui import GitIdentityFields
                 identity = self.query_one(GitIdentityFields).collect()
@@ -1224,13 +1329,17 @@ class SSHScreen(Screen):
                 old_text = '\n'.join(f'{h["alias"]} {h["user"]} {h["hostname"]} {h["port"]}' for h in old['hosts'])
                 settings = (self.imported[1] if self.imported and self.imported[0] == text else
                             old if text == old_text else sandbox_ssh.parse_hosts(text, self.query_one('#ssh-known-hosts', Input).value))
+                identity_changed = identity != options(self.record['config'].get('options'))['git_identity']
+                if settings == old and not identity_changed:
+                    self.notify('No SSH or Git settings changed.')
+                    return
                 service = self.app.service
                 def apply(yes):
                     if not yes: return
                     self.app.pop_screen()
                     self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
                         done_on_success=True,
-                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity != options(self.record['config'].get('options'))['git_identity'] else []))))
+                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
                 notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
                          *settings_effects.editor_migration(self.record['config'])]
                 self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
@@ -1252,7 +1361,9 @@ class SSHScreen(Screen):
             field.load_text('\n'.join(rows + [value['line']]))
             self.notify('Destination added. Apply it, then return here to generate or import the key.')
 
-    def action_back(self): self.app.pop_screen()
+    def action_back(self):
+        self.app.pop_screen()
+        self.app.refresh_inventory()
 
 
 class AdvisorsScreen(Screen):
@@ -2995,6 +3106,7 @@ class Cockpit(App):
     #application-update-message { width: 1fr; height: auto; }
     #application-update-run { width: 15; margin: 0 0 0 1; }
     #home { width: 100%; padding: 1 3; }
+    .compact-terminal #home { padding: 1 3 0 3; }
     .compact-terminal.missing-dependencies #home { padding: 0 3; }
     .compact-terminal.missing-dependencies #details { padding: 0; min-height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
     #dashboard-filters { height: 4; margin: 0 0 1 0; }
@@ -3004,6 +3116,12 @@ class Cockpit(App):
     #sort-direction { margin: 1 0 0 0; height: 3; padding: 1 2; min-width: 16; }
     #sandboxes { padding-right: 1; height: 1fr; min-height: 5; }
     #details { height: auto; min-height: 3; padding: 1 0; }
+    .compact-terminal #details { text-wrap: nowrap; text-overflow: ellipsis; }
+    #ssh-key-feedback { height: auto; }
+    #ssh-duration-error, #ssh-key-feedback.error { color: #ef9a91; }
+    #ssh-key-feedback.unlock-succeeded { color: #87c99b; text-style: bold; }
+    Screen:nocolor #ssh-key-feedback { color: white; text-style: bold; }
+    Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error { color: white; text-style: bold reverse; }
     #home-error { height: auto; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }
@@ -3012,7 +3130,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
@@ -3065,20 +3183,21 @@ class Cockpit(App):
                     yield Label('Sort by')
                     yield Select([(label, key) for key, label in [('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('name', 'Name'), ('dev', 'Status')]], value='started', allow_blank=False, id='sort-field')
                 yield Button('Newest first', id='sort-direction')
-            yield DataTable(id='sandboxes', cursor_type='row', zebra_stripes=True)
+            yield SandboxTable(id='sandboxes', cursor_type='cell', cursor_background_priority='renderable',
+                               cursor_foreground_priority='renderable', zebra_stripes=True)
             yield Static('Choose a sandbox, or create your first one.', id='details', markup=False)
             yield Feedback('', id='home-error', markup=False)
             with Horizontal(classes='buttons'):
-                yield Button('Open in browser', id='open', variant='primary')
                 yield Button('Open with…', id='launch-with')
                 yield Button('Settings', id='settings')
                 yield Button('Actions…', id='more')
         yield Footer()
 
     def on_mount(self):
-        for key, label in [('name', 'Name'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
-            self.query_one(DataTable).add_column(label, key=key)
+        for key, label in [('name', 'Name'), ('open', ''), ('alerts', 'Alerts'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
+            self.query_one('#sandboxes', DataTable).add_column(label, key=key)
         self.action_refresh_inventory()
+        self.set_interval(15, self.poll_ssh_status)
         self.check_update()
         self.resize_banner()
 
@@ -3090,6 +3209,7 @@ class Cockpit(App):
         self.set_class(self.size.height >= 32, 'tall-terminal')
         self.set_class(self.size.height < 32, 'compact-terminal')
         self.query_one('#title-banner', Static).update(banner(self.version, self.size.width < 100 or self.size.height < 32))
+        self.render_records()
 
     @work(thread=True, exclusive=True, group='application-update', exit_on_error=False)
     def check_update(self):
@@ -3124,11 +3244,17 @@ class Cockpit(App):
         else:
             self.exit(result=updates.RELAUNCH)
 
+    def poll_ssh_status(self):
+        if (self.screen is self.screen_stack[0] and any('ssh_key_state' in record for record in self.records)
+                and not any(worker.group == 'inventory' and worker.is_running for worker in self.workers)):
+            self.refresh_inventory(only_if_changed=True)
+
     @work(thread=True, exclusive=True, group='inventory', exit_on_error=False)
-    def refresh_inventory(self):
+    def refresh_inventory(self, only_if_changed=False):
         try:
             records = self.service.inventory()
-            self.call_from_thread(self.receive_inventory, records)
+            if not get_current_worker().is_cancelled:
+                self.call_from_thread(self.receive_inventory, records, only_if_changed)
         except Exception as error:
             self.call_from_thread(self.query_one('#home-error', Static).update, safe_text(error))
 
@@ -3148,14 +3274,16 @@ class Cockpit(App):
             '\n'.join('• ' + message for message in missing))
         self.set_class(bool(missing), 'missing-dependencies')
 
-    def receive_inventory(self, records):
+    def receive_inventory(self, records, only_if_changed=False):
+        if only_if_changed and records == self.records:
+            return
         self.records = records
         self.query_one('#create-from', Button).disabled = not records
         self.query_one('#home-error', Static).update('')
         self.render_records()
 
     def render_records(self):
-        table = self.query_one(DataTable)
+        table = self.query_one('#sandboxes', DataTable)
         selected = self.selected_name()
         table.clear()
         text = self.query_one('#search', Input).value.casefold()
@@ -3167,10 +3295,16 @@ class Cockpit(App):
             source_names = list(providers) if isinstance(providers, dict) else [row['name'] for row in providers]
             sources = (['Local ' + config['local_model_ports']] if config.get('local_model_ports') else [])
             sources += [name for name in source_names if name != 'local']
-            table.add_row(*[safe_text(x) for x in (record['name'], record['dev'].capitalize(),
+            name = safe_text(record['name'])
+            if self.size.width < 100 and len(name) > 32:
+                name = name[:31] + '…'
+            alert_count = len(sandbox_alerts(record))
+            table.add_row(name, SandboxTable.action_cell('Open', primary=True),
+                          SandboxTable.action_cell(f'Show Alerts ({alert_count})') if alert_count else '',
+                          *[safe_text(x) for x in (record['dev'].capitalize(),
                           *[activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')],
                           ', '.join(sources) or 'Not configured',
-                          'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted')], key=record['name'])
+                          'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted')], height=SandboxTable.ROW_HEIGHT, key=record['name'])
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
         self.update_details()
@@ -3218,7 +3352,7 @@ class Cockpit(App):
             self.query_one('#sort-field', Select).value = key
 
     def selected_name(self):
-        table = self.query_one(DataTable)
+        table = self.query_one('#sandboxes', DataTable)
         if table.row_count and table.cursor_row < table.row_count:
             return str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
         return None
@@ -3231,9 +3365,18 @@ class Cockpit(App):
     def filter_records(self):
         self.render_records()
 
-    @on(DataTable.RowHighlighted)
+    @on(DataTable.CellHighlighted, '#sandboxes')
     def highlighted(self):
         self.update_details()
+
+    @on(DataTable.CellSelected, '#sandboxes')
+    def select_sandbox_cell(self, event):
+        action = event.cell_key.column_key.value
+        if action in ('open', 'alerts') and event.value:
+            name = event.cell_key.row_key.value
+            record = next((item for item in self.records if item['name'] == name), None)
+            if record:
+                self.perform(action, record=record)
 
     def update_details(self):
         record = self.selected()
@@ -3244,19 +3387,11 @@ class Cockpit(App):
             text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
             text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
             text += ' · Profile: ' + str(record['profile'])
-            if record.get('chat_editor') == 'pendant':
-                text += '\nUpdate Pendant to FrostPi · Actions → Update sources and recreate…'
         details = self.query_one('#details', Static)
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
-        mode = editor_settings.load(self.state_root / record['name'])['mode'] if record else 'browser'
-        self.query_one('#open', Button).label = OPEN_LABELS[mode]
-        for action in ('open', 'launch-with', 'settings', 'more'):
+        for action in ('launch-with', 'settings', 'more'):
             self.query_one('#' + action, Button).disabled = record is None
-
-    @on(DataTable.RowSelected)
-    def open_selected(self):
-        self.perform('open')
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -3344,6 +3479,9 @@ class Cockpit(App):
                              lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'containers':
             self.push_screen(ContainersScreen(record))
+        elif action == 'alerts' and sandbox_alerts(record):
+            self.push_screen(SandboxAlerts(record),
+                             lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'settings':
             state = self.state_root / name
             try:
@@ -3356,6 +3494,9 @@ class Cockpit(App):
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':
             self.push_screen(SSHScreen(record))
+        elif action == 'ssh-key-alert':
+            focus = '#ssh-unlock' if record.get('ssh_key_state') == 'locked' else '#ssh-key-file'
+            self.push_screen(SSHScreen(record, key_focus=focus))
         elif action == 'advisors':
             self.push_screen(AdvisorsScreen(record))
         elif action == 'models':

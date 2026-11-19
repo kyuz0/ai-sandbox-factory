@@ -9,6 +9,39 @@ import sys
 import time
 
 
+DEFAULT_UNLOCK_DURATION = '8h'
+
+
+def unlock_seconds(duration):
+    value = re.fullmatch(r'([1-9][0-9]{0,9})([smhd])', duration.strip().lower()) if isinstance(duration, str) else None
+    if value:
+        seconds = int(value[1]) * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[value[2]]
+        if seconds <= 2**31 - 1:
+            return seconds
+    raise ValueError('Enter a positive unlock duration, such as 8h or 2d.')
+
+
+def key_state(config, *, companion_running):
+    """Inspect only a running SSH companion already verified as owned."""
+    if not companion_running:
+        return 'unavailable'
+    from . import sandbox as core
+    probe = (
+        'ssh-add -l >/dev/null 2>&1; status=$?; '
+        'if [ "$status" = 0 ]; then printf loaded; '
+        'elif [ "$status" != 1 ]; then printf unavailable; '
+        'elif [ -f /private/id_key ]; then printf locked; '
+        'else printf missing; fi'
+    )
+    try:
+        result = core.run([config['engine'], 'exec', names(config)[0], 'sh', '-c', probe],
+                          capture=True, check=False, stderr=subprocess.DEVNULL, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return 'unavailable'
+    state = result.stdout.strip()
+    return state if result.returncode == 0 and state in ('loaded', 'locked', 'missing') else 'unavailable'
+
+
 def validate(value):
     if not isinstance(value, dict) or set(value) - {'hosts'} or not isinstance(value.get('hosts', []), list):
         raise ValueError('SSH settings require a hosts list')
@@ -182,15 +215,20 @@ def delete_volumes(config):
             core.run([config['engine'],'volume','rm',volume])
 
 
-def unlock(config,state):
+def unlock(config, state, duration=DEFAULT_UNLOCK_DURATION):
+    seconds = unlock_seconds(duration)
     if not enabled(config):raise ValueError('Configure SSH destinations first')
     from . import sandbox as core
     up(config,state)
     tty=['-it'] if sys.stdin.isatty() else ['-i']
-    core.run([config['engine'],'exec']+tty+[names(config)[0],'python3','/opt/ssh-access/unlock.py'])
+    # Run the same helper as a new companion. Existing companions can use
+    # the new duration without replacing their running agent.
+    helper = (core.ROOT / 'containers/ssh-access/unlock.py').read_text()
+    core.run([config['engine'], 'exec', *tty, names(config)[0], 'python3', '-c', helper, str(seconds)])
 
 
-def import_key(config,state,path):
+def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
+    unlock_seconds(duration)
     if not enabled(config):raise ValueError('Configure SSH destinations first')
     source=Path(path).expanduser().resolve(strict=True)
     if not source.is_file() or not 0 < source.stat().st_size <= 65536:raise ValueError('Select an SSH private key file under 64 KiB')
@@ -208,7 +246,7 @@ def import_key(config,state,path):
     with source.open('rb') as stream:
         core.run([config['engine'],'exec','-i',names(config)[0],'python3','-c',script],stdin=stream)
     print('Key imported into the private SSH companion. Unlocking for the declared destinations.',flush=True)
-    unlock(config,state)
+    unlock(config, state, duration)
 
 
 def repository_destination(url):

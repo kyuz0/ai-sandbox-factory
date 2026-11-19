@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import uuid
 from unittest.mock import patch
 
@@ -50,10 +51,16 @@ def main():
     server = name + '-server'
     network = name + '-network'
     original_run = sandbox.run
+    passphrase = "ssh-fixture-only"
+    input_passphrase = passphrase
+    encrypted_fixture = False
     def fixture_run(argv, **kwargs):
         argv = list(argv)
         if len(argv) > 1 and argv[1] == 'run' and '--name' in argv and argv[argv.index('--name') + 1] == 'pi-sandbox-factory-' + name + '-ssh':
             argv[2:2] = ['--network', network]
+        if encrypted_fixture and argv[-3] == '-c' and 'Invalid SSH key lifetime' in argv[-2]:
+            argv[2] = '-i'
+            kwargs['input'] = input_passphrase + '\n'
         return original_run(argv, **kwargs)
     fixture_network = patch.object(sandbox, 'run', side_effect=fixture_run)
     server_image = 'localhost/factory-repository-ssh-test'
@@ -97,6 +104,8 @@ cp /fixture/hook /home/git/project.git/hooks/pre-receive
 '''
             run(engine, 'exec', '-u', 'git', server, 'sh', '-c', setup)
             ssh.build(config)
+            ssh.up(config, state)
+            assert ssh.key_state(config, companion_running=True) == 'missing'
             public = ssh.repository_key(config, state, generate=True)
             assert public.startswith('ssh-ed25519 ')
             (fixture/'authorized_keys').write_text('command="/usr/local/bin/git-access",restrict ' + public + '\n')
@@ -155,7 +164,8 @@ cp /fixture/hook /home/git/project.git/hooks/pre-receive
             print('PASS private-volume isolation and key persistence after companion restart', flush=True)
             # Import a different fixture key and verify the agent drops the old identity.
             imported = root / 'imported-key'
-            run('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', imported)
+            run('ssh-keygen', '-q', '-t', 'ed25519', '-N', passphrase, '-f', imported)
+            encrypted_fixture = True
             ssh.import_key(config, state, imported)
             replacement = ssh.repository_key(config, state)
             assert replacement != public
@@ -170,7 +180,37 @@ cp /fixture/hook /home/git/project.git/hooks/pre-receive
             git('cd /tmp/project && git ls-remote origin HEAD', succeeds=False)
             ssh.unlock(config, state)
             git('cd /tmp/project && git ls-remote origin HEAD')
-            print('PASS unloaded key diagnosed; companion unlock restores Git without client key files', flush=True)
+            print('PASS unloaded encrypted key diagnosed; companion unlock restores Git', flush=True)
+            watch = (client, ssh.names(config)[0])
+            def lifecycle():
+                return run(engine, 'inspect', '--format', '{{.Id}} {{.State.StartedAt}}', *watch).stdout
+
+            current = lifecycle()
+            sandbox.apply_settings(config, state, {'ssh': config['ssh']})
+            assert lifecycle() == current, 'Unchanged settings restarted the client or SSH companion'
+            git('cd /tmp/project && git -c user.email=fixture@example.test -c user.name=Fixture '
+                'commit --allow-empty -qm after-unlock && git push origin HEAD:main')
+            print('PASS unchanged Apply leaves the encrypted key unlocked and Git can push', flush=True)
+            ssh.unlock(config, state, '6s')
+            assert ssh.key_state(config, companion_running=True) == 'loaded'
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline and ssh.key_state(config, companion_running=True) == 'loaded':
+                time.sleep(.2)
+            assert ssh.key_state(config, companion_running=True) == 'locked'
+            git('cd /tmp/project && git ls-remote origin HEAD', succeeds=False)
+            input_passphrase = 'incorrect-fixture-passphrase'
+            try:
+                ssh.unlock(config, state, '2d')
+            except subprocess.CalledProcessError:
+                assert ssh.key_state(config, companion_running=True) == 'locked'
+            else:
+                raise AssertionError('An incorrect passphrase unlocked the fixture key')
+            input_passphrase = passphrase
+            ssh.unlock(config, state, '2d')
+            assert lifecycle() == current, 'Changing unlock duration restarted a container'
+            assert ssh.key_state(config, companion_running=True) == 'loaded'
+            git('cd /tmp/project && git ls-remote origin HEAD')
+            print('PASS custom expiry is reported as locked and unlocking for two days restores Git', flush=True)
         finally:
             run(engine, 'rm', '-f', name + '-client', server, check=False)
             ssh.down(config, remove=True)

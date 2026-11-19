@@ -1,8 +1,10 @@
 import asyncio
 import copy
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -344,6 +346,48 @@ class TUITests(unittest.TestCase):
             self.assertFalse(service.calls)
             await pilot.press('q')
 
+    async def test_ssh_unlock_and_unchanged_apply_leave_the_sandbox_running(self):
+        from pi_sandbox_factory.sandbox_tui import SSHScreen
+        self.records[0]['config']['ssh'] = {'hosts': [{
+            'alias': 'repository', 'hostname': 'git.example.test', 'user': 'git', 'port': 22,
+            'host_keys': ['ssh-ed25519 AAAA'],
+        }]}
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.ready(app, pilot)
+            await app.push_screen(SSHScreen(self.records[0]))
+            unlock = app.screen.query_one('#ssh-unlock', Button)
+            self.assertFalse(unlock.disabled)
+            with (patch.object(app, 'suspend', return_value=nullcontext()),
+                  patch.object(service, 'command', create=True, side_effect=lambda *args: list(args)),
+                  patch('pi_sandbox_factory.sandbox_tui.subprocess.run',
+                        side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]) as run,
+                  patch.object(app.screen, 'notify') as notify):
+                field = app.screen.query_one('#ssh-duration', Input)
+                self.assertEqual(field.value, '8h')
+                field.value = '0h'
+                unlock.press()
+                await pilot.pause()
+                run.assert_not_called()
+                self.assertIn('positive unlock duration', str(app.screen.query_one('#ssh-duration-error').render()))
+                field.value = '2d'
+                unlock.press()
+                await pilot.pause()
+                run.assert_called_once_with(['ssh-unlock', 'alpha', '--duration', '2d'], check=False)
+                feedback = app.screen.query_one('#ssh-key-feedback')
+                self.assertEqual(str(feedback.render()), 'SSH key unlocked for 2d. Git can use it now.')
+                self.assertTrue(feedback.display)
+                unlock.press()
+                await pilot.pause()
+                self.assertTrue(feedback.has_class('error'))
+                self.assertIn('Could not unlock the SSH key', str(feedback.render()))
+                app.screen.query_one('#ssh-apply', Button).press()
+                await pilot.pause()
+                notify.assert_called_with('No SSH or Git settings changed.')
+                self.assertIsInstance(app.screen, SSHScreen)
+                self.assertEqual(service.calls, [])
+
     async def test_git_identity_is_optional_validated_and_saved_with_ssh_settings(self):
         from pi_sandbox_factory.sandbox_tui import SSHScreen, preset
         from pi_sandbox_factory.repository_ui import GitIdentityFields
@@ -630,10 +674,10 @@ class TUITests(unittest.TestCase):
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot);self.assertEqual(app.theme,'cockpit-gold')
-            for name in ['open','launch-with','settings','new','create-from','more','packages']:
+            for name in ['launch-with','settings','new','create-from','more','packages']:
                 b=app.query_one('#'+name,Button)
                 self.assertLessEqual(b.region.right,80,name);self.assertLessEqual(b.region.bottom,23,name)
-            self.assertEqual(len(app.query('#home Button')),8)
+            self.assertEqual(sum(button.display for button in app.query('#home Button')), 7)
             app.save_screenshot(filename='sandbox-home-declutter.svg',path='/tmp')
             await self.settings_page(app,pilot,action="network-settings")
             self.assertLessEqual(app.screen.query_one('#apply',Button).region.bottom,23)
@@ -722,7 +766,10 @@ class TUITests(unittest.TestCase):
                 run.assert_called_once_with(service.command('pi','beta'),check=False)
             self.assertEqual(len(app.screen_stack),1)
             self.assertEqual(app.selected_name(),'beta')
-            app.query_one(DataTable).focus()
+            table = app.query_one(DataTable)
+            table.focus()
+            open_cell = table.get_cell_coordinate('beta', 'open')
+            table.move_cursor(row=open_cell.row, column=open_cell.column)
             await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['start','beta'],['open','beta','--editor','browser']])
 
@@ -883,7 +930,7 @@ class TUITests(unittest.TestCase):
             self.assertEqual(app.screen.actions[0],('Start sandbox','start'))
             await pilot.press('escape');await pilot.pause()
             app.query_one('#search',Input).value='no-match';await pilot.pause()
-            for name in ('open','launch-with','settings','more'):
+            for name in ('launch-with','settings','more'):
                 self.assertTrue(app.query_one('#'+name,Button).disabled)
             self.assertFalse(app.query_one('#new',Button).disabled)
 
@@ -923,32 +970,112 @@ class TUITests(unittest.TestCase):
             self.assertIs(app.screen, app.screen_stack[0])
             self.assertEqual(service.calls, [])
 
-    async def test_pendant_upgrade_notice_follows_selection_and_cancels_safely(self):
-        from textual.widgets import Static
+    async def test_dashboard_row_clicks_and_enter_select_without_opening(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one('#sandboxes', DataTable)
+            with patch.object(app, 'launch_client') as launch:
+                name_cell = table.get_cell_coordinate('beta', 'name')
+                name_region = table._get_cell_region(name_cell)
+                await pilot.click('#sandboxes', offset=(3, name_region.y))
+                self.assertEqual(app.selected_name(), 'beta')
+                await pilot.click('#sandboxes', offset=(3, name_region.y), times=2)
+                table.focus()
+                await pilot.press('enter')
+                launch.assert_not_called()
+                self.assertEqual(app.selected_name(), 'beta')
+                self.assertEqual(table.get_cell('beta', 'alerts'), '')
+                table.move_cursor(row=0, column=0)
+                cell = table.get_cell_coordinate('beta', 'open')
+                region = table._get_cell_region(cell)
+                first = table._get_cell_region(table.get_cell_coordinate('alpha', 'open'))
+                self.assertEqual(region.y - first.y, 2)
+                action_line = table.render_line(first.y).crop(first.x, first.right)
+                gap_line = table.render_line(first.y + 1).crop(first.x, first.right)
+                action_style = next(segment.style for segment in action_line
+                                    if segment.style and segment.style.meta.get('sandbox_action'))
+                self.assertFalse(gap_line.text.strip())
+                self.assertFalse(any(segment.style and segment.style.bgcolor == action_style.bgcolor
+                                     for segment in gap_line))
+                await pilot.click('#sandboxes', offset=(first.x + 3, first.y + 1), times=2)
+                self.assertEqual(app.selected_name(), 'alpha')
+                launch.assert_not_called()
+                await pilot.click('#sandboxes', offset=(region.x + 3, region.y), button=3)
+                launch.assert_not_called()
+                await pilot.click('#sandboxes', offset=(region.x + 3, region.y), times=2)
+                launch.assert_called_once_with('beta', 'browser')
+                launch.reset_mock()
+                table.move_cursor(row=cell.row, column=cell.column)
+                await pilot.press('enter')
+                launch.assert_called_once_with('beta', 'browser')
+
+    async def test_padded_dashboard_rows_remain_reachable_by_keyboard(self):
+        records = [dict(self.records[0], name=f'sandbox-{i}') for i in range(6)]
+        app = Cockpit(self.root, FakeService(records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one(DataTable)
+            table.focus()
+            with patch.object(app, 'launch_client') as launch:
+                for row in range(1, len(records)):
+                    await pilot.press('down')
+                    self.assertEqual(app.selected_name(), records[row]['name'])
+                self.assertGreater(table.scroll_y, 0)
+                await pilot.press('right', 'enter')
+                launch.assert_called_once_with(records[-1]['name'], 'browser')
+
+    async def test_sandbox_alerts_follow_selection_and_open_existing_actions(self):
+        from pi_sandbox_factory.sandbox_tui import SSHScreen, SandboxAlerts
         old = self.records[0]
         common = self.root / 'legacy-common'
         common.mkdir()
         (common / 'Dockerfile').write_text(
             'ARG PI_VERSION=1.4.0\nARG PENDANT_VERSION=0.94.2\nRUN curl cdervis.vscode-pi-${PENDANT_VERSION}.vsix\n')
-        old.update(chat_editor='pendant', dev='exited')
+        old.update(chat_editor='pendant', ssh_key_state='locked')
         old['config']['common'] = {'path': str(common)}
+        old['config']['ssh'] = {'hosts': [{
+            'alias': 'repository', 'hostname': 'git.example.test', 'user': 'git', 'port': 22,
+            'host_keys': ['ssh-ed25519 AAAA'],
+        }]}
         service = FakeService(self.records)
         app = Cockpit(self.root, service)
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             table = app.query_one(DataTable)
-            details = app.query_one('#details', Static)
-            self.assertIn('Update Pendant to FrostPi · Actions → Update sources and recreate…', str(details.render()))
-            await pilot.click('#more')
-            menu = app.screen.query_one('#more-actions', OptionList)
-            menu.highlighted = next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'rebuild')
-            menu.focus()
+            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Show Alerts (2)')
+            self.assertEqual(table.get_cell('beta', 'alerts'), '')
+            cell = table.get_cell_coordinate('alpha', 'alerts')
+            region = table._get_cell_region(cell)
+            self.assertLess(table.region.x + region.right, app.size.width)
+            await pilot.click('#sandboxes', offset=(region.x + 3, region.y))
+            self.assertIsInstance(app.screen, SandboxAlerts)
+            menu = app.screen.query_one('#sandbox-alerts-list', OptionList)
+            self.assertEqual(menu.option_count, 2)
+            self.assertIn('SSH key locked', str(menu.get_option_at_index(0).prompt))
+            self.assertIn('Update to FrostPi', str(menu.get_option_at_index(1).prompt))
+            menu.highlighted = 0
+            await pilot.press('enter')
+            self.assertIsInstance(app.screen, SSHScreen)
+            self.assertEqual(app.focused.id, 'ssh-unlock')
+            await pilot.press('escape')
+            await self.ready(app, pilot)
+            table.move_cursor(row=cell.row, column=cell.column)
+            table.focus()
+            await pilot.press('enter')
+            app.screen.query_one('#sandbox-alerts-list', OptionList).highlighted = 1
             await pilot.press('enter')
             self.assertIn('Update alpha to FrostPi?', app.screen.message)
             await pilot.press('escape')
             table.move_cursor(row=1)
             await pilot.pause()
-            self.assertNotIn('Update Pendant to FrostPi', str(details.render()))
+            self.assertEqual(table.get_cell('beta', 'alerts'), '')
+            service.records[0]['ssh_key_state'] = 'loaded'
+            app.poll_ssh_status()
+            await self.ready(app, pilot)
+            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Show Alerts (1)')
+            self.assertEqual(app.selected_name(), 'beta')
             self.assertEqual(service.calls, [])
 
 

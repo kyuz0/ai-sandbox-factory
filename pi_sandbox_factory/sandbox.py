@@ -470,6 +470,10 @@ def list_sandboxes(state_root, structured=False):
         if structured:
             entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}))
                                    if engine in owned else None)
+            if states[0] == 'running' and isinstance(config.get('ssh'), dict) and sandbox_ssh.enabled(config):
+                worker = sandbox_ssh.names(config)[0]
+                entry['ssh_key_state'] = sandbox_ssh.key_state(
+                    config, companion_running=statuses[engine].get(worker) == ('running', sandbox_name))
             if pendant_versions(config):
                 entry['chat_editor'] = 'pendant'
         inventory.append(entry)
@@ -937,6 +941,12 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     allowed = {'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
+    if 'ssh' in changes and changes.keys() <= {'ssh', 'options'}:
+        saved_options = options(config.get('options'))
+        ssh = sandbox_ssh.validate(changes['ssh'])
+        if ssh == config.get('ssh', {'hosts': []}) and options(changes.get('options', saved_options)) == saved_options:
+            print('No SSH or Git settings changed.')
+            return
     updated = dict(config)
     updated.update({k: v for k, v in changes.items() if k not in ('allowlist', 'skill_source', 'skill_path', 'remove_skills', 'library_skills')})
     updated['working_directory'] = folders.working_directory(updated['workspace'], updated.get('working_directory', '.'))
@@ -1230,6 +1240,9 @@ def main():
             cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Open with a different client this time')
         if command == 'ssh-import-key':
             cmd.add_argument('--key-file', required=True)
+        if command in ('ssh-import-key', 'ssh-unlock'):
+            cmd.add_argument('--duration', default=sandbox_ssh.DEFAULT_UNLOCK_DURATION,
+                             help='How long to unlock the key, e.g. 8h or 2d (default: 8h)')
         if command in ('advisor-login', 'advisor-import'):
             cmd.add_argument('provider', choices=['codex', 'claude', 'agy'])
         if command == 'communication-key':
@@ -1316,12 +1329,12 @@ def main():
             activity.save_config(state, config)
         build(config)
     elif args.command == 'ssh-import-key':
-        sandbox_ssh.import_key(config, state, args.key_file)
+        sandbox_ssh.import_key(config, state, args.key_file, args.duration)
         activity.record(state, 'edited')
     elif args.command in ('ssh-generate-key', 'ssh-public-key'):
         print(sandbox_ssh.repository_key(config, state, generate=args.command == 'ssh-generate-key'))
     elif args.command == 'ssh-unlock':
-        sandbox_ssh.unlock(config, state)
+        sandbox_ssh.unlock(config, state, args.duration)
     elif args.command == 'advisor-check':
         sandbox_advisors.check(config, state)
     elif args.command == 'advisor-import':

@@ -39,6 +39,39 @@ class SSHTests(unittest.TestCase):
             self.assertIn('inner sandbox', report['action'])
             self.assertNotIn('PRIVATE', json.dumps(report))
 
+    def test_unlock_duration_is_positive_validated_before_using_the_key(self):
+        for text, seconds in [('8h', 28_800), ('2d', 172_800), ('30m', 1_800), ('5s', 5)]:
+            self.assertEqual(ssh.unlock_seconds(text), seconds)
+        with patch.object(ssh, 'up') as up:
+            for invalid in ('', '0h', '-3h', '8', '1.5h', '1w', '999999999d', '8h 9h', None, True):
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'unlock duration'):
+                    ssh.unlock({}, Path('/unused'), invalid)
+            up.assert_not_called()
+
+    def test_key_state_distinguishes_locked_missing_and_unavailable(self):
+        config = {'name': 'demo', 'engine': 'podman'}
+        with patch.object(sandbox, 'run') as run:
+            self.assertEqual(ssh.key_state(config, companion_running=False), 'unavailable')
+            run.assert_not_called()
+            for rc, stdout, state in [(0, 'loaded', 'loaded'), (0, 'locked', 'locked'),
+                                      (0, 'missing', 'missing'), (0, 'unknown', 'unavailable'),
+                                      (1, 'locked', 'unavailable')]:
+                run.return_value = SimpleNamespace(returncode=rc, stdout=stdout)
+                self.assertEqual(ssh.key_state(config, companion_running=True), state)
+        with patch.object(sandbox, 'run', side_effect=ssh.subprocess.TimeoutExpired('podman', 3)):
+            self.assertEqual(ssh.key_state(config, companion_running=True), 'unavailable')
+
+    def test_unchanged_ssh_apply_never_rebuilds_or_restarts_the_companion(self):
+        config = {'name': 'demo', 'ssh': {'hosts': [HOST]}, 'options': {'approval': 'manual'}}
+        changes = {'ssh': copy.deepcopy(config['ssh']), 'options': sandbox.options(config['options'])}
+        with (patch.object(sandbox, 'build') as build,
+              patch.object(sandbox, 'down') as down,
+              patch.object(sandbox, 'up') as up,
+              patch.object(sandbox.activity, 'save_config') as save):
+            sandbox.apply_settings(config, Path('/unused'), changes)
+        for operation in (build, down, up, save):
+            operation.assert_not_called()
+
     def test_exact_ips_ipv6_and_hostnames(self):
         for name in ['192.0.2.10','2001:db8::1','build.example.test','build']:
             self.assertEqual(ssh.validate({'hosts':[{**HOST,'hostname':name}]})['hosts'][0]['hostname'],name)
