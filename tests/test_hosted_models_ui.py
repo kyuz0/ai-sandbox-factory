@@ -4,10 +4,11 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static
 from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ModelsScreen, SettingsForm, preset
 from pi_sandbox_factory.models_ui import HostedProviders, ModelDialog, ProviderDialog
 from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
+from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory import editor_settings, hosted_models, inference, provider_credentials
 from test_tui import FakeService
 
@@ -44,7 +45,11 @@ class HostedUITests(unittest.TestCase):
                 await app.push_screen(ProviderDialog(), chosen.append)
                 await pilot.pause()
                 picker = app.screen.query_one('#saved-key', Select)
-                self.assertLessEqual(app.screen.query_one('#remember-key').region.bottom,
+                remember = app.screen.query_one('#remember-key')
+                key = app.screen.query_one('#hosted-key', Input)
+                self.assertEqual(remember.region.x, key.region.x)
+                self.assertEqual(remember.region.y, key.region.bottom + 1)
+                self.assertLessEqual(remember.region.bottom,
                                      app.screen.query_one('.model-fields').content_region.bottom)
                 picker.value = work
                 await pilot.pause()
@@ -69,7 +74,9 @@ class HostedUITests(unittest.TestCase):
                 await pilot.press('enter')
                 await pilot.pause(0.3)
                 self.assertIs(app.focused, app.screen.query_one('#managed-key', Input))
-                self.assertIn('Enter an API key.', str(app.screen.query_one('#credential-dialog-error', Static).render()))
+                feedback = app.screen.query_one('#credential-input-error', Static)
+                self.assertIn('Enter an API key.', str(feedback.render()))
+                self.assertEqual(feedback.region.y, app.focused.region.bottom)
                 app.screen.query_one('#saved-key', Select).value = work
                 app.screen.query_one('#credential-apply', Button).focus()
                 await pilot.press('enter')
@@ -117,6 +124,12 @@ class HostedUITests(unittest.TestCase):
                 await app.push_screen(SettingsForm(draft, section='hosted-section'))
                 await pilot.pause()
                 form = app.screen
+                local = form.query_one('#local-provider', Collapsible)
+                self.assertTrue(local.collapsed)
+                local.query_one('CollapsibleTitle').focus()
+                await pilot.press('enter')
+                await pilot.pause()
+                self.assertFalse(local.collapsed)
                 form.query_one('#local-server-keys', Button).focus()
                 await pilot.press('enter')
                 await pilot.pause()
@@ -166,8 +179,20 @@ class HostedUITests(unittest.TestCase):
                     draft=preset('base',copy.deepcopy(DEFAULT_SETTINGS));draft.update(name='test',workspace=temp)
                     await app.push_screen(SettingsForm(draft,section='hosted-section'));await pilot.pause()
                     form=app.screen.query_one(HostedProviders)
+                    names = form.query_one('#hosted-available', Static)
+                    self.assertEqual(str(names.render()), ', '.join(hosted_models.PROVIDERS.values()))
                     form.query_one('#hosted-add',Button).focus();await pilot.press('enter');await pilot.pause()
                     self.assertIsInstance(app.screen,ProviderDialog)
+                    remember = app.screen.query_one('#remember-key', Checkbox)
+                    key = app.screen.query_one('#hosted-key', Input)
+                    self.assertEqual(remember.region.x, key.region.x)
+                    self.assertEqual(remember.region.y, key.region.bottom + 1)
+                    label = str(remember.label)
+                    remember.value = True
+                    await pilot.pause()
+                    self.assertEqual(str(remember.label), label)
+                    self.assertEqual(app.screen.query_one('#credential-remember').region.x, key.region.x + 2)
+                    remember.value = False
                     app.screen.query_one('#hosted-provider',Select).value='amazon-bedrock';await pilot.pause()
                     app.screen.query_one('#hosted-method',Select).value='iam';await pilot.pause()
                     self.assertTrue(app.screen.query_one('#hosted-secret_key',Input).password)
@@ -180,6 +205,12 @@ class HostedUITests(unittest.TestCase):
                     app.screen.query_one('#hosted-key',Input).value='fixture-key'
                     app.screen.query_one('#hosted-save',Button).focus();await pilot.press('enter');await pilot.pause()
                     self.assertEqual(form.changes['openrouter']['key'],'fixture-key')
+                    self.assertEqual(str(names.render()), 'Available to connect · Together, Azure / Foundry, AWS Bedrock')
+                    form.query_one('#hosted-add', Button).focus()
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    self.assertEqual(app.screen.query_one('#hosted-provider', Select).value, 'together')
+                    await pilot.press('escape')
                     await pilot.press('escape');await pilot.pause()
                     await app.push_screen(ModelsScreen({'name':'test','config':{'model_providers':[]}}));await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()
                     await app.push_screen(ModelDialog('test','azure'));await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()

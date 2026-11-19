@@ -251,8 +251,13 @@ class TUILayoutTests(unittest.TestCase):
                     await app.push_screen(form)
                     await pilot.pause()
                     section=form.query_one('#hosted-section',Collapsible)
+                    local=form.query_one('#local-provider',Collapsible)
                     self.assertEqual(section.collapsed, context != 'create')
-                    self.assertIn('local on',section.title)
+                    self.assertTrue(local.collapsed)
+                    self.assertEqual(local.title, 'Local models · On')
+                    control=form.query_one('#local-models',Checkbox)
+                    help_text = control.parent.query_one('.checkbox-help', Static)
+                    copy=(str(control.label), str(help_text.render()))
                     field=form.query_one('#model-ports',Input)
                     self.assertIn(field,section.query(Input))
                     for invalid in ('bad',''):
@@ -261,6 +266,7 @@ class TUILayoutTests(unittest.TestCase):
                         with self.assertRaises(ValueError):form.collect()
                         await pilot.pause()
                         self.assertFalse(section.collapsed)
+                        self.assertFalse(local.collapsed)
                         error=form.query_one('#model-ports-error')
                         self.assertTrue(error.display)
                         self.assertGreaterEqual(error.region.y,1)
@@ -268,12 +274,15 @@ class TUILayoutTests(unittest.TestCase):
                     form.query_one('#local-models',Checkbox).value=False
                     await pilot.pause()
                     self.assertTrue(field.disabled)
+                    self.assertFalse(form.query_one('#local-model-details').display)
                     self.assertFalse(form.query_one('#model-ports-error').display)
-                    self.assertIn('local off',section.title)
+                    self.assertEqual(local.title, 'Local models · Off')
+                    self.assertEqual((str(control.label), str(help_text.render())), copy)
                     field.value='8000'
                     form.query_one('#local-models',Checkbox).value=True
                     await pilot.pause()
                     self.assertFalse(field.disabled)
+                    self.assertTrue(form.query_one('#local-model-details').display)
 
     async def test_agent_tools_summary_tracks_visible_controls(self):
         app = self.app()
@@ -304,7 +313,7 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn(form.query_one('#local-models'), section.query('#local-models'))
             section.collapsed = False
             await pilot.pause()
-            self.assertIn('local on', section.title)
+            self.assertIn('1 enabled', section.title)
             form.query_one('#network-search-section', Collapsible).collapsed = False
             form.query_one('#network-section', Collapsible).collapsed = False
             await pilot.pause()

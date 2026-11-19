@@ -9,7 +9,16 @@ from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from . import hosted_models, settings_effects, editor_settings
 from .credentials_ui import CredentialFields, choice_key_caption, key_caption
+from .settings_catalog import HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL
 from .tui_widgets import Feedback
+
+
+def local_models_title(enabled):
+    return LOCAL_MODELS_LABEL + (' · On' if enabled else ' · Off')
+
+
+def hosted_provider_names(connected=()):
+    return ', '.join(label for provider, label in hosted_models.PROVIDERS.items() if provider not in connected)
 
 
 class ProviderDialog(ModalScreen):
@@ -22,19 +31,24 @@ class ProviderDialog(ModalScreen):
     .provider-specific { height: auto; }
     '''
 
-    def __init__(self, value=None):
+    def __init__(self, value=None, providers=None):
         super().__init__()
         self.value = dict(value or {})
+        self.providers = hosted_models.PROVIDERS if providers is None else providers
 
     def compose(self):
         v = self.value
+        selected_provider = v.get('provider') or next(iter(self.providers))
         with Vertical(classes='model-dialog key-dialog'):
             yield Label(('Connection · ' + hosted_models.PROVIDERS[v['provider']]) if v.get('provider')
                         else 'Connect a model provider', classes='title')
             with VerticalScroll(classes='model-fields key-dialog-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Provider')
-                    yield Select([(v,k) for k,v in hosted_models.PROVIDERS.items()], value=v.get('provider','openrouter'), allow_blank=False, disabled=bool(v.get('provider')), id='hosted-provider')
+                    yield Select([(label, provider) for provider, label in self.providers.items()],
+                                 value=selected_provider, allow_blank=False,
+                                 disabled=bool(v.get('provider')), id='hosted-provider')
+                    yield Static('Uses pi.dev for Pi’s model catalogue.', classes='setting-help')
                 with Vertical(id='azure-fields', classes='provider-specific'):
                     with Vertical(classes='setting'):
                         yield Label('Azure / Foundry endpoint')
@@ -49,7 +63,7 @@ class ProviderDialog(ModalScreen):
                         yield Select([('Bedrock bearer token','bearer'),('AWS access keys','iam')], value=v.get('method','bearer'), allow_blank=False, id='hosted-method')
                 with Vertical(id='hosted-key-field', classes='setting'):
                     yield CredentialFields('hosted-key',
-                                           binding=self.credential_binding({**v, 'provider':v.get('provider', 'openrouter')}),
+                                           binding=self.credential_binding({**v, 'provider': selected_provider}),
                                            choice=v.get('credential') or {'key':v.get('key','')})
                     if v.get('has_key'):
                         yield Static('Leave blank to keep the assigned key.', classes='setting-help')
@@ -59,13 +73,16 @@ class ProviderDialog(ModalScreen):
                             yield Label(label)
                             yield Input(v.get(field,''), password=True, id='hosted-'+field)
                     yield Static('Leave all three empty to keep saved AWS keys. Temporary credentials must be replaced when they expire.', classes='setting-help')
-                yield Static('', id='hosted-destinations', markup=False, classes='setting-help')
-            yield Feedback('', id='hosted-error', markup=False, classes='error')
+                yield Feedback('', id='hosted-error', markup=False, classes='error')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='hosted-cancel')
                 yield Button('Use key', id='hosted-save', variant='primary')
 
-    def on_mount(self): self.sync()
+    def on_mount(self):
+        self.sync()
+        provider = self.query_one('#hosted-provider', Select)
+        if not provider.disabled:
+            provider.focus()
 
     def credential_binding(self, value):
         try:
@@ -89,7 +106,6 @@ class ProviderDialog(ModalScreen):
             'provider': provider, 'endpoint': self.query_one('#hosted-endpoint', Input).value,
             'region': self.query_one('#hosted-region', Input).value, 'method': self.query_one('#hosted-method', Select).value,
         }))
-        self.query_one('#hosted-destinations', Static).update('Uses pi.dev for Pi’s model catalogue.')
 
     def action_cancel(self): self.dismiss(None)
 
@@ -116,11 +132,13 @@ class ProviderDialog(ModalScreen):
                     if value['provider'] == 'amazon-bedrock' and value['method'] == 'iam':
                         if not value['access_key'] or not value['secret_key']: raise ValueError('Enter the AWS access key and secret key.')
                     elif not value['key'] and not value.get('credential'):
-                        fields.focus_key()
-                        raise ValueError('Enter an API key.')
+                        fields.require_key()
+                        return
                 self.dismiss(value)
             except ValueError as error:
-                self.query_one('#hosted-error',Static).update(str(error))
+                feedback = self.query_one('#hosted-error', Feedback)
+                feedback.update(str(error))
+                feedback.scroll_visible(animate=False)
 
 
 class HostedProviders(Vertical):
@@ -130,7 +148,7 @@ class HostedProviders(Vertical):
 
     DEFAULT_CSS = '''
     HostedProviders, .hosted-list { height: auto; }
-    .hosted-row { height: auto; margin-bottom: 1; padding: 1 2; background: #24292f; }
+    .hosted-row { height: auto; margin-bottom: 1; padding: 1 3; background: #24292f; }
     .hosted-row Static { height: auto; }
     .hosted-row .buttons { height: auto; min-height: 1; }
     '''
@@ -143,12 +161,14 @@ class HostedProviders(Vertical):
         self.busy = False
 
     def compose(self):
-        yield Static('Hosted model services', classes='group-title')
+        yield Static(HOSTED_PROVIDERS_LABEL, classes='group-title model-group-title')
         yield Vertical(classes='hosted-list', id='hosted-list')
         with Vertical(classes='setting'):
-            yield Button('Connect provider…', id='hosted-add')
+            yield Static(hosted_provider_names(), id='hosted-available', markup=False,
+                         classes='available-providers')
+            yield Button('Connect hosted provider…', id='hosted-add')
             yield Static('Choose a model after the sandbox starts.' if not self.sandbox_name else
-                'Manage connections and choose models for this sandbox.', classes='setting-help')
+                'Choose a model for this sandbox after connecting.', classes='setting-help')
         yield Static('',id='hosted-message',markup=False, classes='setting-help')
 
     async def on_mount(self):
@@ -173,7 +193,11 @@ class HostedProviders(Vertical):
     async def render_rows(self):
         target = self.query_one('#hosted-list',Vertical)
         await target.remove_children()
-        for provider, value in {**self.saved, **self.changes}.items():
+        connected = {**self.saved, **self.changes}
+        for provider in hosted_models.PROVIDERS:
+            if provider not in connected:
+                continue
+            value = connected[provider]
             row = Vertical(classes='hosted-row')
             await target.mount(row)
             assignment = value.get('assignment')
@@ -187,7 +211,13 @@ class HostedProviders(Vertical):
             edit_label = 'Change key…' if self.sandbox_name and provider in hosted_models.ENDPOINTS else 'Connection…'
             await buttons.mount(Button(edit_label,name='edit:'+provider), Button('Remove',name='remove:'+provider))
             if self.sandbox_name: await buttons.mount(Button('Choose model…',name='model:'+provider))
-        self.query_one('#hosted-add',Button).disabled = self.busy
+        available = self.query_one('#hosted-available', Static)
+        names = hosted_provider_names(connected)
+        available.update('Available to connect · ' + names if connected and names else names)
+        available.display = bool(names)
+        add = self.query_one('#hosted-add', Button)
+        add.disabled = self.busy
+        add.parent.display = bool(names)
         self.post_message(self.Changed())
 
     @on(Button.Pressed)
@@ -195,7 +225,11 @@ class HostedProviders(Vertical):
         event.stop()
         if self.busy: return
         action = event.button.name or event.button.id
-        if action == 'hosted-add': self.app.push_screen(ProviderDialog(), self.changed)
+        if action == 'hosted-add':
+            available = {provider: label for provider, label in hosted_models.PROVIDERS.items()
+                         if provider not in self.saved and provider not in self.changes}
+            if available:
+                self.app.push_screen(ProviderDialog(providers=available), self.changed)
         elif action.startswith('edit:'):
             provider = action.split(':')[1]
             self.app.push_screen(ProviderDialog({**self.saved,**self.changes}[provider]), self.changed)

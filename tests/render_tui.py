@@ -85,7 +85,12 @@ async def capture(size):
                     await app.workers.wait_for_complete()
                     await pilot.pause()
                     if focus:
-                        app.screen.query_one(focus).focus()
+                        widget = app.screen.query_one(focus)
+                        for parent in reversed(widget.ancestors):
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
+                        await pilot.pause()
+                        widget.focus()
                         await pilot.pause()
                     p = out / f'{name}-{size[0]}x{size[1]}.svg'
                     p.write_text(app.export_screenshot())
@@ -93,6 +98,72 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('providers-') for name in args.only):
+                    plugin = {'name': 'chaucer', 'settings': {}, 'manifest': {
+                        'description': 'Chaucer model catalogue',
+                        'network': ['models.example.test:443'],
+                        'settings': {'key': {'type': 'secret', 'label': 'Chaucer API key'}},
+                        'inference': {'origin': 'https://models.example.test', 'auth': {'type': 'bearer'},
+                                      'operations': [{'method': 'GET', 'path': '/v1/models'}]},
+                    }}
+                    resolve = registry.resolve
+                    def choices(kind):
+                        return {'local': 'Local models', 'chaucer': 'Chaucer model catalogue'} if kind == 'provider' else {'base': 'Default Developer Sandbox'}
+                    with patch('pi_sandbox_factory.skill_library.entries', return_value={}), \
+                         patch.object(registry, 'choices', side_effect=choices), \
+                         patch.object(registry, 'resolve', side_effect=lambda kind, name:
+                                      root if kind == 'provider' else resolve(kind, name)), \
+                         patch.object(registry, 'manifest', return_value=plugin['manifest']):
+                        draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                        draft.update(name='demo', workspace=str(workspace), local_model_ports='8000')
+                        form = SettingsForm(draft)
+                        await app.push_screen(form)
+                        await shot('providers-create')
+                        await shot('providers-create-local-on', focus='#local-models')
+                        form.query_one('#local-models', Checkbox).value = False
+                        await pilot.pause()
+                        await shot('providers-create-local-off', focus='#local-models')
+                        form.query_one('#local-models', Checkbox).value = True
+                        form.query_one('#model-ports', Input).value = '8000,not-a-port'
+                        await pilot.pause()
+                        try:
+                            form.checked_local_ports()
+                        except ValueError:
+                            pass
+                        await shot('providers-create-local-error', focus='#model-ports')
+                        form.query_one('#model-ports', Input).value = '8000'
+                        form.query_one('#local-provider', Collapsible).collapsed = True
+                        form.query_one('#source-chaucer', Checkbox).value = True
+                        await pilot.pause()
+                        await shot('providers-create-plugin', focus='#source-chaucer')
+                        await app.pop_screen()
+                        defaults = SettingsForm(draft, defaults=True)
+                        await app.push_screen(defaults)
+                        section = defaults.query_one('#hosted-section', Collapsible)
+                        section.query_one('CollapsibleTitle').focus()
+                        section.collapsed = False
+                        await shot('providers-defaults')
+                        await app.pop_screen()
+                        existing = {**draft, 'model_providers': [*c['model_providers'], plugin]}
+                        await shot('providers-edit', SettingsForm(existing, editing=True, setting='model-sources'))
+                        app.service.populated = True
+                        live = ModelsScreen({**record, 'config': {**c, 'model_providers': existing['model_providers']}})
+                        await app.push_screen(live)
+                        await shot('providers-settings')
+                        await shot('providers-settings-local', focus='#local-server-keys')
+                        live.query_one('#live-local-provider', Collapsible).collapsed = True
+                        await shot('providers-settings-plugin', focus='#model-provider')
+                        dialog = ProviderDialog(providers={
+                            'together': 'Together', 'azure': 'Azure / Foundry', 'amazon-bedrock': 'AWS Bedrock'})
+                        await app.push_screen(dialog)
+                        await shot('providers-connect')
+                        dialog.query_one('#hosted-save', Button).focus()
+                        await pilot.press('enter')
+                        await pilot.pause(0.3)
+                        await shot('providers-connect-error')
+                        await app.pop_screen()
+                        await app.pop_screen()
+                    return
                 if args.only and all(name.startswith('local-key-') for name in args.only):
                     ports = [8000, 8080, 8081]
                     binding = provider_credentials.scope('local', inference.local_route(8000))
@@ -121,6 +192,8 @@ async def capture(size):
                         if 'local-key-invalid' in args.only:
                             draft['local_model_ports'] = '8080-8000'
                             await app.push_screen(SettingsForm(draft, section='hosted-section'))
+                            await pilot.pause()
+                            app.screen.query_one('#local-provider', Collapsible).collapsed = False
                             await pilot.pause()
                             app.screen.query_one('#local-server-keys', Button).focus()
                             await pilot.press('enter')

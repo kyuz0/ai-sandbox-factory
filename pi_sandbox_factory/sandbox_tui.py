@@ -19,14 +19,15 @@ from .creation import Creation, Cancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
-    CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH,
-    NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS, WEB_SEARCH_LABEL,
+    CATEGORIES, EDIT_FORMS, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
+    MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
+    PROVIDER_PLUGINS_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm
-from .models_ui import HostedProviders
+from .models_ui import HostedProviders, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
-                             assigned_key_caption, choice_key_caption, key_caption)
+                             assigned_key_label, choice_key_caption, key_caption)
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
@@ -1263,51 +1264,70 @@ class ModelsScreen(Screen):
     def __init__(self,record,finished=None):
         super().__init__();self.record=record;self.finished=finished
         self.key_status = {}
-        self.providers = {row['name']: row['manifest'] for row in record['config'].get('model_providers', [])}
+        rows = record['config'].get('model_providers', [{'name': 'local', 'manifest': {}}])
+        self.providers = {row['name']: row['manifest'] for row in rows}
 
     def credential_binding(self, name):
         return provider_credentials.scope(name, self.providers.get(name, {}).get('inference'))
+
+    def discovery_buttons(self, prefix):
+        with Horizontal(classes='buttons'):
+            for action in ('Status', 'Preview', 'Refresh'):
+                yield Button(action, id=f'{prefix}-{action.lower()}')
+
     def compose(self):
-        rows=self.record['config'].get('model_providers',[{'name':'local','manifest':{}}])
+        ports = self.record['config'].get('local_model_ports')
+        local = 'local' in self.providers
+        plugins = [(manifest.get('description', name), name)
+                   for name, manifest in self.providers.items() if name != 'local']
         yield Header()
         with VerticalScroll(classes='form'):
             yield Label(CATEGORIES['models'].label + ' · ' + self.record['name'], classes='title')
-            with Vertical(classes='setting'):
-                yield Label('Local models', classes='group-title')
-                ports = self.record['config'].get('local_model_ports')
-                yield Static('On · server ports ' + ports if ports else 'Off', markup=False)
-                yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
-                yield Static('Changing local access or provider plugins recreates the sandbox.', classes='setting-help')
-            if ports:
-                with Vertical(classes='setting'):
-                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+            if ports or local:
+                with Collapsible(title=local_models_title(bool(ports)), id='live-local-provider'):
+                    if ports:
+                        with Vertical(classes='setting'):
+                            yield Static('Server ports · ' + ports, markup=False)
+                        with Vertical(classes='setting'):
+                            yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+                    if local:
+                        yield from self.discovery_buttons('local')
+            else:
+                yield Static(local_models_title(False), classes='group-title')
             yield HostedProviders(self.record['name'])
-            yield Label('Model discovery and credentials', classes='group-title')
-            if not rows:
-                yield Static('No provider plugins are enabled.', id='no-model-providers')
-            with Vertical(id='provider-controls') as controls:
-                controls.display = bool(rows)
+            if plugins:
+                with Collapsible(title=PROVIDER_PLUGINS_LABEL, id='provider-controls'):
+                    with Vertical(classes='setting'):
+                        yield Label('Model provider')
+                        yield Select(plugins, id='model-provider', allow_blank=False, value=plugins[0][1])
+                    with Vertical(classes='setting', id='legacy-provider-key'):
+                        yield Label('Provider credential · when required')
+                        with Horizontal(classes='path-row'):
+                            yield Input(password=True, id='provider-key')
+                            yield Button('Configure', id='provider-auth')
+                    with Vertical(classes='setting', id='managed-provider-key'):
+                        yield Static(key_caption(), id='assigned-provider-key', markup=False)
+                        yield Button('Choose key…', id='provider-change-key')
+                    yield from self.discovery_buttons('provider')
+            else:
                 with Vertical(classes='setting'):
-                    yield Label('Model provider')
-                    yield Select([(r['manifest'].get('description',r['name']),r['name']) for r in rows],id='model-provider',allow_blank=not rows,value=rows[0]['name'] if rows else Select.NULL,disabled=not rows)
-                with Vertical(classes='setting', id='legacy-provider-key'):
-                    yield Label('Provider credential · when required')
-                    with Horizontal(classes='path-row'):
-                        yield Input(password=True,id='provider-key',disabled=not rows)
-                        yield Button('Configure',id='provider-auth',disabled=not rows)
-                with Vertical(classes='setting', id='managed-provider-key'):
-                    yield Static(key_caption(), id='assigned-provider-key', markup=False)
-                    yield Button('Change key…', id='provider-change-key')
-                with Horizontal(classes='buttons'):
-                    yield Button('Status',id='provider-status',disabled=not rows)
-                    yield Button('Preview',id='provider-preview',disabled=not rows)
-                    yield Button('Refresh',id='provider-refresh',disabled=not rows)
+                    yield Label(PROVIDER_PLUGINS_LABEL, classes='group-title model-group-title')
+                    yield Static('No provider plugins are enabled.', id='no-model-providers', classes='setting-help')
+            with Vertical(classes='setting'):
+                yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
+                yield Static('Changing local access or enabled plugins recreates the sandbox.', classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Continue' if self.finished else 'Back',id='models-back',variant='primary' if self.finished else 'default')
         yield Footer()
 
     def on_mount(self):
-        self.query_one('#model-sources', Button).focus()
+        local = self.query('#live-local-provider CollapsibleTitle')
+        if local:
+            local.first().focus()
+        else:
+            self.query_one('.form', VerticalScroll).focus()
+        if not self.query('#model-provider'):
+            return
         self.show_key_status()
         if any(self.credential_binding(name) for name in self.providers):
             self.load_key_status()
@@ -1318,7 +1338,9 @@ class ModelsScreen(Screen):
         managed = bool(self.credential_binding(provider))
         self.query_one('#legacy-provider-key').display = not managed and provider not in ('local', Select.NULL)
         self.query_one('#managed-provider-key').display = managed
-        self.query_one('#assigned-provider-key', Static).update(assigned_key_caption(self.key_status, provider))
+        label = assigned_key_label(self.key_status, provider)
+        self.query_one('#assigned-provider-key', Static).update(key_caption(label))
+        self.query_one('#provider-change-key', Button).label = 'Change key…' if label else 'Choose key…'
 
     @work(exclusive=True)
     async def load_key_status(self):
@@ -1366,23 +1388,33 @@ class ModelsScreen(Screen):
         if action == 'local-server-keys':
             self.open_local_keys()
             return
-        selected=self.query_one('#model-provider',Select).value
-        if selected is Select.NULL:return
+        if action in ('local-status', 'local-preview', 'local-refresh'):
+            self.run_discovery('local', action.removeprefix('local-'))
+            return
+        if action not in ('provider-change-key', 'provider-status', 'provider-preview', 'provider-refresh', 'provider-auth'):
+            return
+        selected = self.query_one('#model-provider', Select).value
         if action == 'provider-change-key':
             provider = self.providers[selected]
             self.app.push_screen(CredentialDialog(provider.get('description', selected),
                 self.credential_binding(selected), active=selected in self.key_status.get('configured', ())),
                 lambda choice: self.change_key(selected, choice))
             return
-        if action not in ('provider-status','provider-preview','provider-refresh','provider-auth'):return
-        key=self.query_one('#provider-key',Input).value if action=='provider-auth' else None
-        if action=='provider-auth' and not key.strip():self.notify('Enter the provider credential first.',severity='error');return
+        key = self.query_one('#provider-key', Input).value if action == 'provider-auth' else None
+        if action == 'provider-auth' and not key.strip():
+            self.notify('Enter the provider credential first.', severity='error')
+            return
         self.query_one('#provider-key',Input).value=''
+        self.run_discovery(selected, action.removeprefix('provider-'), key)
+
+    def run_discovery(self, provider, action, key=None):
         service=self.app.service
         def task(log):
-            service.provider(self.record['name'], selected, action.removeprefix('provider-'), key, log)
-        self.app.pop_screen();self.app.push_screen(Operation('Provider · '+selected,task,
-            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('provider-auth', 'provider-refresh') else ''))
+            service.provider(self.record['name'], provider, action, key, log)
+        self.app.pop_screen()
+        label = LOCAL_MODELS_LABEL if provider == 'local' else self.providers[provider].get('description', provider)
+        self.app.push_screen(Operation(label, task,
+            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('auth', 'refresh') else ''))
     def action_back(self):self.app.pop_screen()
 
 
@@ -2033,56 +2065,62 @@ class SettingsForm(Screen):
         available.update({name:row['manifest'].get('description',name) for name,row in saved_rows.items() if name not in available})
         self.provider_forms={}
         with Collapsible(title=category.label, collapsed=True, id=category.section):
-            yield Label('Local models', classes='group-title')
-            with Vertical(classes='setting'):
-                yield Checkbox('Connect to models on this computer',
-                               value=bool(value.get('local_model_ports')), id='local-models')
-                yield Static('Requires rootless Podman.', classes='setting-help checkbox-help')
-            with Vertical(classes='setting', id='model-port-setting'):
-                yield Label('Server ports · comma-separated ports or ranges')
-                yield Input(value.get('local_model_ports') or '8000', id='model-ports')
-                yield Feedback('', id='model-ports-error', markup=False)
-                yield Static('For example, 8000,8080-8082.', classes='setting-help')
-            if not self.editing and not self.defaults_mode:
-                with Vertical(classes='setting local-keys-action'):
-                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+            ports = value.get('local_model_ports')
+            with Collapsible(title=local_models_title(bool(ports)), id='local-provider'):
+                with Vertical(classes='setting', id='local-enable-setting'):
+                    yield Checkbox('Connect to models on this computer', value=bool(ports), id='local-models')
+                    yield Static('Requires rootless Podman.', classes='setting-help checkbox-help')
+                with Vertical(id='local-model-details'):
+                    with Vertical(classes='setting', id='model-port-setting'):
+                        yield Label('Server ports')
+                        yield Input(ports or '8000', id='model-ports')
+                        yield Feedback('', id='model-ports-error', markup=False)
+                        yield Static('Use comma-separated ports or ranges, for example 8000,8080-8082.',
+                                     classes='setting-help')
+                    if not self.editing and not self.defaults_mode:
+                        with Vertical(classes='setting'):
+                            yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
             if not self.editing and not self.defaults_mode:
                 yield HostedProviders(changes=value.get('_hosted_changes'))
             elif self.setting != 'model-sources':
                 with Vertical(classes='setting'):
-                    yield Label('Hosted model services', classes='group-title')
+                    yield Label(HOSTED_PROVIDERS_LABEL, classes='group-title model-group-title')
+                    yield Static(hosted_provider_names(), markup=False)
                     yield Static(f'Configure hosted services in {MODEL_PROVIDERS_PATH} without recreating the sandbox.'
                                  if self.editing else f'Connect hosted services during creation or later in {MODEL_PROVIDERS_PATH}.',
                                  classes='setting-help')
             if any(name != 'local' for name in available):
-                yield Label('Provider plugins', classes='group-title')
+                yield Label(PROVIDER_PLUGINS_LABEL, classes='group-title model-group-title')
             for name,label in available.items():
                 if name=='local':continue
                 info=saved_rows[name]['manifest'] if name in saved_rows else registry.manifest('provider',registry.resolve('provider',name))
                 self.provider_forms[name]=info
                 with Vertical(classes='setting'):
                     yield Checkbox(label,value=name in configured,id='source-'+name)
-                    if info.get('network'):
-                        yield Static('Required network access: '+', '.join(info['network']), classes='setting-help checkbox-help')
-                for key,spec in info.get('settings',{}).items():
-                    secret = spec['type']=='secret'
-                    if secret and (self.editing or self.defaults_mode):continue
-                    with Vertical(classes='setting provider-setting' + (' -provider-disabled' if name not in configured else '')):
-                        if secret and (binding := provider_credentials.scope(name, info.get('inference'))):
-                            choice = self.provider_key_choices.get(name)
-                            yield Static(choice_key_caption(binding, choice), id='source-key-label-'+name, markup=False)
-                            yield Button('Change key…' if choice else 'Choose key…',
-                                         id='source-'+name+'-'+key, name='provider-key:'+name,
-                                         disabled=name not in configured)
-                            continue
-                        yield Label(spec.get('label',key))
-                        yield Input('' if secret else configured.get(name,{}).get(key,spec.get('default','')),
-                                    password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
-                        if secret:
-                            yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
-                                         + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
-                            yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
-            yield Static('Add providers from Library…', classes='setting-help')
+                    with Vertical(id='source-details-'+name, classes='provider-details') as details:
+                        details.display = name in configured
+                        if info.get('network'):
+                            yield Static('Required network access · '+', '.join(info['network']),
+                                         classes='setting-help provider-setting', markup=False)
+                        for key,spec in info.get('settings',{}).items():
+                            secret = spec['type']=='secret'
+                            if secret and (self.editing or self.defaults_mode):continue
+                            with Vertical(classes='setting provider-setting'):
+                                if secret and (binding := provider_credentials.scope(name, info.get('inference'))):
+                                    choice = self.provider_key_choices.get(name)
+                                    yield Static(choice_key_caption(binding, choice), id='source-key-label-'+name, markup=False)
+                                    yield Button('Change key…' if choice else 'Choose key…',
+                                                 id='source-'+name+'-'+key, name='provider-key:'+name,
+                                                 disabled=name not in configured)
+                                    continue
+                                yield Label(spec.get('label',key))
+                                yield Input('' if secret else configured.get(name,{}).get(key,spec.get('default','')),
+                                            password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
+                                if secret:
+                                    yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
+                                                 + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
+                                    yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
+            yield Static('Open Library… from the home screen to install provider plugins.', classes='setting-help')
 
     def compose_editor_settings(self, category, value, selected):
         if not self.editing:
@@ -2155,10 +2193,11 @@ class SettingsForm(Screen):
             yield Checkbox('Scheduled prompts in the current chat', value=selected['scheduling'], id='scheduling')
 
     def compose_skills(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        skills = SkillSelection(value)
+        with Collapsible(title=category.label + ' · ' + skills.summary(), collapsed=True, id=category.section):
             for skill in PROFILE_SKILLS.get(self.profile_name, []):
                 yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
-            yield SkillSelection(value)
+            yield skills
 
     def compose_ssh_settings(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
@@ -2225,14 +2264,16 @@ class SettingsForm(Screen):
     def local_models_changed(self):
         disabled = not self.query_one('#local-models', Checkbox).value
         self.query_one('#model-ports', Input).disabled = disabled
-        for button in self.query('#local-server-keys'):
-            button.parent.display = not disabled
-        self.query_one('#model-port-setting').set_class(disabled, '-provider-disabled')
-        self.query_one('#model-ports-error', Feedback).update('')
+        self.query_one('#local-model-details').display = not disabled
+        provider = self.query_one('#local-provider', Collapsible)
+        provider.title = local_models_title(not disabled)
+        provider.set_class(disabled, '-local-off')
+        self.local_ports_changed()
         self.models_summary()
 
     @on(Input.Changed, '#model-ports')
     def local_ports_changed(self):
+        self.query_one('#model-ports', Input).remove_class('-invalid')
         self.query_one('#model-ports-error', Feedback).update('')
 
     def checked_local_ports(self):
@@ -2243,18 +2284,20 @@ class SettingsForm(Screen):
             return sandbox.local_model_ports(field.value.strip())
         except ValueError as error:
             self.query_one('#model-ports-error', Feedback).update(str(error))
+            field.add_class('-invalid')
             self.query_one('#hosted-section', Collapsible).collapsed = False
+            self.query_one('#local-provider', Collapsible).collapsed = False
             field.focus()
             self.call_after_refresh(field.parent.scroll_visible, animate=False)
             raise
 
     @on(HostedProviders.Changed)
     def models_summary(self):
-        local = self.query_one('#local-models', Checkbox).value
-        count = sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
+        count = int(self.query_one('#local-models', Checkbox).value)
+        count += sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
         count += sum(len({**group.saved, **group.changes}) for group in self.query(HostedProviders))
-        self.query_one('#hosted-section', Collapsible).title = (CATEGORIES['models'].label + ' · local ' + ('on' if local else 'off')
-            + (f' · {count} provider' + ('s' if count != 1 else '') if count else ''))
+        self.query_one('#hosted-section', Collapsible).title = (
+            CATEGORIES['models'].label + (f' · {count} enabled' if count else ' · None enabled'))
 
     @on(SkillSelection.Changed)
     def skills_summary(self):
@@ -2286,10 +2329,10 @@ class SettingsForm(Screen):
     def provider_selected(self, event):
         for name, info in self.provider_forms.items():
             if event.checkbox.id == 'source-' + name:
+                self.query_one('#source-details-' + name).display = event.value
                 for key in info.get('settings', {}):
                     for field in self.query('#source-' + name + '-' + key):
                         field.disabled = not event.value
-                        field.parent.set_class(not event.value, '-provider-disabled')
                         if not event.value:
                             field.remove_class('-invalid-credential')
                             for message in field.parent.query(Feedback):
@@ -2654,11 +2697,16 @@ class Cockpit(App):
     GitIdentityFields Input:focus { border: solid $primary; }
     GitIdentityFields Input.-invalid, GitIdentityFields Input.-invalid:focus { border: double $error; }
     #git-identity-error { color: #f1f3f5; text-style: bold; }
-    .provider-setting { margin: 0 0 1 2; }
-    .setting.-provider-disabled { opacity: 50%; }
-    #model-ports-error { text-style: bold; }
-    Screen:nocolor #model-ports-error { color: white; text-style: bold reverse; }
+    .provider-setting { margin: 0 0 1 0; }
+    .provider-details { height: auto; padding: 1 0 0 2; }
+    .provider-details > *:last-child { margin-bottom: 0; }
+    .group-title.model-group-title { margin-bottom: 0; }
+    .available-providers { height: auto; margin-bottom: 1; }
+    #model-ports-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports.-invalid, #model-ports.-invalid:focus { border: double $error; }
+    Screen:nocolor #model-ports-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
+    ModelsScreen #managed-provider-key, ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     #package-skills { margin: 0 0 1 0; }
     .provider-setting Input.-invalid-credential { border: tall $error; }
     .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
@@ -2679,13 +2727,20 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
+    #hosted-section Button:focus, ModelsScreen Button:focus,
+    .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
     .settings-review .form > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
     .compact-terminal .settings-review #review-project { margin: 0; }
     Collapsible > Contents,
     #agent-section.focused-setting > Contents,
-    #network-search-section.focused-setting > Contents { padding: 1 3; }
+    #network-search-section.focused-setting > Contents,
+    #hosted-section.focused-setting > Contents { padding: 1 3; }
+    #local-provider > Contents { padding: 1 3 0 3; }
+    #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
+    #provider-controls > CollapsibleTitle { padding: 0; }
+    #local-provider.-local-off #local-enable-setting { margin: 0; }
     #network-search-section #network-section,
     #network-search-section #web-section { margin: 0; }
     Collapsible.focused-setting > CollapsibleTitle { display: none; }
@@ -2711,13 +2766,15 @@ class Cockpit(App):
     .dialog-actions Button:last-child { margin-right: 0; }
     .key-dialog .key-dialog-fields { max-height: 65vh; }
     .compact-terminal .key-dialog { height: 96%; max-height: 96%; }
+    .compact-terminal ProviderDialog .model-dialog { height: 100%; max-height: 100%; }
+    .compact-terminal ProviderDialog .dialog-actions { margin: 0; }
     .compact-terminal .key-dialog .key-dialog-fields { height: 1fr; max-height: 100%; }
     .compact-terminal .key-dialog.-saved-key-selected,
     .compact-terminal .key-dialog.-saved-key-selected .key-dialog-fields { height: auto; }
     .compact-terminal .key-dialog #hosted-provider,
-    .compact-terminal .key-dialog .credential-key-input { margin: 0; }
-    .key-dialog #remember-key { margin: 0 0 1 2; }
-    .local-keys-action { margin: 0 0 1 2; }
+    .key-dialog .credential-key-input { margin: 0; }
+    .key-dialog #remember-key { margin: 1 0 0 0; }
+    .key-dialog #credential-remember { margin: 1 0 1 2; }
     SSHScreen #ssh-hosts { height: 5; }
     #web-enable-setting { margin: 0; }
     #web-fields { margin: 1 0 0 0; }
@@ -2726,12 +2783,14 @@ class Cockpit(App):
     #slack-controls Checkbox { width: auto; margin-bottom: 0; }
     #editor-show-password { margin-top: 1; }
     #editor-tls-fields { margin-top: 1; }
-    #model-port-setting { margin: 0 0 1 2; }
+    #local-model-details { height: auto; margin: 0 0 0 2; }
+    #model-ports { max-width: 48; }
     Collapsible > Contents > *:last-child > .setting:last-child,
     Collapsible > Contents > *:last-child > Collapsible:last-child { margin-bottom: 0; }
     #slack-controls Button { margin-right: 0; }
     .search-provider-row Button { margin-right: 0; }
     .model-fields, #slack-fields, #copy-sandbox-fields, #search-provider-fields { padding-right: 1; }
+    ProviderDialog .model-fields { padding: 0; }
     OptionList > .option-list--option { padding: 0 1; }
     #custom-profile-fields, #network-rules-fields, #network-rules-setting, #provider-controls { height: auto; }
     #home > .buttons { margin: 0 0 1 0; }
@@ -2770,7 +2829,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }

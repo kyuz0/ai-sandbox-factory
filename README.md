@@ -34,7 +34,7 @@ Choose **New sandbox**, select your project folder and configure a model:
 
 - **Local server:** open **Model Providers**, enable local models and enter its port, usually `8000`. The included
   [Pi Local Model Manager](docs/usage.md#local-models) discovers the running model.
-- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model Providers → Connect provider…**. Factory keeps credentials outside Pi and
+- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model Providers → Built-in hosted providers → Connect hosted provider…**. Factory keeps credentials outside Pi and
   editor extensions; see [hosted model setup](docs/hosted-models.md).
 
 Choose **Create and start** to open the editor. Use **Settings** to change the

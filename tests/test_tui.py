@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from pi_sandbox_factory import sandbox
 from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, DEFAULT_SETTINGS, Service, SettingsMenu
-from textual.widgets import Input, Button, DataTable, Checkbox, TextArea, OptionList
+from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList
 
 class FakeService:
     def __init__(self,records): self.records=records;self.calls=[]
@@ -223,7 +223,6 @@ class TUITests(unittest.TestCase):
 
     async def test_models_without_provider_plugins(self):
         from pi_sandbox_factory.sandbox_tui import ModelsScreen
-        from textual.widgets import Select
         self.records[0]['config']['model_providers'] = []
         service = FakeService(self.records)
         app = Cockpit(self.root, service)
@@ -231,9 +230,8 @@ class TUITests(unittest.TestCase):
             await self.ready(app, pilot)
             await app.push_screen(ModelsScreen(self.records[0]))
             await pilot.pause()
-            self.assertIs(app.screen.query_one('#model-provider', Select).value, Select.NULL)
-            for action in ('status', 'preview', 'refresh', 'auth'):
-                self.assertTrue(app.screen.query_one('#provider-' + action, Button).disabled)
+            self.assertFalse(app.screen.query('#model-provider'))
+            self.assertTrue(app.screen.query_one('#no-model-providers').display)
             self.assertEqual(str(app.screen.query_one('#model-sources', Button).label), 'Local models & provider plugins…')
             self.assertEqual(service.calls, [])
             await pilot.press('escape')
@@ -243,15 +241,20 @@ class TUITests(unittest.TestCase):
         from pi_sandbox_factory.sandbox_tui import ModelsScreen
         from textual.widgets import Select
         self.records[0]['config']['model_providers'] = [
-            {'name': 'local', 'manifest': {'description': 'Local models'}}]
+            {'name': 'local', 'manifest': {'description': 'Local models'}},
+            {'name': 'company', 'manifest': {'description': 'Company models'}}]
         service = FakeService(self.records)
         app = Cockpit(self.root, service)
         async with app.run_test(size=(120, 40)) as pilot:
             await self.ready(app, pilot)
             await app.push_screen(ModelsScreen(self.records[0]))
             await pilot.pause()
-            self.assertEqual(app.screen.query_one('#model-provider', Select).value, 'local')
-            await pilot.click('#provider-refresh')
+            self.assertEqual(app.screen.query_one('#model-provider', Select).value, 'company')
+            local = app.screen.query_one('#live-local-provider', Collapsible)
+            local.query_one('CollapsibleTitle').focus()
+            await pilot.press('enter')
+            await pilot.pause()
+            await pilot.click('#local-refresh')
             await self.ready(app, pilot)
             self.assertEqual(service.calls, [['provider', 'alpha', 'local', 'refresh', None]])
 
@@ -613,7 +616,11 @@ class TUITests(unittest.TestCase):
             await pilot.click('#operation-back');await self.ready(app,pilot)
             app.query_one(DataTable).move_cursor(row=1);await pilot.pause()
             await self.settings_page(app,pilot,action="models")
-            await pilot.click('#provider-preview');await self.ready(app,pilot)
+            local = app.screen.query_one('#live-local-provider', Collapsible)
+            local.query_one('CollapsibleTitle').focus()
+            await pilot.press('enter')
+            await pilot.pause()
+            await pilot.click('#local-preview');await self.ready(app,pilot)
             self.assertEqual(service.calls[-1],['provider','beta','local','preview',None])
             await pilot.press('q')
 
@@ -956,7 +963,8 @@ class TUITests(unittest.TestCase):
     async def test_creation_provider_credentials_are_masked_and_separate_from_settings(self):
         from pi_sandbox_factory import registry
         from pi_sandbox_factory.sandbox_tui import preset
-        info = {'description': 'Company models', 'settings': {'key': {'type': 'secret', 'label': 'Company API key'}},
+        info = {'description': 'Company models', 'network': ['models.example.com:443'],
+                'settings': {'key': {'type': 'secret', 'label': 'Company API key'}},
                 'inference': {'origin': 'https://models.example.com', 'auth': {'type': 'bearer'}}}
         resolve = registry.resolve
         for size in ((80, 24), (120, 40), (220, 50)):
@@ -972,11 +980,17 @@ class TUITests(unittest.TestCase):
                     await pilot.pause()
                     form = app.screen
                     field = form.query_one('#source-company-key', Input)
+                    details = form.query_one('#source-details-company')
+                    checkbox = form.query_one('#source-company', Checkbox)
+                    label = str(checkbox.label)
                     self.assertTrue(field.password)
                     self.assertTrue(field.disabled)
-                    form.query_one('#source-company', Checkbox).value = True
+                    self.assertFalse(details.display)
+                    checkbox.value = True
                     await pilot.pause()
                     self.assertFalse(field.disabled)
+                    self.assertTrue(details.display)
+                    self.assertEqual(str(checkbox.label), label)
                     field.value = 'synthetic-secret'
                     field.focus(); field.scroll_visible(animate=False)
                     await pilot.pause()
@@ -994,9 +1008,11 @@ class TUITests(unittest.TestCase):
                     self.assertTrue(form.query_one('#source-company-key-error').display)
                     self.assertLessEqual(form.query_one('#source-company-key-error').region.bottom,
                                          form.query_one('.wizard-actions').region.y)
-                    form.query_one('#source-company', Checkbox).value = False
+                    checkbox.value = False
                     await pilot.pause()
                     self.assertTrue(field.disabled)
+                    self.assertFalse(details.display)
+                    self.assertEqual(str(checkbox.label), label)
                     self.assertFalse(form.query_one('#source-company-key-error').display)
                     with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                         selected, _ = form.collect()

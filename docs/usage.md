@@ -171,7 +171,8 @@ placeholder credentials.
 ## Local models
 
 During creation or in **Settings → Model Providers → Local models & provider plugins**,
-enable **Connect to models on this computer** and enter the server ports, such as `8000` or `8000-8002`.
+expand **Local models**, enable **Connect to models on this computer**, and enter
+the server ports, such as `8000` or `8000-8002`.
 Factory uses [Pi Local Model Manager](https://github.com/kyuz0/pi-local-model-manager)
 to discover models and configure their context, image and thinking support in
 Pi and FrostPi.
@@ -184,7 +185,7 @@ For a sandbox created before this feature, use **Actions → Update sources and
 recreate…** once. Later key changes take effect on the next request.
 
 Choose a model in FrostPi’s picker or with `/model`. After changing the running
-model, use `/local-models refresh` or **Settings → Model Providers → Refresh**.
+model, use `/local-models refresh` or **Settings → Model Providers → Local models → Refresh**.
 
 ## CLI and storage
 
