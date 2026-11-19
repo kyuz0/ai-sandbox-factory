@@ -100,7 +100,8 @@ http.createServer((request, response) => {
         { label: 'Pear', description: 'Second choice' },
       ];
       delta = choice('ask_user_question', { questions: [
-        { header: 'Choose one', question: 'Pick a fruit', options },
+        { header: 'Choose one', question: 'Pick a fruit',
+          options: [{ ...options[0], label: 'Apple (Recommended)' }, options[1]] },
         { header: 'Custom answer', question: 'Pick another fruit', options },
         { header: 'Choose several', question: 'Pick several fruits', options, multiSelect: true },
       ] });
