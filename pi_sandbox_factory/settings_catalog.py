@@ -11,6 +11,9 @@ class Category(NamedTuple):
 NETWORK_LABEL = 'Network'
 NETWORK_MODE_LABEL = 'Network mode'
 WEB_SEARCH_LABEL = 'Web Search'
+LOCAL_MODELS_LABEL = 'Local models'
+HOSTED_PROVIDERS_LABEL = 'Built-in hosted providers'
+PROVIDER_PLUGINS_LABEL = 'Provider plugins'
 
 
 # In display order. A focus target opens the shared settings form for a saved
@@ -31,7 +34,7 @@ CATEGORIES = {
 
 EDIT_FORMS = {action: category for action, category in CATEGORIES.items() if category.focus}
 EDIT_FORMS.update({
-    'model-sources': Category('Local models & provider plugins', CATEGORIES['models'].section, 'local-models'),
+    'model-sources': Category('Local models & provider plugins', CATEGORIES['models'].section, 'local-provider'),
 })
 
 NETWORK_PATH = f'Settings → {CATEGORIES["network-settings"].label} → {NETWORK_LABEL}'

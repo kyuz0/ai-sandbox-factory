@@ -33,8 +33,9 @@ intended task. No extra OS sandbox surrounds the entire Pi child process.
 
 # Goals and scheduled prompts
 
-Pendant provides built-in goals. Start a goal only when explicitly requested and
-its tools are available. Every profile includes current-chat scheduled prompts.
+The shared Pi goal extension works in the terminal and FrostPi. Start a goal
+only when explicitly requested and its tools are available. Every profile
+includes current-chat scheduled prompts.
 
 Use `schedule_prompt` for a requested future or recurring prompt. For example,
 `action: "add", type: "once", schedule: "+5m", prompt: "Review the latest results"`.

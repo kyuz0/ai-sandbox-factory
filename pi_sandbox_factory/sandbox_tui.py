@@ -16,21 +16,24 @@ from typing import Optional
 
 from . import sandbox, editor_settings
 from .creation import Creation, Cancelled
+from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
-    CATEGORIES, EDIT_FORMS, LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH,
-    NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS, WEB_SEARCH_LABEL,
+    CATEGORIES, EDIT_FORMS, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
+    MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
+    PROVIDER_PLUGINS_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
-from .communications_ui import CommunicationsForm
-from .models_ui import HostedProviders
+from .communications_ui import CommunicationsForm, communications_summary
+from .models_ui import HostedProviders, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
-                             assigned_key_caption, choice_key_caption, key_caption)
+                             assigned_key_label, choice_key_caption, key_caption)
+from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
-from .skills_ui import SkillSelection, SkillLibraryScreen
+from .skills_ui import SkillSelection, SkillLibraryScreen, saved_skills_summary
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
@@ -150,6 +153,13 @@ class Service:
                 log(safe_text(line.rstrip()))
             if process.wait():
                 raise ValueError('Command failed. See the output above.')
+
+    def run_update(self, args, log, update):
+        if update is None:
+            self.run(args, log)
+        else:
+            log('› ' + ' '.join(args))
+            update.run(self.command(*args), log)
 
     def start(self, name, log):
         config = self.config(name)
@@ -305,7 +315,7 @@ class Service:
         if result.returncode:raise ValueError('Provider operation failed. Check its settings and network access.')
         log(safe_text(result.stdout))
         if action not in ('status','preview'):
-            log('Reload an open Pi/Pendant session before selecting newly discovered models.')
+            log('Reload an open Pi/FrostPi session before selecting newly discovered models.')
 
     def provider_key_status(self, name, *, local=False):
         config = self.config(name)
@@ -337,7 +347,7 @@ class Service:
         from . import inference
         return inference.credentials(self.config(name), self.state / name, {'id': provider, 'remove': True})
 
-    def update(self, name, draft, key, log):
+    def update(self, name, draft, key, log, update=None):
         changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
         changes['local_model_ports'] = draft.get('local_model_ports')
         changes['model_providers'] = draft.get('model_providers', {'local':{}})
@@ -347,22 +357,22 @@ class Service:
         with tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, changes)
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
         self.setup(name, draft, key, log)
 
-    def folders(self, name, settings, log):
+    def folders(self, name, settings, log, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-folders-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, settings)
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
-    def ssh_settings(self, name, settings, log, git_identity):
+    def ssh_settings(self, name, settings, log, git_identity, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-ssh-') as temp:
             path = Path(temp) / 'settings.json'
             selected = options(self.config(name).get('options'))
             selected['git_identity'] = git_identity
             write_json(path, {'ssh': settings, 'options': options(selected)})
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
     def ssh_key(self, name, generate=False):
         result = subprocess.run(self.command('ssh-generate-key' if generate else 'ssh-public-key', name),
@@ -374,11 +384,11 @@ class Service:
             raise ValueError('The SSH companion did not return a public key')
         return rows[-1]
 
-    def advisors(self, name, settings, log):
+    def advisors(self, name, settings, log, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-advisors-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, {'advisors': settings})
-            self.run(['update', name, '--settings-file', str(path)], log)
+            self.run_update(['update', name, '--settings-file', str(path)], log, update)
 
     def models(self, name, mode, log):
         if mode not in ('preview', 'refresh'):
@@ -386,7 +396,7 @@ class Service:
         self.start(name, log)
         self.run(['configure', name] + (['--preview'] if mode == 'preview' else []), log)
         if mode == 'refresh':
-            log('In an already open Pi/Pendant session, refresh there too before selecting a model with /model.')
+            log('In an already open Pi/FrostPi session, refresh there too before selecting a model with /model.')
 
 
 class WebsiteGroups(Vertical):
@@ -837,15 +847,16 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action):
+    def __init__(self, message, action, *, cancel_label='Cancel'):
         super().__init__()
         self.message, self.action = message, action
+        self.cancel_label = cancel_label
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Static(self.message, markup=False)
             with Horizontal(classes='buttons dialog-actions'):
-                yield Button('Cancel', id='cancel', variant='primary')
+                yield Button(self.cancel_label, id='cancel', variant='primary')
                 yield Button(self.action, id='yes', variant='error')
 
     @on(Button.Pressed)
@@ -899,13 +910,13 @@ class ApprovalHelp(ModalScreen):
                     with Horizontal(classes='approval-mode-help'):
                         yield Label('•')
                         yield Static(Text.assemble((label, 'bold'), ' ', explanation), classes='approval-mode-description')
-                yield Static('Pi can ask in its terminal or in Pendant. If the reviewer fails to respond, '
+                yield Static('Pi can ask in its terminal or in FrostPi. If the reviewer fails to respond, '
                              'the action stays blocked in both Auto modes. Explicit sandbox and permission '
                              'blocks and the container’s network rules apply in every mode.',
                              classes='setting-help approval-help-note')
-                yield Static('In either Auto mode, use /auto-review-settings in Pi or Pendant to change the reviewer '
+                yield Static('In either Auto mode, use /auto-review-settings in Pi or FrostPi to change the reviewer '
                              'model or thinking effort for the current chat.', classes='setting-help approval-help-note')
-                yield Static('Select Apply and recreate to use these settings in Pi and Pendant.' if self.editing else
+                yield Static('Select Apply and recreate to use these settings in Pi and FrostPi.' if self.editing else
                              f'Change these settings later in Settings → {CATEGORIES["approval-settings"].label}.',
                              classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
@@ -925,7 +936,7 @@ class MoreActions(ModalScreen[Optional[str]]):
         self.sandbox_name = record['name']
         self.actions = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                         ('Container shell', 'shell'),
-                        ('Test MCP connections', 'connections'), ('Container logs', 'logs'),
+                        ('Test MCP connections', 'connections'), ('Container logs', 'logs'), ('Containers…', 'containers'),
                         ('Update sources and recreate…', 'rebuild'), ('Delete sandbox…', 'delete')]
         if browser_running:
             self.actions.append(('Stop browser editor', 'stop-editor'))
@@ -951,18 +962,86 @@ class MoreActions(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class ContainersScreen(Screen):
+    BINDINGS = [('escape', 'back', 'Back')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.record = record
+
+    def compose(self):
+        yield Header()
+        yield Label('Containers · ' + self.record['name'], classes='title focused-settings-title')
+        with VerticalScroll(classes='form', id='container-list'):
+            containers = self.record.get('containers')
+            if not self.record.get('engine'):
+                yield Static('Factory could not read this sandbox’s saved configuration.')
+            elif containers is None:
+                yield Static('Factory could not query the container engine. Once it’s available, press R on the sandbox list to refresh.')
+            elif not containers:
+                yield Static('There are no containers for this sandbox.')
+            else:
+                for container in containers:
+                    status = container['status']
+                    heading = Text(container['role'], style='bold')
+                    heading.append(' · ' + ('Stopped' if status == 'exited' else safe_text(status).capitalize()))
+                    with Vertical(classes='setting'):
+                        yield Static(heading)
+                        yield Static(safe_text(container['name']), markup=False)
+                        yield Static(container['purpose'], classes='setting-help', markup=False)
+        with Horizontal(classes='wizard-actions'):
+            yield Button('Back', id='containers-back')
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one('#containers-back').focus()
+
+    @on(Button.Pressed, '#containers-back')
+    def back_pressed(self, event):
+        event.stop()
+        self.action_back()
+
+    def action_back(self):
+        self.app.pop_screen()
+
+
 class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Close')]
     ACTIONS = [(category.label, action) for action, category in CATEGORIES.items()]
 
-    def __init__(self, name):
+    def __init__(self, name, config, editor_mode):
         super().__init__()
         self.sandbox_name = name
+        self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
+        if isinstance(config, dict) and config.get('engine'):
+            local = bool(config.get('local_model_ports'))
+            count = (int(local) + sum(row['name'] != 'local' for row in model_providers.selections(config))
+                     + len(config.get('hosted_connections', {})))
+            self.summaries['models'] = model_sources_summary(local, count)
+            self.summaries['skills'] = saved_skills_summary(len(config.get('extra_skills', [])))
+            try:
+                selected = options(config.get('options'))
+                network = sandbox.network_mode(config)
+            except ValueError:
+                return
+            self.summaries.update({
+                'network-settings': network_search_summary(network, selected['web_access']['enabled']),
+                'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
+                'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
+                'ssh-settings': git_identity_summary(selected['git_identity']),
+                'communications': communications_summary(selected['communications']['slack']),
+            })
 
     def compose(self):
+        prompts = []
+        for label, action in self.ACTIONS:
+            prompt = Text(label)
+            if summary := self.summaries.get(action):
+                prompt.append(' · ' + summary, style='dim')
+            prompts.append(prompt)
         with Vertical(id='confirm-box'):
             yield Label('Settings · ' + self.sandbox_name)
-            yield OptionList(*[label for label, _ in self.ACTIONS], id='settings-actions')
+            yield OptionList(*prompts, id='settings-actions')
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='settings-back')
 
@@ -978,6 +1057,31 @@ class SettingsMenu(ModalScreen[Optional[str]]):
 
     def action_cancel(self):
         self.dismiss(None)
+
+
+def model_sources_summary(local, count):
+    enabled = f'{count} enabled' if count else 'None enabled'
+    return f"{LOCAL_MODELS_LABEL} {on_off(local)} · {enabled}"
+
+
+def on_off(enabled):
+    return 'on' if enabled else 'off'
+
+
+def network_mode_label(mode):
+    return 'Restricted' if mode == 'allowlist' else 'Unrestricted'
+
+
+def network_search_summary(mode, search):
+    return f'{network_mode_label(mode)} · {WEB_SEARCH_LABEL} {on_off(search)}'
+
+
+def approval_mode_summary(mode, inner):
+    return f'{APPROVAL_MODES[mode][0]} · Inner sandbox {on_off(inner)}'
+
+
+def agent_tools_summary(recall, browser, goals):
+    return f'Recall {recall.capitalize()} · Browser {on_off(browser)} · Goals {on_off(goals)}'
 
 
 class FoldersScreen(Screen):
@@ -1010,11 +1114,14 @@ class FoldersScreen(Screen):
                 service = self.app.service
                 def apply():
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('Updating folders', lambda log: service.folders(self.record['name'], selected, log),
+                    self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.folders(self.record['name'], selected, log, update),
                         done_on_success=True,
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
-                    self.app.push_screen(Confirm('Apply folder mounts? This recreates the sandbox and interrupts running processes.', 'Apply and recreate'), lambda yes: apply() if yes else None)
+                    notes = ['This recreates the sandbox and interrupts running processes.',
+                             *settings_effects.editor_migration(self.record['config'])]
+                    self.app.push_screen(Confirm('Apply folder mounts?\n' + settings_effects.bullets(notes),
+                                                 'Apply and recreate'), lambda yes: apply() if yes else None)
                 else:
                     apply()
             except (ValueError, OSError) as error:
@@ -1121,10 +1228,12 @@ class SSHScreen(Screen):
                 def apply(yes):
                     if not yes: return
                     self.app.pop_screen()
-                    self.app.push_screen(Operation('SSH & Git settings · ' + name, lambda log: service.ssh_settings(name, settings, log, identity),
+                    self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
                         done_on_success=True,
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity != options(self.record['config'].get('options'))['git_identity'] else []))))
-                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(['Active sandbox processes restart.', 'Workspace and private key are preserved.']), 'Apply'), apply)
+                notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
+                         *settings_effects.editor_migration(self.record['config'])]
+                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.notify(safe_text(error), severity='error')
 
@@ -1245,14 +1354,17 @@ class AdvisorsScreen(Screen):
                 if not yes:
                     return
                 self.app.pop_screen()
-                def setup(log):
-                    service.advisors(name, settings, log)
+                def setup(log, update):
+                    service.advisors(name, settings, log, update)
                     for provider in imports:
                         service.run(['advisor-import', name, provider], log)
-                self.app.push_screen(Operation('Advisors · ' + name, setup, done_on_success=True,
+                self.app.push_screen(UpdateOperation('Advisors · ' + name, setup, done_on_success=True,
                     success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']))))
-            self.app.push_screen(Confirm('Apply advisor settings?\nActive sandbox processes restart. Workspace and private home are preserved.'
-                                         + ('\nSelected host sign-ins replace the saved advisor logins.' if imports else ''), 'Apply'), apply)
+            notes = ['Active sandbox processes restart.', 'Workspace and private home are preserved.',
+                     *settings_effects.editor_migration(self.record['config'])]
+            if imports:
+                notes.append('Selected host sign-ins replace the saved advisor logins.')
+            self.app.push_screen(Confirm('Apply advisor settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
 
     def action_back(self):
         self.app.pop_screen()
@@ -1263,51 +1375,70 @@ class ModelsScreen(Screen):
     def __init__(self,record,finished=None):
         super().__init__();self.record=record;self.finished=finished
         self.key_status = {}
-        self.providers = {row['name']: row['manifest'] for row in record['config'].get('model_providers', [])}
+        rows = record['config'].get('model_providers', [{'name': 'local', 'manifest': {}}])
+        self.providers = {row['name']: row['manifest'] for row in rows}
 
     def credential_binding(self, name):
         return provider_credentials.scope(name, self.providers.get(name, {}).get('inference'))
+
+    def discovery_buttons(self, prefix):
+        with Horizontal(classes='buttons'):
+            for action in ('Status', 'Preview', 'Refresh'):
+                yield Button(action, id=f'{prefix}-{action.lower()}')
+
     def compose(self):
-        rows=self.record['config'].get('model_providers',[{'name':'local','manifest':{}}])
+        ports = self.record['config'].get('local_model_ports')
+        local = 'local' in self.providers
+        plugins = [(manifest.get('description', name), name)
+                   for name, manifest in self.providers.items() if name != 'local']
         yield Header()
         with VerticalScroll(classes='form'):
             yield Label(CATEGORIES['models'].label + ' · ' + self.record['name'], classes='title')
-            with Vertical(classes='setting'):
-                yield Label('Local models', classes='group-title')
-                ports = self.record['config'].get('local_model_ports')
-                yield Static('On · server ports ' + ports if ports else 'Off', markup=False)
-                yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
-                yield Static('Changing local access or provider plugins recreates the sandbox.', classes='setting-help')
-            if ports:
-                with Vertical(classes='setting'):
-                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+            if ports or local:
+                with Collapsible(title=local_models_title(bool(ports)), id='live-local-provider'):
+                    if ports:
+                        with Vertical(classes='setting'):
+                            yield Static('Server ports · ' + ports, markup=False)
+                        with Vertical(classes='setting'):
+                            yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+                    if local:
+                        yield from self.discovery_buttons('local')
+            else:
+                yield Static(local_models_title(False), classes='group-title')
             yield HostedProviders(self.record['name'])
-            yield Label('Model discovery and credentials', classes='group-title')
-            if not rows:
-                yield Static('No provider plugins are enabled.', id='no-model-providers')
-            with Vertical(id='provider-controls') as controls:
-                controls.display = bool(rows)
+            if plugins:
+                with Collapsible(title=PROVIDER_PLUGINS_LABEL, id='provider-controls'):
+                    with Vertical(classes='setting'):
+                        yield Label('Model provider')
+                        yield Select(plugins, id='model-provider', allow_blank=False, value=plugins[0][1])
+                    with Vertical(classes='setting', id='legacy-provider-key'):
+                        yield Label('Provider credential · when required')
+                        with Horizontal(classes='path-row'):
+                            yield Input(password=True, id='provider-key')
+                            yield Button('Configure', id='provider-auth')
+                    with Vertical(classes='setting', id='managed-provider-key'):
+                        yield Static(key_caption(), id='assigned-provider-key', markup=False)
+                        yield Button('Choose key…', id='provider-change-key')
+                    yield from self.discovery_buttons('provider')
+            else:
                 with Vertical(classes='setting'):
-                    yield Label('Model provider')
-                    yield Select([(r['manifest'].get('description',r['name']),r['name']) for r in rows],id='model-provider',allow_blank=not rows,value=rows[0]['name'] if rows else Select.NULL,disabled=not rows)
-                with Vertical(classes='setting', id='legacy-provider-key'):
-                    yield Label('Provider credential · when required')
-                    with Horizontal(classes='path-row'):
-                        yield Input(password=True,id='provider-key',disabled=not rows)
-                        yield Button('Configure',id='provider-auth',disabled=not rows)
-                with Vertical(classes='setting', id='managed-provider-key'):
-                    yield Static(key_caption(), id='assigned-provider-key', markup=False)
-                    yield Button('Change key…', id='provider-change-key')
-                with Horizontal(classes='buttons'):
-                    yield Button('Status',id='provider-status',disabled=not rows)
-                    yield Button('Preview',id='provider-preview',disabled=not rows)
-                    yield Button('Refresh',id='provider-refresh',disabled=not rows)
+                    yield Label(PROVIDER_PLUGINS_LABEL, classes='group-title model-group-title')
+                    yield Static('No provider plugins are enabled.', id='no-model-providers', classes='setting-help')
+            with Vertical(classes='setting'):
+                yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
+                yield Static('Changing local access or enabled plugins recreates the sandbox.', classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Continue' if self.finished else 'Back',id='models-back',variant='primary' if self.finished else 'default')
         yield Footer()
 
     def on_mount(self):
-        self.query_one('#model-sources', Button).focus()
+        local = self.query('#live-local-provider CollapsibleTitle')
+        if local:
+            local.first().focus()
+        else:
+            self.query_one('.form', VerticalScroll).focus()
+        if not self.query('#model-provider'):
+            return
         self.show_key_status()
         if any(self.credential_binding(name) for name in self.providers):
             self.load_key_status()
@@ -1318,7 +1449,9 @@ class ModelsScreen(Screen):
         managed = bool(self.credential_binding(provider))
         self.query_one('#legacy-provider-key').display = not managed and provider not in ('local', Select.NULL)
         self.query_one('#managed-provider-key').display = managed
-        self.query_one('#assigned-provider-key', Static).update(assigned_key_caption(self.key_status, provider))
+        label = assigned_key_label(self.key_status, provider)
+        self.query_one('#assigned-provider-key', Static).update(key_caption(label))
+        self.query_one('#provider-change-key', Button).label = 'Change key…' if label else 'Choose key…'
 
     @work(exclusive=True)
     async def load_key_status(self):
@@ -1366,23 +1499,33 @@ class ModelsScreen(Screen):
         if action == 'local-server-keys':
             self.open_local_keys()
             return
-        selected=self.query_one('#model-provider',Select).value
-        if selected is Select.NULL:return
+        if action in ('local-status', 'local-preview', 'local-refresh'):
+            self.run_discovery('local', action.removeprefix('local-'))
+            return
+        if action not in ('provider-change-key', 'provider-status', 'provider-preview', 'provider-refresh', 'provider-auth'):
+            return
+        selected = self.query_one('#model-provider', Select).value
         if action == 'provider-change-key':
             provider = self.providers[selected]
             self.app.push_screen(CredentialDialog(provider.get('description', selected),
                 self.credential_binding(selected), active=selected in self.key_status.get('configured', ())),
                 lambda choice: self.change_key(selected, choice))
             return
-        if action not in ('provider-status','provider-preview','provider-refresh','provider-auth'):return
-        key=self.query_one('#provider-key',Input).value if action=='provider-auth' else None
-        if action=='provider-auth' and not key.strip():self.notify('Enter the provider credential first.',severity='error');return
+        key = self.query_one('#provider-key', Input).value if action == 'provider-auth' else None
+        if action == 'provider-auth' and not key.strip():
+            self.notify('Enter the provider credential first.', severity='error')
+            return
         self.query_one('#provider-key',Input).value=''
+        self.run_discovery(selected, action.removeprefix('provider-'), key)
+
+    def run_discovery(self, provider, action, key=None):
         service=self.app.service
         def task(log):
-            service.provider(self.record['name'], selected, action.removeprefix('provider-'), key, log)
-        self.app.pop_screen();self.app.push_screen(Operation('Provider · '+selected,task,
-            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('provider-auth', 'provider-refresh') else ''))
+            service.provider(self.record['name'], provider, action, key, log)
+        self.app.pop_screen()
+        label = LOCAL_MODELS_LABEL if provider == 'local' else self.providers[provider].get('description', provider)
+        self.app.push_screen(Operation(label, task,
+            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('auth', 'refresh') else ''))
     def action_back(self):self.app.pop_screen()
 
 
@@ -1599,10 +1742,11 @@ class Operation(Screen):
             self.operation_task(log)
             if not self.done_on_success:
                 log('Finished.')
-        except Cancelled as error:
+        except (Cancelled, UpdateCancelled) as error:
             self.cancelled = True
             self.result = str(error)
-            log(str(error))
+            if self.result:
+                log(self.result)
         except Exception as error:
             self.failed = True
             self.result = str(error)
@@ -1632,7 +1776,7 @@ class Operation(Screen):
         status = self.query_one('#operation-status', Static)
         status.update('●  Failed · see output below' if self.failed else '●  Cancelled' if self.cancelled else
                       '●  Complete · model not connected' if self.model_disconnected else '●  Complete')
-        if self.cancelled:
+        if self.cancelled and self.cancellation:
             status.update('●  Cancelled · project files and build cache preserved')
         elif cleanup_failed:
             status.update('●  From sandboxes, choose Actions… → Delete sandbox… to finish cleanup')
@@ -1653,15 +1797,13 @@ class Operation(Screen):
         if self.finished:
             self.action_back()
         else:
-            self.action_cancel_creation()
+            self.action_cancel()
 
     def check_action(self, action, parameters):
         if action == 'back':
             return self.finished and not (self.succeeded and self.done_on_success)
         if action == 'done':
             return self.succeeded and self.done_on_success
-        if action == 'cancel_creation':
-            return bool(self.cancellation) and not self.finished and not self.cancellation.requested.is_set()
         return True
 
     def action_done(self):
@@ -1672,12 +1814,76 @@ class Operation(Screen):
             self.app.pop_screen()
             self.app.refresh_inventory()
 
-    def action_cancel_creation(self):
+    def action_cancel(self):
         if self.cancellation and self.cancellation.cancel():
             button = self.query_one('#operation-back', Button)
             button.disabled, button.label = True, 'Cancelling…'
             self.query_one('#operation-status', Static).update('●  Cancelling · stopping creation and removing containers')
             self.refresh_bindings()
+
+
+class UpdateOperation(Operation):
+    BINDINGS = [*Operation.BINDINGS, Binding('escape', 'cancel', show=False)]
+
+    def __init__(self, title, task, **completion):
+        self.update = Update()
+        self.confirmation = None
+        super().__init__(title, lambda log: task(log, self.update), **completion)
+
+    def compose_actions(self):
+        yield Button('Cancel update', id='operation-back')
+
+    def on_mount(self):
+        self.query_one('#operation-status', Static).update('●  Preparing update')
+        self.phase_timer = self.set_interval(0.15, self.check_phase)
+
+    def check_phase(self):
+        if self.update.applying:
+            self.phase_timer.stop()
+            self.close_confirmation()
+            self.query_one('#operation-back', Button).disabled = True
+            self.query_one('#operation-status', Static).update('●  Applying changes · please wait for the sandbox update to finish')
+            self.refresh_bindings()
+
+    def close_confirmation(self):
+        if self.confirmation is not None and self.app.screen is self.confirmation:
+            self.confirmation.dismiss(False)
+
+    def check_action(self, action, parameters):
+        if action == 'cancel':
+            return not self.finished and self.update.can_cancel
+        return super().check_action(action, parameters)
+
+    def action_cancel(self):
+        if not self.update.can_cancel:
+            self.check_phase()
+            return
+        self.confirmation = Confirm('Cancel this update? The sandbox will keep its current settings and containers.',
+                                    'Cancel update', cancel_label='Keep updating')
+        self.app.push_screen(self.confirmation, self.confirm_cancel)
+
+    def confirm_cancel(self, confirmed):
+        self.confirmation = None
+        if confirmed and not self.finished and self.update.cancel():
+            self.query_one('#operation-back', Button).disabled = True
+            self.query_one('#operation-status', Static).update('●  Cancelling update')
+            self.refresh_bindings()
+        elif not self.finished:
+            self.check_phase()
+
+    def complete(self):
+        self.phase_timer.stop()
+        self.close_confirmation()
+        super().complete()
+        if self.failed or self.cancelled:
+            result = 'Update cancelled' if self.cancelled else 'Update failed'
+            self.title = result + ' · ' + self.title.removeprefix('Updating ')
+            self.query_one('#operation-title', Static).update(self.title)
+        if self.cancelled:
+            self.query_one('#operation-status', Static).update('●  Update cancelled · current sandbox preserved')
+        button = self.query_one('#operation-back', Button)
+        button.variant = 'default'
+        button.focus()
 
 
 class CreationOperation(Operation):
@@ -2033,56 +2239,62 @@ class SettingsForm(Screen):
         available.update({name:row['manifest'].get('description',name) for name,row in saved_rows.items() if name not in available})
         self.provider_forms={}
         with Collapsible(title=category.label, collapsed=True, id=category.section):
-            yield Label('Local models', classes='group-title')
-            with Vertical(classes='setting'):
-                yield Checkbox('Connect to models on this computer',
-                               value=bool(value.get('local_model_ports')), id='local-models')
-                yield Static('Requires rootless Podman.', classes='setting-help checkbox-help')
-            with Vertical(classes='setting', id='model-port-setting'):
-                yield Label('Server ports · comma-separated ports or ranges')
-                yield Input(value.get('local_model_ports') or '8000', id='model-ports')
-                yield Feedback('', id='model-ports-error', markup=False)
-                yield Static('For example, 8000,8080-8082.', classes='setting-help')
-            if not self.editing and not self.defaults_mode:
-                with Vertical(classes='setting local-keys-action'):
-                    yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
+            ports = value.get('local_model_ports')
+            with Collapsible(title=local_models_title(bool(ports)), id='local-provider'):
+                with Vertical(classes='setting', id='local-enable-setting'):
+                    yield Checkbox('Connect to models on this computer', value=bool(ports), id='local-models')
+                    yield Static('Requires rootless Podman.', classes='setting-help checkbox-help')
+                with Vertical(id='local-model-details'):
+                    with Vertical(classes='setting', id='model-port-setting'):
+                        yield Label('Server ports')
+                        yield Input(ports or '8000', id='model-ports')
+                        yield Feedback('', id='model-ports-error', markup=False)
+                        yield Static('Use comma-separated ports or ranges, for example 8000,8080-8082.',
+                                     classes='setting-help')
+                    if not self.editing and not self.defaults_mode:
+                        with Vertical(classes='setting'):
+                            yield Button(LOCAL_KEYS_LABEL, id='local-server-keys')
             if not self.editing and not self.defaults_mode:
                 yield HostedProviders(changes=value.get('_hosted_changes'))
             elif self.setting != 'model-sources':
                 with Vertical(classes='setting'):
-                    yield Label('Hosted model services', classes='group-title')
+                    yield Label(HOSTED_PROVIDERS_LABEL, classes='group-title model-group-title')
+                    yield Static(hosted_provider_names(), markup=False)
                     yield Static(f'Configure hosted services in {MODEL_PROVIDERS_PATH} without recreating the sandbox.'
                                  if self.editing else f'Connect hosted services during creation or later in {MODEL_PROVIDERS_PATH}.',
                                  classes='setting-help')
             if any(name != 'local' for name in available):
-                yield Label('Provider plugins', classes='group-title')
+                yield Label(PROVIDER_PLUGINS_LABEL, classes='group-title model-group-title')
             for name,label in available.items():
                 if name=='local':continue
                 info=saved_rows[name]['manifest'] if name in saved_rows else registry.manifest('provider',registry.resolve('provider',name))
                 self.provider_forms[name]=info
                 with Vertical(classes='setting'):
                     yield Checkbox(label,value=name in configured,id='source-'+name)
-                    if info.get('network'):
-                        yield Static('Required network access: '+', '.join(info['network']), classes='setting-help checkbox-help')
-                for key,spec in info.get('settings',{}).items():
-                    secret = spec['type']=='secret'
-                    if secret and (self.editing or self.defaults_mode):continue
-                    with Vertical(classes='setting provider-setting' + (' -provider-disabled' if name not in configured else '')):
-                        if secret and (binding := provider_credentials.scope(name, info.get('inference'))):
-                            choice = self.provider_key_choices.get(name)
-                            yield Static(choice_key_caption(binding, choice), id='source-key-label-'+name, markup=False)
-                            yield Button('Change key…' if choice else 'Choose key…',
-                                         id='source-'+name+'-'+key, name='provider-key:'+name,
-                                         disabled=name not in configured)
-                            continue
-                        yield Label(spec.get('label',key))
-                        yield Input('' if secret else configured.get(name,{}).get(key,spec.get('default','')),
-                                    password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
-                        if secret:
-                            yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
-                                         + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
-                            yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
-            yield Static('Add providers from Library…', classes='setting-help')
+                    with Vertical(id='source-details-'+name, classes='provider-details') as details:
+                        details.display = name in configured
+                        if info.get('network'):
+                            yield Static('Required network access · '+', '.join(info['network']),
+                                         classes='setting-help provider-setting', markup=False)
+                        for key,spec in info.get('settings',{}).items():
+                            secret = spec['type']=='secret'
+                            if secret and (self.editing or self.defaults_mode):continue
+                            with Vertical(classes='setting provider-setting'):
+                                if secret and (binding := provider_credentials.scope(name, info.get('inference'))):
+                                    choice = self.provider_key_choices.get(name)
+                                    yield Static(choice_key_caption(binding, choice), id='source-key-label-'+name, markup=False)
+                                    yield Button('Change key…' if choice else 'Choose key…',
+                                                 id='source-'+name+'-'+key, name='provider-key:'+name,
+                                                 disabled=name not in configured)
+                                    continue
+                                yield Label(spec.get('label',key))
+                                yield Input('' if secret else configured.get(name,{}).get(key,spec.get('default','')),
+                                            password=secret, disabled=name not in configured, id='source-'+name+'-'+key)
+                                if secret:
+                                    yield Static(('Stored in the separate inference container. ' if info.get('inference') else '')
+                                                 + f'Optional. Configure later in {MODEL_PROVIDERS_PATH}.', classes='setting-help')
+                                    yield Feedback('', id='source-'+name+'-'+key+'-error', markup=False)
+            yield Static('Open Library… from the home screen to install provider plugins.', classes='setting-help')
 
     def compose_editor_settings(self, category, value, selected):
         if not self.editing:
@@ -2147,25 +2359,29 @@ class SettingsForm(Screen):
                 yield Static('Not isolation from malicious editor or Pi extensions with the same user permissions. Active browser sessions remain accessible to browser automation.', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
                 yield Checkbox('Question forms', value=selected['question_forms'], id='question-forms')
-                yield Static('Let Pi and Pendant ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
-            yield Checkbox('Pendant goals', value=selected['goals'], id='goals')
+                yield Static('Let Pi and FrostPi ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
+            with Vertical(classes='setting'):
+                yield Checkbox('Goals', value=selected['goals'], id='goals')
+                yield Static('Use /goal to save an objective and keep working toward it across turns.',
+                             classes='setting-help checkbox-help')
             yield Checkbox('Scheduled prompts in the current chat', value=selected['scheduling'], id='scheduling')
 
     def compose_skills(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        skills = SkillSelection(value)
+        with Collapsible(title=category.label + ' · ' + skills.summary(), collapsed=True, id=category.section):
             for skill in PROFILE_SKILLS.get(self.profile_name, []):
                 yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
-            yield SkillSelection(value)
+            yield skills
 
     def compose_ssh_settings(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
             from .repository_ui import GitIdentityFields
             identity = selected['git_identity']
-            with Collapsible(title=category.label + ' · commit identity ' + ('set' if identity else 'not set'), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(identity), collapsed=True, id=category.section):
                 yield GitIdentityFields(identity, setup=True)
         if self.defaults_mode:
             from .repository_ui import GitIdentityFields
-            with Collapsible(title=category.label + ' · commit identity ' + ('set' if selected['git_identity'] else 'not set'), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(selected['git_identity']), collapsed=True, id=category.section):
                 yield GitIdentityFields(selected['git_identity'], defaults=True, setup=True)
 
     def compose_advisors(self, category, value, selected):
@@ -2222,14 +2438,16 @@ class SettingsForm(Screen):
     def local_models_changed(self):
         disabled = not self.query_one('#local-models', Checkbox).value
         self.query_one('#model-ports', Input).disabled = disabled
-        for button in self.query('#local-server-keys'):
-            button.parent.display = not disabled
-        self.query_one('#model-port-setting').set_class(disabled, '-provider-disabled')
-        self.query_one('#model-ports-error', Feedback).update('')
+        self.query_one('#local-model-details').display = not disabled
+        provider = self.query_one('#local-provider', Collapsible)
+        provider.title = local_models_title(not disabled)
+        provider.set_class(disabled, '-local-off')
+        self.local_ports_changed()
         self.models_summary()
 
     @on(Input.Changed, '#model-ports')
     def local_ports_changed(self):
+        self.query_one('#model-ports', Input).remove_class('-invalid')
         self.query_one('#model-ports-error', Feedback).update('')
 
     def checked_local_ports(self):
@@ -2240,7 +2458,9 @@ class SettingsForm(Screen):
             return sandbox.local_model_ports(field.value.strip())
         except ValueError as error:
             self.query_one('#model-ports-error', Feedback).update(str(error))
+            field.add_class('-invalid')
             self.query_one('#hosted-section', Collapsible).collapsed = False
+            self.query_one('#local-provider', Collapsible).collapsed = False
             field.focus()
             self.call_after_refresh(field.parent.scroll_visible, animate=False)
             raise
@@ -2248,10 +2468,11 @@ class SettingsForm(Screen):
     @on(HostedProviders.Changed)
     def models_summary(self):
         local = self.query_one('#local-models', Checkbox).value
-        count = sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
+        count = int(local)
+        count += sum(self.query_one('#source-' + name, Checkbox).value for name in self.provider_forms)
         count += sum(len({**group.saved, **group.changes}) for group in self.query(HostedProviders))
-        self.query_one('#hosted-section', Collapsible).title = (CATEGORIES['models'].label + ' · local ' + ('on' if local else 'off')
-            + (f' · {count} provider' + ('s' if count != 1 else '') if count else ''))
+        self.query_one('#hosted-section', Collapsible).title = (
+            CATEGORIES['models'].label + ' · ' + model_sources_summary(local, count))
 
     @on(SkillSelection.Changed)
     def skills_summary(self):
@@ -2261,10 +2482,11 @@ class SettingsForm(Screen):
     @on(Checkbox.Changed, '#goals')
     @on(Select.Changed, '#compaction-recall')
     def tools_summary(self):
-        browser = 'on' if self.query_one('#browser', Checkbox).value else 'off'
-        goals = 'on' if self.query_one('#goals', Checkbox).value else 'off'
-        recall = str(self.query_one('#compaction-recall', Select).value).capitalize()
-        self.query_one('#skills-section', Collapsible).title = CATEGORIES['agent-tools'].label + f' · Recall {recall} · Browser {browser} · Goals {goals}'
+        browser = self.query_one('#browser', Checkbox).value
+        goals = self.query_one('#goals', Checkbox).value
+        recall = self.query_one('#compaction-recall', Select).value
+        self.query_one('#skills-section', Collapsible).title = (
+            CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(recall, browser, goals))
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -2283,10 +2505,10 @@ class SettingsForm(Screen):
     def provider_selected(self, event):
         for name, info in self.provider_forms.items():
             if event.checkbox.id == 'source-' + name:
+                self.query_one('#source-details-' + name).display = event.value
                 for key in info.get('settings', {}):
                     for field in self.query('#source-' + name + '-' + key):
                         field.disabled = not event.value
-                        field.parent.set_class(not event.value, '-provider-disabled')
                         if not event.value:
                             field.remove_class('-invalid-credential')
                             for message in field.parent.query(Feedback):
@@ -2303,11 +2525,11 @@ class SettingsForm(Screen):
 
     def approval_summary(self):
         mode = self.query_one('#approval', Select).value
-        mode_label, inline_help, _ = APPROVAL_MODES[mode]
+        _, inline_help, _ = APPROVAL_MODES[mode]
         inner = self.query_one('#inner-sandbox', Checkbox).value
         category = CATEGORIES['approval-settings'].label
         self.query_one('#agent-section', Collapsible).title = (
-            f'{category} · {mode_label} · Inner sandbox ' + ('on' if inner else 'off'))
+            category + ' · ' + approval_mode_summary(mode, inner))
         self.query_one('#selected-approval-help', Static).update(inline_help)
 
     @on(Select.Changed, '#approval')
@@ -2317,10 +2539,14 @@ class SettingsForm(Screen):
         self.browser_changed()
 
     @on(Select.Changed, '#network')
+    @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
-        self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + (
-            'Restricted' if mode == 'allowlist' else 'Unrestricted')
+        search = self.query_one('#web-enabled', Checkbox).value
+        category = CATEGORIES['network-settings']
+        self.query_one('#' + category.section, Collapsible).title = (
+            category.label + ' · ' + network_search_summary(mode, search))
+        self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
         self.query_one('#network-rules-setting').display = mode == 'allowlist'
 
     def network_rules(self, text):
@@ -2551,12 +2777,12 @@ class SettingsForm(Screen):
         cancellation = None if editing else Creation()
         editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
         opened = False
-        def task(log):
+        def task(log, update=None):
             nonlocal opened
             if draft.get('mkdir'):
                 Path(draft['workspace']).mkdir(parents=True, exist_ok=True)
             if editing:
-                service.update(draft['name'], draft, key, log)
+                service.update(draft['name'], draft, key, log, update)
             else:
                 service.create(draft, key, log, cancellation=cancellation)
             if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
@@ -2579,7 +2805,7 @@ class SettingsForm(Screen):
                 operation.leave_wizard()
             self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
         if editing:
-            operation = Operation('Updating ' + draft['name'], task,
+            operation = UpdateOperation('Updating ' + draft['name'], task,
                 done_on_success=True, completed_title='Updated ' + draft['name'],
                 success_message=lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened)),
                 on_success=choose_models if draft.get('_hosted_changes') else
@@ -2608,7 +2834,7 @@ class SettingsForm(Screen):
 
 def banner(version, compact=False):
     title = 'Pi Sandbox Factory' if compact else pyfiglet.figlet_format('Pi Sandbox Factory', font='big', width=120).rstrip()
-    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Pi and Pendant development environments · v{version}[/]'
+    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Pi and FrostPi development environments · v{version}[/]'
 
 
 class Cockpit(App):
@@ -2627,6 +2853,9 @@ class Cockpit(App):
     .form > Static { height: auto; margin-bottom: 1; }
     .form > Label { margin-bottom: 0; }
     .form > .title, .form > .group-title { margin-bottom: 1; }
+    #container-list { padding: 1 2 0 3; scrollbar-size-vertical: 1; }
+    #container-list > .setting { margin: 0 1 1 0; }
+    #container-list:focus { outline: tall $primary; scrollbar-color: $primary; }
     #package-list, #library-list, #skill-candidates { height: auto; }
     SkillLibraryScreen .setting > .buttons { margin: 1 0 0 0; }
     #skill-discover { margin: 0 0 0 0; }
@@ -2651,11 +2880,16 @@ class Cockpit(App):
     GitIdentityFields Input:focus { border: solid $primary; }
     GitIdentityFields Input.-invalid, GitIdentityFields Input.-invalid:focus { border: double $error; }
     #git-identity-error { color: #f1f3f5; text-style: bold; }
-    .provider-setting { margin: 0 0 1 2; }
-    .setting.-provider-disabled { opacity: 50%; }
-    #model-ports-error { text-style: bold; }
-    Screen:nocolor #model-ports-error { color: white; text-style: bold reverse; }
+    .provider-setting { margin: 0 0 1 0; }
+    .provider-details { height: auto; padding: 1 0 0 2; }
+    .provider-details > *:last-child { margin-bottom: 0; }
+    .group-title.model-group-title { margin-bottom: 0; }
+    .available-providers { height: auto; margin-bottom: 1; }
+    #model-ports-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports.-invalid, #model-ports.-invalid:focus { border: double $error; }
+    Screen:nocolor #model-ports-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
+    ModelsScreen #managed-provider-key, ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     #package-skills { margin: 0 0 1 0; }
     .provider-setting Input.-invalid-credential { border: tall $error; }
     .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
@@ -2673,15 +2907,23 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on > .toggle--button { color: white; text-style: bold; }
     Checkbox:focus > .toggle--label { color: #171a1d; background: #f2b544; text-style: bold underline; }
     Checkbox:focus > .toggle--button { color: #171a1d; background: #f2b544; }
+    Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
+    #hosted-section Button:focus, ModelsScreen Button:focus,
+    .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
     .settings-review .form > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
     .compact-terminal .settings-review #review-project { margin: 0; }
     Collapsible > Contents,
     #agent-section.focused-setting > Contents,
-    #network-search-section.focused-setting > Contents { padding: 1 3; }
+    #network-search-section.focused-setting > Contents,
+    #hosted-section.focused-setting > Contents { padding: 1 3; }
+    #local-provider > Contents { padding: 1 3 0 3; }
+    #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
+    #provider-controls > CollapsibleTitle { padding: 0; }
+    #local-provider.-local-off #local-enable-setting { margin: 0; }
     #network-search-section #network-section,
     #network-search-section #web-section { margin: 0; }
     Collapsible.focused-setting > CollapsibleTitle { display: none; }
@@ -2707,13 +2949,15 @@ class Cockpit(App):
     .dialog-actions Button:last-child { margin-right: 0; }
     .key-dialog .key-dialog-fields { max-height: 65vh; }
     .compact-terminal .key-dialog { height: 96%; max-height: 96%; }
+    .compact-terminal ProviderDialog .model-dialog { height: 100%; max-height: 100%; }
+    .compact-terminal ProviderDialog .dialog-actions { margin: 0; }
     .compact-terminal .key-dialog .key-dialog-fields { height: 1fr; max-height: 100%; }
     .compact-terminal .key-dialog.-saved-key-selected,
     .compact-terminal .key-dialog.-saved-key-selected .key-dialog-fields { height: auto; }
     .compact-terminal .key-dialog #hosted-provider,
-    .compact-terminal .key-dialog .credential-key-input { margin: 0; }
-    .key-dialog #remember-key { margin: 0 0 1 2; }
-    .local-keys-action { margin: 0 0 1 2; }
+    .key-dialog .credential-key-input { margin: 0; }
+    .key-dialog #remember-key { margin: 1 0 0 0; }
+    .key-dialog #credential-remember { margin: 1 0 1 2; }
     SSHScreen #ssh-hosts { height: 5; }
     #web-enable-setting { margin: 0; }
     #web-fields { margin: 1 0 0 0; }
@@ -2722,12 +2966,14 @@ class Cockpit(App):
     #slack-controls Checkbox { width: auto; margin-bottom: 0; }
     #editor-show-password { margin-top: 1; }
     #editor-tls-fields { margin-top: 1; }
-    #model-port-setting { margin: 0 0 1 2; }
+    #local-model-details { height: auto; margin: 0 0 0 2; }
+    #model-ports { max-width: 48; }
     Collapsible > Contents > *:last-child > .setting:last-child,
     Collapsible > Contents > *:last-child > Collapsible:last-child { margin-bottom: 0; }
     #slack-controls Button { margin-right: 0; }
     .search-provider-row Button { margin-right: 0; }
     .model-fields, #slack-fields, #copy-sandbox-fields, #search-provider-fields { padding-right: 1; }
+    ProviderDialog .model-fields { padding: 0; }
     OptionList > .option-list--option { padding: 0 1; }
     #custom-profile-fields, #network-rules-fields, #network-rules-setting, #provider-controls { height: auto; }
     #home > .buttons { margin: 0 0 1 0; }
@@ -2766,14 +3012,14 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
     #confirm-box Static { height: auto; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
-    SettingsMenu #confirm-box { height: 95%; max-height: 24; }
+    SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 24; }
     SettingsMenu #settings-actions { height: 1fr; }
     #folder-box { width: 85%; height: 85%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #folders { height: 1fr; padding-right: 1; }
@@ -2998,6 +3244,8 @@ class Cockpit(App):
             text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
             text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
             text += ' · Profile: ' + str(record['profile'])
+            if record.get('chat_editor') == 'pendant':
+                text += '\nUpdate Pendant to FrostPi · Actions → Update sources and recreate…'
         details = self.query_one('#details', Static)
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
@@ -3016,14 +3264,14 @@ class Cockpit(App):
         self.perform(event.button.id)
 
     def action_quit(self):
-        if isinstance(self.screen, Operation) and not self.screen.finished:
+        if not self.check_action('quit', ()):
             self.notify('Wait for the current operation to finish before closing the cockpit.')
             return
         self.exit()
 
     def check_action(self, action, parameters):
-        if action == 'quit' and isinstance(self.screen, Operation):
-            return self.screen.finished
+        if action == 'quit':
+            return not any(isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
         if action in ('new', 'search', 'refresh_inventory', 'defaults'):
             return self.screen is self.screen_stack[0]
         return True
@@ -3092,9 +3340,18 @@ class Cockpit(App):
             self.operation('Stopping browser editor', ['browser-editor', name, '--stop'])
         elif action == 'more':
             from .browser_editor import runtime
-            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))), lambda choice: self.perform(choice) if choice else None)
+            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))),
+                             lambda choice: self.perform(choice, record=record) if choice else None)
+        elif action == 'containers':
+            self.push_screen(ContainersScreen(record))
         elif action == 'settings':
-            self.push_screen(SettingsMenu(name), lambda choice: self.perform(choice) if choice else None)
+            state = self.state_root / name
+            try:
+                saved = self.service.config(name) if config.get('engine') else config
+            except (OSError, ValueError):
+                saved = {}
+            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode']),
+                             lambda choice: self.perform(choice) if choice else None)
         elif action == 'folders':
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':
@@ -3126,11 +3383,18 @@ class Cockpit(App):
                 log(result.stdout + result.stderr)
             self.push_screen(Operation('Container logs · ' + name, logs))
         elif action == 'rebuild':
-            self.push_screen(Confirm('Fetch current profile sources, build and recreate ' + name + '?\n'
-                                     'Active processes are interrupted after the build. Saved files and home persist.', 'Update and recreate'),
-                lambda yes: self.operation('Updating ' + name, ['recreate', name, '--profile',
-                    config.get('profile', {}).get('registry_name', config.get('profile', {}).get('name', 'base')) if config.get('profile', {}).get('registry_name',config.get('profile', {}).get('name')) in profile_titles()
-                    else config['profile']['path']], done_on_success=True, completed_title='Updated ' + name) if yes else None)
+            profile = config.get('profile', {})
+            source = profile.get('registry_name', profile.get('name', 'base'))
+            args = ['recreate', name, '--profile', source if source in profile_titles() else profile['path']]
+            migration = settings_effects.editor_migration(config)
+            question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
+            notes = ['Workspace files, private home and saved chats are kept.']
+            if record.get('dev') == 'running':
+                notes.insert(0, 'Active processes stop after the build.')
+            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), 'Update sources and recreate'),
+                lambda yes: self.push_screen(UpdateOperation('Updating ' + name,
+                    lambda log, update: self.service.run_update(args, log, update),
+                    done_on_success=True, completed_title='Updated ' + name)) if yes else None)
         elif action == 'start':
             self.push_screen(Operation('Starting ' + name, lambda log: self.service.start(name, log)))
         elif action == 'stop':

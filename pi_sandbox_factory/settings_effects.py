@@ -26,6 +26,11 @@ MODELS = bullets(['Reopen the client to refresh model connections.', 'Select a m
 FOLDER = 'The new starting folder applies when you next open the client.'
 APPROVALS_LABEL = CATEGORIES['approval-settings'].label
 
+
+def editor_migration(config):
+    from .sandbox import pendant_versions
+    return ['The editor switches from Pendant to FrostPi.'] if pendant_versions(config) else []
+
 # Keep every options key explicit so new settings require an effect assessment.
 OPTION_GROUPS = {
     'approval': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
@@ -69,7 +74,7 @@ def configuration_changes(original, draft):
 
 def configuration_notes(original, draft, mode='browser'):
     groups = set(configuration_changes(original, draft))
-    notes = [RECREATE, 'Workspace files and saved chats are kept.', *reconnect(mode)]
+    notes = [RECREATE, *editor_migration(original), 'Workspace files and saved chats are kept.', *reconnect(mode)]
     if groups & {'Skills', 'Agent tools and conversation recall', APPROVALS_LABEL}:
         notes.append('Earlier chat messages stay unchanged; a new chat gives a clean context.')
     before, after = options(original.get('options')), options(draft.get('options'))

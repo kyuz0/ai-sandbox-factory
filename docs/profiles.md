@@ -7,7 +7,7 @@ so the same profile can use local or hosted models.
 ## What profiles inherit
 
 **Default Developer Sandbox** is the built-in profile (`base`). It includes Pi,
-Pendant, Node.js, Python, Git, document tools and the sandbox security components.
+FrostPi, Node.js, Python, Git, document tools and the sandbox security components.
 
 Custom profiles extend that base image with their own dependencies, skills and
 instructions. They do not inherit other profiles’ additions.
@@ -71,7 +71,7 @@ and copy `resources.json` to `/opt/sandbox/resources.json`, for example:
 
 Skills are folders containing `SKILL.md`. Extensions are Pi extension files or
 folders. Prompts are Pi prompt files or folders. They must exist in the built
-image. Pi and Pendant read the same registrations. Replacing a profile removes
+image. Pi and FrostPi read the same registrations. Replacing a profile removes
 its old launcher-managed registrations while preserving user-added resources.
 
 If the tools live in another repository, add `git_source` and optionally `git_ref`
@@ -93,5 +93,5 @@ pi-sandbox-factory check reports --allowed-url http://local-model.internal:8000/
 ```
 
 The endpoint must be running and allowed. This checks the container boundaries,
-common tools and your `check.py`. Open Pi/Pendant and confirm the skill loads.
+common tools and your `check.py`. Open Pi/FrostPi and confirm the skill loads.
 Delete the disposable sandbox afterward; its workspace is retained.

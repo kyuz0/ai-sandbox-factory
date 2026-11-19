@@ -60,6 +60,7 @@ class CredentialFields(Vertical):
         with Vertical(id='credential-new'):
             yield Label('API key')
             yield Input(self.choice.get('key', ''), password=True, id=self.key_id, classes='credential-key-input')
+            yield Feedback('', id='credential-input-error', markup=False)
             yield Checkbox('Remember on this computer', value=bool(self.choice.get('label')), id='remember-key')
             with Vertical(id='credential-remember'):
                 yield Label('Save as', id='replace-key-title')
@@ -113,6 +114,15 @@ class CredentialFields(Vertical):
 
     def focus_key(self):
         self.query_one('#' + self.key_id, Input).focus()
+
+    def require_key(self):
+        self.query_one('#credential-input-error', Feedback).update('Enter an API key.')
+        self.focus_key()
+
+    @on(Input.Changed, '.credential-key-input')
+    @on(Select.Changed, '#saved-key')
+    def clear_key_error(self):
+        self.query_one('#credential-input-error', Feedback).update('')
 
     def collect(self):
         ref = self.query_one('#saved-key', Select).value
@@ -201,8 +211,8 @@ class CredentialDialog(ModalScreen):
                 fields = self.query_one(CredentialFields)
                 choice = fields.collect()
                 if not choice:
-                    fields.focus_key()
-                    raise ValueError('Enter an API key.')
+                    fields.require_key()
+                    return
                 self.dismiss(choice)
             except ValueError as error:
                 self.query_one('#credential-dialog-error', Feedback).update(str(error))

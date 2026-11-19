@@ -1,6 +1,8 @@
 # Browser editor
 
-The browser editor runs Pendant and its Node extensions inside the sandbox.
+The browser editor runs FrostPi and its Node extensions inside the sandbox.
+FrostPi shows previews of the images Pi receives from tools such as `read` and
+Betterwright. Click a thumbnail to enlarge it. Images remain in the saved chat.
 It is the default with rootless Podman on Linux, Windows through WSL2, and macOS
 through Podman Machine. Pi CLI and host VS Code remain available through **Open with…**.
 It supports amd64 and arm64 containers; see [platform setup](platforms.md).
@@ -12,13 +14,14 @@ model connection, then **Create and start**. The browser opens automatically unl
 you clear **Open selected editor after creation**. The first launch downloads a
 pinned code-server release for the container’s architecture into the existing development container.
 
-The selected workspace opens trusted, in dark mode, with Pendant in the right
-secondary sidebar. Select your model and start a conversation.
+The selected workspace opens trusted, in dark mode, with FrostPi in the right
+secondary sidebar. The first chat opens and shows the approval mode. Select your
+model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
 
 Closing the tab or manager leaves the editor running. **Open in browser** returns
 to it. **Actions → Stop browser editor** stops the editor and its terminals,
-active Pendant runs and scheduled prompts. Pi CLI sessions remain independent.
+active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
 Stopping the sandbox stops both clients.
 
 ## Connection settings
@@ -39,7 +42,7 @@ passwords start fresh.
 To connect from another computer, enter the host's interface IP, enable a password
 and supply an HTTPS certificate and private key. These fields appear when the
 address is non-local. The certificate must be trusted by the connecting browser
-and cover that IP. Pendant's webviews require a secure browser context. The key
+and cover that IP. FrostPi's webviews require a secure browser context. The key
 stays on the host and must have permissions `0600`; encrypted keys are unsupported.
 
 ## Choose a client
@@ -68,7 +71,7 @@ opening a tab.
 
 ## Access boundaries
 
-The editor backend, Pendant and its tools can access the selected workspace,
+The editor backend, FrostPi and its tools can access the selected workspace,
 additional mounts and container home. Container mounts enforce read-only folders.
 Do not mount a directory containing secrets that extensions should not read.
 
@@ -84,8 +87,9 @@ downloads. Gallery searches and other browser-side requests can use the host
 browser’s network. Seeing an extension in search does not mean its package can
 be downloaded inside the sandbox.
 
-[Developer checks](../TESTING.md#browser-editor) cover Pendant, hostile
-extension probes, login protection and session cleanup.
+[FrostPi checks](../TESTING.md#frostpi-editor-and-shared-pi-goals) cover first
+launch, reviewer prompts and handoff to Pi CLI. [Browser editor checks](../TESTING.md#browser-editor)
+cover login protection, untrusted extensions and session cleanup.
 
 ## References
 

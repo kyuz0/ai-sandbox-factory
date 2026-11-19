@@ -6,7 +6,10 @@ project folder, choose your models and create a sandbox from the terminal UI.
 Network access is restricted by default; commands needing broader permissions
 go through approval and still run inside the container.
 
-The default editor runs in your browser with Pendant, the Pi chat extension.
+The default editor runs in your browser with [Factory’s FrostPi fork](https://github.com/kyuz0/pi-vscode-ui).
+We switched from Pendant because FrostPi is open source and we can adapt it to
+Factory. It runs the same mainline `pi` executable as Pi CLI, so the editor
+and terminal stay in sync on Pi versions, models and extensions.
 You can also use Pi CLI or host VS Code. Each sandbox keeps its own tools, model
 settings and conversations.
 
@@ -26,7 +29,7 @@ pi-sandbox-factory
 ```
 
 Open a new terminal if the command is not found. The first build downloads Pi,
-Pendant and their dependencies.
+FrostPi and their dependencies.
 
 ## Create a sandbox
 
@@ -34,7 +37,7 @@ Choose **New sandbox**, select your project folder and configure a model:
 
 - **Local server:** open **Model Providers**, enable local models and enter its port, usually `8000`. The included
   [Pi Local Model Manager](docs/usage.md#local-models) discovers the running model.
-- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model Providers → Connect provider…**. Factory keeps credentials outside Pi and
+- **OpenRouter, Together, Azure/Foundry or AWS Bedrock:** open **Model Providers → Built-in hosted providers → Connect hosted provider…**. Factory keeps credentials outside Pi and
   editor extensions; see [hosted model setup](docs/hosted-models.md).
 
 Choose **Create and start** to open the editor. Use **Settings** to change the
@@ -53,6 +56,9 @@ cancellation both preserve your project files and reusable build cache.
 The manager offers **Upgrade now** when a new version is available. You can also
 run `pipx upgrade pi-sandbox-factory`. Update existing sandbox images through
 **Actions → Update sources and recreate…**.
+Use **Cancel update** while Factory prepares the replacement to keep your current
+sandbox running. Once Factory starts applying changes, it finishes the update
+before returning you to the sandbox list.
 
 When enabling **Browser · Betterwright**, **Protect saved browser vault files**
 is on by default. It blocks direct file-tool access to `~/.betterwright/vault`;
@@ -68,6 +74,15 @@ Disabling the option removes only the extra vault file guard;
 other sandbox and approval rules still apply.
 With the inner sandbox and approval reviews both off, Bash can read vault files;
 the checkbox continues to protect native file tools only.
+
+### Switch an existing Pendant sandbox to FrostPi
+
+Open existing Pendant sandboxes as usual until you're ready to switch. Update
+Factory, select the sandbox, then choose **Actions → Update sources and recreate…**.
+Factory builds the replacement first, then restarts the sandbox. Your workspace
+and saved Pi chats are kept. Reopen the editor and resume a chat.
+The sandbox list points to the update for sandboxes saved with Pendant.
+The previous Factory release is preserved on the [Pendant branch](https://github.com/kyuz0/pi-sandbox-factory/tree/pendant).
 
 ## Profiles and providers
 

@@ -1,9 +1,9 @@
 {
   "name": "editor-startup",
   "publisher": "pi-sandbox-factory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "displayName": "Pi Sandbox Factory editor setup",
-  "description": "Opens Pendant when a sandbox workspace is first opened.",
+  "description": "Opens Pi chat in FrostPi when a sandbox workspace is first opened.",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -12,7 +12,7 @@
     "workspace"
   ],
   "extensionDependencies": [
-    "cdervis.vscode-pi"
+    "frostime.frostpi"
   ],
   "activationEvents": [
     "onStartupFinished"

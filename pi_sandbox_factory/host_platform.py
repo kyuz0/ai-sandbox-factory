@@ -30,7 +30,7 @@ def python_command(module, *args):
 
 
 def stop_process_group(process, grace=5):
-    """Stop a dedicated creation session and its children on Linux, WSL or macOS."""
+    """Stop a dedicated process group on Linux, WSL or macOS."""
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
         process.poll()
         try:

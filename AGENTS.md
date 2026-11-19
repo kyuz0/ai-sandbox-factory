@@ -1,6 +1,6 @@
 # Agent guide
 
-Pi Sandbox Factory manages Pi/Pendant containers with a Python CLI and Textual UI.
+Pi Sandbox Factory manages Pi/FrostPi containers with a Python CLI and Textual UI.
 Read `README.md` and `TESTING.md`. For package work, use `docs/profiles.md`,
 `docs/providers.md` and the runnable `examples/`.
 
@@ -62,7 +62,7 @@ is relative to `/workspace` and applies at launch. Keep mount validation, inner
 write roots, native tool permissions and agent context derived from the same
 folder configuration. The managed global `AGENTS.md` block adds context without
 replacing project instructions. Folder grants never become workstation defaults.
-Keep the UI usable at 80×24. Test actual shipped Pendant workers for bootstrap or
+Keep the UI usable at 80×24. Test the shipped FrostPi webview and standalone Pi for bootstrap or
 extension changes, not just mocked APIs. Never restart a user's sandbox to test.
 
 Host-specific behavior belongs in `host_platform.py`. Windows runs inside WSL2;
@@ -177,7 +177,8 @@ Run the relevant suites in `TESTING.md`. Extension implementation and unit tests
 belong in the extension repository; this project pins and integrates them.
 Update pins in `pi_sandbox_factory/containers/dev/extensions.lock.json` or the
 security directory’s `sources.json`.
-Pi and Pendant have separate version pins; Pendant embeds its own Pi.
+FrostPi uses the standalone Pi already installed in the container. Factory pins
+FrostPi source in the extension lock and builds its VSIX from that commit.
 Conversation recall defaults to Lite in both clients; keep its mode tied to the
 saved sandbox options. Its dependency lock lives in `containers/dev/compaction-recall/`.
 

@@ -13,7 +13,7 @@ Pi can ask Codex (OpenAI), Claude (Anthropic) or Antigravity (Google) for a seco
 3. Use **Check advisors** to check login status and available models or quota.
    Antigravity also needs an exact Gemini model ID, quota group and matching effort;
    enter these after login and **Apply**.
-4. Reopen Pi/Pendant, run `/advisor status`, then ask Pi to consult an advisor.
+4. Reopen Pi/FrostPi, run `/advisor status`, then ask Pi to consult an advisor.
    `/advisor usage` shows usage; `/advisor cancel` stops an active request.
    `start` and `resume` keep a conversation reference for follow-up.
 
@@ -83,7 +83,7 @@ Images in the chat are not automatically sent to an advisor.
 flowchart LR
     USER[You in the terminal manager] -->|interactive login| CLI
     subgraph DEV[Development container]
-        PI[Pi + Pendant] --> EXT[advisor_ask extension]
+        PI[Pi + FrostPi] --> EXT[advisor_ask extension]
         PI --> TOOLS[Local file and shell tools]
     end
     EXT -->|question and selected context over Unix socket| RPC
@@ -108,4 +108,4 @@ Login state survives stopping and rebuilding. Deleting the sandbox removes it. T
 
 Under **Settings → Advisors → Claude model**, choose `sonnet`, `opus`, `haiku` or an exact model ID and thinking effort. The default is Sonnet at medium effort. Pi can request Opus with an escalation reason or Haiku for simpler questions. `/advisor status` refreshes subscription limits and reset times through Claude's native `/usage`, without inference. Calls stop at the configured quota reserve; unavailable limits are reported as unknown. See the [advisor configuration](https://github.com/kyuz0/pi-advisor/blob/main/docs/configuration.md) for the complete model and quota policy.
 
-To update the installed advisor, use **Actions → Update sources and recreate…**, then reopen Pi/Pendant.
+To update the installed advisor, use **Actions → Update sources and recreate…**, then reopen Pi/FrostPi.

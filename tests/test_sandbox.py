@@ -1,4 +1,5 @@
 from contextlib import closing, redirect_stderr, redirect_stdout
+import hashlib
 import importlib.util
 import io
 import json
@@ -449,6 +450,74 @@ class ListTests(unittest.TestCase):
                 self.assertNotIn('missing', output.getvalue())
                 self.assertIn('cannot query podman', errors.getvalue())
 
+    def test_structured_inventory_lists_owned_containers_with_purpose(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.save(root, 'demo')
+            self.save(root, 'empty')
+            self.save(root, 'offline', engine='docker')
+            sample = (
+                'pi-sandbox-factory-demo\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-proxy\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-advisor\texited\tdemo\n'
+                'pi-sandbox-factory-demo-advisor-proxy\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-inference\trunning\tdemo\n'
+                'pi-sandbox-factory-demo-ssh\trunning\tother\n'
+                'another-owned-container\tpaused\tdemo\n'
+            )
+
+            def run(argv, **kwargs):
+                return subprocess.CompletedProcess(argv, 0, sample) if argv[0] == 'podman' else subprocess.CompletedProcess(argv, 1, '')
+
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(sandbox, 'run', side_effect=run) as commands:
+                sandbox.list_sandboxes(root, structured=True)
+            demo, empty, offline = json.loads(output.getvalue())
+            self.assertEqual([row['role'] for row in demo['containers']],
+                             ['Development', 'Network gateway', 'Model connections',
+                              'Advisors', 'Advisor network gateway', 'Additional container'])
+            self.assertEqual(demo['containers'][3]['status'], 'exited')
+            self.assertTrue(all(row['purpose'] for row in demo['containers']))
+            self.assertEqual(empty['containers'], [])
+            self.assertIsNone(offline['containers'])
+            self.assertEqual(commands.call_count, 2)
+
+    def test_pendant_notice_uses_saved_build_even_with_engine_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self.save(root, 'demo')
+            missing = self.save(root, 'missing')
+            fresh = self.save(root, 'new')
+            old_inputs = state / 'common'
+            old_inputs.mkdir()
+            (old_inputs / 'Dockerfile').write_text(
+                'ARG PI_VERSION=1.4.0\nARG PENDANT_VERSION=0.94.2\nRUN curl cdervis.vscode-pi-${PENDANT_VERSION}.vsix\n')
+            for folder, path in [(state, old_inputs), (missing, missing / 'absent'),
+                                 (fresh, sandbox.ROOT / 'containers/dev')]:
+                config_path = folder / 'config.json'
+                config = json.loads(config_path.read_text())
+                config.update(uid=1000, gid=1000, workspace=str(root),
+                              common={'path': str(path), 'digest': 'fixture'})
+                config_path.write_text(json.dumps(config))
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(
+                    sandbox, 'run', return_value=subprocess.CompletedProcess([], 1, '')) as commands:
+                sandbox.list_sandboxes(root, structured=True)
+            legacy, unknown, modern = json.loads(output.getvalue())
+            self.assertEqual(legacy['chat_editor'], 'pendant')
+            self.assertEqual(legacy['dev'], 'unknown')
+            self.assertNotIn('chat_editor', unknown)
+            self.assertNotIn('chat_editor', modern)
+            expected = hashlib.sha256(b'1.4.0-0.94.2-1000-1000-fixture').hexdigest()[:16]
+            self.assertEqual(sandbox.base_tag(legacy['config']), expected)
+            sandbox.write_attach(legacy['config'], state)
+            attach = json.loads((state / 'attached-container.json').read_text())
+            self.assertEqual(attach['extensions'], ['cdervis.vscode-pi'])
+            self.assertEqual(attach['settings'], {'pendant.agentDir': '/home/node/.pi/agent'})
+            sandbox.write_attach(modern['config'], fresh)
+            self.assertEqual(json.loads((fresh / 'attached-container.json').read_text())['extensions'], ['frostime.frostpi'])
+            commands.assert_called_once()
+
     def test_each_saved_engine_is_queried_and_foreign_container_ownership_is_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -725,9 +794,9 @@ class EditorTests(unittest.TestCase):
                 existing_state = {'userConfirmedAttachToContainerRequiresTrust': False, 'otherState': 'preserved'}
                 database.execute('UPDATE ItemTable SET value=? WHERE key=?', (json.dumps(existing_state), extension_key))
                 layout = json.loads(database.execute("SELECT value FROM ItemTable WHERE key='views.customizations'").fetchone()[0])
-                self.assertEqual(layout['viewContainerLocations']['workbench.view.extension.pendant-container'], 2)
+                self.assertEqual(layout['viewContainerLocations']['workbench.view.extension.frostpi'], 2)
                 # A later user move must survive reconnecting.
-                layout['viewContainerLocations']['workbench.view.extension.pendant-container'] = 0
+                layout['viewContainerLocations']['workbench.view.extension.frostpi'] = 0
                 database.execute("UPDATE ItemTable SET value=? WHERE key='views.customizations'", (json.dumps(layout),))
             with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
                  patch.object(sandbox.shutil, 'which', return_value='/usr/bin/code'), \
@@ -745,7 +814,7 @@ class BootstrapTests(unittest.TestCase):
         from pi_sandbox_factory import git_settings
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for directory in ('shared', 'pendant', 'home', 'sandbox', 'repo'):
+            for directory in ('shared', 'home', 'sandbox', 'repo'):
                 (root / directory).mkdir()
             (root / 'home/.gitconfig').write_text('[user]\nname = Previous\nemail = previous@example.test\n[alias]\nst = status\n')
             identity = root / 'sandbox/git-identity.gitconfig'
@@ -786,12 +855,12 @@ class BootstrapTests(unittest.TestCase):
 
     def bootstrap(self, root, subagents=False):
         script = (sandbox.ROOT / 'containers/dev/bootstrap.py').read_text()
-        shutil.copytree(sandbox.ROOT / 'containers/dev/editor-startup', root / 'editor-extensions/pi-sandbox-factory.editor-startup-1.0.0', dirs_exist_ok=True)
+        shutil.copytree(sandbox.ROOT / 'containers/dev/editor-startup', root / 'editor-extensions/pi-sandbox-factory.editor-startup-1.1.0', dirs_exist_ok=True)
         for relative in ('sandbox/profile.md', 'recall/node_modules/pi-compaction-recall/src/index.ts'):
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('Profile guidance' if relative.endswith('profile.md') else '')
-        for original, relative in (('/home/node', 'home'), ('/pi-config', 'shared'), ('/opt/pendant', 'pendant'),
+        for original, relative in (('/home/node', 'home'), ('/pi-config', 'shared'), ('/opt/pi-goal', 'goals'),
                                    ('/opt/pi-security', 'security'), ('/opt/editor-extensions', 'editor-extensions'),
                                    ('/opt/betterwright', 'betterwright'),
                                    ('/opt/pi-compaction-recall', 'recall'),
@@ -802,10 +871,32 @@ class BootstrapTests(unittest.TestCase):
         subprocess.run(['python3', '-c', script], check=True,
                        env=dict(os.environ, SANDBOX_SUBAGENTS='1' if subagents else '0'))
 
+    def test_bootstrap_retires_legacy_editor_copies_and_preserves_other_extensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared').mkdir()
+            legacy = ('cdervis.vscode-pi-0.94.2', 'pi-sandbox-factory.editor-startup-1.0.0')
+            for server in ('.vscode-server', '.vscode-server-insiders'):
+                extensions = root / 'home' / server / 'extensions'
+                for name in (*legacy, 'fixture.user-extension-1.0.0'):
+                    target = extensions / name
+                    target.mkdir(parents=True)
+                    (target / 'fixture.txt').write_text(name)
+            self.bootstrap(root)
+            self.bootstrap(root)
+            for server in ('.vscode-server', '.vscode-server-insiders'):
+                base = root / 'home' / server
+                self.assertTrue((base / 'extensions/fixture.user-extension-1.0.0/fixture.txt').is_file())
+                self.assertTrue((base / 'extensions/pi-sandbox-factory.editor-startup-1.1.0').is_symlink())
+                backup, = (base / 'factory-retired-extensions').iterdir()
+                for name in legacy:
+                    self.assertFalse((base / 'extensions' / name).exists())
+                    self.assertEqual((backup / name / 'fixture.txt').read_text(), name)
+
     def test_managed_ssh_guidance_tracks_saved_destinations_without_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for directory in ('shared', 'pendant', 'ssh'):
+            for directory in ('shared', 'ssh'):
                 (root / directory).mkdir()
             (root / 'ssh/targets.json').write_text(json.dumps([
                 {'alias': 'repository', 'hostname': 'git.example.test', 'user': 'git',
@@ -836,7 +927,6 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'shared').mkdir()
-            (root / 'pendant').mkdir()
             (root / 'shared/settings.json').write_text(json.dumps({
                 'packages': ['npm:pi-compaction-recall@0.2.0', 'npm:unrelated'],
                 'extensions': ['/custom/extension.ts']}))
@@ -854,7 +944,7 @@ class BootstrapTests(unittest.TestCase):
         import re
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant', 'sandbox', 'betterwright'):
+            for name in ('shared', 'sandbox', 'betterwright'):
                 (root / name).mkdir()
             (root / 'sandbox/options.json').write_text('{"browser":true}')
             (root / 'betterwright/extension.mjs').touch()
@@ -869,7 +959,7 @@ class BootstrapTests(unittest.TestCase):
     def test_ask_loads_by_default_and_preserves_existing_configuration(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant', 'ask'):
+            for name in ('shared', 'ask'):
                 (root / name).mkdir(parents=True)
             extension = root / 'ask/index.ts'
             extension.touch()
@@ -892,27 +982,28 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(actual['extensions'], baseline if enabled else [p for p in baseline if p != str(extension)])
                 self.assertEqual(actual['defaultProvider'], 'kept')
 
-    def test_native_goal_setting_preserves_preferences_and_tracks_launcher_choice(self):
+    def test_goals_registration_tracks_launcher_choice(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant', 'sandbox'):
-                (root / name).mkdir()
-            seed = {'enabled': True, 'maxAutonomousRuns': 12}
-            (root / 'shared/pendant-goals.json').write_text(json.dumps(seed))
-            choice = root / 'sandbox/options.json'
-            for enabled in (False, True):
-                choice.write_text(json.dumps({'goals': enabled}))
+            for name in ('shared', 'sandbox', 'goals'):
+                (root / name).mkdir(parents=True)
+            extension = root / 'goals/index.js'
+            extension.touch()
+            (root / 'shared/settings.json').write_text(json.dumps({
+                'packages': ['npm:@ethanthoma/pi-goal@0.2.1', 'npm:another-package'],
+                'extensions': ['/custom/extension.ts']}))
+            for enabled in (True, False, False, True):
+                (root / 'sandbox/options.json').write_text(json.dumps({'goals': enabled}))
                 self.bootstrap(root)
-                target = root / 'home/.pi/agent/pendant-goals.json'
-                self.assertFalse(target.is_symlink())
-                self.assertEqual(json.loads(target.read_text()), {**seed, 'enabled': enabled})
-                self.assertEqual(target.stat().st_mode & 0o077, 0)
-            self.assertEqual(json.loads((root / 'shared/pendant-goals.json').read_text()), seed)
+                settings = json.loads((root / 'home/.pi/agent/settings.json').read_text())
+                self.assertEqual(settings['extensions'].count(str(extension)), int(enabled))
+                self.assertIn('/custom/extension.ts', settings['extensions'])
+                self.assertEqual(settings['packages'], ['npm:another-package'])
 
     def test_browser_registration_tracks_saved_choice_and_preserves_user_resources(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant', 'sandbox', 'betterwright'):
+            for name in ('shared', 'sandbox', 'betterwright'):
                 (root / name).mkdir()
             extension = root / 'betterwright/extension.mjs'
             extension.touch()
@@ -937,8 +1028,7 @@ class BootstrapTests(unittest.TestCase):
     def test_subagents_are_opt_in_and_can_be_disabled_without_losing_user_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant'):
-                (root / name).mkdir()
+            (root / 'shared').mkdir()
             managed = [root / 'security/packages/pi-sandbox/src/container-subagents.ts',
                        root / 'security/node_modules/pi-subagents/index.js']
             for resource in managed:
@@ -964,8 +1054,7 @@ class BootstrapTests(unittest.TestCase):
     def test_automation_replaces_seeded_npm_registrations_without_duplicate_extensions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant'):
-                (root / name).mkdir()
+            (root / 'shared').mkdir()
             seed = {'packages': ['npm:pi-goal@0.1.7', {'source': 'npm:pi-schedule-prompt'},
                                  'npm:pi-sandbox', {'source': 'npm:@gotgenes/pi-permission-system', 'autoload': False},
                                  'npm:unrelated-package'], 'defaultProvider': 'kept',
@@ -992,8 +1081,7 @@ class BootstrapTests(unittest.TestCase):
     def test_fresh_private_configuration_is_empty_and_preserves_edits(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name in ('shared', 'pendant'):
-                (root / name).mkdir()
+            (root / 'shared').mkdir()
             self.bootstrap(root)
             agent = root / 'home/.pi/agent'
             models = agent / 'models.json'
@@ -1026,7 +1114,6 @@ class BootstrapTests(unittest.TestCase):
             root = Path(tmp)
             shared = root / 'shared'
             shared.mkdir()
-            (root / 'pendant').mkdir()
             (shared / 'models.json').write_text('{"providers":{"seed":{}}}')
             for suffix in ('lock', 'journal.json', 'backup.bak'):
                 (shared / ('models.json.' + suffix)).write_text('host-only transaction')

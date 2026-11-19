@@ -5,7 +5,7 @@ Enable **Communications → Slack** when creating a sandbox, or open
 and an optional user token for search. Save the form to install the extension
 and apply the configuration. Updating only the tokens preserves running sessions.
 
-Pi and Pendant use the same Slack configuration. Ask Pi to list channels, read a
+Pi and FrostPi use the same Slack configuration. Ask Pi to list channels, read a
 conversation, find messages or send a reply. The extension also downloads files
 and can edit or delete messages sent by its bot. It runs tools when Pi requests
 them; incoming messages do not start agent tasks.

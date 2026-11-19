@@ -22,7 +22,8 @@ from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
-from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, settings_effects, web_access
+from pi_sandbox_factory.sandbox_tui import ContainersScreen
+from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
@@ -85,7 +86,12 @@ async def capture(size):
                     await app.workers.wait_for_complete()
                     await pilot.pause()
                     if focus:
-                        app.screen.query_one(focus).focus()
+                        widget = app.screen.query_one(focus)
+                        for parent in reversed(widget.ancestors):
+                            if isinstance(parent, Collapsible):
+                                parent.collapsed = False
+                        await pilot.pause()
+                        widget.focus()
                         await pilot.pause()
                     p = out / f'{name}-{size[0]}x{size[1]}.svg'
                     p.write_text(app.export_screenshot())
@@ -93,6 +99,110 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('editor-migration-') for name in args.only):
+                    common = root / 'legacy-common'
+                    common.mkdir()
+                    (common / 'Dockerfile').write_text(
+                        'ARG PI_VERSION=1.4.0\nARG PENDANT_VERSION=0.94.2\nRUN curl cdervis.vscode-pi-${PENDANT_VERSION}.vsix\n')
+                    legacy = {**record, 'chat_editor': 'pendant', 'dev': 'exited',
+                              'config': {**c, 'common': {'path': str(common)}}}
+                    app.receive_inventory([legacy])
+                    await shot('editor-migration-pendant')
+                    await shot('editor-migration-actions', MoreActions(legacy))
+                    if 'editor-migration-confirm' in args.only:
+                        app.perform('rebuild', record={**legacy, 'dev': 'running'})
+                        await shot('editor-migration-confirm')
+                        await app.pop_screen()
+                    app.receive_inventory([record])
+                    await shot('editor-migration-frostpi')
+                    return
+                if args.only and all(name.startswith('containers-') for name in args.only):
+                    name = 'fixture-with-a-long-readable-sandbox-id1'
+                    config = {**c, 'name': name}
+                    prefix = sandbox.names(config)[0]
+                    states = {
+                        prefix: 'running', prefix + '-proxy': 'running', prefix + '-inference': 'running',
+                        prefix + '-ssh': 'exited', prefix + '-advisor': 'running', prefix + '-advisor-proxy': 'running',
+                    }
+                    owned = {**record, 'name': name, 'config': config, 'containers': sandbox.describe_containers(config, states)}
+                    await shot('containers-actions', MoreActions(record))
+                    await app.push_screen(ContainersScreen(owned))
+                    await shot('containers-populated')
+                    listing = app.screen.query_one('#container-list')
+                    listing.focus()
+                    listing.scroll_end(animate=False)
+                    await shot('containers-scrolled')
+                    await app.pop_screen()
+                    await shot('containers-empty', ContainersScreen({**record, 'containers': []}))
+                    await shot('containers-offline', ContainersScreen({**record, 'containers': None}))
+                    await shot('containers-invalid', ContainersScreen({**record, 'engine': None}))
+                    return
+                if args.only and all(name.startswith('providers-') for name in args.only):
+                    plugin = {'name': 'chaucer', 'settings': {}, 'manifest': {
+                        'description': 'Chaucer model catalogue',
+                        'network': ['models.example.test:443'],
+                        'settings': {'key': {'type': 'secret', 'label': 'Chaucer API key'}},
+                        'inference': {'origin': 'https://models.example.test', 'auth': {'type': 'bearer'},
+                                      'operations': [{'method': 'GET', 'path': '/v1/models'}]},
+                    }}
+                    resolve = registry.resolve
+                    def choices(kind):
+                        return {'local': 'Local models', 'chaucer': 'Chaucer model catalogue'} if kind == 'provider' else {'base': 'Default Developer Sandbox'}
+                    with patch('pi_sandbox_factory.skill_library.entries', return_value={}), \
+                         patch.object(registry, 'choices', side_effect=choices), \
+                         patch.object(registry, 'resolve', side_effect=lambda kind, name:
+                                      root if kind == 'provider' else resolve(kind, name)), \
+                         patch.object(registry, 'manifest', return_value=plugin['manifest']):
+                        draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                        draft.update(name='demo', workspace=str(workspace), local_model_ports='8000')
+                        form = SettingsForm(draft)
+                        await app.push_screen(form)
+                        await shot('providers-create')
+                        await shot('providers-create-local-on', focus='#local-models')
+                        form.query_one('#local-models', Checkbox).value = False
+                        await pilot.pause()
+                        await shot('providers-create-local-off', focus='#local-models')
+                        form.query_one('#local-models', Checkbox).value = True
+                        form.query_one('#model-ports', Input).value = '8000,not-a-port'
+                        await pilot.pause()
+                        try:
+                            form.checked_local_ports()
+                        except ValueError:
+                            pass
+                        await shot('providers-create-local-error', focus='#model-ports')
+                        form.query_one('#model-ports', Input).value = '8000'
+                        form.query_one('#local-provider', Collapsible).collapsed = True
+                        form.query_one('#source-chaucer', Checkbox).value = True
+                        await pilot.pause()
+                        await shot('providers-create-plugin', focus='#source-chaucer')
+                        await app.pop_screen()
+                        defaults = SettingsForm(draft, defaults=True)
+                        await app.push_screen(defaults)
+                        section = defaults.query_one('#hosted-section', Collapsible)
+                        section.query_one('CollapsibleTitle').focus()
+                        section.collapsed = False
+                        await shot('providers-defaults')
+                        await app.pop_screen()
+                        existing = {**draft, 'model_providers': [*c['model_providers'], plugin]}
+                        await shot('providers-edit', SettingsForm(existing, editing=True, setting='model-sources'))
+                        app.service.populated = True
+                        live = ModelsScreen({**record, 'config': {**c, 'model_providers': existing['model_providers']}})
+                        await app.push_screen(live)
+                        await shot('providers-settings')
+                        await shot('providers-settings-local', focus='#local-server-keys')
+                        live.query_one('#live-local-provider', Collapsible).collapsed = True
+                        await shot('providers-settings-plugin', focus='#model-provider')
+                        dialog = ProviderDialog(providers={
+                            'together': 'Together', 'azure': 'Azure / Foundry', 'amazon-bedrock': 'AWS Bedrock'})
+                        await app.push_screen(dialog)
+                        await shot('providers-connect')
+                        dialog.query_one('#hosted-save', Button).focus()
+                        await pilot.press('enter')
+                        await pilot.pause(0.3)
+                        await shot('providers-connect-error')
+                        await app.pop_screen()
+                        await app.pop_screen()
+                    return
                 if args.only and all(name.startswith('local-key-') for name in args.only):
                     ports = [8000, 8080, 8081]
                     binding = provider_credentials.scope('local', inference.local_route(8000))
@@ -121,6 +231,8 @@ async def capture(size):
                         if 'local-key-invalid' in args.only:
                             draft['local_model_ports'] = '8080-8000'
                             await app.push_screen(SettingsForm(draft, section='hosted-section'))
+                            await pilot.pause()
+                            app.screen.query_one('#local-provider', Collapsible).collapsed = False
                             await pilot.pause()
                             app.screen.query_one('#local-server-keys', Button).focus()
                             await pilot.press('enter')
@@ -202,6 +314,28 @@ async def capture(size):
                 await shot('new', NewSandbox())
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                 draft.update(name='demo', workspace=str(workspace), working_directory='.', extra_folders=[])
+                if args.only and all(name.startswith('settings-summary-') for name in args.only):
+                    selected = options({'browser': True, 'goals': False, 'compaction_recall': 'full',
+                                        'approval': 'manual', 'inner_sandbox': False,
+                                        'web_access': {'enabled': True}, 'communications': {'slack': True}})
+                    skills = [{'name': 'sample-skill', 'digest': 'fixture'}]
+                    saved = {**c, 'options': selected, 'network': 'unrestricted',
+                             'extra_skills': skills,
+                             'hosted_connections': {'openrouter': {}}}
+                    await shot('settings-summary-default', SettingsMenu('demo', c, 'browser'))
+                    await shot('settings-summary-populated', SettingsMenu('demo', saved, 'pi'), focus='#settings-actions')
+                    await shot('settings-summary-invalid-config', SettingsMenu('demo', {}, 'browser'))
+                    form = {**draft, 'options': selected, 'network': 'unrestricted',
+                            'editor': {**draft['editor'], 'mode': 'pi'}, 'extra_skills': skills,
+                            '_hosted_changes': {'openrouter': {'provider': 'openrouter'}}}
+                    await app.push_screen(SettingsForm(form))
+                    app.screen.query_one('#hosted-section', Collapsible).collapsed = True
+                    await shot('settings-summary-create')
+                    await shot('settings-summary-create-network', section='#network-search-section',
+                               focus='#network-search-section > CollapsibleTitle')
+                    await app.pop_screen()
+                    return
+
                 def network_form(text=None, config=None):
                     value = copy.deepcopy(draft)
                     if config is not None:
@@ -212,7 +346,7 @@ async def capture(size):
                     return SettingsForm(value, editing=True, setting='network-settings')
 
                 if args.only and all(name.startswith('network-group-') for name in args.only):
-                    await shot('network-group-menu', SettingsMenu('demo'))
+                    await shot('network-group-menu', SettingsMenu('demo', c, 'browser'))
                     await app.push_screen(SettingsForm(copy.deepcopy(draft)))
                     app.screen.query_one('#hosted-section', Collapsible).collapsed = True
                     await shot('network-group-create-order')
@@ -253,7 +387,7 @@ async def capture(size):
                     await app.pop_screen()
                     return
                 if args.only and all(name.startswith('settings-ux-') for name in args.only):
-                    await shot('settings-ux-menu', SettingsMenu('demo'))
+                    await shot('settings-ux-menu', SettingsMenu('demo', c, 'browser'))
                     await shot('settings-ux-create', SettingsForm(copy.deepcopy(draft)))
                     if 'settings-ux-create-categories' in args.only:
                         await app.push_screen(SettingsForm(copy.deepcopy(draft)))
@@ -356,9 +490,13 @@ async def capture(size):
                         for part in ('browser', 'goals', 'compaction-recall'):
                             screen.query_one('#skills-section', Collapsible).collapsed = False
                             await shot('model-settings-' + context + '-tools-' + part, focus='#' + part)
+                        goals_off = 'model-settings-' + context + '-tools-goals-off'
+                        if args.only and goals_off in args.only:
+                            screen.query_one('#goals', Checkbox).value = False
+                            await shot(goals_off, focus='#goals')
                         await app.pop_screen()
                     await shot('model-settings-open-with', EditorScreen('demo'))
-                    await shot('model-settings-menu', SettingsMenu('demo'))
+                    await shot('model-settings-menu', SettingsMenu('demo', c, 'browser'))
                     await shot('model-settings-saved-models', ModelsScreen(record))
                     app.service.populated = True
                     await shot('model-settings-connected-models', ModelsScreen(record))
@@ -479,7 +617,7 @@ async def capture(size):
                 await shot('network-edit', network_form('local-model.internal:8000', c))
                 await shot('folders', FoldersScreen(record))
                 await shot('folder-add', FolderEditor(None, [], str(workspace), root))
-                await shot('settings', SettingsMenu('demo'))
+                await shot('settings', SettingsMenu('demo', c, 'browser'))
                 await shot('actions', MoreActions(record))
                 await shot('models', ModelsScreen(record))
                 await shot('packages', PackagesScreen())
@@ -504,6 +642,35 @@ async def capture(size):
                 await shot('repository', RepositorySetup())
                 await shot('public-key', PublicKey('demo'))
                 await shot('operation', Operation('Creating sandbox', lambda log: log('Sandbox ready.')))
+                if not args.only or any(name.startswith('update-operation-') for name in args.only):
+                    for phase in ('preparing', 'confirm', 'applying', 'cancelling', 'cancelled', 'complete', 'failed'):
+                        screen = UpdateOperation('Updating example-project', lambda log, update: None,
+                                                 done_on_success=True, completed_title='Updated example-project')
+                        with patch.object(Operation, 'execute'):
+                            await app.push_screen(screen)
+                        for index in range(24):
+                            screen.write_log(f'STEP {index + 1}/24: building the updated image and checking cached dependencies')
+                        if phase == 'confirm':
+                            screen.action_cancel()
+                        elif phase == 'applying':
+                            with patch.object(type(screen.update), 'applying', True):
+                                screen.check_phase()
+                        elif phase in ('cancelling', 'cancelled'):
+                            screen.confirm_cancel(True)
+                        if phase in ('cancelled', 'complete', 'failed'):
+                            screen.cancelled = phase == 'cancelled'
+                            screen.failed = phase == 'failed'
+                            if screen.failed:
+                                screen.write_log('Error: The container engine could not build the replacement image.')
+                            if phase == 'complete':
+                                screen.write_log('Finished.')
+                            screen.complete()
+                        if app.screen is screen and not screen.query_one('#operation-back', Button).disabled:
+                            screen.query_one('#operation-back', Button).focus()
+                        await shot('update-operation-' + phase)
+                        if phase == 'confirm':
+                            await app.pop_screen()
+                        await app.pop_screen()
                 if not args.only or any(name.startswith('creation-') for name in args.only):
                     for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete', 'failed'):
                         controller = Creation()
@@ -516,7 +683,7 @@ async def capture(size):
                         for index in range(35):
                             output.write(f'STEP {index + 1}/39: preparing sandbox dependencies and cached image layers')
                         if state_name in ('cancelling', 'cancelled', 'cleanup-error'):
-                            screen.action_cancel_creation()
+                            screen.action_cancel()
                             output.write('Stopping creation…')
                         if state_name in ('cancelled', 'cleanup-error', 'complete', 'failed'):
                             screen.failed = state_name in ('cleanup-error', 'failed')

@@ -32,6 +32,93 @@ python3 -m venv /tmp/pi-sandbox-package-check
 (cd /tmp && /tmp/pi-sandbox-package-check/bin/pi-sandbox-factory profile list)
 ```
 
+## FrostPi editor and shared Pi goals
+
+Build the Factory image from the current checkout in a disposable sandbox.
+Use the code-server archive pinned in `pi_sandbox_factory/browser_editor.py`.
+Extract it before the test. The browser check needs Podman, socat, Playwright,
+and its Chromium installation.
+
+```sh
+.venv/bin/pip install playwright
+.venv/bin/python -m playwright install chromium
+.venv/bin/python tests/frostpi_editor.py \
+  --image FACTORY_IMAGE --code-server /path/to/code-server-4.145.2-linux-amd64 \
+  --output /tmp/factory-frostpi
+```
+
+The test uses a network-disabled disposable container and synthetic local
+inference. It opens the installed editor on a fresh workspace, checks the
+approval mode before the first prompt, exercises a long reviewer rejection
+and verifies that keyboard scrolling reveals the full command and reason
+while both choices stay available. It confirms **Deny** blocks execution and **Allow this exact command once** runs the approved command.
+The test submits a choice, a custom answer and multiple choices through the shared
+question tool. It also dismisses a question and checks the result delivered to the model.
+It pauses and revises a goal in FrostPi, checks its objective and usage in standalone Pi,
+then resumes and completes it in the same session.
+Screenshots and the editor log remain in the output directory. Add
+`--startup-only automatic` to test first launch without a configured model. The
+same check accepts `assisted`, `manual`, and `off`.
+
+Repeat the browser command with `--chat-workflows` and a separate output
+directory to test steering, switching between branches in one session, and
+forking into a separate session. The check continues the original after the fork
+and verifies that the new messages stay in their respective session files.
+
+Use `--session-naming` with the rebuilt image to check the generated title and
+the first-prompt fallback after a provider error. The check verifies both titles
+in FrostPi and in standalone Pi and confirms a later turn keeps the original name.
+
+With a Betterwright-enabled image, use `--tool-images` to verify that Pi's
+`read` tool and Betterwright deliver the same image bytes to the model and
+FrostPi. The check opens both thumbnails and reopens them after a session restart.
+
+For authenticated local discovery, run the following after installing Playwright
+and Chromium.
+
+```sh
+.venv/bin/python tests/local_model_keys.py --code-server-archive /path/to/code-server-4.145.2-linux-amd64.tar.gz
+```
+
+The fixture creates and deletes a Podman sandbox, serves two protected model
+endpoints and one public endpoint, and chats through Pi and FrostPi. It checks the
+model picker, per-port credentials, replacement while the sandbox is running, and
+preservation of the current key after a rejected replacement.
+
+For desktop VS Code, create a separate disposable sandbox with `--editor desktop`.
+Open it, trust its workspace, and verify that FrostPi opens a chat, displays the
+approval notice, and streams a reply using a configured model. For the update
+check, start with the previous Factory release in disposable state, add a
+workspace file and save a Pi chat, then run `recreate NAME --profile base` from
+the new checkout. Verify that both survive and that the old shipped extensions
+are retired in the stable and Insiders server directories.
+
+For the browser migration, open a disposable Pendant sandbox using the new
+Factory launcher before recreating it. Verify the sandbox list offers the
+FrostPi update and the browser still opens Pendant. After recreation, open
+the browser again and verify FrostPi opens and the notice is gone.
+
+To try the branch without touching saved sandboxes, open the launcher with a
+fresh state directory.
+
+```sh
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/factory-frostpi.XXXXXX")
+mkdir "$test_root/workspace"
+.venv/bin/pi-sandbox-factory --state-dir "$test_root/state"
+```
+
+Select the new workspace, enable **Goals** and
+**Auto (interactive)**, and open it in the browser editor. Confirm the mode
+notice appears immediately. Use `/auto-review-settings` to view the current
+reviewer. Ask an action that triggers approval and inspect the command before
+choosing. To switch clients, pause your goal with `/goal pause`, close the chat,
+open Pi CLI, resume the same session, and run `/goal status` before resuming work.
+
+The checks below that reference Pendant require the earlier Pendant image and
+matching checkout (`v2026.11.18.220034`). They remain reproducible historical
+coverage. Use the FrostPi check above for the new editor. Standalone Pi and
+client-independent container checks below also apply to this branch.
+
 ## Container and Pendant integration
 
 Check process headroom with a cached Factory image:
@@ -124,12 +211,6 @@ create a disposable reporting sandbox with local discovery on port 18082 and tha
 port allowed, then run `tests/provider_container.py --name NAME`.
 It checks local discovery, preservation of unrelated models and the profile skill.
 
-For API keys on local servers, run `.venv/bin/python tests/local_model_keys.py`.
-The fixture creates and deletes a Podman sandbox, serves two protected model
-endpoints and one public endpoint on unused loopback ports, then tests discovery
-and chat in Pi and the shipped Pendant worker. It checks that keys stay bound to
-their ports and that a rejected replacement keeps the active key.
-
 To verify Radiance discovery without a GPU server, run the synthetic metadata fixture
 inside a disposable Factory image (replace `FACTORY_IMAGE` with its local image name):
 
@@ -210,19 +291,22 @@ editor, Pi CLI and provider refresh/preview/status from saved configurations wit
 no transient state path. Each uses a custom state directory, with and without a
 configured companion key; discovery failures must still block agent launch.
 
-After the unit suites, run the companion and native Pi/Pendant checks:
+After the unit suites, run the companion and the installed Pi and FrostPi checks:
 
 ```sh
 podman build -t localhost/factory-inference-check pi_sandbox_factory/containers/inference
 .venv/bin/python tests/inference_container.py --image localhost/factory-inference-check --dev-image YOUR_FACTORY_DEV_IMAGE
-.venv/bin/python tests/hosted_container.py --image YOUR_FACTORY_DEV_IMAGE --inference-image localhost/factory-inference-check
+.venv/bin/python tests/hosted_container.py \
+  --image YOUR_FACTORY_DEV_IMAGE --inference-image localhost/factory-inference-check \
+  --code-server /path/to/code-server-4.145.2-linux-amd64 --output /tmp/factory-hosted-editor
 .venv/bin/python tests/inference_lifecycle.py --dev-image YOUR_FACTORY_DEV_IMAGE
 ```
 
 These disposable containers use a TLS fixture to check credential isolation,
 route enforcement and streamed replies for all four providers, including Azure
-deployments and Bedrock profiles. The lifecycle test covers key replacement without
-restart, recovery and credential-volume deletion.
+deployments and Bedrock profiles. The editor check opens the saved default model,
+then uses the model picker to check the remaining routes. The lifecycle test covers
+key replacement without restart, recovery and credential-volume deletion.
 
 For live verification, connect an account in **Settings → Models**, choose a model
 and use **Test selected model**. Check each supported authentication method,
@@ -230,10 +314,11 @@ including temporary AWS credentials and expired-session recovery.
 
 ## Runtime updates
 
-Pi and Pendant have independent version pins in `pi_sandbox_factory/sandbox.py` and
-`pi_sandbox_factory/containers/dev/Dockerfile`. Check the release's official metadata
-before updating; then rebuild and run the worker suite. Extension fixes and unit
-tests belong in their own repositories; update the lock file here afterward.
+Factory passes the standalone Pi version from `pi_sandbox_factory/sandbox.py`
+to the container build. The `containers/dev/extensions.lock.json` file pins
+the FrostPi source used to build the editor extension.
+Check the release metadata, rebuild the image, and run the standalone and editor
+checks. Extension fixes and unit tests belong in their own repositories.
 
 For advisor or SSH changes, run their unit suites and:
 
@@ -499,6 +584,14 @@ is blocked. No saved sandbox is changed.
 
 ## Folder mounts and starting directory
 
+Run `tests/frostpi_editor.py --folder-access` with the image and code-server
+arguments from the [FrostPi check](#frostpi-editor-and-shared-pi-goals). The
+fixture starts Pi CLI and FrostPi in a workspace subfolder. It checks Bash and
+native file tools in the workspace, nested mounted folders, and `/tmp`. It
+copies a file from the read-only mount to the writable mount, verifies its
+contents, and checks that reverse copies, read-only writes, and protected
+credential reads remain blocked. Neither client should show an approval prompt.
+
 Create a disposable workspace with an `app` subfolder and two separate host
 folders. Mount them as `reference` (read-only) and `output` (writable), using
 `--folders-file` as shown in [Usage](docs/usage.md#workspace-and-additional-folders).
@@ -515,7 +608,7 @@ Set `--working-directory app` and allow fixture model port 18085. Put
   --name folders-check
 ```
 
-The fixture checks the actual model-request context in Pi and Pendant, their cwd,
+The historical fixture checks the actual model-request context in Pi and Pendant, their cwd,
 file tools, ordinary shell writes and read-only enforcement after escalation.
 The lifecycle check changes and removes mounts, checks host ownership and SELinux
 labels, and confirms that starting-folder edits preserve the running container.
@@ -566,8 +659,8 @@ and credentials surviving disable/re-enable.
 ## Browser editor
 
 Follow [the browser editor guide](docs/browser-editor.md) for the real-model smoke
-check. Confirm dark mode, Explorer on the left, Pendant in the right secondary
-sidebar with its composer loaded **without clicking the Pendant tab**, a shell
+check. Confirm dark mode, Explorer on the left, FrostPi in the right secondary
+sidebar with its composer loaded **without clicking the FrostPi tab**, a shell
 tool writing a workspace file, and conversation persistence after
 restarting the editor. Use **Actions → Stop browser editor** and verify that its
 terminal processes also exit. Stopping the container must close the loopback listener. Neither action
@@ -581,14 +674,14 @@ For an automated startup check, install Playwright in your test environment and
 run `playwright install chromium`. Start a fresh disposable browser editor, then:
 
 ```sh
-python tests/browser_editor_startup.py 'PRINTED_URL/?folder=/workspace' --screenshot /tmp/pendant-startup.png
+python tests/browser_editor_startup.py 'PRINTED_URL/?folder=/workspace' --screenshot /tmp/frostpi-startup.png
 ```
 
 Use `--cdp http://HOST:PORT` to attach to an existing Chromium or Edge debugging
 session. For WSL, drive Windows Edge so the check includes Windows localhost
 forwarding. Keep the debugging listener on loopback and use a disposable browser profile.
 
-The check waits for the actual Pendant composer without selecting its tab. Inspect
+The check waits for the FrostPi composer without selecting its tab. Inspect
 the screenshot for dark mode and right-side placement. Also check a fresh host
 VS Code profile when changing extension startup behavior.
 
@@ -637,7 +730,7 @@ Generate a password, save, open the browser and sign in. Close the manager and
 confirm the editor remains usable. Reopen through **Open**; use **Open with… → Pi
 CLI** alongside it. Confirm that selecting Pi CLI during creation opens it in the
 terminal and returns to the manager when Pi exits. For remote HTTPS, use a
-certificate trusted by the connecting browser and verify Pendant loads there too.
+certificate trusted by the connecting browser and verify FrostPi loads there too.
 
 Delete the disposable sandbox after stopping the launcher:
 
@@ -654,7 +747,7 @@ On Windows 11 with WSL2 Ubuntu 26.04, and on an Apple Silicon Mac with rootless
 Podman Machine, install from [platform setup](docs/platforms.md) and check:
 
 1. Create a default sandbox from the TUI. Open the browser editor; confirm dark
-   mode, trusted workspace, Pendant on the right and a responding fixture/local model.
+   mode, trusted workspace, FrostPi on the right and a responding fixture/local model.
    Reopen it, stop the editor, restart it and confirm its URL stays stable.
 2. Open a second sandbox. Confirm its hostname differs and its login cookie is
    not sent to the first. Check WebSocket connection and clipboard in the target

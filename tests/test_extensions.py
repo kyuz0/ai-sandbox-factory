@@ -38,7 +38,8 @@ class ExtensionTests(unittest.TestCase):
             self.assertEqual(args, [])
 
     def test_lock_requires_full_revision_and_explicit_repository(self):
-        for change in [{'commit': 'main'}, {'repository': '-oProxyCommand=bad'}, {'extra': True}]:
+        for change in [{'commit': 'main'}, {'repository': '-oProxyCommand=bad'}, {'extra': True},
+                       {'paths': []}, {'paths': ['../LICENSE']}, {'paths': [':(glob)*']}]:
             self.lock({'pi-extension': {**self.source, **change}})
             with self.assertRaises(ValueError): extensions.read_lock(self.root)
 
@@ -76,6 +77,13 @@ class ExtensionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extensions.unpack(bundle('linked', kind=tarfile.SYMTYPE), self.root / 'link')
 
+    def test_interrupted_cache_setup_can_be_retried(self):
+        cache = self.root / 'cache'
+        with patch.object(extensions.subprocess, 'run', side_effect=[None, KeyboardInterrupt]):
+            with self.assertRaises(KeyboardInterrupt):
+                extensions.archive(self.source, cache)
+        self.assertEqual(list(cache.iterdir()), [])
+
     def test_existing_git_revision_exports_committed_files_without_fetch(self):
         import hashlib
         cache = self.root / 'cache'
@@ -88,7 +96,8 @@ class ExtensionTests(unittest.TestCase):
         git('config', 'user.email', 'fixture@example.test')
         git('remote', 'add', 'origin', self.source['repository'])
         (repo / 'package.json').write_text('{"name":"committed"}')
-        git('add', 'package.json'); git('commit', '-qm', 'fixture')
+        (repo / 'other-package.json').write_text('{}')
+        git('add', 'package.json', 'other-package.json'); git('commit', '-qm', 'fixture')
         source = {**self.source, 'commit': git('rev-parse', 'HEAD')}
         (repo / 'package.json').write_text('{"name":"uncommitted"}')
         (repo / 'credentials.json').write_text('synthetic-only')
@@ -98,6 +107,10 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual((target / 'package.json').read_text(), '{"name":"committed"}')
         self.assertFalse((target / 'credentials.json').exists())
         self.assertFalse((target / '.git').exists())
+        self.assertTrue((target / 'other-package.json').exists())
+        selected = self.root / 'selected'
+        extensions.unpack(extensions.archive({**source, 'paths': ['package.json']}, cache), selected)
+        self.assertEqual(list(selected.iterdir()), [selected / 'package.json'])
         git('remote', 'set-url', 'origin', 'git@github.com:other/repo.git')
         with self.assertRaisesRegex(ValueError, 'origin changed'): extensions.archive(source, cache)
 

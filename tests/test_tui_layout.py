@@ -139,7 +139,7 @@ class TUILayoutTests(unittest.TestCase):
                     self.assertFalse(app.screen.query_one('#advisor-claude-model').disabled)
                     self.assertTrue(app.screen.query_one('#advisor-model').disabled)
                     calls = []
-                    app.service.advisors = lambda name, settings, log: calls.append(('save', settings['providers']))
+                    app.service.advisors = lambda name, settings, log, update=None: calls.append(('save', settings['providers']))
                     app.service.run = lambda args, log: calls.append(args)
                     await pilot.click('#advisor-apply')
                     await pilot.pause()
@@ -227,6 +227,7 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.pause()
             sections = {category.section for category in CATEGORIES.values()}
             category_widgets = [section for section in app.screen.query(Collapsible) if section.id in sections]
+            titles = {section.id: section.title for section in category_widgets}
             creation = [section.title.split(' · ', 1)[0] for section in category_widgets]
             models = app.screen.query_one('#hosted-section', Collapsible)
             self.assertFalse(models.collapsed)
@@ -237,9 +238,43 @@ class TUILayoutTests(unittest.TestCase):
             await app.pop_screen()
             await pilot.click('#settings')
             menu = app.screen.query_one('#settings-actions', OptionList)
-            editing = [menu.get_option_at_index(i).prompt for i in range(menu.option_count)]
+            prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
+            editing = [prompt.split(' · ', 1)[0] for prompt in prompts]
             self.assertEqual(creation, expected_order)
             self.assertEqual(editing, expected_order)
+            for action in ('models', 'editor-settings', 'network-settings',
+                           'approval-settings', 'agent-tools', 'ssh-settings', 'communications'):
+                index = list(CATEGORIES).index(action)
+                self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
+            self.assertIn('Model Providers · Local models on · 1 enabled', prompts)
+            self.assertIn('Agent tools · Recall Lite · Browser off · Goals on', prompts)
+            self.assertIn('Skills · 0 saved', prompts)
+
+    async def test_settings_menu_reads_updated_saved_options(self):
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            app.service.records[0]['config'].update(
+                local_model_ports=None, network='unrestricted',
+                hosted_connections={'openrouter': {}},
+                extra_skills=[{'name': 'fixture-skill'}],
+                options={'browser': True, 'goals': False, 'compaction_recall': 'full',
+                         'approval': 'manual', 'inner_sandbox': False,
+                         'web_access': {'enabled': True}, 'communications': {'slack': True}},
+            )
+            await pilot.click('#settings')
+            menu = app.screen.query_one('#settings-actions', OptionList)
+            prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
+            self.assertIn('Model Providers · Local models off · 1 enabled', prompts)
+            self.assertIn('Agent tools · Recall Full · Browser on · Goals off', prompts)
+            self.assertIn('Approvals & sandbox · Manual approval (ask me) · Inner sandbox off', prompts)
+            self.assertIn('Network and Web Search · Unrestricted · Web Search on', prompts)
+            self.assertIn('Communications · Slack', prompts)
+            self.assertIn('Skills · 1 saved', prompts)
+            self.assertEqual(menu.virtual_size.height, menu.option_count)
+            self.assertLess(menu.region.bottom, app.screen.query_one('#settings-back').region.y)
+            await pilot.press('escape')
+            self.assertIs(app.screen, app.screen_stack[0])
 
     async def test_model_settings_are_grouped_and_bad_ports_are_visible(self):
         for size in ((80,24),(120,40),(220,50)):
@@ -251,8 +286,13 @@ class TUILayoutTests(unittest.TestCase):
                     await app.push_screen(form)
                     await pilot.pause()
                     section=form.query_one('#hosted-section',Collapsible)
+                    local=form.query_one('#local-provider',Collapsible)
                     self.assertEqual(section.collapsed, context != 'create')
-                    self.assertIn('local on',section.title)
+                    self.assertTrue(local.collapsed)
+                    self.assertEqual(local.title, 'Local models · On')
+                    control=form.query_one('#local-models',Checkbox)
+                    help_text = control.parent.query_one('.checkbox-help', Static)
+                    copy=(str(control.label), str(help_text.render()))
                     field=form.query_one('#model-ports',Input)
                     self.assertIn(field,section.query(Input))
                     for invalid in ('bad',''):
@@ -261,6 +301,7 @@ class TUILayoutTests(unittest.TestCase):
                         with self.assertRaises(ValueError):form.collect()
                         await pilot.pause()
                         self.assertFalse(section.collapsed)
+                        self.assertFalse(local.collapsed)
                         error=form.query_one('#model-ports-error')
                         self.assertTrue(error.display)
                         self.assertGreaterEqual(error.region.y,1)
@@ -268,12 +309,15 @@ class TUILayoutTests(unittest.TestCase):
                     form.query_one('#local-models',Checkbox).value=False
                     await pilot.pause()
                     self.assertTrue(field.disabled)
+                    self.assertFalse(form.query_one('#local-model-details').display)
                     self.assertFalse(form.query_one('#model-ports-error').display)
-                    self.assertIn('local off',section.title)
+                    self.assertEqual(local.title, 'Local models · Off')
+                    self.assertEqual((str(control.label), str(help_text.render())), copy)
                     field.value='8000'
                     form.query_one('#local-models',Checkbox).value=True
                     await pilot.pause()
                     self.assertFalse(field.disabled)
+                    self.assertTrue(form.query_one('#local-model-details').display)
 
     async def test_agent_tools_summary_tracks_visible_controls(self):
         app = self.app()
@@ -304,7 +348,7 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn(form.query_one('#local-models'), section.query('#local-models'))
             section.collapsed = False
             await pilot.pause()
-            self.assertIn('local on', section.title)
+            self.assertIn('1 enabled', section.title)
             form.query_one('#network-search-section', Collapsible).collapsed = False
             form.query_one('#network-section', Collapsible).collapsed = False
             await pilot.pause()

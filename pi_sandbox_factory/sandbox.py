@@ -7,8 +7,9 @@ from . import sandbox_extensions
 from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference
-from . import registry, model_providers, browser_viewer, folders, host_platform
+from . import registry, model_providers, browser_viewer, folders, host_platform, updating
 from contextlib import closing
+import errno
 import hashlib
 import ipaddress
 import json
@@ -29,7 +30,6 @@ from .sandbox_options import options, memory_limit, permissions, write_json, gui
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 PI_VERSION = '1.4.0'
-PENDANT_VERSION = '0.94.2'
 RUNTIME_ENV = {
     'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
     'http_proxy': 'http://127.0.0.1:3128', 'https_proxy': 'http://127.0.0.1:3128',
@@ -72,6 +72,20 @@ def load_profile(value):
     return profile
 
 
+def publish_snapshot(source, destination):
+    if destination.exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.snapshot-', dir=destination.parent) as temporary:
+        staged = Path(temporary) / 'snapshot'
+        shutil.copytree(source, staged, ignore=shutil.ignore_patterns('.git', '__pycache__'))
+        try:
+            staged.rename(destination)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or not destination.is_dir():
+                raise
+
+
 def snapshot_profile(profile, state):
     if profile.get('git_source'):
         state.mkdir(parents=True, exist_ok=True)
@@ -96,15 +110,13 @@ def snapshot_profile(profile, state):
             destination = state / 'profiles' / digest
             if not destination.exists():
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(staging), destination)
+                staging.rename(destination)
             # A saved snapshot builds offline from its fetched inputs. Only an explicit
             # recreate --profile fetches a new source version.
             return {key: value for key, value in dict(profile, path=str(destination),
                     digest=digest, source_commit=revision).items() if key != 'git_source'}
     destination = state / 'profiles' / profile['digest']
-    if not destination.exists():
-        shutil.copytree(profile['path'], destination,
-                        ignore=shutil.ignore_patterns('.git', '__pycache__'))
+    publish_snapshot(profile['path'], destination)
     return dict(profile, path=str(destination))
 
 
@@ -280,9 +292,29 @@ def network_mode(config):
     return mode
 
 
+def pendant_versions(config):
+    """Read the runtime pins from a saved Pendant build, without asking the engine."""
+    common = config.get('common')
+    path = common.get('path') if isinstance(common, dict) else None
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        dockerfile = (Path(path) / 'Dockerfile').read_text()
+    except (OSError, ValueError):
+        return None
+    if 'cdervis.vscode-pi-' not in dockerfile or '--from=frostpi' in dockerfile:
+        return None
+    pi = re.findall(r'^ARG PI_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$', dockerfile, re.MULTILINE)
+    pendant = re.findall(r'^ARG PENDANT_VERSION=([0-9]+\.[0-9]+\.[0-9]+)$', dockerfile, re.MULTILINE)
+    if len(pi) == len(pendant) == 1:
+        return pi[0], pendant[0]
+    return None
+
+
 def base_tag(config):
     digest = config.get('common', {}).get('digest') or tree_digest(ROOT / 'containers/dev')
-    identity = f'{PI_VERSION}-{PENDANT_VERSION}-{config["uid"]}-{config["gid"]}-' + digest
+    runtime = '-'.join(pendant_versions(config) or (PI_VERSION,))
+    identity = f'{runtime}-{config["uid"]}-{config["gid"]}-' + digest
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
@@ -297,11 +329,14 @@ def build(config):
         raise ValueError('Saved common image inputs were modified; use recreate --profile to refresh them')
     base = f'localhost/pi-sandbox-factory-base:{base_tag(config)}'
     engine = config['engine']
+    pi, *pendant = pendant_versions(config) or (PI_VERSION,)
+    build_args = ['--build-arg', f'USER_UID={config["uid"]}', '--build-arg', f'USER_GID={config["gid"]}',
+                  '--build-arg', f'PI_VERSION={pi}']
+    if pendant:
+        build_args += ['--build-arg', f'PENDANT_VERSION={pendant[0]}']
     run([engine, 'build', '-t', proxy, ROOT / 'containers/proxy'])
     with sandbox_extensions.build_contexts(common['path']) as contexts:
-        run([engine, 'build', '-t', base, *contexts, '--build-arg', f'USER_UID={config["uid"]}',
-             '--build-arg', f'USER_GID={config["gid"]}', '--build-arg', f'PI_VERSION={PI_VERSION}',
-             '--build-arg', f'PENDANT_VERSION={PENDANT_VERSION}', common['path']])
+        run([engine, 'build', '-t', base, *contexts, *build_args, common['path']])
     browser = options(config.get('options'))['browser']
     has_providers = 'model_providers' in config
     web = options(config.get('options'))['web_access']['enabled']
@@ -345,6 +380,26 @@ def inspect(config, name):
     return data
 
 
+def describe_containers(config, states):
+    dev, gateway, *_ = names(config)
+    advisor, advisor_gateway, *_ = sandbox_advisors.names(config)
+    roles = {
+        dev: ('Development', 'Runs Pi, the editor backend and development tools.'),
+        gateway: ('Network gateway', 'Lets the development container reach only allowed destinations.'),
+        inference.names(config)[0]: ('Model connections', 'Connects Pi to model providers and keeps their API keys separate.'),
+        sandbox_ssh.names(config)[0]: ('SSH access', 'Authenticates to configured SSH hosts and keeps private keys separate.'),
+        advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
+        advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
+    }
+    ordered = [name for name in roles if name in states]
+    ordered.extend(sorted(states.keys() - roles.keys()))
+    result = []
+    for name in ordered:
+        role, purpose = roles.get(name, ('Additional container', 'No description is available for this container.'))
+        result.append(dict(name=name, status=states[name], role=role, purpose=purpose))
+    return result
+
+
 def list_sandboxes(state_root, structured=False):
     configs = []
     for path in sorted(state_root.glob('*/config.json')):
@@ -368,6 +423,7 @@ def list_sandboxes(state_root, structured=False):
     # Query each saved engine once. Missing containers and an unavailable engine
     # are different states; listing must remain useful when the engine is offline.
     statuses = {}
+    owned = {}
     for engine in sorted({c['engine'] for c, _ in configs if 'engine' in c}):
         try:
             result = run([engine, 'ps', '--all', '--format',
@@ -376,10 +432,14 @@ def list_sandboxes(state_root, structured=False):
             if result.returncode:
                 raise ValueError('Engine unavailable')
             containers = {}
+            owners = {}
             for line in result.stdout.splitlines():
                 name, status, owner = line.split('\t')
                 containers[name] = (status, owner)
+                if structured and owner:
+                    owners.setdefault(owner, {})[name] = status
             statuses[engine] = containers
+            owned[engine] = owners
         except (OSError, ValueError):
             statuses[engine] = None
             print(f'Warning: cannot query {engine}; container status is unknown', file=sys.stderr)
@@ -403,9 +463,16 @@ def list_sandboxes(state_root, structured=False):
             states.append(status)
         if config.get('network') == 'unrestricted' and states[1] == 'missing':
             states[1] = 'not used'
-        inventory.append(dict(name=config['name'], profile=profile, engine=engine, dev=states[0],
-                              proxy=states[1], workspace=config.get('workspace'), config=config,
-                              activity=activity.load(state_root / config['name'])))
+        sandbox_name = config['name']
+        entry = dict(name=sandbox_name, profile=profile, engine=engine, dev=states[0],
+                     proxy=states[1], workspace=config.get('workspace'), config=config,
+                     activity=activity.load(state_root / sandbox_name))
+        if structured:
+            entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}))
+                                   if engine in owned else None)
+            if pendant_versions(config):
+                entry['chat_editor'] = 'pendant'
+        inventory.append(entry)
         rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-')))
     if structured:
         print(json.dumps(inventory))
@@ -804,9 +871,11 @@ def create(args, state):
 
 
 def write_attach(config, state):
+    pendant = pendant_versions(config)
     attach = {'workspaceFolder': folders.container_cwd(config), 'remoteUser': 'node',
-              'extensions': ['cdervis.vscode-pi'],
-              'settings': {'pendant.agentDir': '/home/node/.pi/agent'},
+              'extensions': ['cdervis.vscode-pi' if pendant else 'frostime.frostpi'],
+              'settings': ({'pendant.agentDir': '/home/node/.pi/agent'} if pendant
+                           else {'frostpi.pi.executable': '/usr/local/bin/pi'}),
               'remoteEnv': {'SSH_AUTH_SOCK': '', 'GIT_ASKPASS': '',
                             'SSH_ASKPASS': ''}}
     (state / 'attached-container.json').write_text(json.dumps(attach, indent=2) + '\n')
@@ -864,7 +933,7 @@ def prepare_options(config, state):
     guide.chmod(0o600)
 
 
-def apply_settings(config, state, changes):
+def apply_settings(config, state, changes, *, apply_gate=None):
     allowed = {'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
@@ -873,6 +942,8 @@ def apply_settings(config, state, changes):
     updated['working_directory'] = folders.working_directory(updated['workspace'], updated.get('working_directory', '.'))
     updated['extra_folders'] = folders.validate_config(updated, state.parent)
     if set(changes) <= {'working_directory', 'extra_folders'} and updated['extra_folders'] == config.get('extra_folders', []):
+        if not updating.begin_apply(apply_gate):
+            return
         activity.save_config(state, updated)
         write_attach(updated, state)
         print('Starting folder saved. Open a new Pi session or reopen VS Code to use it.')
@@ -906,6 +977,8 @@ def apply_settings(config, state, changes):
     # Refresh common inputs so old sandboxes acquire configurable bootstrap.
     updated['common'] = snapshot_profile(common_profile(), state)
     build(updated)  # Leave the old running container intact if the build fails.
+    if not updating.begin_apply(apply_gate):
+        return
     print('Applying settings: recreating containers; saved workspace and home are preserved.')
     down(config, remove=True)
     activity.save_config(state, updated)
@@ -1048,12 +1121,13 @@ def open_editor(config, state):
     # Seed only a new profile; never edit a running editor's database or user layout.
     storage = profile / 'User/globalStorage/state.vscdb'
     if not storage.exists():
+        view = 'pendant-container' if pendant_versions(config) else 'frostpi'
         storage.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(storage)) as database, database:
             database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
             database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
                              ('views.customizations', json.dumps({
-                                 'viewContainerLocations': {'workbench.view.extension.pendant-container': 2},
+                                 'viewContainerLocations': {'workbench.view.extension.' + view: 2},
                                  'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
                              })))
             # Equivalent to "Got It" for attaching in this dedicated profile.
@@ -1145,6 +1219,8 @@ def main():
     for command in ('update', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
+        if command in ('update', 'recreate'):
+            cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
         if command == 'browser-editor':
             cmd.add_argument('--archive', help='Use a downloaded copy of the pinned code-server archive')
             cmd.add_argument('--background', action='store_true', help='Keep the editor running after this command exits')
@@ -1262,7 +1338,8 @@ def main():
     elif args.command == 'delete':
         delete(config, state)
     elif args.command == 'update':
-        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()))
+        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()),
+                       apply_gate=args.apply_gate)
     elif args.command == 'recreate':
         if args.subagents is not None:
             config['subagents'] = args.subagents
@@ -1277,6 +1354,8 @@ def main():
                 updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
             build(updated)
             config = updated
+        if not updating.begin_apply(args.apply_gate):
+            return
         activity.save_config(state, config)
         down(config, remove=True)
         up(config, state)
@@ -1373,7 +1452,7 @@ def main():
             if result.returncode:
                 raise ValueError('Search key saved, but configuration refresh failed')
             activity.record(state, 'edited')
-            print('Search keys updated. Reload an open Pi or Pendant session.')
+            print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':
         update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups)
     elif args.command == 'policy':

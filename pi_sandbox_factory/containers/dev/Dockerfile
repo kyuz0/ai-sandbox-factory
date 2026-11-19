@@ -1,6 +1,12 @@
+FROM docker.io/library/node:24-bookworm-slim AS frostpi-build
+WORKDIR /src
+COPY --from=frostpi / ./
+RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
+    && npm exec --yes --package=pnpm@10.13.1 -- pnpm package:vsix \
+    && /bin/sh -c 'set -- artifacts/FrostPi-*.vsix; test "$#" = 1 && cp "$1" /frostpi.vsix'
+
 FROM docker.io/library/node:24-bookworm-slim
 ARG PI_VERSION=1.4.0
-ARG PENDANT_VERSION=0.94.2
 ARG USER_UID=1000
 ARG USER_GID=1000
 # Strip ping privileges so the executable can start with all container capabilities dropped.
@@ -34,17 +40,21 @@ ENV PI_SANDBOX_CONTAINER=1
 RUN install -d -o node -g node -m 700 /var/tmp/pi
 ENV TMPDIR=/var/tmp/pi TMUX_TMPDIR=/var/tmp/pi
 COPY security/security.md /opt/sandbox/security.md
-# Preload the extension during the trusted image build, before network restrictions.
-RUN curl -fSL --retry 3 \
-    "https://open-vsx.org/api/cdervis/vscode-pi/${PENDANT_VERSION}/file/cdervis.vscode-pi-${PENDANT_VERSION}.vsix" \
-    -o /tmp/pendant.vsix \
-    && mkdir -p /opt/pendant \
-    && unzip -q /tmp/pendant.vsix 'extension/*' -d /opt/pendant \
-    && rm /tmp/pendant.vsix \
-    && mv /opt/pendant/extension "/opt/pendant/cdervis.vscode-pi-${PENDANT_VERSION}"
-COPY editor-startup/ /opt/editor-extensions/pi-sandbox-factory.editor-startup-1.0.0/
-COPY check-pendant.py /opt/sandbox/check-pendant.py
-RUN python3 /opt/sandbox/check-pendant.py "${PENDANT_VERSION}"
+# Build the pinned source before opening the sandbox editor.
+COPY --from=frostpi-build /frostpi.vsix /tmp/frostpi.vsix
+COPY --from=frostpi-build /src/source-commit /opt/sandbox/frostpi-source-commit
+RUN mkdir -p /opt/editor-extensions \
+    && unzip -q /tmp/frostpi.vsix 'extension/*' -d /tmp/frostpi \
+    && version="$(node -p 'require("/tmp/frostpi/extension/package.json").version')" \
+    && mv /tmp/frostpi/extension "/opt/editor-extensions/frostime.frostpi-$version" \
+    && rm /tmp/frostpi.vsix
+COPY editor-startup/ /opt/editor-extensions/pi-sandbox-factory.editor-startup-1.1.0/
+# The package has no runtime dependencies. Both clients resolve its peers from Pi.
+RUN curl -fsSL --retry 3 https://registry.npmjs.org/@ethanthoma/pi-goal/-/pi-goal-0.2.1.tgz -o /tmp/pi-goal.tgz \
+    && printf '%s  %s\n' d648ae641f0af9ef8b3931f52866769016ded4a023261ee378637357002a4053 /tmp/pi-goal.tgz | sha256sum -c - \
+    && mkdir -p /opt/pi-goal \
+    && tar -xzf /tmp/pi-goal.tgz --strip-components=1 -C /opt/pi-goal \
+    && rm /tmp/pi-goal.tgz
 COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint
 COPY --from=pi-local-model-manager / /opt/pi-local-model-manager/
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
@@ -55,6 +65,9 @@ COPY --from=pi-advisor / /opt/pi-advisor/
 COPY --from=rpiv-ask-user-question /packages/rpiv-ask-user-question/ /opt/rpiv-ask-user-question/
 COPY --from=rpiv-ask-user-question /packages/rpiv-config/ /opt/rpiv-ask-user-question/node_modules/@juicesharp/rpiv-config/
 COPY --from=rpiv-ask-user-question /source-commit /opt/rpiv-ask-user-question/source-commit
+COPY --from=pi-session-naming /pi-packages/session-naming/config.ts /pi-packages/session-naming/generator.ts /LICENSE /source-commit /opt/pi-session-naming/
+COPY --from=pi-session-naming /pi-packages/session-naming/extensions/index.ts /opt/pi-session-naming/extensions/
+COPY session-naming.mjs /opt/pi-session-naming/factory.mjs
 RUN rm -rf /opt/pi-security/node_modules/pi-goal
 COPY bootstrap.py /usr/local/lib/sandbox-bootstrap.py
 COPY ssh-status.py /usr/local/bin/sandbox-ssh-status

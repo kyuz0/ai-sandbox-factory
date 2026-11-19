@@ -32,10 +32,10 @@ reviewed separately before execution.
 Enabling browser support allows native `browser` calls without per-action review.
 The outer network allowlist still applies, and downloads keep their separate approval.
 
-Built-in goal creation, updates, task tracking and goal questions need no approval.
-Actions performed to achieve a goal keep their normal permissions. Goals have no
-token budget unless you request one; zero is a literal zero-token limit. To remove
-an existing budget, the agent can use `update_goal` with `token_budget: null`.
+You can manage a goal with `/goal`, and Pi can report completion or ask for help
+with `goal_update` without an approval prompt. Actions taken to achieve the goal
+keep their normal permissions. The [goal extension](extensions.md#goals) also
+accepts optional turn and cost limits.
 
 ## Choosing a shell
 
@@ -97,7 +97,7 @@ For an existing sandbox, select it in the Factory manager, open
 **Settings → Approvals & sandbox**. Choose **Approval mode**, change
 **Use inner command sandbox** or **Protect common credential files**, then select **Apply and recreate**.
 This stops running processes, including tmux sessions, but preserves files and
-saved chats. Reopen Pi or Pendant to resume the conversation with the new settings.
+saved chats. Reopen Pi or FrostPi to resume the conversation with the new settings.
 Choose **Explain** beside **Approval mode** to compare all four modes.
 
 - **Auto (non-interactive)** uses a reviewer model to check actions that need
@@ -117,18 +117,18 @@ Choose **Explain** beside **Approval mode** to compare all four modes.
   Bash directly in the development container, turn off the inner sandbox too.
   If you leave it on, Bash stays inside it.
 
-Pi can ask in its terminal or in Pendant. Reviewer failures block the action in
+Pi can ask in its terminal or in FrostPi. Reviewer failures block the action in
 both Auto modes. Explicit sandbox and permission blocks and the container’s
 network rules apply in every mode.
 
-Pi and Pendant show the approval mode when you open a chat. In either automatic
+Pi and FrostPi show the approval mode when you open a chat. In either automatic
 mode, use `/auto-review-settings` to change the reviewer model or thinking effort
 for that chat. Choose **Current chat model** to follow the model selected in Pi or
-Pendant. Choose **Off** under **Thinking effort** to send a review without
+FrostPi. Choose **Off** under **Thinking effort** to send a review without
 requesting thinking. New chats and resource reloads restore the saved defaults.
 
 In Factory’s **Auto (interactive)** mode, decide on the original action when Pi
-or Pendant asks. The standalone extension’s `/auto-review-approve` command does
+or FrostPi asks. The standalone extension’s `/auto-review-approve` command does
 not apply to Factory’s approval modes. Change the approval mode, the inner sandbox, and credential
 protection in Factory and apply them by recreating the sandbox. `/reload` reloads
 Pi resources and restores the default per-chat reviewer settings.
