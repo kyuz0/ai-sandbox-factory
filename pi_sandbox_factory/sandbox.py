@@ -6,7 +6,7 @@ from . import sandbox_skills
 from . import sandbox_extensions
 from . import sandbox_advisors
 from . import sandbox_ssh
-from . import inference, aws_access
+from . import inference, aws_access, primary_workspace
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
 from contextlib import closing
 import errno
@@ -219,7 +219,12 @@ def squid_config(rules, groups=None):
 def network_policy(config, rules):
     from . import hosted_models
     selected = options(config.get('options'))
-    combined = list(dict.fromkeys(rules + ([('aws-access.internal', 19432)] if config.get('aws_access') else []) + web_access.destinations(selected['web_access']) + communications.destinations(selected['communications']) + hosted_models.destinations(config.get('hosted_connections', {}))))
+    destinations = [('aws-access.internal', 19432)] if config.get('aws_access') else []
+    if primary_workspace.agent(config) == 'pi':
+        destinations += (web_access.destinations(selected['web_access'])
+                         + communications.destinations(selected['communications'])
+                         + hosted_models.destinations(config.get('hosted_connections', {})))
+    combined = list(dict.fromkeys(rules + destinations))
     return squid_config(combined, config.get('website_groups', {}))
 
 
@@ -287,6 +292,8 @@ def stage_image(image, suffix=''):
 
 
 def image_names(config):
+    if primary_workspace.agent(config) != 'pi':
+        return primary_workspace.image(config), 'localhost/pi-sandbox-factory-proxy:1'
     profile = selected_profile(config)
     suffix = ('-' + hashlib.sha256(json.dumps([s['digest'] for s in config['extra_skills']]).encode()).hexdigest()[:12]) if config.get('extra_skills') else ''
     if options(config.get('options'))['browser']:
@@ -342,6 +349,10 @@ def base_tag(config):
 def build(config):
     host_platform.check_engine(config['engine'], config.get('podman_connection'))
     dev, proxy = image_names(config)
+    if primary_workspace.agent(config) != 'pi':
+        run([config['engine'], 'build', '-t', proxy, ROOT / 'containers/proxy'])
+        primary_workspace.build(config, dev)
+        return
     profile = selected_profile(config)
     if tree_digest(Path(profile['path'])) != profile['digest']:
         raise ValueError('Saved profile was modified; select its source again with recreate --profile')
@@ -441,6 +452,11 @@ def describe_containers(config, states):
         advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
         advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
     }
+    selected = primary_workspace.agent(config)
+    if selected != 'pi':
+        from . import primary_agents
+        roles[dev] = ('Workspace', 'Runs commands and holds project files and development tools.')
+        roles.update(primary_agents.describe(config))
     ordered = [name for name in roles if name in states]
     ordered.extend(sorted(states.keys() - roles.keys()))
     result = []
@@ -454,7 +470,7 @@ def list_sandboxes(state_root, structured=False):
     configs = []
     for path in sorted(state_root.glob('*/config.json')):
         try:
-            config = json.loads(path.read_text())
+            config = primary_workspace.normalize(json.loads(path.read_text()))
             profile = config.get('profile') or {'name': 'base'}
             if (config.get('name') != path.parent.name
                     or not SANDBOX_NAME.fullmatch(config['name'])
@@ -462,7 +478,8 @@ def list_sandboxes(state_root, structured=False):
                     or not isinstance(config.get('workspace'), str)
                     or not isinstance(profile.get('name'), str)):
                 raise ValueError('Invalid saved configuration')
-            configs.append((config, profile['name']))
+            selected = primary_workspace.agent(config)
+            configs.append((config, profile['name'] if selected == 'pi' else primary_workspace.AGENTS[selected]))
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             print(f'Warning: cannot read sandbox configuration for {path.parent.name}', file=sys.stderr)
             configs.append(({'name': path.parent.name}, '-'))
@@ -516,7 +533,8 @@ def list_sandboxes(state_root, structured=False):
         sandbox_name = config['name']
         entry = dict(name=sandbox_name, profile=profile, engine=engine, dev=states[0],
                      proxy=states[1], workspace=config.get('workspace'), config=config,
-                     activity=activity.load(state_root / sandbox_name))
+                     activity=activity.load(state_root / sandbox_name),
+                     primary_agent=config.get('primary_agent', 'pi'))
         if structured:
             entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}))
                                    if engine in owned else None)
@@ -596,11 +614,17 @@ def upgrade_gateway_config(state):
         print('Updated gateway configuration for restart-safe startup.')
 
 
-def up(config, state):
+def up(config, state, *, prepare_sign_in=True):
+    from . import primary_agents
+
     folders.validate_config(config, state.parent, saved=True)
     engine = config['engine']
     dev, proxy, socket_volume, home_volume = names(config)
     restricted = network_mode(config) == 'allowlist'
+    native = primary_workspace.agent(config) != 'pi'
+    if native:
+        primary_workspace.validate_mounts(config, state.parent)
+        primary_agents.check_ownership(config)
     sandbox_advisors.check_ownership(config)
     sandbox_ssh.check_ownership(config)
     inference.check_ownership(config)
@@ -627,13 +651,18 @@ def up(config, state):
     if restricted and config.get('pi_config'):
         validate_models(Path(config['pi_config']), rules, strict=False)
     if host_platform.needs_mount_check(config):
-        prepare_options(config, state)
+        if native:
+            (state / 'runtime-config').mkdir(exist_ok=True, mode=0o700)
+        else:
+            prepare_options(config, state)
         host_platform.check_mounts(config, state, image_names(config)[0])
     sandbox_advisors.up(config, state)
     sandbox_ssh.up(config, state)
     inference.up(config, state)
     if config.get('aws_access'):
         aws_access.up(config, state)
+    if native:
+        primary_agents.up(config, state)
     started_dev = current[dev] is None
     for name in active:
         if current[name]:
@@ -674,16 +703,20 @@ def up(config, state):
                     '-v', f'{config["workspace"]}:/workspace:rw',
                     '-v', f'{home_volume}:/home/node']
             args += folders.mounts(config)
-            args += sandbox_advisors.mounts(config)
             args += sandbox_ssh.mounts(config, state)
-            args += inference.mounts(config)
+            if native:
+                args += primary_agents.mounts(config, state)
+                primary_workspace.prepare_git(config, state)
+                args += ['-v', f'{state / "git-identity.gitconfig"}:/opt/sandbox/git-identity.gitconfig:{host_platform.bind_mode()}']
+            else:
+                args += sandbox_advisors.mounts(config) + inference.mounts(config)
             if config.get('aws_access'):
                 args += aws_access.client_mount(state)
                 for key, value in aws_access.CLIENT_ENV.items():
                     args += ['--env', f'{key}={value}']
             if config.get('memory'):
                 args += ['--memory=' + memory_limit(config['memory'])]
-            if 'options' in config:
+            if not native and 'options' in config:
                 prepare_options(config, state)
                 args += ['-v', f'{state / "runtime-config"}:/opt/pi-security/config:{host_platform.bind_mode()}',
                          '-v', f'{state / "options.json"}:/opt/sandbox/options.json:{host_platform.bind_mode()}',
@@ -701,13 +734,16 @@ def up(config, state):
             if config.get('local_model_gateway'):
                 args += ['--env', 'LOCAL_MODEL_PORTS=' + config['local_model_ports']]
             args += ['--env', 'SANDBOX_NETWORK_MODE=' + network_mode(config)]
-            args += ['--env', 'SANDBOX_SUBAGENTS=' + ('1' if config.get('subagents', False) else '0')]
             selected = options(config.get('options'))
-            args += ['--env', 'SANDBOX_APPROVAL_MODE=' + selected['approval']]
-            args += ['--env', 'COMPACTION_RECALL_MODE=' + ('full' if selected['compaction_recall'] == 'full' else 'lite')]
-            if selected['knowledge_embedding'] != 'off':
+            if native:
+                args += ['--env', 'SANDBOX_PROFILE=base', '--env', 'PI_SANDBOX_CONTAINER=1']
+            else:
+                args += ['--env', 'SANDBOX_SUBAGENTS=' + ('1' if config.get('subagents', False) else '0')]
+                args += ['--env', 'SANDBOX_APPROVAL_MODE=' + selected['approval']]
+                args += ['--env', 'COMPACTION_RECALL_MODE=' + ('full' if selected['compaction_recall'] == 'full' else 'lite')]
+            if not native and selected['knowledge_embedding'] != 'off':
                 args += ['--env', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
-            if selected['knowledge_embedding'] == 'endpoint':
+            if not native and selected['knowledge_embedding'] == 'endpoint':
                 args += ['--env', 'PI_KNOWLEDGE_EMBEDDING=openai:' + selected['knowledge_embedding_model'],
                          '--env', 'PI_KNOWLEDGE_EMBEDDING_BASE_URL=' + inference.embedding_client_url(config),
                          '--env', 'PI_KNOWLEDGE_EMBEDDING_API_KEY=not-needed']
@@ -719,17 +755,22 @@ def up(config, state):
             run(base + args + [dev_image])
     # Readiness also catches bootstrap failures (permissions, malformed settings).
     for _ in range(40):
-        ready = 'test -f /home/node/.vscode-server/data/Machine/settings.json'
+        ready = ('test -f /tmp/factory-workspace-ready' if native else
+                 'test -f /home/node/.vscode-server/data/Machine/settings.json')
         entrypoint = Path(config.get('common', {}).get('path', '/nonexistent')) / 'entrypoint.sh'
-        if 'options' in config and entrypoint.is_file() and '/var/tmp/pi/pi-sandbox-factory-ready' in entrypoint.read_text():
+        if not native and 'options' in config and entrypoint.is_file() and '/var/tmp/pi/pi-sandbox-factory-ready' in entrypoint.read_text():
             ready += ' && test -f /var/tmp/pi/pi-sandbox-factory-ready'
         if restricted:
             ready += ' && test -S /run/egress/proxy.sock && echo >/dev/tcp/127.0.0.1/3128'
         result = run([engine, 'exec', dev, 'bash', '-c', ready], capture=True, check=False,
                      stderr=subprocess.DEVNULL)
         if result.returncode == 0:
+            if native:
+                primary_agents.worker_start(config, dev)
             if options(config.get('options'))['browser']:
                 browser_viewer.ensure_viewer(engine, inspect(config, dev)['Id'])
+            if native and prepare_sign_in:
+                primary_workspace.initial_sign_in(config, state)
             if started_dev:
                 activity.record(state, 'started')
             print(f'Ready: {dev}; workspace /workspace; engine {engine}; network {network_mode(config)}')
@@ -756,6 +797,10 @@ def down(config, remove=False):
     sandbox_advisors.check_ownership(config)
     sandbox_ssh.check_ownership(config)
     inference.check_ownership(config)
+    if primary_workspace.agent(config) != 'pi':
+        from . import primary_agents
+        primary_agents.check_ownership(config)
+        primary_agents.down(config, remove=remove)
     if config.get('aws_access'):
         aws_access.down(config)
     sandbox_advisors.down(config, remove=remove)
@@ -790,6 +835,9 @@ def delete(config, state):
     sandbox_advisors.delete_volumes(config)
     sandbox_ssh.delete_volumes(config)
     inference.delete_volumes(config)
+    if primary_workspace.agent(config) != 'pi':
+        from . import primary_agents
+        primary_agents.delete_volumes(config)
     shutil.rmtree(state)
     print(f'Deleted {config["name"]}: containers, private volumes, and saved state. Host workspace preserved.')
 
@@ -838,6 +886,9 @@ def configure_local_gateway(config, value, rules):
 
 
 def create(args, state):
+    selected = primary_workspace.agent({'primary_agent': getattr(args, 'primary_agent', 'pi') or 'pi'})
+    auth_method = primary_workspace.auth({'primary_auth': getattr(args, 'primary_auth', 'login') or 'login'})
+    native = selected != 'pi'
     reuse = {}
     if getattr(args, 'reuse_from', None):
         if not SANDBOX_NAME.fullmatch(args.reuse_from):
@@ -846,7 +897,9 @@ def create(args, state):
     prompt_file = getattr(args, 'system_prompt_file', None)
     saved_prompt = (prompt_library.prompt(json.loads(Path(prompt_file).read_text(encoding='utf-8'))) if prompt_file else
                     (prompt_library.selection(state.parent / args.reuse_from) if reuse else None))
-    if reuse and args.profile == reuse['profile']['path']:
+    if native:
+        profile = load_profile('base')
+    elif reuse and args.profile == reuse['profile']['path']:
         profile = reuse['profile']
         if tree_digest(Path(profile['path'])) != profile['digest']:
             raise ValueError('Source profile snapshot was modified')
@@ -904,13 +957,18 @@ def create(args, state):
     subagents = getattr(args, 'subagents', None)
     config = dict(name=args.name, engine=engine, uid=uid, gid=gid, workspace=str(workspace),
                   pi_config=str(shared) if shared else None, env_file=env_file, memory=memory_limit(args.memory),
-                  network=mode, subagents=preset.get('subagents', False) if subagents is None else subagents)
+                  network=mode, subagents=preset.get('subagents', False) if subagents is None else subagents,
+                  primary_agent=selected, primary_auth=auth_method)
     if connection:
         config['podman_connection'] = connection
     config['working_directory'] = folders.working_directory(workspace, getattr(args, 'working_directory', '.'))
     config['extra_folders'] = folders.validate(
         json.loads(Path(args.folders_file).read_text()) if getattr(args, 'folders_file', None) else [],
         workspace, state.parent, private_paths=[shared])
+    if native:
+        if shared or getattr(args, 'local_model_ports', None) or getattr(args, 'model_provider', None) or getattr(args, 'advisor', []):
+            raise ValueError('Pi configuration, model providers, local models and advisors apply to Pi sandboxes.')
+        primary_workspace.validate_mounts(config, state.parent)
     model_ports = getattr(args, 'local_model_ports', None)
     configure_local_gateway(config, model_ports, rules)
     config['options'] = selected_options
@@ -919,7 +977,8 @@ def create(args, state):
     if getattr(args, 'aws_access_file', None):
         config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
     config['website_groups'] = network_groups.snapshots(options(config.get('options'))['website_groups'])
-    config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
+    if not native:
+        config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
     if not creation_token:
         state.mkdir(parents=True, mode=0o700)
     try:
@@ -928,8 +987,9 @@ def create(args, state):
         else:
             enabled_providers = getattr(args, 'model_provider', None) or (['local'] if model_ports else [])
             values = {name: {} for name in enabled_providers}
-        config['model_providers'] = model_providers.prepare(values, state, saved=reuse.get('model_providers', []))
-        model_providers.validate_network(config, rules)
+        if not native:
+            config['model_providers'] = model_providers.prepare(values, state, saved=reuse.get('model_providers', []))
+            model_providers.validate_network(config, rules)
         config['profile'] = snapshot_profile(profile, state)
         config['common'] = snapshot_profile(common_profile(), state)
         if saved_prompt:
@@ -958,13 +1018,16 @@ def create(args, state):
     (state / 'squid.conf').write_text(network_policy(config, rules))
     write_attach(config, state)
     from . import editor_settings
-    editor_settings.save(state, {'mode': getattr(args, 'editor', None) or editor_settings.default_mode(engine)}, record_edit=False)
+    editor_settings.save(state, {'mode': 'pi' if native else (getattr(args, 'editor', None) or editor_settings.default_mode(engine))}, record_edit=False)
     activity.record(state, 'created')
-    print(f'Created {state}\nProfile: {profile["name"]}. Network: {mode}; {len(rules)} hostname/port rules. Run build, then up.')
+    description = f'Coding agent: {primary_workspace.AGENTS[selected]}' if native else f'Profile: {profile["name"]}'
+    print(f'Created {state}\n{description}. Network: {mode}; {len(rules)} hostname/port rules. Run build, then up.')
 
 
 
 def write_attach(config, state):
+    if primary_workspace.agent(config) != 'pi':
+        return
     pendant = pendant_versions(config)
     attach = {'workspaceFolder': folders.container_cwd(config), 'remoteUser': 'node',
               'extensions': ['cdervis.vscode-pi' if pendant else 'frostime.frostpi'],
@@ -1044,6 +1107,8 @@ def prepare_options(config, state):
 
 
 def apply_settings(config, state, changes, *, apply_gate=None):
+    config = primary_workspace.normalize(config)
+    native = primary_workspace.agent(config) != 'pi'
     if isinstance(changes, dict) and 'expected_aws_access' in changes:
         if set(changes) != {'expected_aws_access', 'aws_access'}:
             raise ValueError('An AWS profile update can only change AWS access.')
@@ -1080,12 +1145,18 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     updated.update({k: v for k, v in changes.items() if k not in ('allowlist', 'skill_source', 'skill_path', 'remove_skills', 'library_skills')})
     updated['working_directory'] = folders.working_directory(updated['workspace'], updated.get('working_directory', '.'))
     updated['extra_folders'] = folders.validate_config(updated, state.parent)
+    if native:
+        primary_workspace.validate_mounts(updated, state.parent)
     if set(changes) <= {'working_directory', 'extra_folders'} and updated['extra_folders'] == config.get('extra_folders', []):
         if not updating.begin_apply(apply_gate):
             return
         activity.save_config(state, updated)
         write_attach(updated, state)
-        print('Starting folder saved. Open a new Pi session or reopen VS Code to use it.')
+        if native:
+            from . import primary_agents
+            primary_agents.prepare_workspace(updated, state)
+        print('Starting folder saved. Open a new terminal to use it.' if native
+              else 'Starting folder saved. Open a new Pi session or reopen VS Code to use it.')
         return
     updated['extra_skills'] = [s for s in config.get('extra_skills', []) if s['name'] not in changes.get('remove_skills', [])]
     if 'ssh' in updated:
@@ -1110,7 +1181,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     if changes.get('skill_source'):
         added = sandbox_skills.snapshot(changes['skill_source'], changes.get('skill_path', '.'), state, SimpleNamespace(run=run, tree_digest=tree_digest))
         updated['extra_skills'] = [s for s in updated['extra_skills'] if s['name'] != added['name']] + [added]
-    if 'model_providers' in changes:
+    if 'model_providers' in changes and not native:
         updated['model_providers'] = model_providers.prepare(changes['model_providers'], state, saved=config.get('model_providers', []))
     model_providers.validate_network(updated, rules)
     # Refresh common inputs so old sandboxes acquire configurable bootstrap.
@@ -1204,6 +1275,12 @@ def configure_models(config, state, preview=False):
 
 
 def open_selected(config, state, mode=None):
+    if primary_workspace.agent(config) != 'pi':
+        from . import primary_agents
+        if mode not in (None, 'pi'):
+            raise ValueError('Open this coding agent from its terminal.')
+        up(config, state)
+        return primary_agents.open_terminal(config, state)
     from . import editor_settings, browser_editor
     mode = mode or editor_settings.load(state)['mode']
     if mode == 'browser':
@@ -1315,6 +1392,10 @@ def main():
     listing.add_argument('--json', action='store_true', help='Structured saved inventory')
     new = sub.add_parser('create', help='Validate and save a new sandbox configuration')
     new.add_argument('name')
+    new.add_argument('--primary-agent', choices=list(primary_workspace.AGENTS), default='pi',
+                     help='Coding agent to open (default: Pi)')
+    new.add_argument('--primary-auth', choices=['login', 'copy'], default='login',
+                     help='Sign in when opening the agent or explicitly copy the host sign-in on startup')
     new.add_argument('--profile', default='base', help='Installed profile name or custom profile directory (default: base)')
     new.add_argument('--workspace', required=True)
     new.add_argument('--creation-token', help=argparse.SUPPRESS)
@@ -1364,7 +1445,7 @@ def main():
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('update', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('update', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
         if command in ('update', 'recreate'):
@@ -1461,6 +1542,9 @@ def main():
         delete_incomplete(state)
         return
     config = json.loads((state / 'config.json').read_text())
+    native = primary_workspace.agent(config) != 'pi'
+    if native and args.command in ('browser-editor', 'configure', 'pi', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
+        raise ValueError('This command applies to Pi sandboxes. Use open to launch the selected coding agent.')
     if args.command == 'build':
         if not config.get('common'):
             config['common'] = snapshot_profile(common_profile(), state)
@@ -1482,6 +1566,19 @@ def main():
         print(f'{LABELS[args.provider]} host sign-in copied into the advisor container.')
     elif args.command == 'advisor-login':
         sandbox_advisors.login(config, state, args.provider)
+    elif args.command in ('primary-login', 'primary-import'):
+        from . import primary_agents
+        if not native:
+            raise ValueError('This sandbox uses Pi. Configure model connections in Settings.')
+        up(config, state, prepare_sign_in=False)
+        if args.command == 'primary-login':
+            primary_agents.login(config, state)
+            config['primary_auth'] = 'login'
+        else:
+            primary_agents.copy_host(config, state)
+            (state / 'primary-sign-in-copied').touch(mode=0o600)
+            config['primary_auth'] = 'copy'
+        activity.save_config(state, config)
     elif args.command == 'up':
         up(config, state)
     elif args.command == 'down':
@@ -1495,11 +1592,16 @@ def main():
             config = json.loads((state / 'config.json').read_text())
             apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
     elif args.command == 'recreate':
+        if native and (args.profile or args.subagents is not None):
+            raise ValueError('Profiles and Pi subagent settings apply to Pi sandboxes.')
         if args.subagents is not None:
             config['subagents'] = args.subagents
         if args.browser is not None:
             config['options'] = options({**config.get('options', {}), 'browser': args.browser})
-        if args.profile or args.subagents is not None or args.browser is not None:
+        if native:
+            config['common'] = snapshot_profile(common_profile(), state)
+            build(config)
+        elif args.profile or args.subagents is not None or args.browser is not None:
             profile = config.get('profile')
             if args.profile or not profile:
                 profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)

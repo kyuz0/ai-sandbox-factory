@@ -771,6 +771,22 @@ Review new and edited forms at 80×24, 120×40 and 220×50, including expanded s
 validation errors and long paths. Inspect the rendered view as well as geometry;
 use Textual's `App.export_screenshot()` for SVG captures with fixture data.
 
+## Primary coding agents
+
+Run `PYTHONPATH=tests .venv/bin/python -m unittest test_primary_workspace test_primary_agents test_primary_agents_ui`
+for saved metadata, protected mount validation, sign-in selection, and the terminal
+forms. Render the first creation screen, review, sign-in and Settings with
+`PYTHONPATH=tests .venv/bin/python tests/render_primary_agents.py /tmp/factory-primary-ui`.
+
+Use a disposable workspace and a separate Factory state directory for runtime
+checks. Create one sandbox per coding agent. Exercise **Sign in** and **Copy sign-in
+from this computer** from Settings, then open the agent and read and write a file in
+the workspace. Inspect the workspace mount list and the separate sign-in container.
+The workspace should contain no private sign-in volume, keyring bus, or container
+engine socket. Repeat with restricted network, a read-only folder, a skill from
+the library and the optional browser. Stop and reopen the sandboxes and delete the
+disposable state when finished.
+
 ## Communications
 
 Create a disposable sandbox with `{"communications":{"slack":true}}` in its
