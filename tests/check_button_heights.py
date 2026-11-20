@@ -10,6 +10,27 @@ from textual.widgets import Button
 APPROVED_HEIGHTS = {}
 
 
+def test_cases(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from test_cases(test)
+        else:
+            yield test
+
+
+def run_tests():
+    if sys.argv[1:2] != ['--shard']:
+        return unittest.main(module=None, exit=False).result
+
+    index, count = map(int, sys.argv[2:])
+    if not 1 <= index <= count:
+        raise ValueError('The shard number must be between 1 and the shard count.')
+    cases = sorted(test_cases(unittest.defaultTestLoader.discover('tests')), key=lambda test: test.id())
+    selected = cases[index - 1::count]
+    print(f'Group {index}/{count}: {len(selected)} of {len(cases)} tests', flush=True)
+    return unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(selected))
+
+
 def main():
     resize = Button._size_updated
     violations = set()
@@ -25,10 +46,10 @@ def main():
 
     # Textual supplies the allocated rectangle here, including borders and padding.
     with patch.object(Button, '_size_updated', check_size):
-        suite = unittest.main(module=None, exit=False)
+        result = run_tests()
     for violation in sorted(violations):
         print(f'Button height violation: {violation}', file=sys.stderr)
-    return not violations and suite.result.wasSuccessful()
+    return not violations and result.wasSuccessful()
 
 
 if __name__ == '__main__':

@@ -760,7 +760,9 @@ Node runtime, which Pendant uses. Check both when updating this package.
 
 ## Terminal layout
 
-CI runs the Python suite with `python tests/check_button_heights.py discover -s tests`.
+CI divides the Python tests across eight runners. Run the whole suite locally with
+`python tests/check_button_heights.py discover -s tests`. To repeat one CI
+group, use its command from the log, for example `python tests/check_button_heights.py --shard 3 8`.
 The check fails if a rendered button requests or occupies more than one terminal
 row, including buttons shown after opening a dialog or expanding a section.
 
