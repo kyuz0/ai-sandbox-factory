@@ -61,6 +61,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-client 
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/ssh/ssh_config.d \
     && printf "Include /etc/sandbox-ssh/config\n" > /etc/ssh/ssh_config.d/10-sandbox.conf
+# Pi uses --no-require-git when searching ordinary folders. Bookworm's fd lacks it.
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) arch=x86_64; sha=7e2d07fa2b8807642aaec67b7e2972a9fbe4db26fcb340a7372392db42b26694 ;; \
+        arm64) arch=aarch64; sha=63ea52cb31586e6d98efa2f06d73d542f16c7d0c4af0f07b579aaf9714cf907a ;; \
+        i386) arch=i686; sha=98e61a903fd3e58f92bc268e37b2cd0668195b9383d696693a1fca0b39d5a1f0 ;; \
+        *) echo "No bundled fd binary for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    version=10.5.2; asset="fd-v${version}-${arch}-unknown-linux-musl"; \
+    curl -fsSL --retry 3 "https://github.com/sharkdp/fd/releases/download/v${version}/${asset}.tar.gz" -o /tmp/fd.tar.gz; \
+    echo "$sha  /tmp/fd.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/fd.tar.gz -C /usr/local/bin --no-same-owner --strip-components=1 "$asset/fd"; \
+    rm /tmp/fd.tar.gz; \
+    test "$(fd --no-require-git --glob fd /usr/local/bin)" = /usr/local/bin/fd
 COPY --from=pi-advisor / /opt/pi-advisor/
 COPY --from=rpiv-ask-user-question /packages/rpiv-ask-user-question/ /opt/rpiv-ask-user-question/
 COPY --from=rpiv-ask-user-question /packages/rpiv-config/ /opt/rpiv-ask-user-question/node_modules/@juicesharp/rpiv-config/
