@@ -103,11 +103,15 @@ Use `--streaming-metrics` to verify the running count and average rate during
 reasoning and answer generation. The fixture also sends 420 estimated tokens in
 a burst after a delay and checks the final average uses the reported count.
 
-Use `--local-knowledge` with the optional model layer to index a read-only mount
-in FrostPi, reject a link outside the allowed folders, and search the same index
-in Pi CLI. The test container has no outbound network access. Use
+Run `--local-knowledge off` with the Local Knowledge profile image to check that
+both clients can find text without an embedding request. Run `--local-knowledge endpoint`
+with the optional pi-knowledge layer to index a read-only mount, reject a link
+outside the allowed folders, and search the saved index in both clients. The
+embedding server is a loopback fixture. The test container has no outbound network access. Use
 `--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web
-Research image to verify the profile addendum in both clients.
+Research image to verify the profile addendum in both clients. For a profile
+with `start-here.md`, this also checks the startup hint and `/profile-guide` in
+FrostPi. Use the Local Knowledge profile path to check its onboarding.
 With the Deep Web Research image and the Web Search layer, use `--deep-research`
 to verify that Pi and FrostPi load the skill, delegate a search through a
 loopback provider, read a mounted reference and save a cited report and source log.
@@ -975,7 +979,9 @@ Run `./.venv/bin/python tests/render_tui.py /tmp/factory-ui` to capture offline
 fixtures at 80×24, 120×40 and 220×50. Open the SVGs in a browser; `coverage.json`
 lists each screen and state. The fixtures include expanded settings, populated
 fields and errors. Review every image with Claude Opus before committing UI changes,
-using the layout rules in `AGENTS.md`. Re-render corrected views; passing tests alone
+using the layout rules in `AGENTS.md`. The renderer checks that each visible text
+input has one row of usable text, aligns with its label with one blank row between
+them, and lines up with any button beside it. Re-render corrected views; passing tests alone
 is insufficient. Use `--size 80x24 --monochrome` for the monochrome check, or
 `--only STATE` to repeat a corrected view. Also exercise keyboard focus and scrolling.
 

@@ -29,7 +29,7 @@ def names(config):
     return name, name + '-socket', name + '-keys'
 
 
-def routes(config):
+def _provider_routes(config):
     """Declare the exact upstream operations available to this sandbox."""
     from . import sandbox
     result = {}
@@ -72,6 +72,8 @@ def routes(config):
         else:
             raise ValueError('Unknown hosted provider.')
         result[provider] = {'origin': origin, 'auth': auth, 'operations': operations, 'basePath': prefix}
+        if provider == 'openrouter':
+            result[provider]['embeddingCatalogue'] = {'basePath': prefix, 'path': prefix + '/embeddings/models'}
         if credential_check:
             result[provider]['credentialCheck'] = credential_check
     for row in config.get('model_providers', []):
@@ -86,6 +88,71 @@ def routes(config):
             fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
             result[provider] = {**route, 'credentialCheckId': fingerprint}
     return result
+
+
+def _embedding_target(config, providers):
+    selected = config.get('options', {})
+    if selected.get('knowledge_embedding') != 'endpoint':
+        return None, None
+    base = selected['knowledge_embedding_url'].rstrip('/')
+    provider = selected.get('knowledge_embedding_provider')
+    if provider == '@custom':
+        return base, None
+    if provider:
+        route = providers.get(provider, {})
+        catalogue = route.get('embeddingCatalogue')
+        if catalogue and base == route['origin'].rstrip('/') + catalogue['basePath']:
+            return base, provider
+        raise ValueError('The selected embedding provider changed. Choose the provider and model again in Document search.')
+    matches = []
+    for name, route in providers.items():
+        if route['auth']['type'] not in ('bearer', 'header'):
+            continue
+        origin = route['origin'].rstrip('/')
+        prefix = route.get('basePath', '').rstrip('/')
+        bases = {origin + prefix}
+        # Some adapters use /api for credentials and declare their v1 API
+        # explicitly through its model catalogue, e.g. /api/v1/models.
+        if any(op['method'] == 'GET' and op['path'] == prefix + '/v1/models'
+               for op in route['operations']):
+            bases.add(origin + prefix + '/v1')
+        if base in bases:
+            matches.append(name)
+    if len(matches) > 1:
+        raise ValueError('Several model connections use the same embedding URL.')
+    return base, matches[0] if matches else None
+
+
+def routes(config):
+    providers = _provider_routes(config)
+    base, name = _embedding_target(config, providers)
+    if name:
+        route = providers[name]
+        operation = {'method': 'POST', 'path': urlsplit(base).path + '/embeddings'}
+        if operation not in route['operations']:
+            providers[name] = {**route, 'operations': [*route['operations'], operation]}
+    return providers
+
+
+def embedding_client_url(config):
+    """Base URL for pi-knowledge. Only a matching companion injects credentials."""
+    base, name = _embedding_target(config, _provider_routes(config))
+    if name:
+        return f'http://127.0.0.1:{PORT}/r/{name}' + urlsplit(base).path
+    return base
+
+
+def embedding_provider(config):
+    return _embedding_target(config, _provider_routes(config))[1]
+
+
+def embedding_batch_size(config):
+    providers = _provider_routes(config)
+    _, name = _embedding_target(config, providers)
+    if name:
+        model = config['options']['knowledge_embedding_model']
+        return providers[name].get('embeddingBatchSizes', {}).get(model)
+    return None
 
 
 def connection_checks(config):

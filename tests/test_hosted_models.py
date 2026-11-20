@@ -9,6 +9,20 @@ from pi_sandbox_factory import hosted_models as h, sandbox, inference
 
 
 class HostedModelsTests(unittest.TestCase):
+    def test_removing_active_embedding_provider_preserves_connection_and_key(self):
+        config = {'hosted_connections': {'openrouter': {}}, 'options': {
+            'knowledge_embedding': 'endpoint', 'knowledge_embedding_url': 'https://openrouter.ai/api/v1'}}
+        for selection in ('openrouter', ''):
+            config['options']['knowledge_embedding_provider'] = selection
+            with self.subTest(selection=selection), patch.object(inference, 'up') as start, \
+                    patch.object(inference, 'credentials') as credentials, \
+                    patch.object(h.activity, 'save_config') as save_config:
+                with self.assertRaisesRegex(ValueError, 'Settings → Document search'):
+                    h.remove(config, '.', 'openrouter')
+                start.assert_not_called()
+                credentials.assert_not_called()
+                save_config.assert_not_called()
+
     def test_routing_and_secret_separation(self):
         values = [dict(provider='openrouter',key='fixture'),dict(provider='together',key='fixture'),
                   dict(provider='azure',endpoint='https://sample.services.ai.azure.com/openai/v1',key='fixture'),

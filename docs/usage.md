@@ -14,10 +14,9 @@ choose **Pi CLI** or **VS Code on host** as the default. Clear **Open sandbox af
 creation** if you want to open it yourself later. For an existing sandbox,
 **Settings → Editor** lets you change the default client, address, port, or password.
 
-Pi CLI opens in your current terminal. Exit Pi to return to Factory. You can
-open it alongside the browser editor. Both clients use the same files and model
-settings and can have separate chats open. They start in the folder you choose
-under **Settings → Folders**.
+Pi CLI opens in your current terminal. Exit Pi to return to Factory. Pi CLI and
+FrostPi use the same files, model settings, and saved chats, so you can open
+either client. They start in the folder you chose under **Settings → Folders**.
 Use a separate sandbox for VS Code on your computer after using the browser
 editor. [Editor setup and access](browser-editor.md)
 
@@ -93,7 +92,7 @@ when you’re ready to switch.
 
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
-| Approvals & sandbox, Agent tools, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Approvals & sandbox, Agent tools, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |

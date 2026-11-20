@@ -14,27 +14,13 @@ instructions. They do not inherit other profiles’ additions.
 
 ## Research profiles
 
-- **Deep Web Research** enables Web Search and subagents. Its skill uses independent
-  research questions, then writes a cited `report.md` and `sources.md` under
-  `research/` in the workspace. It can use local files alongside web sources.
-- **Local Knowledge** starts with Web Search off. Its skill searches workspace
-  files and mounted folders and cites the relevant passages. You can enable Web
-  Search or subagents in the same settings as any other profile.
+- **Local Knowledge** answers questions about your documents and code. Keyword
+  search is available immediately. Web Search starts off. [Local Knowledge](local-knowledge.md)
+- **Deep Web Research** enables Web Search and subagents. Ask it to investigate a
+  question and write a cited report using web or local sources. [Deep Web Research](deep-web-research.md)
 
-Pi can search file names and text as soon as it can read your files. If you
-also want it to find passages that use different words for the same idea, open
-**Agent tools → File search** and enable **Search by meaning**. Factory installs
-`pi-knowledge` and downloads about 470 MB for the local search model during the build.
-For sandboxes built before this setting was available, choose
-**Actions → Update sources and recreate…** first.
-Indexing and search then run inside the sandbox without an embedding service.
-In Pi or FrostPi, run `/knowledge-index reference` with the path to a file or folder
-in the workspace or a mounted folder. Run `/knowledge-refresh reference` to update
-the index after editing its sources. Pi can search what you indexed. Your indexes
-are stored in the sandbox's private home and survive a rebuild.
-
-Mount local reference folders read-only when you only need to search them. An
-index contains excerpts from its sources. Choose the material you want Pi to use.
+For an existing research sandbox, **Actions… → Update sources and recreate…**
+installs the current profile and adds its **Getting started…** guide.
 
 The profile’s Dockerfile starts with `ARG BASE_IMAGE` and `FROM ${BASE_IMAGE}`.
 The launcher supplies that image, then adds the selected browser support,
@@ -86,12 +72,18 @@ Copy [examples/profile](../examples/profile) into a new repository. It contains:
 | `Dockerfile` | Extends `ARG BASE_IMAGE` / `FROM ${BASE_IMAGE}`; finishes as `USER node`. |
 | `profile.md` | Instructions for the agent, copied to `/opt/sandbox/profile.md`. |
 | `system-prompt.md` | Optional UTF-8 Markdown describing what the profile is intended for. Factory includes it in the Pi system prompt. |
+| `start-here.md` | Optional UTF-8 user guide shown under **Getting started…** in Factory and `/profile-guide` in Pi and FrostPi. |
 | `check.py` | Optional tool checks, copied to `/opt/sandbox/profile-check.py`. |
 | `resources.json` | Skills, prompts and extensions registered with Pi. |
 
 `profile.json` can include a one-line `summary` for the profile picker and Library.
 It can also set `defaults.web_search` and `defaults.subagents` for new sandboxes.
 Each is a boolean. Users can change both in configuration.
+
+Start `start-here.md` with a short plain-text paragraph that gives the user a
+first action. Pi shows that paragraph when it opens a fresh chat. Put examples
+and setup steps below it. Factory serves the guide from the saved profile and
+keeps the workspace available for the user’s own files.
 
 Keep the addendum short. Factory identifies the profile and explains that the user
 can take the work in another direction. The addendum comes from the saved profile

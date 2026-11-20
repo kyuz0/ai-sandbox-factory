@@ -68,6 +68,7 @@ pi-sandbox-factory configure project --provider company --status
 ```
 
 `--key` prompts without echo. `--key-stdin` accepts a key from a credential tool.
+
 With an `inference` declaration, keys pass over stdin into the companion and never
 reach the adapter. Without it, the adapter receives the key and owns its storage
 inside the development container.
@@ -160,3 +161,22 @@ all routes before starting or replacing the companion.
 An in-session extension must reuse the saved proxy endpoint and placeholder.
 Credential replacement belongs in Factory's **Settings → Model Providers → Configure
 credentials**, rather than asking for a key inside Pi.
+
+### List embedding models in Document search
+
+Add `embeddingCatalogue` to the provider’s `inference` declaration. Give it
+the API base path and a GET path that lists embedding models. The optional
+`label` names the provider in the picker.
+
+```json
+{
+  "embeddingCatalogue": {"label": "Example Models", "basePath": "/v1", "path": "/v1/embeddings/models"},
+  "operations": [{"method": "GET", "path": "/v1/embeddings/models"}]
+}
+```
+
+Declare that GET in `operations`. If the catalogue requires a fixed filter,
+set `query` on the catalogue and allow the same value on the operation.
+Factory reads model IDs from the response’s `data` array. For providers that
+limit batch sizes, `embeddingBatchSizes` maps model IDs to the number of texts
+allowed per request, for example `{"example-model": 1}`.

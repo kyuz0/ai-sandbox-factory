@@ -15,12 +15,9 @@ from .tui_widgets import Checkbox, Feedback
 class FolderEditor(ModalScreen):
     DEFAULT_CSS = '''
     FolderEditor { align: center middle; background: #000000 70%; }
-    FolderEditor > Vertical { width: 70; max-width: 95%; height: 28; max-height: 95%; padding: 1 2; background: $panel; border: solid $primary; }
-    FolderEditor #folder-fields { height: 1fr; min-height: 5; }
+    FolderEditor > Vertical { width: 70; max-width: 95%; height: auto; max-height: 95%; padding: 1 2; background: $panel; border: solid $primary; }
+    FolderEditor #folder-fields { height: auto; min-height: 5; max-height: 65vh; }
     FolderEditor Static { height: auto; }
-    FolderEditor Input { margin-bottom: 1; }
-    FolderEditor Horizontal { height: auto; margin-top: 1; }
-    FolderEditor Button { margin-right: 1; }
     '''
     BINDINGS = [('escape', 'cancel', 'Cancel')]
 
@@ -32,16 +29,17 @@ class FolderEditor(ModalScreen):
     def compose(self):
         with Vertical():
             yield Label('Edit folder' if self.row else 'Add host folder', classes='title')
-            with VerticalScroll(id='folder-fields'):
-                yield Label('Folder on your computer')
-                yield PathField('folder-source', (self.row or {}).get('source', ''), title='Choose a host folder',
-                                placeholder='~/Documents/reference')
+            with VerticalScroll(id='folder-fields', classes='spaced-form-fields'):
+                with Vertical(classes='setting'):
+                    yield Label('Folder on your computer')
+                    yield PathField('folder-source', (self.row or {}).get('source', ''), title='Choose a host folder',
+                                    placeholder='~/Documents/reference')
                 with Vertical(classes='setting'):
                     yield Label('Name under /mnt · leave empty to use the folder name')
                     yield Input((self.row or {}).get('name', ''), id='folder-name')
                     yield Static('', id='folder-preview', markup=False, classes='setting-help')
                 yield Checkbox('Read-only', value=(self.row or {}).get('read_only', True), id='folder-read-only')
-            yield Feedback('', id='folder-error', classes='error', markup=False)
+                yield Feedback('', id='folder-error', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='folder-cancel')
                 yield Button('Save folder', id='folder-save', variant='primary')
@@ -52,10 +50,10 @@ class FolderEditor(ModalScreen):
     @on(Input.Changed)
     def preview(self):
         source = self.query_one('#folder-source', Input).value.strip()
-        name = self.query_one('#folder-name', Input).value.strip() or folders.suggested_name(source, self.rows)
-        preview = self.query_one('#folder-preview', Static)
-        preview.display = bool(source)
-        preview.update('Available in the sandbox at /mnt/' + name)
+        name = self.query_one('#folder-name', Input).value.strip()
+        if not name:
+            name = folders.suggested_name(source, self.rows) if source else '<folder-name>'
+        self.query_one('#folder-preview', Static).update('Available in the sandbox at /mnt/' + name)
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -72,7 +70,7 @@ class FolderEditor(ModalScreen):
             except (ValueError, OSError) as error:
                 feedback = self.query_one('#folder-error', Static)
                 feedback.update(str(error))
-                self.query_one('#folder-fields').scroll_home(animate=False)
+                self.call_after_refresh(feedback.scroll_visible, animate=False)
 
     def action_cancel(self):
         self.dismiss(None)
@@ -82,29 +80,29 @@ class FolderFields(Vertical):
     DEFAULT_CSS = '''
     FolderFields { height: auto; }
     FolderFields #folder-rows { height: auto; }
-    FolderFields .mount-row { height: auto; margin: 0 0 1 0; padding: 1 2; background: #24292f; }
+    FolderFields .mount-row { height: auto; margin: 1 0 0 0; }
     FolderFields .mount-row Static { height: auto; }
-    FolderFields .mount-buttons { height: auto; margin-top: 1; }
-    FolderFields Button { margin-right: 1; }
-    FolderFields .mount-help { margin: 0; }
-    FolderFields #working-directory { margin-bottom: 1; }
+    FolderFields .mount-name { text-style: bold; }
+    FolderFields .mount-buttons { height: auto; margin: 1 0 0 0; }
+    FolderFields .mount-buttons Button, FolderFields #folder-add { padding: 0 2; }
     '''
 
     def __init__(self, config, state_root):
-        super().__init__()
+        super().__init__(classes='spaced-form-fields')
         self.config, self.state_root = config, state_root
         self.rows = copy.deepcopy(config.get('extra_folders', []))
 
     def compose(self):
         yield Static('Main workspace: ' + str(self.config['workspace']) + ' → /workspace', markup=False, classes='section-intro')
-        yield Label('Start Pi and VS Code in · relative to /workspace')
-        yield PathField('working-directory', self.config.get('working_directory', '.'), title='Choose starting folder',
-                        root=self.config['workspace'], placeholder='.')
-        yield Label('Additional host folders')
-        yield Vertical(id='folder-rows')
+        with Vertical(id='starting-folder-setting', classes='setting'):
+            yield Label('Start Pi and VS Code in · relative to /workspace', id='starting-folder-label')
+            yield PathField('working-directory', self.config.get('working_directory', '.'), title='Choose starting folder',
+                            root=self.config['workspace'], placeholder='.')
         with Vertical(classes='setting'):
+            yield Label('Additional host folders', id='additional-folders-label')
+            yield Vertical(id='folder-rows')
             yield Button('Add folder…', id='folder-add')
-            yield Static('Separately mounted filesystems inside an added folder are not included.', markup=False, classes='setting-help mount-help')
+            yield Static('Separately mounted filesystems inside an added folder are not included.', markup=False, classes='setting-help')
 
     async def on_mount(self):
         await self.refresh_rows()
@@ -114,7 +112,8 @@ class FolderFields(Vertical):
         await target.remove_children()
         for index, row in enumerate(self.rows):
             label = '/mnt/' + row['name'] + ' · ' + ('read-only' if row['read_only'] else 'read and write')
-            await target.mount(Vertical(Static(label, markup=False), Static(row['source'], markup=False),
+            await target.mount(Vertical(Static(label, markup=False, classes='mount-name'),
+                Static(row['source'], markup=False, classes='setting-help'),
                 Horizontal(Button('Edit', id=f'folder-edit-{index}'), Button('Remove', id=f'folder-remove-{index}'), classes='mount-buttons'), classes='mount-row'))
 
     @on(Button.Pressed)

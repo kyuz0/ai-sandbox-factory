@@ -32,11 +32,39 @@ APPROVAL_MODES = {
 DEFAULTS = {'approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
-            'knowledge_embedding': 'off', 'disabled_skills': [], 'web_access': None, 'website_groups': [], 'communications': None,
+            'knowledge_embedding': 'off', 'knowledge_embedding_provider': '', 'knowledge_embedding_url': '', 'knowledge_embedding_model': '',
+            'disabled_skills': [], 'web_access': None, 'website_groups': [], 'communications': None,
             'git_identity': None}
 
 COMMON_CREDENTIAL_PATTERNS = ('*.pem', '*.key', '*.env', '*.env.*')
 BROWSER_VAULT_PATTERNS = ('/home/node/.betterwright/vault', '/home/node/.betterwright/vault/*')
+
+
+def embedding_url(url):
+    if not isinstance(url, str) or not url:
+        raise ValueError('Enter the embedding server URL.')
+    parsed = urlsplit(url)
+    if (parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or any(c in url for c in '?#\\%')
+            or any(ord(c) < 33 or ord(c) == 127 for c in url)
+            or any(part in ('.', '..') for part in parsed.path.split('/')) or '//' in parsed.path):
+        raise ValueError('Use an HTTP or HTTPS embedding server URL without credentials, a query or a fragment.')
+    try:
+        port = parsed.port
+    except ValueError:
+        port = 0
+    if port == 0:
+        raise ValueError('Enter a valid port for the embedding server.')
+    url = url.rstrip('/')
+    if url.endswith('/embeddings'):
+        raise ValueError('Enter the API base URL without /embeddings. Factory adds that path.')
+    return url
+
+
+def embedding_model(model):
+    if not isinstance(model, str) or not model or any(ord(c) < 33 or ord(c) == 127 for c in model):
+        raise ValueError('Enter the embedding model ID supplied by your server.')
+    return model
 
 
 def options(value=None):
@@ -51,8 +79,16 @@ def options(value=None):
             raise ValueError(key + ' must be a boolean')
     if result['compaction_recall'] not in ('lite', 'full', 'off'):
         raise ValueError('Conversation recall must be lite, full or off')
-    if result['knowledge_embedding'] not in ('off', 'local'):
-        raise ValueError('Knowledge embeddings must be off or local')
+    if result['knowledge_embedding'] not in ('off', 'endpoint', 'local'):
+        raise ValueError('Choose keyword search or an embedding server.')
+    if result['knowledge_embedding'] == 'endpoint':
+        provider = result['knowledge_embedding_provider']
+        if not isinstance(provider, str) or (provider not in ('', '@custom') and not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', provider)):
+            raise ValueError('Choose a valid embedding provider.')
+        result['knowledge_embedding_url'] = embedding_url(result['knowledge_embedding_url'])
+        result['knowledge_embedding_model'] = embedding_model(result['knowledge_embedding_model'])
+    else:
+        result.update(knowledge_embedding_provider='', knowledge_embedding_url='', knowledge_embedding_model='')
     disabled = result['disabled_skills']
     if not isinstance(disabled, list) or any(x not in SKILLS for x in disabled):
         raise ValueError('Unknown disabled skill')
@@ -107,7 +143,7 @@ def permissions(template, selected):
     rules['bash'] = ('allow' if selected['inner_sandbox'] or selected['approval'] == 'off' else 'ask')
     if selected['browser']:
         rules.update({name: 'allow' for name in ('browser', 'browser_login', 'browser_evidence')})
-    if selected['knowledge_embedding'] == 'local':
+    if selected['knowledge_embedding'] != 'off':
         rules.update({name: 'allow' for name in ('knowledge_search', 'knowledge_symbol_search',
                                                  'knowledge_status', 'knowledge_show')})
     return policy

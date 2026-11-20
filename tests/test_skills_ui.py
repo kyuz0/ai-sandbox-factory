@@ -111,7 +111,10 @@ class SkillsUITests(unittest.TestCase):
                 await app.push_screen(ImportSkills(temp,'main'));await pilot.pause()
                 self.assertEqual(app.screen.query_one('#skill-source',Input).value,temp)
                 self.assertEqual(app.screen.query_one('#skill-ref',Input).value,'main')
-                self.assertEqual(app.screen.query_one('#skill-browse',Button).region.height,3)
+                source = app.screen.query_one('#skill-source', Input)
+                browse = app.screen.query_one('#skill-browse', Button)
+                self.assertEqual((source.region.height, browse.region.height), (1, 1))
+                self.assertEqual(source.region.y, browse.region.y)
 
     async def test_search_preserves_hidden_selections_and_imports_them(self):
         with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)):

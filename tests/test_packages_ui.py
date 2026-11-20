@@ -6,6 +6,7 @@ from textual.widgets import Button, Collapsible, Input, Static, TabbedContent, T
 from pi_sandbox_factory import registry
 from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, InstallPackage, Operation, PackageRow, PackagesScreen, ProfileDetails
 from test_tui import FakeService
+from tui_geometry import check_input_layout
 import test_tui
 
 
@@ -122,6 +123,9 @@ class PackageUITests(unittest.TestCase):
                 await pilot.click('#package-add'); await pilot.pause()
                 error = form.query_one('#package-error', Static)
                 self.assertIn('inside', str(error.render()))
+                field = form.query_one('#package-subdir', Input)
+                self.assertIs(app.focused, field)
+                self.assertIs(form.get_widget_at(field.region.x, field.region.y)[0], field)
                 self.assertLessEqual(error.region.bottom, form.query_one('.wizard-actions').region.y)
                 form.query_one('#package-subdir', Input).value = 'profiles/reporting'
                 form.query_one('#package-ref', Input).value = 'v1'
@@ -157,6 +161,8 @@ class PackageUITests(unittest.TestCase):
                             await pilot.click('#package-install'); await pilot.pause()
                     app.screen.query_one(Collapsible).collapsed = False
                     await pilot.pause()  # Lay out the expanded fields before scrolling.
+                    self.assertCountEqual(check_input_layout(app.screen), ['package-source', 'package-name',
+                                                                          'package-subdir', 'package-ref'])
                     field = app.screen.query_one('#package-ref', Input)
                     field.focus(); await pilot.pause()
                     await pilot.wait_for_scheduled_animations()

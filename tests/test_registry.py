@@ -85,6 +85,23 @@ class RegistryTests(unittest.TestCase):
         sandbox.prepare_options(config, state)
         self.assertEqual(json.loads(runtime.read_text())['text'], '')
 
+    def test_profile_guide_comes_from_snapshot_and_leaves_workspace_files_alone(self):
+        guide = self.source / 'start-here.md'
+        guide.write_text('Ask about this project.\n\nUse the included tools.')
+        state = self.root / 'state'
+        profile = sandbox.snapshot_profile(sandbox.load_profile(str(self.source)), state)
+        guide.write_text('A newer guide.')
+        workspace = self.root / 'workspace'
+        workspace.mkdir()
+        existing = workspace / 'START_HERE.md'
+        existing.write_text('User instructions')
+        sandbox.prepare_options({'profile': profile, 'workspace': str(workspace), 'common': sandbox.common_profile()}, state)
+        runtime = json.loads((state / 'runtime-config/profile-guide.json').read_text())
+        self.assertEqual(runtime['title'], 'Sample tools')
+        self.assertTrue(runtime['text'].startswith('Ask about this project.'))
+        self.assertEqual(list(workspace.iterdir()), [existing])
+        self.assertEqual(existing.read_text(), 'User instructions')
+
     def test_research_profile_defaults_are_optional_and_resolve(self):
         from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
 
@@ -98,6 +115,7 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(draft['options']['knowledge_embedding'], 'off')
             resources = json.loads((Path(profile['path']) / 'resources.json').read_text())
             self.assertEqual(resources['skills'], ['/opt/research-skills/' + name])
+            self.assertTrue(registry.profile_guide(profile['path']).startswith('Ask '))
         self.assertFalse(DEFAULT_SETTINGS['subagents'])
         self.assertFalse(preset('base', DEFAULT_SETTINGS)['options']['web_access']['enabled'])
 

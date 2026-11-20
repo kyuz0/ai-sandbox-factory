@@ -75,7 +75,7 @@ settings = json.loads(settings_file.read_text())
 managed_packages = ('pi-sandbox', '@erichll/pi-sandbox', '@erichll/pi-auto-review',
                     '@gotgenes/pi-permission-system', 'pi-goal', '@ethanthoma/pi-goal', 'pi-schedule-prompt', 'betterwright', 'pi-web-access', '@dreki-gg/pi-slack', 'pi-compaction-recall', '@juicesharp/rpiv-ask-user-question')
 
-if selection.get('knowledge_embedding') == 'local':
+if selection.get('knowledge_embedding') == 'endpoint':
     managed_packages += ('pi-knowledge',)
 
 
@@ -106,6 +106,7 @@ image_resources = {
                    '/opt/pi-session-naming/factory.mjs',
                    '/opt/sandbox/system-prompt.mjs',
                    '/opt/sandbox/local-knowledge-status.mjs',
+                   '/opt/sandbox/profile-guide.mjs',
                    '/opt/pi-security/packages/pi-auto-review/src/index.ts',
                    '/opt/pi-security/node_modules/@gotgenes/pi-permission-system/src/index.ts',
                    '/opt/pi-security/packages/pi-reviewed-escalation/index.ts',
@@ -172,9 +173,9 @@ if (selection.get('communications') or {}).get('slack'):
     if not Path(communications_extension).is_file():
         raise ValueError('Slack is enabled but absent from this image; recreate the sandbox')
     image_resources['extensions'].append(communications_extension)
-if selection.get('knowledge_embedding') == 'local':
+if selection.get('knowledge_embedding') == 'endpoint':
     if not Path(knowledge_extension).is_file():
-        raise ValueError('Local knowledge embeddings are enabled but absent from this image. Recreate the sandbox.')
+        raise ValueError('pi-knowledge is enabled but missing from this image. Recreate the sandbox.')
     image_resources['extensions'].append(knowledge_extension)
 if selection.get('compaction_recall', 'lite') != 'off':
     if not Path(recall_extension).is_file():

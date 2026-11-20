@@ -7,9 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pi_sandbox_factory import folders, sandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, FoldersScreen, NewSandbox, SettingsForm, DEFAULT_SETTINGS, copy_draft
+from pi_sandbox_factory.sandbox_tui import Cockpit, FoldersScreen, NewSandbox, SettingsForm, DEFAULT_SETTINGS, copy_draft, preset
 from pi_sandbox_factory.folders_ui import FolderFields, FolderEditor
-from textual.widgets import Input, Button, Checkbox
+from textual.widgets import Input, Button, Checkbox, Collapsible, Static
+from tui_geometry import check_input_layout
+from test_tui import FakeService
 
 
 class FolderTests(unittest.TestCase):
@@ -165,6 +167,45 @@ class FolderTests(unittest.TestCase):
                     await pilot.pause()
                     self.assertEqual(fields.rows, [])
         asyncio.run(check())
+
+    def test_folder_controls_share_a_left_edge_in_setup_and_settings(self):
+        async def check():
+            mounted = self.validate([dict(source=str(self.extra))])
+            draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+            draft.update(name='demo', workspace=str(self.workspace), extra_folders=mounted)
+            for size in ((80, 24), (120, 40), (220, 50)):
+                app = Cockpit(self.state, FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    for screen in (SettingsForm(draft), FoldersScreen(dict(name='demo', config=draft))):
+                        await app.push_screen(screen)
+                        if isinstance(screen, SettingsForm):
+                            screen.query_one('#folders-section', Collapsible).collapsed = False
+                        await pilot.pause()
+                        fields = screen.query_one(FolderFields)
+                        self.assertIn('working-directory', check_input_layout(screen))
+                        start = fields.query_one('#working-directory', Input)
+                        heading = fields.query_one('#additional-folders-label')
+                        self.assertEqual(heading.region.y, start.region.bottom + 1)
+                        self.assertEqual({widget.region.x for widget in (
+                            fields.query_one('#starting-folder-label'), start, heading, fields.query_one('.mount-name'),
+                            fields.query_one('.mount-row .setting-help'), fields.query_one('#folder-edit-0'), fields.query_one('#folder-add')
+                        )}, {fields.content_region.x})
+                        for button in (fields.query_one('#folder-edit-0'), fields.query_one('#folder-add')):
+                            self.assertEqual(button.region.height, 1)
+                        await app.pop_screen()
+                    for row in (None, mounted[0]):
+                        dialog = FolderEditor(row, [], self.workspace, self.state)
+                        await app.push_screen(dialog)
+                        await pilot.pause()
+                        self.assertEqual(set(check_input_layout(dialog)), {'folder-source', 'folder-name'})
+                        if row:
+                            preview = dialog.query_one('#folder-preview', Static)
+                            self.assertEqual(preview.region.y, dialog.query_one('#folder-name').region.bottom + 1)
+                        save = dialog.query_one('#folder-save')
+                        self.assertIs(dialog.get_widget_at(save.region.x, save.region.y)[0], save)
+                        await app.pop_screen()
+        with patch('pi_sandbox_factory.updates.available_update', return_value=None):
+            asyncio.run(check())
 
     def test_creation_passes_selected_workspace_to_folder_review(self):
         async def check():

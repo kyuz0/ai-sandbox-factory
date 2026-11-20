@@ -45,8 +45,8 @@ class FolderPicker(ModalScreen[str | None]):
     def compose(self):
         with Vertical(id='folder-box'):
             yield Label(self.title_text, classes='title', markup=False)
+            yield Label('Folder', classes='folder-input-label')
             with Horizontal(classes='path-row'):
-                yield Label('Folder', classes='folder-path-label')
                 yield Input(str(self.start.absolute()), id='folder-path', select_on_focus=False)
                 yield Button('Up', id='folder-up')
             with Horizontal(id='folder-places'):
@@ -60,9 +60,8 @@ class FolderPicker(ModalScreen[str | None]):
                 yield Static('Modified', id='folder-modified-column')
             yield DirectoryNavigation(self.start)
             if self.mode == 'save':
-                with Horizontal(id='folder-filename-row'):
-                    yield Label('File name')
-                    yield Input(self.filename, id='folder-filename', select_on_focus=False)
+                yield Label('File name', classes='folder-input-label', id='folder-filename-label')
+                yield Input(self.filename, id='folder-filename', select_on_focus=False)
             yield Feedback(id='folder-browse-error', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='folder-cancel')

@@ -144,6 +144,9 @@ def save(config, state, value):
 
 def remove(config, state, provider):
     from . import inference, sandbox
+    if inference.embedding_provider(config) == provider:
+        raise ValueError('Document search uses this provider. In Settings → Document search, '
+                         'choose a different provider or switch to keyword search before removing it.')
     state = Path(state)
     inference.up(config, state)
     inference.credentials(config, state, {'id':provider, 'remove':True})

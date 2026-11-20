@@ -47,33 +47,32 @@ class SkillSelection(Vertical):
     async def refresh_choices(self, _=None):
         listing = self.query_one('#skill-choices', Vertical)
         await listing.remove_children()
+        if not listing.is_attached:
+            return
         self.rows = skill_library.entries()
+        choices = []
         for index, row in enumerate(self.existing):
             newer = self.rows.get(row.get('library_id'), {}).get('digest', row['digest']) != row['digest']
-            setting = Vertical(classes='setting')
-            await listing.mount(setting)
-            await setting.mount(Checkbox(row['name'] + (' · saved copy; update available' if newer else ' · saved sandbox copy'),
-                value=row['name'] not in self.removed, id=f'saved-skill-{index}'),
+            choices.append(Vertical(
+                Checkbox(row['name'] + (' · saved copy; update available' if newer else ' · saved sandbox copy'),
+                         value=row['name'] not in self.removed, id=f'saved-skill-{index}'),
                 Static(row.get('description', ''), markup=False, classes='setting-help checkbox-help'),
-                Feedback('', id=f'saved-skill-error-{index}', markup=False))
-        shown = 0
+                Feedback('', id=f'saved-skill-error-{index}', markup=False), classes='setting'))
         for key, row in self.rows.items():
             if any(old.get('library_id') == key and old['digest'] == row['digest'] for old in self.existing):
                 self.chosen.discard(key)
                 continue
-            setting = Vertical(classes='setting')
-            await listing.mount(setting)
-            await setting.mount(Checkbox(row['name'] + ' · library version', value=key in self.chosen, id='library-skill-' + key),
-                                Static(row['description'], markup=False, classes='setting-help checkbox-help'))
-            shown += 1
-        if not shown and not self.existing:
-            await listing.mount(Static('No skills in your library yet. Add a source with Manage skill library….', markup=False))
+            choices.append(Vertical(
+                Checkbox(row['name'] + ' · library version', value=key in self.chosen, id='library-skill-' + key),
+                Static(row['description'], markup=False, classes='setting-help checkbox-help'), classes='setting'))
+        if not choices:
+            choices.append(Static('No skills in your library yet. Add a source with Manage skill library….', markup=False))
         missing = self.chosen - self.rows.keys()
         self.query_one('#skill-selection-error', Feedback).update(
             'Error: a selected skill was removed from the library. Clear the missing selection or add its source again.' if missing else '')
-        if missing:
-            for key in sorted(missing):
-                await listing.mount(Checkbox('Missing library skill · ' + key, value=True, id='library-skill-' + key))
+        choices.extend(Checkbox('Missing library skill · ' + key, value=True, id='library-skill-' + key)
+                       for key in sorted(missing))
+        await listing.mount(*choices)
         self.post_message(self.Changed())
 
     def summary(self):
@@ -197,7 +196,7 @@ class ImportSkills(Screen):
 
     def compose(self):
         yield Header()
-        with VerticalScroll(classes='form'):
+        with VerticalScroll(classes='form spaced-form-fields'):
             yield Label('Add skills to library', classes='title')
             with Vertical(classes='setting'):
                 yield Label('Git repository, GitHub skill link or local folder')
@@ -237,8 +236,8 @@ class ImportSkills(Screen):
             self.candidates = []
             self.query_one('#skill-search', Input).value = ''
             self.query_one('#skill-search-setting').display = False
-            await self.query_one('#skill-candidates', Vertical).remove_children()
             self.query_one('#skill-import-save', Button).disabled = True
+            await self.query_one('#skill-candidates', Vertical).remove_children()
             self.query_one('#skill-import-status', Static).display = True
             self.query_one('#skill-import-status', Static).update('Find and validate skills after changing the source.')
 

@@ -2,6 +2,6 @@
   "version": 1,
   "name": "local-knowledge",
   "description": "Local Knowledge",
-  "summary": "Find answers in your files and cite the sources. Web Search starts off.",
+  "summary": "Find answers in your files with keyword search. Web Search starts off.",
   "defaults": {"web_search": false}
 }

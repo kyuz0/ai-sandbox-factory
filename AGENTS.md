@@ -127,10 +127,24 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   screens for readable bullets and visible actions, and remove irrelevant or
   repeated text before release.
 
-- Group each label, control and explanation in one `.setting`. Keep help directly
-  below its control; put one blank row between groups, not inside them.
-- Path inputs and Browse buttons share a three-row height. Put dependent options
-  one row below, indented two columns. Use the shared checkbox from `tui_widgets.py`.
+- Group each label, control and explanation in one `.setting`. Put the help
+  below its control and leave one blank row between groups. In compact forms,
+  leave one clear row above and below a borderless input or dropdown so its
+  value is distinct from the label and help. Count the visible rows once:
+  the space below the last field also separates it from the next group.
+  Use the shared `.spaced-form-fields` style. Test for both missing and
+  doubled gaps using rendered positions. Check the whole ordinary form,
+  from its heading through its buttons, at 80×24, 120×40 and 220×50.
+  Long forms and errors can scroll inside the dialog while actions stay visible.
+- Every single-line text input uses one terminal row at every terminal size.
+  Leave one blank row between its label and the field. Keep adjacent Browse,
+  Generate or other field buttons on the same row and at the same height.
+  Check that the text stays visible on focus and after validation errors.
+  Align checkboxes with the other controls in their group. Indent controls
+  within an explicitly nested section. Use the shared checkbox from `tui_widgets.py`.
+  Test alignment against the visible label or adjacent field. An existing
+  offset or screenshot is not a layout requirement. When the design changes,
+  correct conflicting assertions and review the rendered result before updating screenshots.
 - Keep related choices in a consistent order and use the same label pattern.
   Advisors are Codex (OpenAI), Claude (Anthropic), Antigravity (Google).
 - Give inputs persistent labels; placeholders are examples, not labels. Use the
@@ -206,6 +220,10 @@ Conversation recall defaults to Lite in both clients; keep its mode tied to the
 saved sandbox options. Its dependency lock lives in `containers/dev/compaction-recall/`.
 
 Write short, direct documentation explaining supported behavior and actual setup.
+**Hard gate for user-facing copy:** assume readers know what a local model is.
+Remove reminders about where local chat models process data from docs, starter
+guides and UI help. Document the actual controls and setup steps.
+
 Each sentence should explain an action, mechanism, contract or actionable limitation.
 User setup guides describe normal installations on supported hosts. Keep test
 infrastructure and validation history in `TESTING.md`, not in user prerequisites.

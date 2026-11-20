@@ -47,7 +47,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 password = screen.query_one('#editor-password', Input)
                 generate = screen.query_one('#editor-generate', Button)
-                self.assertEqual(password.region.height, 3)
+                self.assertEqual(password.region.height, 1)
                 self.assertEqual(generate.region.height, password.region.height)
                 self.assertEqual(generate.region.y, password.region.y)
                 await pilot.click('#editor-generate')
@@ -63,6 +63,20 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
                 self.app.save_screenshot(filename=f'editor-settings-{size[0]}.svg', path='/tmp')
                 await pilot.press('escape')
                 self.assertFalse((self.state / 'editor.json').exists())
+
+    async def test_invalid_port_feedback_visible_above_save(self):
+        async with self.app.run_test(size=(80, 24)) as pilot:
+            await self.ready(pilot)
+            await self.app.push_screen(EditorScreen('demo'))
+            screen = self.app.screen
+            screen.query_one('#editor-connection', Collapsible).collapsed = False
+            screen.query_one('#editor-port', Input).value = 'invalid'
+            await pilot.click('#editor-save')
+            await pilot.pause()
+            feedback = screen.query_one('#editor-error')
+            self.assertIn('numeric editor port', str(feedback.render()))
+            self.assertGreaterEqual(feedback.region.y, screen.query_one('.form').content_region.y)
+            self.assertLessEqual(feedback.region.bottom, screen.query_one('.wizard-actions').region.y)
 
     async def test_save_without_recreating_and_password_stays_masked(self):
         async with self.app.run_test(size=(80, 24)) as pilot:

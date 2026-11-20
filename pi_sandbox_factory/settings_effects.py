@@ -39,7 +39,10 @@ OPTION_GROUPS = {
     'browser': 'Browser and saved vault protection',
     'goals': 'Agent tools and conversation recall', 'scheduling': 'Agent tools and conversation recall',
     'question_forms': 'Agent tools and conversation recall', 'compaction_recall': 'Agent tools and conversation recall',
-    'knowledge_embedding': 'Local knowledge',
+    'knowledge_embedding': 'Document search',
+    'knowledge_embedding_url': 'Document search',
+    'knowledge_embedding_provider': 'Document search',
+    'knowledge_embedding_model': 'Document search',
     'disabled_skills': 'Skills', 'web_access': WEB_SEARCH_LABEL, 'website_groups': NETWORK_LABEL,
     'communications': 'Slack tools', 'git_identity': 'Git commit identity',
 }

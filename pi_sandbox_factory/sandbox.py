@@ -282,8 +282,9 @@ def image_names(config):
         suffix += '-web'
     if options(config.get('options'))['communications']['slack']:
         suffix += '-slack'
-    if options(config.get('options'))['knowledge_embedding'] == 'local':
-        suffix += '-knowledge'
+    knowledge_mode = options(config.get('options'))['knowledge_embedding']
+    if knowledge_mode != 'off':
+        suffix += '-knowledge-endpoint' if knowledge_mode == 'endpoint' else '-knowledge'
     if 'model_providers' in config:
         suffix += '-models-' + model_providers.digest(config)
     return (f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}',
@@ -332,9 +333,14 @@ def build(config):
     common = config['common']
     if tree_digest(Path(common['path'])) != common['digest']:
         raise ValueError('Saved common image inputs were modified; use recreate --profile to refresh them')
-    knowledge = options(config.get('options'))['knowledge_embedding'] == 'local'
-    if knowledge and not (Path(common['path']) / 'local-knowledge' / 'Dockerfile').is_file():
-        raise ValueError('Choose Actions → Update sources and recreate… before enabling Search by meaning.')
+    knowledge_mode = options(config.get('options'))['knowledge_embedding']
+    knowledge = knowledge_mode != 'off'
+    knowledge_dir = Path(common['path']) / 'local-knowledge'
+    if knowledge_mode == 'endpoint' and not (knowledge_dir / 'Dockerfile.endpoint').is_file():
+        raise ValueError('Choose Actions → Update sources and recreate… before enabling an embedding server.')
+    if knowledge_mode == 'local' and not (knowledge_dir / 'Dockerfile').is_file():
+        raise ValueError('This version uses an embedding server for semantic search. Select keyword search '
+                         'in Settings → Document search before updating sources, then configure your server.')
     base = f'localhost/pi-sandbox-factory-base:{base_tag(config)}'
     engine = config['engine']
     pi, *pendant = pendant_versions(config) or (PI_VERSION,)
@@ -368,8 +374,13 @@ def build(config):
         tools = target
     if knowledge:
         target = dev + '-local-knowledge' if config.get('extra_skills') or has_providers else dev
-        run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
-             Path(common['path']) / 'local-knowledge'])
+        if knowledge_mode == 'endpoint':
+            run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
+                 '-f', knowledge_dir / 'Dockerfile.endpoint', knowledge_dir])
+        elif run([engine, 'image', 'inspect', target], capture=True, check=False,
+                 stderr=subprocess.DEVNULL).returncode:
+            raise ValueError('The previously bundled embedding model is missing. Choose keyword search '
+                             'in Settings → Document search, then update sources to configure an embedding server.')
         tools = target
     if has_providers:
         target = dev + '-models' if config.get('extra_skills') else dev
@@ -658,8 +669,15 @@ def up(config, state):
             selected = options(config.get('options'))
             args += ['--env', 'SANDBOX_APPROVAL_MODE=' + selected['approval']]
             args += ['--env', 'COMPACTION_RECALL_MODE=' + ('full' if selected['compaction_recall'] == 'full' else 'lite')]
-            if selected['knowledge_embedding'] == 'local':
+            if selected['knowledge_embedding'] != 'off':
                 args += ['--env', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
+            if selected['knowledge_embedding'] == 'endpoint':
+                args += ['--env', 'PI_KNOWLEDGE_EMBEDDING=openai:' + selected['knowledge_embedding_model'],
+                         '--env', 'PI_KNOWLEDGE_EMBEDDING_BASE_URL=' + inference.embedding_client_url(config),
+                         '--env', 'PI_KNOWLEDGE_EMBEDDING_API_KEY=not-needed']
+                batch_size = inference.embedding_batch_size(config)
+                if batch_size is not None:
+                    args += ['--env', f'PI_KNOWLEDGE_EMBEDDING_BATCH_SIZE={batch_size}']
             for key, value in runtime_env.items():
                 args += ['--env', f'{key}={value}']
             run(base + args + [dev_image])
@@ -803,10 +821,18 @@ def create(args, state):
     if mode == 'unrestricted' and (args.allowlist or args.allow_domain):
         raise ValueError('--network unrestricted cannot be combined with an allowlist')
     preset = profile.get('defaults', {})
-    selected_options = options(json.loads(Path(args.options_file).read_text()) if getattr(args, 'options_file', None)
-                               else {'web_access': {'enabled': preset.get('web_search', False)}})
-    if getattr(args, 'knowledge_embedding', None) is not None:
-        selected_options['knowledge_embedding'] = args.knowledge_embedding
+    selected_options = (json.loads(Path(args.options_file).read_text()) if getattr(args, 'options_file', None)
+                        else {'web_access': {'enabled': preset.get('web_search', False)}})
+    if not isinstance(selected_options, dict):
+        raise ValueError('Expected a JSON object of sandbox options.')
+    for key in ('knowledge_embedding', 'knowledge_embedding_url', 'knowledge_embedding_model'):
+        if getattr(args, key, None) is not None:
+            selected_options[key] = getattr(args, key)
+    if selected_options.get('knowledge_embedding') == 'local':
+        raise ValueError('Choose keyword search or configure an embedding server for this new sandbox.')
+    if (getattr(args, 'knowledge_embedding_url', None) or getattr(args, 'knowledge_embedding_model', None)) and selected_options.get('knowledge_embedding') != 'endpoint':
+        raise ValueError('Use --knowledge-embedding endpoint with the embedding server URL and model ID.')
+    selected_options = options(selected_options)
     workspace = directory(args.workspace)
     host_platform.validate_data_path(workspace)
     shared = directory(args.pi_config) if args.pi_config else None
@@ -860,11 +886,13 @@ def create(args, state):
     if not creation_token:
         state.mkdir(parents=True, mode=0o700)
     try:
-        values = json.loads(Path(args.providers_file).read_text()) if getattr(args,'providers_file',None) else {name:{} for name in (getattr(args,'model_provider',None) or ['local'])}
+        if getattr(args, 'providers_file', None):
+            values = json.loads(Path(args.providers_file).read_text())
+        else:
+            enabled_providers = getattr(args, 'model_provider', None) or (['local'] if model_ports else [])
+            values = {name: {} for name in enabled_providers}
         config['model_providers'] = model_providers.prepare(values, state, saved=reuse.get('model_providers', []))
         model_providers.validate_network(config, rules)
-        if mode == 'allowlist' and not (args.allowlist or args.allow_domain or selected_options['website_groups'] or selected_options['web_access']['enabled'] or any(selected_options['communications'].values()) or inference.enabled(config)):
-            raise ValueError('Add an allowed destination, model provider, website category or search service.')
         config['profile'] = snapshot_profile(profile, state)
         config['common'] = snapshot_profile(common_profile(), state)
         if saved_prompt:
@@ -945,6 +973,11 @@ def prepare_options(config, state):
     profile = selected_profile(config)
     write_json(target / 'profile-system-prompt.json', {
         'text': registry.profile_system_prompt(profile['path'], profile['name']),
+    })
+    write_json(target / 'profile-guide.json', {
+        'id': profile['name'],
+        'title': profile.get('description') or profile['name'],
+        'text': registry.profile_guide(profile['path']),
     })
     write_json(target / 'web-providers.json', selected['web_access'])
     inference.write_connection_checks(config, state)
@@ -1228,8 +1261,10 @@ def main():
                      help='Outer container network policy (default: allowlist); unrestricted uses ordinary bridge networking')
     new.add_argument('--subagents', action=argparse.BooleanOptionalAction, default=None,
                      help='Enable or disable standard pi-subagents (defaults to the profile choice)')
-    new.add_argument('--knowledge-embedding', choices=['off', 'local'],
-                     help='Install pi-knowledge with offline embeddings, or use model-free file search (default: off)')
+    new.add_argument('--knowledge-embedding', choices=['off', 'endpoint'],
+                     help='Use keyword search (default: off) or install pi-knowledge with an embedding server')
+    new.add_argument('--knowledge-embedding-url', help='OpenAI-compatible embedding API base URL, including its API path')
+    new.add_argument('--knowledge-embedding-model', help='Model ID accepted by the embedding server')
     new.add_argument('--browser', action='store_true', help='Install optional Betterwright browser tools and dependencies (default: disabled)')
     policy = new.add_mutually_exclusive_group()
     policy.add_argument('--allowlist')

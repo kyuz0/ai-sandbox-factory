@@ -16,13 +16,13 @@ from .tui_widgets import Checkbox, Feedback
 class EditorFields(Vertical):
     DEFAULT_CSS = '''
     EditorFields, #editor-connection, #editor-password-fields, #editor-tls-fields { height: auto; }
-    #editor-password-fields { margin-top: 1; margin-left: 2; padding-right: 1; }
+    #editor-password-fields { margin: 1 0 0 2; }
     #editor-show-password { margin-top: 1; }
     #editor-generate { background: #424850; color: #f1f3f5; }
     '''
 
     def __init__(self, value=None, *, desktop_allowed=True, connection_settings=True):
-        super().__init__()
+        super().__init__(classes='spaced-form-fields')
         self.value = editor_settings.validate(value)
         self.desktop_allowed = desktop_allowed
         self.connection_settings = connection_settings
@@ -172,7 +172,9 @@ class EditorScreen(Screen):
                 self.app.push_screen(Operation('Saving editor settings', apply, done_on_success=True,
                     success_message='• Use Open with… to reconnect.\n• Resume your saved conversation.'))
             except (ValueError, OSError) as error:
-                self.query_one('#editor-error', Static).update(str(error))
+                feedback = self.query_one('#editor-error', Feedback)
+                feedback.update(str(error))
+                self.call_after_refresh(feedback.scroll_visible, animate=False)
 
     def action_back(self):
         self.app.pop_screen()

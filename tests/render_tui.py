@@ -12,17 +12,19 @@ if args.monochrome:
 else:
     os.environ.pop('NO_COLOR', None)
 os.environ['TEXTUAL_COLOR_SYSTEM'] = 'truecolor'
-import asyncio, copy, json, sys, tempfile
+import asyncio, copy, json, subprocess, sys, tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 root = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(root), str(root / 'tests')]
 from test_tui import FakeService
+from tui_geometry import check_checkbox_alignment, check_input_layout
 from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
-from pi_sandbox_factory.sandbox_tui import ContainersScreen
+from pi_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts
 from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
@@ -103,10 +105,34 @@ async def capture(size):
                         await pilot.pause()
                     p = out / f'{name}-{size[0]}x{size[1]}.svg'
                     p.write_text(app.export_screenshot())
-                    coverage.append(dict(file=p.name, screen=type(app.screen).__name__, size=size))
+                    check_checkbox_alignment(app.screen)
+                    coverage.append(dict(file=p.name, screen=type(app.screen).__name__, size=size,
+                                         inputs=check_input_layout(app.screen)))
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('folder-layout-') for name in args.only):
+                    folder_config = dict(c, workspace='/home/sam/projects/research', working_directory='notes',
+                                         extra_folders=[dict(source='/home/sam/documents/reference',
+                                                             name='reference', read_only=True)])
+                    folder_record = {**record, 'name': 'research', 'config': folder_config}
+                    is_dir = Path.is_dir
+                    with patch.object(Path, 'is_dir', lambda path: str(path) == folder_config['workspace'] or is_dir(path)):
+                        await shot('folder-layout-settings', FoldersScreen(folder_record))
+                        await shot('folder-layout-empty', FoldersScreen({**folder_record, 'config': {
+                            **folder_config, 'extra_folders': []}}))
+                        draft = preset('base', DEFAULT_SETTINGS)
+                        draft.update(name='research', workspace=folder_config['workspace'],
+                                     working_directory='notes', extra_folders=folder_config['extra_folders'])
+                        await shot('folder-layout-setup', SettingsForm(draft), '#folders-section')
+                    await app.push_screen(FolderEditor(None, [], str(workspace), root))
+                    await shot('folder-layout-add', focus='#folder-source')
+                    app.screen.query_one('#folder-save', Button).press()
+                    await shot('folder-layout-error')
+                    await app.pop_screen()
+                    await shot('folder-layout-edit', FolderEditor(folder_config['extra_folders'][0], [],
+                                                                  str(workspace), root), focus='#folder-name')
+                    return
                 if not args.only or any(name.startswith('chat-history-') for name in args.only):
                     sample = '/home/sam/.local/share/pi-sandbox-factory/chat-backups/demo-chats-20261120-164101.zip'
                     (workspace / 'demo-chats.zip').touch()
@@ -198,6 +224,99 @@ async def capture(size):
                     await shot('prompt-sandbox-update-edit', focus='#edit-prompt-copy')
                     await app.pop_screen()
                     return
+                if args.only and all(name.startswith('embedding-picker-') for name in args.only):
+                    from pi_sandbox_factory import embedding_models
+                    from test_document_search_ui import embedding_provider_fixture
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='research', workspace='/home/user/projects/research',
+                                 model_providers=[embedding_provider_fixture()], hosted_connections={'openrouter': {}})
+                    form = SettingsForm(draft, editing=True, setting='document-search')
+                    await app.push_screen(form)
+                    await pilot.pause()
+                    models = {'example': ['example-embedding-v2'],
+                              'openrouter': ['openai/text-embedding-3-small', 'openai/text-embedding-3-large']}
+                    def catalogue(config, provider, **kwargs):
+                        result = models[provider]
+                        if isinstance(result, Exception):
+                            raise result
+                        return result
+                    with patch.object(embedding_models, 'catalogue', side_effect=catalogue):
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        dialog = app.screen
+                        await shot('embedding-picker-keyword', focus='#knowledge-embedding')
+                        dialog.query_one('#knowledge-embedding', Select).value = 'endpoint'
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        provider = dialog.query_one('#embedding-provider', Select)
+                        provider.expanded = True
+                        await shot('embedding-picker-providers')
+                        provider.expanded = False
+                        provider.value = 'example'
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        dialog.query_one('#embedding-catalogue', Select).value = 'example-embedding-v2'
+                        await shot('embedding-picker-example', focus='#embedding-catalogue')
+                        provider.value = 'openrouter'
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        picker = dialog.query_one('#embedding-catalogue', Select)
+                        picker.focus()
+                        await pilot.press('enter', 'down')
+                        await shot('embedding-picker-openrouter-list')
+                        picker.expanded = False
+                        picker.value = 'openai/text-embedding-3-small'
+                        await shot('embedding-picker-openrouter', focus='#embedding-catalogue')
+                        await pilot.click('#save-document-search')
+                        await pilot.pause()
+                        await shot('embedding-picker-saved-draft', focus='#configure-document-search')
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        dialog = app.screen
+                        provider = dialog.query_one('#embedding-provider', Select)
+                        provider.value = '@custom'
+                        await pilot.pause()
+                        url = dialog.query_one('#embedding-url', Input)
+                        url.focus()
+                        await pilot.pause()
+                        url.value = 'models.example.org'
+                        await pilot.pause()
+                        await shot('embedding-picker-custom-error')
+                        dialog.query_one('#embedding-url', Input).value = 'https://models.example.org/v1'
+                        dialog.query_one('#embedding-model', Input).value = 'text-embedding'
+                        await shot('embedding-picker-custom', focus='#embedding-model')
+                        provider.value = 'example'
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        dialog.query_one('#embedding-catalogue', Select).value = 'example-embedding-v2'
+                        await pilot.pause()
+                        await pilot.click('#save-document-search')
+                        await pilot.pause()
+                        models['example'] = ValueError('Offline')
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        dialog = app.screen
+                        await shot('embedding-picker-offline', focus='#retry-embedding-catalogue')
+                        models['example'] = []
+                        dialog.query_one('#retry-embedding-catalogue').focus()
+                        await pilot.pause()
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        await pilot.pause(dialog.query_one('#retry-embedding-catalogue', Button).active_effect_duration)
+                        await shot('embedding-picker-empty', focus='#retry-embedding-catalogue')
+                        models['example'] = ['example-embedding-v2']
+                        dialog.query_one('#retry-embedding-catalogue').focus()
+                        await pilot.pause()
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                        await shot('embedding-picker-restored', focus='#embedding-catalogue')
+                        await pilot.press('escape')
+                        await app.pop_screen()
+                    return
                 if research_only:
                     package = root / 'sample-profile'
                     package.mkdir()
@@ -215,6 +334,9 @@ async def capture(size):
                     profile.expanded = False
                     profile.value = 'deep-research'
                     await shot('research-web-selected', focus='#profile')
+                    await pilot.click('#new-profile-guide')
+                    await shot('research-web-guide', focus='#close-profile-guide')
+                    await app.pop_screen()
                     profile.value = 'local-knowledge'
                     await shot('research-local-selected', focus='#profile')
                     await pilot.click('#continue')
@@ -227,23 +349,75 @@ async def capture(size):
                     await shot('research-web-review')
                     app.screen.query_one('#network-search-section CollapsibleTitle').focus()
                     await shot('research-web-network')
+                    app.screen.query_one('#network-search-section', Collapsible).collapsed = False
+                    await shot('research-web-provider', focus='#web-mode')
                     await app.pop_screen()
                     metadata = sandbox.load_profile('local-knowledge')
                     draft = preset('local-knowledge', DEFAULT_SETTINGS, metadata['defaults'])
-                    draft.update(name='research', workspace=str(workspace))
+                    draft.update(name='research', workspace='/home/user/projects/research')
                     await app.push_screen(SettingsForm(draft))
-                    file_search = app.screen.query_one('#file-search-section', Collapsible)
-                    app.screen.query_one('#skills-section', Collapsible).collapsed = False
+                    await shot('research-local-review')
+                    configure = app.screen.query_one('#configure-document-search', Button)
+                    configure.focus()
                     await pilot.pause()
-                    file_search.query_one('CollapsibleTitle').focus()
-                    await shot('research-file-search-collapsed-off')
-                    await shot('research-file-search-off', focus='#knowledge-embedding')
-                    app.screen.query_one('#knowledge-embedding', Checkbox).value = True
-                    await shot('research-file-search-on', focus='#knowledge-embedding')
-                    file_search.collapsed = True
-                    file_search.query_one('CollapsibleTitle').focus()
-                    await shot('research-file-search-collapsed-on')
+                    await shot('research-document-search-entry')
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    await shot('research-pi-knowledge-off', focus='#knowledge-embedding')
+                    search_mode = app.screen.query_one('#knowledge-embedding', Select)
+                    search_mode.expanded = True
+                    await shot('research-pi-knowledge-modes')
+                    search_mode.expanded = False
+                    search_mode.value = 'endpoint'
+                    await pilot.pause()
+                    app.screen.query_one('#embedding-url', Input).value = 'models.example.org'
+                    await pilot.pause()
+                    await shot('research-pi-knowledge-error', focus='#embedding-url')
+                    app.screen.query_one('#embedding-url', Input).value = 'https://models.example.org/v1'
+                    await pilot.pause()
+                    app.screen.query_one('#embedding-model', Input).value = 'invalid model'
+                    await pilot.pause()
+                    await shot('research-pi-knowledge-model-error', focus='#embedding-model')
+                    app.screen.query_one('#embedding-model', Input).value = 'text-embedding'
+                    await shot('research-pi-knowledge-on', focus='#knowledge-embedding')
+                    await pilot.pause()
+                    await pilot.click('#save-document-search')
+                    await pilot.pause()
+                    saved = app.screen.document_search
                     await app.pop_screen()
+                    draft['options'].update(saved)
+                    config = {**c, 'options': draft['options']}
+                    await app.push_screen(SettingsMenu('research', config, 'browser'))
+                    menu = app.screen.query_one('#settings-actions', OptionList)
+                    menu.highlighted = next(i for i, (_, key) in enumerate(SettingsMenu.ACTIONS) if key == 'document-search')
+                    await shot('research-document-search-menu', focus='#settings-actions')
+                    menu.highlighted = menu.option_count - 1
+                    await shot('research-document-search-menu-last', focus='#settings-actions')
+                    await app.pop_screen()
+                    await shot('research-document-search-settings',
+                               SettingsForm(draft, editing=True, setting='document-search'), focus='#configure-document-search')
+                    await app.push_screen(SettingsForm(draft, editing=True, setting='agent-tools'))
+                    await shot('research-document-search-agent-tools', focus='#subagents')
+                    await shot('research-document-search-agent-tools-bottom', focus='#scheduling')
+                    await app.pop_screen()
+                    draft['options'].update(knowledge_embedding='local', knowledge_embedding_url='', knowledge_embedding_model='')
+                    await app.push_screen(SettingsForm(draft, editing=True, setting='document-search'))
+                    await pilot.pause()
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    await shot('research-pi-knowledge-offline', focus='#knowledge-embedding')
+                    await pilot.press('escape')
+                    await app.pop_screen()
+                    local_config = {**c, 'profile': metadata}
+                    await shot('research-local-folders', FoldersScreen({**record, 'config': local_config}))
+                    return
+                if args.only and all(name.startswith('sandbox-alerts-') for name in args.only):
+                    app.receive_inventory([{**record, 'workspace': '/home/user/projects/demo'}])
+                    legacy = {**record, 'chat_editor': 'pendant'}
+                    await shot('sandbox-alerts-editor', SandboxAlerts(legacy))
+                    await shot('sandbox-alerts-two', SandboxAlerts({**legacy, 'ssh_key_state': 'locked'}))
+                    await shot('sandbox-alerts-missing-key', SandboxAlerts({**record, 'ssh_key_state': 'missing'}))
+                    await shot('sandbox-alerts-unavailable', SandboxAlerts({**record, 'ssh_key_state': 'unavailable'}))
                     return
                 if args.only and all(name.startswith('editor-migration-') for name in args.only):
                     common = root / 'legacy-common'
@@ -284,16 +458,16 @@ async def capture(size):
                     await shot('containers-invalid', ContainersScreen({**record, 'engine': None}))
                     return
                 if args.only and all(name.startswith('providers-') for name in args.only):
-                    plugin = {'name': 'chaucer', 'settings': {}, 'manifest': {
-                        'description': 'Chaucer model catalogue',
+                    plugin = {'name': 'example', 'settings': {}, 'manifest': {
+                        'description': 'Example Models',
                         'network': ['models.example.test:443'],
-                        'settings': {'key': {'type': 'secret', 'label': 'Chaucer API key'}},
+                        'settings': {'key': {'type': 'secret', 'label': 'Example Models API key'}},
                         'inference': {'origin': 'https://models.example.test', 'auth': {'type': 'bearer'},
                                       'operations': [{'method': 'GET', 'path': '/v1/models'}]},
                     }}
                     resolve = registry.resolve
                     def choices(kind):
-                        return {'local': 'Local models', 'chaucer': 'Chaucer model catalogue'} if kind == 'provider' else {'base': 'Default Developer Sandbox'}
+                        return {'local': 'Local models', 'example': 'Example Models'} if kind == 'provider' else {'base': 'Default Developer Sandbox'}
                     with patch('pi_sandbox_factory.skill_library.entries', return_value={}), \
                          patch.object(registry, 'choices', side_effect=choices), \
                          patch.object(registry, 'resolve', side_effect=lambda kind, name:
@@ -318,9 +492,9 @@ async def capture(size):
                         await shot('providers-create-local-error', focus='#model-ports')
                         form.query_one('#model-ports', Input).value = '8000'
                         form.query_one('#local-provider', Collapsible).collapsed = True
-                        form.query_one('#source-chaucer', Checkbox).value = True
+                        form.query_one('#source-example', Checkbox).value = True
                         await pilot.pause()
-                        await shot('providers-create-plugin', focus='#source-chaucer')
+                        await shot('providers-create-plugin', focus='#source-example')
                         await app.pop_screen()
                         defaults = SettingsForm(draft, defaults=True)
                         await app.push_screen(defaults)
@@ -432,11 +606,43 @@ async def capture(size):
                                 await shot('provider-key-create-selected', SettingsForm(draft), focus='#source-company-key')
                     return
                 await shot('home')
+                if args.only and all(name.startswith('home-filters-') for name in args.only):
+                    app.receive_inventory([{**record, 'workspace': '/home/user/projects/demo'}])
+                    await shot('home-filters-default')
+                    await shot('home-filters-sort-focus', focus='#sort-field')
+                    await pilot.click('#sort-field')
+                    await shot('home-filters-sort-expanded')
+                    await pilot.press('escape')
+                    app.query_one('#search', Input).value = 'demo'
+                    await shot('home-filters-search', focus='#search')
+                    await shot('home-filters-direction', focus='#sort-direction')
+                    return
+                if args.only and all(name.startswith('home-update-') for name in args.only):
+                    app.receive_inventory([{**record, 'workspace': '/home/user/projects/demo'}])
+                    with patch('pi_sandbox_factory.updates.pipx_install', return_value=True), \
+                            patch.object(host_platform.shutil, 'which', return_value='/usr/bin/pipx'):
+                        app.show_update('2099.11.20.153000')
+                        await shot('home-update-available', focus='#search')
+                        await shot('home-update-focused', focus='#application-update-run')
+                        with patch.object(app, 'suspend', return_value=nullcontext()), \
+                                patch('pi_sandbox_factory.sandbox_tui.subprocess.run',
+                                      side_effect=subprocess.CalledProcessError(1, ['pipx', 'upgrade', 'pi-sandbox-factory'],
+                                                                              stderr='Could not connect to the repository.')):
+                            app.upgrade(True)
+                        await shot('home-update-failed', focus='#close-update-details')
+                        await pilot.press('escape')
+                    with patch('pi_sandbox_factory.updates.pipx_install', return_value=False):
+                        app.show_update('2099.11.20.153000')
+                        await shot('home-update-source', focus='#application-update-help')
+                        await pilot.click('#application-update-help')
+                        await shot('home-update-instructions', focus='#close-update-details')
+                    return
                 with patch.object(host_platform, 'is_mac', return_value=False), \
                         patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/pipx' if name == 'pipx' else None), \
                         patch('pi_sandbox_factory.updates.pipx_install', return_value=True):
                     app.check_dependencies()
-                    app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown'}])
+                    app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown',
+                                            'workspace': '/home/user/projects/demo'}])
                     await shot('home-missing-dependencies')
                     app.show_update('2099.1.1.1')
                     await shot('home-missing-dependencies-update')
@@ -857,7 +1063,7 @@ async def capture(size):
                 if args.only and 'review-error' in args.only:
                     await app.push_screen(SettingsForm(copy.deepcopy(draft)))
                     error = app.screen.query_one('#form-error', Static)
-                    error.update('Add an allowed destination or enable host-local models.')
+                    error.update('Allowlist line 1: use an exact hostname:port')
                     error.scroll_visible(animate=False)
                     await shot('review-error', focus='#apply')
                     await app.pop_screen()

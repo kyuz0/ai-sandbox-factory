@@ -84,6 +84,19 @@ def profile_system_prompt(path, name):
     )
 
 
+def profile_guide(path):
+    """Read the optional user guide from a profile or its saved snapshot."""
+    file = Path(path) / 'start-here.md'
+    if file.is_symlink() or (file.exists() and not file.is_file()):
+        raise ValueError('start-here.md must be a regular file')
+    if not file.is_file():
+        return ''
+    try:
+        return file.read_text(encoding='utf-8').strip()
+    except UnicodeError as error:
+        raise ValueError('start-here.md must be valid UTF-8') from error
+
+
 def manifest(kind, path):
     if kind not in KINDS:
         raise ValueError("Choose profile or provider")
@@ -102,6 +115,7 @@ def manifest(kind, path):
             raise ValueError("Missing or unsafe package entry: " + filename)
     if kind == "profile":
         profile_system_prompt(path, data["name"])
+        profile_guide(path)
         summary = data.get("summary", "")
         if not isinstance(summary, str) or '\n' in summary or '\r' in summary:
             raise ValueError("Profile summary must be a single line of text")
@@ -143,6 +157,15 @@ def manifest(kind, path):
                 raise ValueError("Provider plugins support bearer or API-key header authentication")
             if not isinstance(route.get("operations"),list) or not route["operations"]:
                 raise ValueError("Declare the inference and discovery operations")
+            if 'embeddingCatalogue' in route:
+                from .embedding_models import validate_catalogue
+                validate_catalogue(route)
+            batches = route.get("embeddingBatchSizes", {})
+            if not isinstance(batches, dict) or any(
+                not isinstance(model, str) or not model.strip() or model != model.strip()
+                or type(size) is not int or size < 1 for model, size in batches.items()
+            ):
+                raise ValueError("Embedding batch sizes must map model IDs to positive integers")
             check = route.get("credentialCheck")
             if "local" in route:
                 raise ValueError("Local inference routes are managed by Factory")

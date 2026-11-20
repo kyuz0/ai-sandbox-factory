@@ -14,6 +14,10 @@ function sourceAccess() {
 }
 
 export default function localKnowledge(pi) {
+  if (!process.env.PI_KNOWLEDGE_EMBEDDING?.startsWith("openai:") ||
+      !process.env.PI_KNOWLEDGE_EMBEDDING_BASE_URL || !process.env.PI_KNOWLEDGE_EMBEDDING_API_KEY) {
+    throw new Error("Open Document search → Configure… in Factory and enter an embedding server and model.");
+  }
   const definitions = new Map(getKnowledgeToolDefinitions().map(tool => [tool.name, tool]));
   for (const name of searchTools) {
     const { approval: _approval, promptGuidelines: _guidelines, ...tool } = definitions.get(name);

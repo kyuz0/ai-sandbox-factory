@@ -76,10 +76,11 @@ class TUITests(unittest.TestCase):
         await pilot.press('enter');await pilot.pause()
 
     async def test_banner_and_update_notice_fit_small_and_large_terminals(self):
-        for size in ((80,24),(120,40)):
+        for size in ((80,24),(120,40),(220,50)):
             app=Cockpit(self.root,FakeService(self.records))
             async with app.run_test(size=size) as pilot:
                 await self.ready(app,pilot)
+                self.assertFalse(app.query_one('#application-update').display)
                 with patch('pi_sandbox_factory.updates.pipx_install',return_value=True), patch('pi_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
                     app.show_update('2099.1.1.1')
                 await pilot.pause()
@@ -90,11 +91,24 @@ class TUITests(unittest.TestCase):
                 else:
                     self.assertEqual(title.content_region.height, 9)
                     self.assertEqual(title.styles.padding.top, 1)
-                self.assertFalse(app.query_one('#application-update-run',Button).disabled)
+                    self.assertIn('Configurable Pi Sandboxes', str(title.render()))
+                upgrade = app.query_one('#application-update-run', Button)
+                self.assertFalse(upgrade.disabled)
+                self.assertTrue(upgrade.display)
+                self.assertEqual(upgrade.region.height, 1)
+                self.assertEqual(app.query_one('#application-update').region.height, 1)
+                self.assertFalse(app.query_one('#application-update-help').display)
+                app.query_one('#search', Input).focus()
+                await pilot.pause()
+                normal_background = upgrade.styles.background
+                upgrade.focus()
+                await pilot.pause()
+                self.assertIs(app.focused, upgrade)
+                self.assertNotEqual(upgrade.styles.background, normal_background)
                 self.assertLess(app.query_one('#new').region.bottom,size[1])
                 self.assertLess(app.query_one('#more').region.bottom,size[1])
                 self.assertGreaterEqual(app.query_one('#sandboxes').region.height,5)
-                self.assertIn('pipx upgrade pi-sandbox-factory',str(app.query_one('#application-update-message').render()))
+                self.assertIn('Update available · v2099.1.1.1', str(app.query_one('#application-update-message').render()))
                 self.assertTrue(await pilot.click('#settings'))
                 await pilot.pause()
                 self.assertEqual(type(app.screen).__name__,'SettingsMenu')
@@ -108,15 +122,24 @@ class TUITests(unittest.TestCase):
             with patch('pi_sandbox_factory.updates.pipx_install',return_value=True), patch('pi_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
                 app.show_update('2099.1.1.1')
             await pilot.pause()
-            with patch.object(app,'suspend',return_value=nullcontext()), patch('pi_sandbox_factory.sandbox_tui.subprocess.run',side_effect=subprocess.CalledProcessError(1,['pipx'])) as run:
+            dashboard_positions = {selector: app.query_one(selector).region for selector in ('#search', '#sandboxes', '#new')}
+            failure = subprocess.CalledProcessError(1, ['pipx'], stderr='Could not connect to the repository.')
+            with patch.object(app,'suspend',return_value=nullcontext()), patch('pi_sandbox_factory.sandbox_tui.subprocess.run',side_effect=failure) as run:
                 await pilot.click('#application-update-run');await pilot.pause()
                 self.assertIsInstance(app.screen,Confirm)
                 await pilot.click('#cancel');await pilot.pause()
                 run.assert_not_called()
                 await pilot.click('#application-update-run');await pilot.pause()
                 await pilot.click('#yes');await pilot.pause()
-                run.assert_called_once_with(('pipx','upgrade','pi-sandbox-factory'),check=True)
-                self.assertIn('Upgrade failed',str(app.query_one('#application-update-message').render()))
+                run.assert_called_once_with(('pipx','upgrade','pi-sandbox-factory'),check=True, stderr=subprocess.PIPE, text=True, errors='replace')
+                self.assertEqual(app.screen.heading, 'Factory upgrade failed')
+                self.assertIn('pipx exited with status 1.', app.screen.message)
+                self.assertIn(failure.stderr, app.screen.message)
+                self.assertIn('pipx upgrade pi-sandbox-factory', app.screen.message)
+                self.assertEqual(app.focused.id, 'close-update-details')
+                await pilot.press('escape');await pilot.pause()
+                self.assertEqual({selector: app.query_one(selector).region for selector in dashboard_positions}, dashboard_positions)
+                self.assertIn('Update available · v2099.1.1.1', str(app.query_one('#application-update-message').render()))
                 self.assertFalse(app.query_one('#application-update-run',Button).disabled)
 
     async def test_startup_reports_missing_dependencies_and_refresh_clears_notice(self):
@@ -159,6 +182,13 @@ class TUITests(unittest.TestCase):
             with patch('pi_sandbox_factory.updates.pipx_install',return_value=False):
                 app.show_update('2099.1.1.1')
             self.assertTrue(app.query_one('#application-update-run',Button).disabled)
+            self.assertFalse(app.query_one('#application-update-run',Button).display)
+            await pilot.pause()
+            self.assertTrue(await pilot.click('#application-update-help'));await pilot.pause()
+            self.assertEqual(app.screen.heading, 'Update Factory manually')
+            self.assertIn('git pull --ff-only', app.screen.message)
+            self.assertIn('python -m pip install --upgrade', app.screen.message)
+            await pilot.click('#close-update-details');await pilot.pause()
             with patch.object(app,'suspend',return_value=nullcontext()), patch('pi_sandbox_factory.sandbox_tui.subprocess.run'), patch.object(app,'exit') as finish:
                 app.upgrade(True)
                 finish.assert_called_once_with(result=updates.RELAUNCH)
@@ -593,6 +623,24 @@ class TUITests(unittest.TestCase):
             self.assertEqual(app.screen.query_one('#workspace', Input).value, str(project))
             self.assertEqual(app.screen.query_one('#name', Input).value, 'my-project')
 
+    async def test_file_picker_labels_and_actions_align_at_all_sizes(self):
+        from pi_sandbox_factory.file_browser import FolderPicker
+        for size in ((80, 24), (120, 40), (220, 50)):
+            with self.subTest(size=size):
+                app = Cockpit(self.root, FakeService(self.records))
+                async with app.run_test(size=size) as pilot:
+                    await self.ready(app, pilot)
+                    await app.push_screen(FolderPicker(self.root, mode='save', filename='backup.zip'))
+                    await self.ready(app, pilot)
+                    dialog = app.screen
+                    for label, field in zip(dialog.query('.folder-input-label'), dialog.query(Input), strict=True):
+                        self.assertEqual(field.region.height, 1)
+                        self.assertEqual(field.region.y - label.region.bottom, 1)
+                        self.assertEqual(field.region.x, label.region.x)
+                    use = dialog.query_one('#folder-use')
+                    self.assertIs(dialog.get_widget_at(use.region.x, use.region.y)[0], use)
+                    self.assertGreater(dialog.query_one(DirectoryNavigation).region.height, 0)
+
     async def test_export_browser_chooses_a_new_filename_without_saving_it(self):
         service = FakeService(self.records)
         app = Cockpit(self.root, service)
@@ -702,6 +750,10 @@ class TUITests(unittest.TestCase):
             self.assertFalse(app.screen.query('#pip-preset, #npm-preset, #github-preset'))
             for category in ('dev-python', 'dev-npmjs', 'dev-github'):
                 app.screen.query_one('#category-'+category,Checkbox).value=True
+            local = app.screen.query_one('#local-models', Checkbox)
+            self.assertFalse(local.value)
+            self.assertEqual(app.screen.query_one('#allowlist', TextArea).text, '')
+            local.value = True
             app.screen.query_one('#model-ports',Input).value='8002-8003'
             app.screen.query_one('#new-advisor-codex',Checkbox).value=True
             app.screen.query_one('#new-advisor-agy',Checkbox).value=True
@@ -741,6 +793,7 @@ class TUITests(unittest.TestCase):
             await pilot.pause()
             form = app.screen
             self.assertIsInstance(form, SettingsForm)
+            form.query_one('#local-models', Checkbox).value = True
             form.query_one('#model-ports', Input).value = '8002-8003'
             form.query_one('#open-editor', Checkbox).value = False
 
@@ -1187,12 +1240,17 @@ class TUITests(unittest.TestCase):
             self.assertLess(table.region.x + region.right, app.size.width)
             await pilot.click('#sandboxes', offset=(region.x + 3, region.y + 1))
             self.assertIsInstance(app.screen, SandboxAlerts)
-            menu = app.screen.query_one('#sandbox-alerts-list', OptionList)
-            self.assertEqual(menu.option_count, 2)
-            self.assertIn('SSH key locked', str(menu.get_option_at_index(0).prompt))
-            self.assertIn('Update to FrostPi', str(menu.get_option_at_index(1).prompt))
-            menu.highlighted = 0
-            await pilot.press('enter')
+            self.assertEqual(len(app.screen.query('.sandbox-alert')), 2)
+            descriptions = [str(widget.render()) for widget in app.screen.query('.sandbox-alert-description')]
+            self.assertIn('Git over SSH is unavailable', descriptions[0])
+            self.assertIn('Switching to FrostPi restarts the sandbox', descriptions[1])
+            self.assertIn('workspace and saved chats', descriptions[1])
+            self.assertEqual(app.focused.id, 'sandbox-alert-ssh-key-alert')
+            await pilot.press('tab')
+            self.assertEqual(app.focused.id, 'sandbox-alert-rebuild')
+            await pilot.press('tab')
+            self.assertEqual(app.focused.id, 'close-alerts')
+            self.assertTrue(await pilot.click('#sandbox-alert-ssh-key-alert'))
             self.assertIsInstance(app.screen, SSHScreen)
             self.assertEqual(app.focused.id, 'ssh-unlock')
             await pilot.press('escape')
@@ -1200,7 +1258,10 @@ class TUITests(unittest.TestCase):
             table.move_cursor(row=cell.row, column=cell.column)
             table.focus()
             await pilot.press('enter')
-            app.screen.query_one('#sandbox-alerts-list', OptionList).highlighted = 1
+            upgrade = app.screen.query_one('#sandbox-alert-rebuild', Button)
+            self.assertEqual(str(upgrade.label), 'Update to FrostPi…')
+            await pilot.press('tab')
+            self.assertIs(app.focused, upgrade)
             await pilot.press('enter')
             self.assertIn('Update alpha to FrostPi?', app.screen.message)
             await pilot.press('escape')
@@ -1685,6 +1746,33 @@ class DashboardActivityTests(unittest.TestCase):
     setUp = TUITests.setUp
     tearDown = TUITests.tearDown
     ready = TUITests.ready
+
+    async def test_dashboard_filters_share_a_single_control_row(self):
+        from textual.widgets import Select
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = Cockpit(self.root, FakeService(self.records))
+            async with app.run_test(size=size) as pilot:
+                await self.ready(app, pilot)
+                search = app.query_one('#search', Input)
+                field = app.query_one('#sort-field', Select)
+                direction = app.query_one('#sort-direction', Button)
+                self.assertEqual(search.region.y - app.query_one('#dashboard-search Label').region.bottom, 1)
+                self.assertEqual(field.region.y - app.query_one('#sandbox-sort Label').region.bottom, 1)
+                self.assertEqual({widget.region.height for widget in (search, field, direction)}, {1})
+                self.assertEqual({widget.region.y for widget in (search, field, direction)}, {search.region.y})
+                self.assertEqual(field.region.x - search.region.right, 2)
+                self.assertEqual(direction.region.x - field.region.right, 2)
+                self.assertEqual(direction.region.right, app.query_one('#packages', Button).region.right)
+                current = field.query_one('SelectCurrent')
+                normal_background = current.styles.background
+                field.focus()
+                await pilot.pause()
+                self.assertNotEqual(current.styles.background, normal_background)
+                await pilot.click('#sort-field')
+                self.assertTrue(field.expanded)
+                await pilot.press('escape')
+                self.assertFalse(field.expanded)
+
     async def test_timestamp_sorting_search_and_selection(self):
         self.records[0]['activity']={'created':'2026-11-13T12:00:00+00:00','started':'2026-11-14T10:00:00+00:00','edited':None}
         self.records[1]['activity']={'created':'2026-11-14T12:00:00+00:00','started':'2026-11-14T11:00:00+00:00','edited':'2026-11-14T12:30:00+00:00'}

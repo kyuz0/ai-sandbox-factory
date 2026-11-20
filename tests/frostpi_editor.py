@@ -447,17 +447,64 @@ def check_pi_nonblocking_questions(inside, output):
         tmux('kill-server')
 
 
-def check_local_knowledge(page, frame, send, inside, output):
-    send('/knowledge-index /mnt/reference')
-    frame.get_by_text(re.compile(r'Indexed "reference":')).first.wait_for(timeout=120000)
-    send('/knowledge-index /workspace/outside-reference')
-    frame.get_by_text(re.compile('outside the allowed filesystem roots')).first.wait_for(timeout=20000)
-    send('Factory knowledge fixture')
-    frame.get_by_text('FACTORY LOCAL KNOWLEDGE VERIFIED', exact=True).wait_for(timeout=45000)
+def check_local_knowledge(page, frame, send, inside, output, mode, options_file):
+    endpoint = mode == 'endpoint'
+    prompt = 'Factory knowledge fixture' if endpoint else 'Factory keyword fixture'
+    if endpoint:
+        inside('test', '!', '-e', '/opt/pi-knowledge/models')
+        send('/knowledge-index /mnt/reference')
+        frame.get_by_text(re.compile(r'Indexed "reference":')).first.wait_for(timeout=120000)
+        send('/knowledge-index /workspace/outside-reference')
+        frame.get_by_text(re.compile('outside the allowed filesystem roots')).first.wait_for(timeout=20000)
+    else:
+        inside('test', '!', '-e', '/opt/pi-knowledge')
+    success = 'FACTORY LOCAL KNOWLEDGE VERIFIED'
+
+    def check_clients(prompt):
+        send(prompt)
+        frame.get_by_text(success, exact=True).wait_for(timeout=45000)
+        result = inside('pi', '--no-session', '--print', prompt)
+        assert success in result, result
+
+    def reopen_with(selection):
+        # The container's read-only file mount follows the original inode.
+        options_file.write_text(json.dumps(selection))
+        inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
+        frame.get_by_role('button', name='New or resume session').click()
+        frame.locator('button.launcher-create').click()
+        frame.locator('button.session-heading .session-title').filter(
+            has_text=re.compile('^New session$')).wait_for(timeout=20000)
+
+    check_clients(prompt)
     page.screenshot(path=str(output / 'local-knowledge.png'))
-    result = inside('pi', '--print', 'Factory knowledge fixture')
-    assert 'FACTORY LOCAL KNOWLEDGE VERIFIED' in result, result
-    print('PASS FrostPi indexes a read-only mounted folder offline and Pi CLI searches the same persisted corpus.')
+    trace = inside('cat', '/tmp/fixture.log')
+    if endpoint:
+        passages = trace.count('EMBEDDING passage')
+        queries = trace.count('EMBEDDING query')
+        assert passages >= 1 and queries >= 2, trace
+        database, = inside('find', '/home/node', '-name', 'knowledge.db', '-type', 'f').splitlines()
+        vectors, = inside('find', str(Path(database).parent / 'vectors'), '-name', '*.bin').splitlines()
+        checksum = inside('sha256sum', vectors)
+
+        selected = json.loads(options_file.read_text())
+        reopen_with(sandbox.options({**selected, 'knowledge_embedding': 'off'}))
+        check_clients('Factory keyword fixture')
+        off_trace = inside('cat', '/tmp/fixture.log')
+        assert off_trace.count('EMBEDDING') == trace.count('EMBEDDING'), off_trace
+        inside('test', '-s', database)
+        assert inside('sha256sum', vectors) == checksum
+
+        reopen_with(selected)
+        check_clients(prompt)
+        trace = inside('cat', '/tmp/fixture.log')
+        assert trace.count('EMBEDDING passage') == passages, trace
+        assert trace.count('EMBEDDING query') >= queries + 2, trace
+        assert inside('sha256sum', vectors) == checksum
+        print('PASS Both clients switched to keyword search and reused the original index after re-enabling the endpoint.')
+    else:
+        assert 'EMBEDDING' not in trace, trace
+        print('PASS Both clients searched the read-only mount using keyword search.')
+    (output / 'fixture.log').write_text(trace + '\n')
 
 
 def check_deep_research(page, frame, send, inside, workspace, output):
@@ -784,7 +831,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             (root / 'reference/fixture.md').write_text('# Local source\nCEDAR_LOCAL_EVIDENCE_746\n')
             config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if local_knowledge:
-            config['options']['knowledge_embedding'] = 'local'
+            config['profile'] = sandbox.load_profile(str(REPO / 'pi_sandbox_factory/profiles/local-knowledge'))
+            config['options']['knowledge_embedding'] = local_knowledge
+            if local_knowledge == 'endpoint':
+                config['options'].update(knowledge_embedding_url='http://127.0.0.1:19381/v1',
+                                         knowledge_embedding_model='fixture-embedding')
             (root / 'reference').mkdir()
             (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
             (root / 'workspace/outside-reference').symlink_to('/etc/passwd')
@@ -857,7 +908,10 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if web_workers or deep_research:
             args += ['-e', 'FACTORY_SUBAGENT_WEB_TOOLS=1']
             mounts.append((Path(__file__).with_name('subagent_web_tools.mjs').resolve(), '/tmp/subagent_web_tools.mjs', 'ro'))
-        if local_knowledge:
+        if local_knowledge == 'endpoint':
+            args += ['-e', 'PI_KNOWLEDGE_EMBEDDING=openai:fixture-embedding',
+                     '-e', 'PI_KNOWLEDGE_EMBEDDING_BASE_URL=' + config['options']['knowledge_embedding_url'],
+                     '-e', 'PI_KNOWLEDGE_EMBEDDING_API_KEY=not-needed']
             args += ['-e', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
         if local_knowledge or deep_research:
             mounts.append((root / 'reference', '/mnt/reference', 'ro'))
@@ -1028,7 +1082,7 @@ p.write_text(json.dumps(v))
                     browser.close()
                     return
                 if local_knowledge:
-                    check_local_knowledge(page, frame, send, inside, output)
+                    check_local_knowledge(page, frame, send, inside, output, local_knowledge, root / 'options.json')
                     assert not errors, errors
                     browser.close()
                     return
@@ -1048,6 +1102,15 @@ p.write_text(json.dumps(v))
                     browser.close()
                     return
                 if profile_prompt:
+                    guide = root / 'runtime-config/profile-guide.json'
+                    if json.loads(guide.read_text())['text']:
+                        frame.get_by_text(re.compile(r'Type /profile-guide for first steps\.')).wait_for(timeout=15000)
+                        page.screenshot(path=str(output / 'profile-startup.png'))
+                        send('/profile-guide')
+                        paragraphs = json.loads(guide.read_text())['text'].split('\n\n')
+                        steps = paragraphs[1] if len(paragraphs) > 1 else paragraphs[0]
+                        frame.get_by_text(steps, exact=False).last.wait_for(timeout=15000)
+                        page.screenshot(path=str(output / 'profile-guide.png'))
                     send('Factory profile prompt fixture')
                     verified = frame.get_by_text('FACTORY PROFILE PROMPT VERIFIED', exact=True)
                     counts = frame.get_by_text(re.compile(r'^FACTORY PROFILE PROMPT COUNTS'))
@@ -1233,7 +1296,8 @@ if __name__ == '__main__':
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
-    scope.add_argument('--local-knowledge', action='store_true', help='Check offline embeddings from a read-only mount in Pi and FrostPi.')
+    scope.add_argument('--local-knowledge', nargs='?', const='endpoint', choices=('off', 'endpoint'),
+                       help='Check keyword search or an embedding endpoint on a read-only mount in both clients.')
     scope.add_argument('--deep-research', action='store_true', help='Check Deep Web Research from search to report in Pi and FrostPi.')
     scope.add_argument('--system-prompt', action='store_true', help='Check reusable system prompt changes in Pi and FrostPi.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')

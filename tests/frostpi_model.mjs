@@ -86,6 +86,20 @@ http.createServer((request, response) => {
   request.on('data', chunk => body += chunk);
   request.on('end', async () => {
     const input = JSON.parse(body);
+    if (request.url === '/v1/embeddings') {
+      const texts = input.input;
+      if (request.method !== 'POST' || request.headers.authorization !== 'Bearer not-needed' ||
+          input.model !== 'fixture-embedding' || !Array.isArray(texts) || !texts.length) {
+        response.writeHead(400).end('Invalid fixture embedding request');
+        return;
+      }
+      // Deterministic vectors exercise the upstream API protocol and persisted index.
+      for (const text of texts) console.log('EMBEDDING', text.includes('ORCHID_WINDOW_842') ? 'passage' : 'query');
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+        data: texts.map((_, index) => ({ index, embedding: [1, 0, 0] })),
+      }));
+      return;
+    }
     const messages = input.messages;
     const last = messages.at(-1);
     const userText = last.role === 'user'
@@ -141,6 +155,13 @@ http.createServer((request, response) => {
         : 'FACTORY RESEARCH FAILED web evidence missing' };
     } else if (tools.length && context.includes('Factory Deep Web Research fixture')) {
       delta = researchReply(messages, tools);
+    } else if (userText === 'Factory keyword fixture' && tools.length) {
+      delta = tools.includes('knowledge_search') ? { content: 'FACTORY UNEXPECTED SEMANTIC SEARCH' }
+        : choice('bash', { command: 'rg -n ORCHID_WINDOW /mnt/reference' });
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-bash-') &&
+               context.includes('Factory keyword fixture')) {
+      delta = { content: String(last.content).includes('ORCHID_WINDOW_842')
+        ? 'FACTORY LOCAL KNOWLEDGE VERIFIED' : 'FACTORY KEYWORD RESULT MISSING' };
     } else if (userText === 'Factory knowledge fixture' && tools.length) {
       if (!tools.includes('knowledge_search') || tools.some(name =>
         ['knowledge_add', 'knowledge_configure', 'knowledge_export', 'knowledge_update'].includes(name))) {

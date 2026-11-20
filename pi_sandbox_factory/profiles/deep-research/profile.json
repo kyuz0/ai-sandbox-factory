@@ -2,6 +2,6 @@
   "version": 1,
   "name": "deep-research",
   "description": "Deep Web Research",
-  "summary": "Research the web and use your files to write a cited report.",
+  "summary": "Use the web for cited reports. Web Search and subagents start on.",
   "defaults": {"web_search": true, "subagents": true}
 }

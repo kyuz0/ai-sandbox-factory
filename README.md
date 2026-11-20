@@ -28,7 +28,7 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 1. Choose **New sandbox**, select a **Profile** and **Workspace**, check the
    **Sandbox name**, then choose **Continue**.
 2. In **Review sandbox → Model Providers**, choose how Pi connects to a model.
-   - **Local models:** enable **Connect to models on this computer** and enter
+   - **Local models:** off by default. Enable **Connect to models on this computer** and enter
      your server port, usually `8000`. If no model appears, check that the server
      is running on that port, then refresh the model list. [Local model setup](docs/usage.md#local-models)
    - **Hosted models:** choose **Connect hosted provider…** for OpenRouter,
@@ -40,6 +40,19 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 
 If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 **Connect to models on this computer**. [Linux local model requirements](docs/platforms.md#linux-local-models)
+
+## Research with Pi
+
+- **Local Knowledge** searches your documents and cites the files it used. Mount
+  a document folder read-only, start with keyword search, and add `pi-knowledge`
+  with a connected provider or your own embedding server for semantic search. [Set up Local Knowledge](docs/local-knowledge.md) ·
+  [Turn embeddings on](docs/local-knowledge.md#turn-embeddings-on) · [Turn them off](docs/local-knowledge.md#turn-embeddings-off)
+- **Deep Web Research** uses web search and can bring in local references. Choose
+  a search provider and the sites Pi can read, then ask for a cited report.
+  [Set up Deep Web Research](docs/deep-web-research.md)
+
+Choose **Getting started…** beside either profile in Factory, or type
+`/profile-guide` in Pi or FrostPi.
 
 ## What the sandbox can access
 

@@ -14,7 +14,7 @@ import pyfiglet
 import shutil
 from rich.style import Style
 from rich.text import Text
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from . import sandbox, editor_settings, sandbox_ssh, prompt_library
 from . import chat_history
@@ -37,12 +37,15 @@ from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL
 from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
+from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
+from . import embedding_models
 from . import sandbox_skills
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
-from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
+from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
+                              endpoint_rule, memory_limit, write_json)
 
 try:
     from textual import events, on, work
@@ -54,7 +57,7 @@ try:
     from textual.theme import Theme
     from textual.worker import get_current_worker
     from textual.widgets import (Button, Collapsible, DataTable, Footer, Header,
-                                 Input, Label, RichLog, Select, Static, TextArea, OptionList,
+                                 Input, Label, Markdown, RichLog, Select, Static, TextArea, OptionList,
                                  TabbedContent, TabPane, Tabs)
 except ImportError as error:
     raise SystemExit('Install Pi Sandbox Factory with pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git.') from error
@@ -67,10 +70,10 @@ def profile_titles():
 
 def installed_profile_title(name):
     return name.replace('-', ' ').title()
-DEFAULT_SETTINGS = {'profile': 'base', 'model_providers': {'local':{}}, 'workspace_parent': '', 'network': 'allowlist',
+DEFAULT_SETTINGS = {'profile': 'base', 'model_providers': {}, 'workspace_parent': '', 'network': 'allowlist',
                     'engine': 'podman', 'memory': '8g', 'subagents': False, 'env_file': '',
                     'pi_config': '', 'skill_repo': '', 'skill_path': '', 'library_skills': [], 'open_editor': True,
-                    'local_model_ports': '8000', 'options': DEFAULTS, 'editor': {**editor_settings.DEFAULTS, 'mode': editor_settings.default_mode()}}
+                    'local_model_ports': None, 'options': DEFAULTS, 'editor': {**editor_settings.DEFAULTS, 'mode': editor_settings.default_mode()}}
 
 
 def safe_text(value):
@@ -957,6 +960,29 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(event.button.id == 'yes')
 
 
+class FactoryUpdateDetails(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, title, message):
+        super().__init__()
+        self.heading, self.message = title, message
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label(self.heading)
+            with VerticalScroll(id='factory-update-details'):
+                yield Static(self.message, markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-update-details')
+
+    def on_mount(self):
+        self.query_one('#close-update-details', Button).focus()
+
+    @on(Button.Pressed, '#close-update-details')
+    def action_close(self):
+        self.dismiss()
+
+
 class ApplySettingsReview(Confirm):
     """Scrollable effects review keeps Apply reachable with many changes."""
     DEFAULT_CSS = '''
@@ -1032,6 +1058,9 @@ class MoreActions(ModalScreen[Optional[str]]):
                         ('Update sources and recreate…', 'rebuild')]
         if browser_running:
             self.actions.append(('Stop browser editor', 'stop-editor'))
+        profile = record.get('config', {}).get('profile') or {}
+        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
+            self.actions.append(('Getting started…', 'profile-guide'))
         if record.get('config', {}).get('engine'):
             self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
         self.actions.append(('Delete sandbox…', 'delete'))
@@ -1124,6 +1153,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
                 'network-settings': network_search_summary(network, selected['web_access']['enabled']),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
+                'document-search': search_summary(selected, embedding_models.sources(config)),
                 'ssh-settings': git_identity_summary(selected['git_identity']),
                 'communications': communications_summary(selected['communications']['slack']),
             })
@@ -1180,10 +1210,6 @@ def agent_tools_summary(recall, browser, goals):
     return f'Recall {recall.capitalize()} · Browser {on_off(browser)} · Goals {on_off(goals)}'
 
 
-def file_search_title(semantic):
-    return 'File search · ' + ('Keywords and meaning' if semantic else 'Keywords')
-
-
 class FoldersScreen(Screen):
     BINDINGS = [('escape', 'back', 'Back')]
 
@@ -1231,17 +1257,33 @@ class FoldersScreen(Screen):
         self.app.pop_screen()
 
 
+class SandboxAlert(NamedTuple):
+    title: str
+    description: str
+    button: str
+    action: str
+    blocking: bool = False
+
+
 def sandbox_alerts(record):
     alerts = []
     ssh_alert = {
-        'locked': ('SSH key locked', 'Unlock existing key…', 'ssh-key-alert'),
-        'missing': ('SSH key missing', 'Set up an SSH key', 'ssh-key-alert'),
-        'unavailable': ('SSH service unavailable', 'View containers', 'containers'),
+        'locked': SandboxAlert('SSH key locked',
+            'Git over SSH is unavailable until this key is unlocked.',
+            'Unlock existing key…', 'ssh-key-alert', True),
+        'missing': SandboxAlert('SSH key missing',
+            'Add a key to use Git over SSH in this sandbox.',
+            'Set up SSH key…', 'ssh-key-alert', True),
+        'unavailable': SandboxAlert('SSH service unavailable',
+            'Couldn’t reach the SSH service. Check this sandbox’s containers.',
+            'View containers', 'containers', True),
     }.get(record.get('ssh_key_state'))
     if ssh_alert:
         alerts.append(ssh_alert)
     if record.get('chat_editor') == 'pendant':
-        alerts.append(('Pendant editor', 'Update to FrostPi…', 'rebuild'))
+        alerts.append(SandboxAlert('Editor update available',
+            'This sandbox still uses Pendant. Switching to FrostPi restarts the sandbox and keeps your workspace and saved chats.',
+            'Update to FrostPi…', 'rebuild'))
     return alerts
 
 
@@ -1257,7 +1299,7 @@ class SandboxTable(DataTable):
         style = Style(color='#17191b' if primary else '#f1f3f5',
                       bgcolor='#f2b544' if primary else '#494f57', bold=True,
                       meta={'sandbox_action': True})
-        return Text.assemble(('  ' + label + '  ', style), no_wrap=True)
+        return Text.assemble(' ', ('  ' + label + '  ', style), no_wrap=True)
 
     def on_click(self, event: events.Click):
         # Textual normally activates an already-selected cell on click. Keep all
@@ -1289,19 +1331,25 @@ class SandboxAlerts(ModalScreen[Optional[str]]):
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label('Alerts · ' + self.name_label)
-            entries = []
-            for label, action, _ in self.alerts:
-                if entries:
-                    entries.append(None)
-                entries.append(Text.assemble((label, 'bold'), '\n', action))
-            yield OptionList(*entries, id='sandbox-alerts-list')
+            with VerticalScroll(id='sandbox-alerts-list'):
+                for alert in self.alerts:
+                    classes = 'sandbox-alert -blocking' if alert.blocking else 'sandbox-alert'
+                    with Vertical(classes=classes):
+                        with Horizontal(classes='sandbox-alert-heading'):
+                            yield Label(alert.title, classes='sandbox-alert-title')
+                            yield Button(alert.button, name=alert.action, id='sandbox-alert-' + alert.action,
+                                         classes='sandbox-alert-action')
+                        yield Static(alert.description, classes='sandbox-alert-description', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='close-alerts')
 
-    @on(OptionList.OptionSelected)
+    def on_mount(self):
+        self.query_one('.sandbox-alert-action', Button).focus()
+
+    @on(Button.Pressed, '.sandbox-alert-action')
     def selected(self, event):
         event.stop()
-        self.dismiss(self.alerts[event.option_index][2])
+        self.dismiss(event.button.name)
 
     @on(Button.Pressed, '#close-alerts')
     def action_close(self):
@@ -1316,14 +1364,14 @@ class SSHScreen(Screen):
         super().__init__()
         self.record = record
         self.imported = None
-        self.key_focus = key_focus
+        self.AUTO_FOCUS = key_focus
 
     def compose(self):
         hosts = self.record['config'].get('ssh', {}).get('hosts', [])
         from .repository_ui import GitIdentityFields
         identity = options(self.record['config'].get('options'))['git_identity']
         yield Header()
-        with VerticalScroll(classes='form'):
+        with VerticalScroll(classes='form spaced-form-fields'):
             yield Label(CATEGORIES['ssh-settings'].label + ' · ' + self.record['name'], classes='title')
             yield Static('Keys stay in a separate SSH container. The remote account or deploy key determines what the sandbox can do.', classes='section-intro')
             yield Static('Applying changes to destinations or commit identity restarts the sandbox.', classes='section-intro')
@@ -1347,7 +1395,7 @@ class SSHScreen(Screen):
                     yield PathField('ssh-known-hosts', str(Path.home() / '.ssh/known_hosts'),
                                     title='Choose trusted known_hosts file', mode='file')
                     yield Static('Verify unknown hosts in your host terminal before applying destinations.', classes='setting-help')
-            with Collapsible(title='SSH key · one per sandbox', collapsed=not bool(hosts), id='ssh-key-section'):
+            with Collapsible(title='SSH key · one per sandbox', collapsed=not (hosts or self.AUTO_FOCUS), id='ssh-key-section'):
                 with Vertical(classes='setting'):
                     with Horizontal(classes='buttons'):
                         yield Button('Generate repository key', id='ssh-generate-key', disabled=not hosts)
@@ -1373,11 +1421,6 @@ class SSHScreen(Screen):
             yield Button('Back', id='ssh-back')
             yield Button('Apply', id='ssh-apply', variant='primary')
         yield Footer()
-
-    def on_mount(self):
-        if self.key_focus:
-            self.query_one('#ssh-key-section', Collapsible).collapsed = False
-            self.call_after_refresh(self.query_one(self.key_focus).focus)
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -1479,7 +1522,7 @@ class AdvisorsScreen(Screen):
         settings = self.record['config'].get('advisors', {})
         providers = settings.get('providers', [])
         yield Header()
-        with VerticalScroll(classes='form'):
+        with VerticalScroll(classes='form spaced-form-fields'):
             yield Label(CATEGORIES['advisors'].label + ' · ' + self.record['name'], classes='title')
             yield Static('Choose the advisors Pi can consult. Sign-ins stay in a separate container.')
             yield Static(settings_effects.bullets(['Apply restarts sandbox processes.', 'Sign in and Check advisors take effect immediately.']), classes='section-intro')
@@ -1493,21 +1536,27 @@ class AdvisorsScreen(Screen):
                 yield Button('Sign in to Antigravity', id='advisor-login-agy', disabled='agy' not in providers)
                 yield Button('Check advisors', id='advisor-check', disabled=not providers)
             with Collapsible(title='Claude model', collapsed=True):
-                yield Label('Model alias or exact ID · default sonnet')
-                yield Input(settings.get('claude_model', 'sonnet'), id='advisor-claude-model')
-                yield Label('Thinking effort')
-                yield Select([(x.title(), x) for x in ('low', 'medium', 'high', 'xhigh', 'max')], value=settings.get('claude_effort', 'medium'), allow_blank=False, id='advisor-claude-effort')
-                yield Static('Use /advisor status in Pi to refresh Claude subscription quota and reset times without a model call.', classes='setting-help')
+                with Vertical(classes='setting'):
+                    yield Label('Model alias or exact ID · default sonnet')
+                    yield Input(settings.get('claude_model', 'sonnet'), id='advisor-claude-model')
+                with Vertical(classes='setting'):
+                    yield Label('Thinking effort')
+                    yield Select([(x.title(), x) for x in ('low', 'medium', 'high', 'xhigh', 'max')], value=settings.get('claude_effort', 'medium'), allow_blank=False, id='advisor-claude-effort')
+                    yield Static('Use /advisor status in Pi to refresh Claude subscription quota and reset times without a model call.', classes='setting-help')
             with Collapsible(title='Antigravity model', collapsed=True):
-                yield Label('Exact Gemini model ID · leave blank to sign in first')
-                yield Input(settings.get('agy_model', ''), id='advisor-model')
-                yield Label('Quota group · from /usage')
-                yield Input(settings.get('agy_quota_group', ''), id='advisor-quota')
-                yield Label('Effort matching that model')
-                yield Select([(x.title(), x) for x in ('low', 'medium', 'high')], value=settings.get('agy_effort', 'medium'), allow_blank=False, id='advisor-effort')
+                with Vertical(classes='setting'):
+                    yield Label('Exact Gemini model ID · leave blank to sign in first')
+                    yield Input(settings.get('agy_model', ''), id='advisor-model')
+                with Vertical(classes='setting'):
+                    yield Label('Quota group · from /usage')
+                    yield Input(settings.get('agy_quota_group', ''), id='advisor-quota')
+                with Vertical(classes='setting'):
+                    yield Label('Effort matching that model')
+                    yield Select([(x.title(), x) for x in ('low', 'medium', 'high')], value=settings.get('agy_effort', 'medium'), allow_blank=False, id='advisor-effort')
             with Collapsible(title='Usage and network', collapsed=True):
-                yield Label('Maximum calls per Pi session · blank for no limit')
-                yield Input(str(settings.get('max_calls') or ''), id='advisor-calls', type='integer')
+                with Vertical(classes='setting'):
+                    yield Label('Maximum calls per Pi session · blank for no limit')
+                    yield Input(str(settings.get('max_calls') or ''), id='advisor-calls', type='integer')
                 with Vertical(classes='setting'):
                     yield Label('Additional allowed destinations · hostname:port')
                     yield TextArea(settings.get('extra_hosts', ''), id='advisor-hosts')
@@ -1605,7 +1654,7 @@ class ModelsScreen(Screen):
         plugins = [(manifest.get('description', name), name)
                    for name, manifest in self.providers.items() if name != 'local']
         yield Header()
-        with VerticalScroll(classes='form'):
+        with VerticalScroll(classes='form spaced-form-fields'):
             yield Label(CATEGORIES['models'].label + ' · ' + self.record['name'], classes='title')
             if ports or local:
                 with Collapsible(title=local_models_title(bool(ports)), id='live-local-provider'):
@@ -1794,6 +1843,27 @@ class PackageRow(Vertical):
                     yield Button('Remove', name='remove')
 
 
+class ProfileGuide(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, name, guide):
+        super().__init__()
+        self.profile_name = name
+        self.guide = guide
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label(f'Getting started · {self.profile_name}', markup=False)
+            with VerticalScroll(id='profile-details-body'):
+                yield Markdown(safe_text(self.guide))
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-profile-guide', variant='primary')
+
+    @on(Button.Pressed, '#close-profile-guide')
+    def action_close(self):
+        self.dismiss()
+
+
 class ProfileDetails(ModalScreen[None]):
     BINDINGS = [('escape', 'close', 'Close')]
 
@@ -1946,7 +2016,7 @@ class InstallPackage(Screen):
 
     def compose(self):
         yield Header()
-        with VerticalScroll(classes='form'):
+        with VerticalScroll(classes='form spaced-form-fields'):
             yield Label('Install '+self.kind,classes='title')
             with Vertical(classes='setting'):
                 yield Label('Git URL or local folder')
@@ -1962,7 +2032,7 @@ class InstallPackage(Screen):
                     yield Label('Tag, branch or commit · optional')
                     yield Input(id='package-ref')
             yield Static('Install only profiles and providers you trust; they contain executable code.',classes='setting-help')
-            yield Feedback('',id='package-error',markup=False)
+        yield Feedback('',id='package-error',markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Cancel',id='package-cancel')
             yield Button('Install',id='package-add',variant='primary')
@@ -1990,20 +2060,28 @@ class InstallPackage(Screen):
         source=self.query_one('#package-source',Input).value.strip()
         ref=self.query_one('#package-ref',Input).value.strip()
         subdir=self.query_one('#package-subdir',Input).value.strip()
+        invalid_field = 'package-name'
         try:
             if not registry.NAME.fullmatch(name) or name in ('base','local'):
                 raise ValueError('Use a local name of 1–40 lowercase letters, digits or hyphens, starting with a letter. The names base and local are reserved.')
             if name in registry.choices(self.kind):
                 raise ValueError('That name is already installed. Choose another name or update the existing '+self.kind+'.')
+            invalid_field = 'package-source'
             source=registry.source_url(source)
+            invalid_field = 'package-subdir'
             if Path(subdir).is_absolute() or '..' in Path(subdir).parts:
                 raise ValueError('The subfolder must be inside the repository.')
+            invalid_field = 'package-ref'
             if ref.startswith('-') or any(c.isspace() for c in ref):
                 raise ValueError('Enter a Git tag, branch or commit without spaces.')
         except ValueError as error:
             message = self.query_one('#package-error', Feedback)
             message.update('Error: ' + str(error))
-            self.call_after_refresh(message.scroll_visible, animate=False)
+            if invalid_field in ('package-subdir', 'package-ref'):
+                self.query_one(Collapsible).collapsed = False
+            field = self.query_one('#' + invalid_field, Input)
+            field.focus()
+            self.call_after_refresh(field.scroll_visible, animate=False)
             return
         args=[self.kind,'add',name,source]
         if ref:args+=['--ref',ref]
@@ -2107,6 +2185,8 @@ class Operation(Screen):
         button = self.query_one('#operation-back', Button)
         done = self.succeeded and self.done_on_success
         button.disabled, button.label = False, 'Done' if done else self.back_label
+        button.refresh(layout=True)
+        button.focus()
         if done:
             button.variant = 'primary'
         status = self.query_one('#operation-status', Static)
@@ -2218,7 +2298,6 @@ class UpdateOperation(Operation):
         if self.cancelled:
             self.query_one('#operation-status', Static).update('●  Update cancelled · current sandbox preserved')
         button = self.query_one('#operation-back', Button)
-        button.variant = 'default'
         button.focus()
 
 
@@ -2348,14 +2427,19 @@ class NewSandbox(Screen):
         settings = self.copied_draft or self.app.defaults
         profiles = profile_titles()
         self.summaries = registry.profile_summaries()
+        self.profile_paths = {name: row['path'] for name, row in registry.installed('profile').items()}
         if self.copied_draft:
             profiles[settings['profile']] = profiles.get(settings['reused_profile'].get('registry_name'), settings['reused_profile']['name']) + ' (from ' + settings['reuse_from'] + ')'
+            self.profile_paths[settings['profile']] = settings['reused_profile']['path']
         yield Header()
         yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
                     classes='title focused-settings-title', id='new-title')
         with VerticalScroll(classes='form'):
             with Vertical(classes='setting'):
-                yield Label('Profile')
+                with Horizontal(classes='profile-guide-row'):
+                    yield Label('Profile')
+                    yield Static('', classes='action-spacer')
+                    yield Button('Getting started…', id='new-profile-guide')
                 yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
                              value=settings['profile'] if settings['profile'] in profiles else 'custom',
                              allow_blank=False, id='profile')
@@ -2390,6 +2474,14 @@ class NewSandbox(Screen):
         helper = self.query_one('#profile-summary', Static)
         helper.update(shorten(safe_text(summary), width=130, placeholder='…'))
         helper.display = bool(summary)
+        self.guide = ''
+        if isinstance(profile, str) and profile != 'custom':
+            path = self.profile_paths.get(profile, sandbox.ROOT / 'profiles' / profile)
+            try:
+                self.guide = registry.profile_guide(path)
+            except (OSError, ValueError):
+                pass  # Continue reports package validation errors in the form.
+        self.query_one('#new-profile-guide').display = bool(self.guide)
 
     @on(Input.Changed, '#workspace')
     def suggest_name(self, event):
@@ -2403,6 +2495,9 @@ class NewSandbox(Screen):
         event.stop()
         if event.button.id == 'cancel':
             self.action_back()
+        elif event.button.id == 'new-profile-guide':
+            profile = self.query_one('#profile', Select).value
+            self.app.push_screen(ProfileGuide(profile_titles().get(profile, profile), self.guide))
         elif event.button.id == 'continue':
             try:
                 profile = self.query_one('#profile', Select).value
@@ -2447,10 +2542,19 @@ class SettingsForm(Screen):
         self.provider_key_choices = dict(draft.get('_provider_credential_choices', {}))
         self.local_key_choices = dict(draft.get('_local_model_keys', {}))
         self.setting = setting
+        selected = options(draft.get('options'))
+        self.document_search = {key: selected[key] for key in ('knowledge_embedding', 'knowledge_embedding_provider',
+                                                               'knowledge_embedding_url', 'knowledge_embedding_model')}
+        self.document_search_sources = embedding_models.sources(draft) if isinstance(draft.get('model_providers'), list) else {}
+        self.allow_offline_search = editing and self.document_search['knowledge_embedding'] == 'local'
+        if self.document_search['knowledge_embedding'] == 'local' and not editing:
+            self.document_search['knowledge_embedding'] = 'off'
         self.initial_section = EDIT_FORMS[setting].section if setting else section
         self.search_keys = search_keys
-        self.profile_name = (draft['reused_profile']['name'] if draft.get('reused_profile') and draft['profile'] == draft['reused_profile']['path']
-                             else sandbox.load_profile(draft['profile'])['name'])
+        self.profile = (draft['reused_profile'] if draft.get('reused_profile') and draft['profile'] == draft['reused_profile']['path']
+                        else sandbox.load_profile(draft['profile']))
+        self.profile_name = self.profile['name']
+        self.guide = registry.profile_guide(self.profile['path']) if not editing and not defaults else ''
 
     def compose(self):
         value, selected = self.draft, options(self.draft.get('options'))
@@ -2465,15 +2569,20 @@ class SettingsForm(Screen):
             if not self.setting and not review:
                 yield Label('Defaults for new sandboxes' if self.defaults_mode else 'Sandbox settings', classes='title')
             if self.defaults_mode:
-                yield Label('Default profile')
-                yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
-                             allow_blank=False, id='default-profile')
+                with Vertical(classes='spaced-form-fields default-profile-setting'):
+                    with Vertical(classes='setting'):
+                        yield Label('Default profile')
+                        yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
+                                     allow_blank=False, id='default-profile')
                 with Vertical(classes='setting'):
                     yield Label('Workspace parent folder')
                     yield PathField('workspace-parent', value.get('workspace_parent', ''), title='Choose workspace parent folder')
             if not self.defaults_mode and not self.setting:
-                yield Static('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
-                             + '\nWorkspace: ' + value['workspace'], id='review-project', markup=False)
+                with Horizontal(classes='profile-guide-row review-profile-row'):
+                    yield Static('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
+                                 + '\nWorkspace: ' + value['workspace'], id='review-project', markup=False)
+                    if self.guide:
+                        yield Button('Getting started…', id='review-profile-guide')
             for action, category in CATEGORIES.items():
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
@@ -2490,7 +2599,7 @@ class SettingsForm(Screen):
         yield Footer()
 
     def compose_approval_settings(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             with Vertical(classes='setting'):
                 yield Checkbox('Use inner command sandbox', value=selected['inner_sandbox'], id='inner-sandbox')
                 yield Static('Runs Bash with file and network limits. Bash can still edit the workspace.',
@@ -2515,7 +2624,7 @@ class SettingsForm(Screen):
         available=registry.choices('provider')
         available.update({name:row['manifest'].get('description',name) for name,row in saved_rows.items() if name not in available})
         self.provider_forms={}
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             ports = value.get('local_model_ports')
             with Collapsible(title=local_models_title(bool(ports)), id='local-provider'):
                 with Vertical(classes='setting', id='local-enable-setting'):
@@ -2585,7 +2694,7 @@ class SettingsForm(Screen):
                 yield FolderFields(value, self.app.state_root)
 
     def compose_network_settings(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             with Collapsible(title=NETWORK_LABEL, collapsed=True, id='network-section'):
                 with Vertical(classes='setting'):
                     yield Label(NETWORK_MODE_LABEL)
@@ -2617,16 +2726,40 @@ class SettingsForm(Screen):
     def compose_communications(self, category, value, selected):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
 
+    def compose_document_search(self, category, value, selected):
+        with Horizontal(id=category.section):
+            yield Static(self.document_search_summary(), id='document-search-summary')
+            yield Button('Configure…', id='configure-document-search')
+
+    def document_search_summary(self):
+        mode = search_summary(self.document_search, self.document_search_sources)
+        return mode if self.setting else f'{CATEGORIES["document-search"].label} · {mode}'
+
+    @on(Button.Pressed, '#configure-document-search')
+    def configure_document_search(self, event):
+        event.stop()
+        rows = [{'name': name, 'manifest': manifest} for name, manifest in self.provider_forms.items()
+                if self.query_one('#source-' + name, Checkbox).value]
+        hosted = dict(self.draft.get('hosted_connections', {}))
+        credentials = dict(self.provider_key_choices)
+        for group in self.query(HostedProviders):
+            for name, value in group.changes.items():
+                hosted[name] = hosted_models.connection(value)
+                credentials[name] = value.get('credential') or {'key': value.get('key', '')}
+        config = {'model_providers': rows, 'hosted_connections': hosted}
+        dialog = DocumentSearchDialog(self.document_search, self.allow_offline_search, config, credentials,
+                                      self.draft if self.editing else None)
+        self.document_search_sources = dialog.sources
+        self.app.push_screen(dialog, self.document_search_saved)
+
+    def document_search_saved(self, values):
+        if values is not None:
+            self.document_search = values
+            self.query_one('#document-search-summary', Static).update(self.document_search_summary())
+
     def compose_agent_tools(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
-            semantic = selected['knowledge_embedding'] == 'local'
-            with Collapsible(title=file_search_title(semantic), collapsed=True, id='file-search-section'):
-                with Vertical(classes='setting'):
-                    yield Checkbox('Search by meaning', value=semantic, id='knowledge-embedding')
-                    yield Static('Finds related passages in files you choose with /knowledge-index in Pi or FrostPi. '
-                                 'Enabling it downloads about 470 MB for the local model.',
-                                 id='knowledge-model-help', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
                 yield Select([('Lite — search history on demand', 'lite'),
@@ -2661,11 +2794,11 @@ class SettingsForm(Screen):
         if not self.editing and not self.defaults_mode:
             from .repository_ui import GitIdentityFields
             identity = selected['git_identity']
-            with Collapsible(title=category.label + ' · ' + git_identity_summary(identity), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(identity), collapsed=True, id=category.section, classes='spaced-form-fields'):
                 yield GitIdentityFields(identity, setup=True)
         if self.defaults_mode:
             from .repository_ui import GitIdentityFields
-            with Collapsible(title=category.label + ' · ' + git_identity_summary(selected['git_identity']), collapsed=True, id=category.section):
+            with Collapsible(title=category.label + ' · ' + git_identity_summary(selected['git_identity']), collapsed=True, id=category.section, classes='spaced-form-fields'):
                 yield GitIdentityFields(selected['git_identity'], defaults=True, setup=True)
 
     def compose_advisors(self, category, value, selected):
@@ -2676,7 +2809,7 @@ class SettingsForm(Screen):
                 yield Static('Copy an existing host sign-in, or sign in after creation through Settings → Advisors. Credentials stay in the separate advisor container.', id='new-advisor-help')
 
     def compose_resources(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section):
+        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             with Vertical(classes='setting'):
                 yield Label('Container engine')
                 yield Select([('Automatic — prefer rootless Podman', 'auto'), ('Podman', 'podman'), ('Docker', 'docker')],
@@ -2713,11 +2846,12 @@ class SettingsForm(Screen):
         self.browser_changed()
         self.tools_summary()
         if self.initial_section:
-            section = self.query_one('#' + self.initial_section, Collapsible)
-            section.collapsed = False
+            section = self.query_one('#' + self.initial_section)
+            if isinstance(section, Collapsible):
+                section.collapsed = False
             if self.setting:
                 for child in self.query_one('.form', VerticalScroll).children:
-                    if isinstance(child, (Collapsible, CommunicationsForm)):
+                    if isinstance(child, (Collapsible, CommunicationsForm)) or child.id == 'document-search-section':
                         child.display = child is section or child in section.ancestors
                 section.add_class('focused-setting')
                 focus = self.query_one('#' + EDIT_FORMS[self.setting].focus)
@@ -2782,11 +2916,8 @@ class SettingsForm(Screen):
         goals = self.query_one('#goals', Checkbox).value
         recall = self.query_one('#compaction-recall', Select).value
         self.query_one('#skills-section', Collapsible).title = (
-            CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(recall, browser, goals))
-
-    @on(Checkbox.Changed, '#knowledge-embedding')
-    def file_search_changed(self, event):
-        self.query_one('#file-search-section', Collapsible).title = file_search_title(event.value)
+            CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(
+                recall, browser, goals))
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -2936,13 +3067,18 @@ class SettingsForm(Screen):
                 selected['web_access'], key = web_search.collect()
         if self.setting in (None, 'communications'):
             selected['communications'], draft['_communication_keys'] = self.query_one(CommunicationsForm).collect()
+        provider = self.document_search.get('knowledge_embedding_provider')
+        if self.setting in (None, 'document-search', 'model-sources') and provider and provider != CUSTOM:
+            if (provider not in draft['model_providers'] and provider not in draft.get('hosted_connections', {})
+                    and provider not in draft.get('_hosted_changes', {})):
+                raise ValueError('The embedding provider is no longer configured. Choose a provider in Document search.')
         selected['website_groups'] = self.query_one(WebsiteGroups).selected()
         selected.update(approval=self.query_one('#approval', Select).value, inner_sandbox=check('inner-sandbox'),
                         protect_credentials=check('protect-credentials'),
                         protect_browser_credentials=check('protect-browser-credentials'),
                         goals=check('goals'), scheduling=check('scheduling'), question_forms=check('question-forms'), browser=check('browser'),
                         compaction_recall=self.query_one('#compaction-recall', Select).value,
-                        knowledge_embedding='local' if check('knowledge-embedding') else 'off')
+                        **self.document_search)
         selected['disabled_skills'] = [s for s in SKILLS if
             (s in PROFILE_SKILLS.get(self.profile_name, []) and not check('skill-' + s))
             or (s not in PROFILE_SKILLS.get(self.profile_name, []) and s in selected['disabled_skills'])]
@@ -2976,8 +3112,6 @@ class SettingsForm(Screen):
                 sandbox.configure_local_gateway({'engine':actual, 'network':draft['network']}, draft['local_model_ports'], rules)
         if draft['network'] == 'allowlist':
             rules += [r for r in sandbox.parse_rules('\n'.join(provider_rules)) if r not in rules]
-        if draft['network'] == 'allowlist' and not rules and not selected['website_groups'] and not selected['web_access']['enabled'] and not any(selected['communications'].values()) and not draft.get('_hosted_changes') and not draft.get('hosted_connections') and not any(self.provider_forms.get(name, {}).get('inference') for name in draft['model_providers']):
-            raise ValueError('Add an allowed destination or enable host-local models.')
         draft['allowlist'] = '\n'.join(f'{host}:{port}' for host,port in rules)
         sandbox.validate_env(draft['env_file'])
         return draft, key
@@ -3001,6 +3135,9 @@ class SettingsForm(Screen):
         event.stop()
         action = event.button.id
         try:
+            if action == 'review-profile-guide':
+                self.app.push_screen(ProfileGuide(self.profile.get('description') or self.profile_name, self.guide))
+                return
             if action == 'local-server-keys':
                 self.app.push_screen(LocalKeysDialog(self.checked_local_ports(), draft=self.local_key_choices),
                                      self.choose_local_keys)
@@ -3125,9 +3262,13 @@ class SettingsForm(Screen):
                 on_success=choose_models if choose_default else
                 (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None)
         else:
+            next_steps = [] if draft.get('open_editor') else [settings_effects.open_client(editor['mode'])]
+            if self.guide:
+                client = 'Pi' if editor['mode'] == 'pi' else 'FrostPi'
+                next_steps.append(f'Type /profile-guide in {client} for first steps.')
             operation = CreationOperation(self.app.state_root / draft['name'], task, cancellation,
                 retry=lambda: self.submit(draft, key),
-                success_message='' if draft.get('open_editor') else settings_effects.open_client(editor['mode']),
+                success_message=settings_effects.bullets(next_steps) if self.guide else '\n'.join(next_steps),
                 on_success=choose_models if choose_default else
                 open_after_models if draft.get('open_editor') else None)
         self.app.push_screen(operation)
@@ -3148,7 +3289,7 @@ class SettingsForm(Screen):
 
 def banner(version, compact=False):
     title = 'Pi Sandbox Factory' if compact else pyfiglet.figlet_format('Pi Sandbox Factory', font='big', width=120).rstrip()
-    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Pi and FrostPi development environments · v{version}[/]'
+    return f'[bold #f2b544]{title}[/]  [dim]v{version}[/]' if compact else f'[bold #f2b544]{title}[/]\n[dim]Configurable Pi Sandboxes · v{version}[/]'
 
 
 class Cockpit(App):
@@ -3167,9 +3308,12 @@ class Cockpit(App):
     .form > Static { height: auto; margin-bottom: 1; }
     .form > Label { margin-bottom: 0; }
     .form > .title, .form > .group-title { margin-bottom: 1; }
-    #container-list { padding: 1 2 0 3; scrollbar-size-vertical: 1; }
+    #container-list { width: 1fr; margin: 1 3 0 3; padding: 0; scrollbar-size-vertical: 1; }
     #container-list > .setting { margin: 0 1 1 0; }
-    #container-list:focus { outline: tall $primary; scrollbar-color: $primary; }
+    #container-list:focus { outline: none; background: $surface; scrollbar-color: $primary; }
+    .package-pane > .package-list, #library-list { padding: 0 1 0 0; }
+    #library-list > .package-row:last-child, #skill-candidates > .setting:last-child { margin-bottom: 0; }
+    PackagesScreen Button:focus, ImportSkills Button:focus { text-style: bold underline; }
     .package-list, SkillLibrary, #library-list, #skill-candidates { height: auto; }
     #packages-page, #package-kind, #package-kind ContentSwitcher { height: 1fr; }
     #package-kind TabPane { height: 1fr; padding: 0; }
@@ -3201,38 +3345,36 @@ class Cockpit(App):
     Screen:nocolor .titled-confirm #yes { background: #454a51; color: white; }
     .compact-terminal PromptChoice TextArea, .compact-terminal #prompt-text { height: 5; }
     EditPrompt Feedback, #sandbox-prompt-error { color: #ef9a91; }
-    EditPrompt .prompt-invalid:focus { border: tall $error; }
+    EditPrompt TextArea.prompt-invalid:focus { border: tall $error; }
     #prompt-update-notice { color: $warning; }
     Screen:nocolor EditPrompt Feedback, Screen:nocolor #sandbox-prompt-error { color: white; text-style: bold reverse; }
     ProfileDetails #confirm-box { height: auto; max-height: 90%; }
     #profile-details-body { height: auto; max-height: 60vh; padding: 0 1 0 0; }
     .compact-terminal #profile-details-body { max-height: 52vh; }
+    ProfileGuide Markdown { padding: 0; }
+    ProfileGuide .dialog-actions { margin: 1 1 0 0; }
+    .compact-terminal ProfileGuide #profile-details-body { max-height: 56vh; }
+    ProfileGuide #profile-details-body { padding: 0 2 0 0; }
     #skill-discover { margin: 0 0 0 0; }
     #skill-import-error, #skill-selection-error, #library-error { color: #f1f3f5; text-style: bold; }
     SkillSelection Feedback.error { color: #f1f3f5; text-style: bold; }
     #skill-selection-error { margin: 1 0 0 0; }
-    ImportSkills Input { border: solid #707780; }
-    ImportSkills Input:focus { border: solid $primary; }
     .package-row { height: auto; padding: 1 2; margin-bottom: 1; background: #24292f; }
     .package-title { text-style: bold; }
     .package-row > .package-actions { margin: 1 0 0 0; }
     .package-actions Button { margin: 0 2 0 0; }
     .package-actions Button:last-child { margin: 0; }
-    InstallPackage Input { border: solid #707780; }
-    InstallPackage Input:focus { border: solid $primary; }
     #package-error { color: #ef9a91; text-style: bold; height: auto; }
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
-    .setting { height: auto; margin-bottom: 1; }
+    .setting, .default-profile-setting { height: auto; }
+    .setting { margin-bottom: 1; }
     #approval-heading { height: 1; }
-    #approval-heading Label { width: auto; margin: 0 1 0 0; }
+    #approval-heading Label { width: auto; margin: 0 2 0 0; }
     .compact-terminal ApprovalHelp #approval-help { max-height: 52vh; }
     ApprovalHelp .approval-help-note { margin: 0 1 1 0; }
     .browser-vault-setting { margin: 0 0 1 2; }
     .browser-vault-setting.-browser-disabled { opacity: 50%; }
     GitIdentityFields #git-identity-fields > .setting:last-child { margin: 0 0 0 0; }
-    GitIdentityFields Input { border: solid #707780; }
-    GitIdentityFields Input:focus { border: solid $primary; }
-    GitIdentityFields Input.-invalid, GitIdentityFields Input.-invalid:focus { border: double $error; }
     #git-identity-error { color: #f1f3f5; text-style: bold; }
     .provider-setting { margin: 0 0 1 0; }
     .provider-details { height: auto; padding: 1 0 0 2; }
@@ -3240,19 +3382,25 @@ class Cockpit(App):
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
     #model-ports-error, #network-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
-    #model-ports.-invalid, #model-ports.-invalid:focus,
     #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
-    .provider-setting Input.-invalid-credential { border: tall $error; }
-    .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
-    .setting > Button, .setting > .buttons, .setting > .path-row { margin: 0; }
-    AdvisorChoices .setting > .copy-login { margin: 1 0 0 2; }
+    .setting > Checkbox, .setting > Select, .setting > TextArea { margin-bottom: 0; }
+    .setting > Button, .setting > .buttons { margin: 0; }
+    AdvisorChoices .setting > .copy-login { margin: 1 0 0 0; }
     .setting-help { height: auto; color: #b8bdc3; }
     .checkbox-help { padding-left: 4; }
     .section-intro { height: auto; margin-bottom: 1; }
-    Input, Select { margin-bottom: 1; }
+    Input {
+        height: 1; padding: 0 1 0 0; margin: 1 0;
+        border: none; border-left: thick #929ba6; background: #414850; color: #f1f3f5;
+    }
+    Input:focus { border: none; border-left: thick $primary; background: #505965; }
+    Input.-invalid, Input.-invalid-credential, Input.prompt-invalid:focus { border-left: thick $error; }
+    Screen:nocolor Input:focus { background: white; color: black; border-left: thick black; }
+    .setting > Input:last-child, .setting > .path-row:last-child { margin: 1 0 0 0; }
+    Select { margin-bottom: 1; }
     TextArea { height: 9; margin-bottom: 1; }
     .group-title { text-style: bold; margin-bottom: 1; }
     Checkbox { height: 1; border: none; padding: 0; margin: 0 0 1 0; }
@@ -3269,14 +3417,10 @@ class Cockpit(App):
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
     .settings-review .form > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
-    Collapsible > Contents,
-    #agent-section.focused-setting > Contents,
-    #network-search-section.focused-setting > Contents,
-    #hosted-section.focused-setting > Contents { padding: 1 3; }
+    Collapsible > Contents { padding: 1 3; }
     #local-provider > Contents { padding: 1 3 0 3; }
-    #file-search-section > Contents { padding: 1 3 0 3; }
     #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
-    #provider-controls > CollapsibleTitle { padding: 0; }
+    #provider-controls > CollapsibleTitle { padding: 0 1 0 0; }
     #local-provider.-local-off #local-enable-setting { margin: 0; }
     #network-search-section #network-section,
     #network-search-section #web-section { margin: 0; }
@@ -3298,6 +3442,10 @@ class Cockpit(App):
     .tall-terminal .dialog-actions Button { height: 3; padding: 1 1; }
     .dialog-actions Button { min-width: 12; padding: 0 1; }
     .action-spacer { width: 1fr; height: 1; }
+    .profile-guide-row { height: auto; }
+    .profile-guide-row Button { padding: 0 2; margin: 0 1; }
+    .review-profile-row { margin: 0 0 1 0; }
+    .review-profile-row Static { width: 1fr; height: auto; }
     Button { height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
@@ -3308,10 +3456,14 @@ class Cockpit(App):
     .compact-terminal .key-dialog .key-dialog-fields { height: 1fr; max-height: 100%; }
     .compact-terminal .key-dialog.-saved-key-selected,
     .compact-terminal .key-dialog.-saved-key-selected .key-dialog-fields { height: auto; }
-    .compact-terminal .key-dialog #hosted-provider,
-    .key-dialog .credential-key-input { margin: 0; }
+    .compact-terminal .key-dialog #hosted-provider { margin: 0; }
+    .compact-terminal CredentialDialog #credential-dialog { height: auto; }
+    .compact-terminal CredentialDialog #credential-dialog-fields { height: auto; max-height: 55vh; }
+    CredentialFields Select, CredentialFields Select > SelectCurrent,
+    CredentialFields Select:focus > SelectCurrent { height: 1; border: none; padding: 0; }
+    CredentialFields Select { margin: 1 0; }
     .key-dialog #remember-key { margin: 1 0 0 0; }
-    .key-dialog #credential-remember { margin: 1 0 1 2; }
+    .key-dialog #credential-remember { margin: 1 0; }
     SSHScreen #ssh-hosts { height: 5; }
     #web-enable-setting { margin: 0; }
     #web-fields { margin: 1 0 0 0; }
@@ -3333,38 +3485,106 @@ class Cockpit(App):
     #custom-profile-fields, #network-rules-fields, #network-rules-setting, #provider-controls { height: auto; }
     #home > .buttons { margin: 0 0 1 0; }
     #home > .buttons Label { width: 1fr; }
-    .path-row { height: 3; }
+    #home > .buttons Button:last-child { margin-right: 0; }
+    .tall-terminal #home > .buttons, .tall-terminal #home > .buttons Button { height: 3; }
+    .tall-terminal #home > .buttons Button { padding: 1 2; }
+    .tall-terminal #home > .buttons Label { padding: 1 0; }
+    .path-row { height: 1; margin: 1 0; }
     NewSandbox .form > .path-row { padding: 0 1 0 0; }
-    .path-row Input { width: 1fr; margin-bottom: 0; }
-    .path-row Button { height: 3; padding: 1 1; margin: 0; }
-    PathField.path-row Button { padding: 1 2; margin: 0 0 0 1; }
+    .path-row Input { width: 1fr; margin: 0; }
+    .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
     .chat-success { color: #91caa6; }
     DeleteSandbox Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
     DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
     DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
-    #mkdir { margin: 1 0 1 2; }
     .error { color: #b75b52; height: auto; }
     .model-dialog > Feedback, FolderEditor Feedback { margin-top: 1; }
-    .tall-terminal FolderEditor > Vertical, .tall-terminal FolderEditor #folder-fields { height: auto; }
+    .compact-terminal FolderEditor #folder-fields { max-height: 52vh; }
+    #folder-fields > .setting { margin: 0; }
+    #folder-preview { margin: 0 0 1 0; }
+    FolderFields #folder-add { margin: 1 0; }
+    FolderEditor Feedback.error { color: #ff9184; }
     #folder-fields > Checkbox:last-child { margin-bottom: 0; }
-    .hosted-row > .buttons { margin: 1 0 0 0; }
+    .hosted-row > .buttons, #managed-provider-key > .buttons { margin: 1 0 0 0; }
     #iam-fields { margin-bottom: 1; }
     #title-banner { height: auto; padding: 1 3 0 3; }
     .compact-terminal #title-banner { display: none; }
-    #startup-dependencies { height: auto; margin: 0 3; color: #f2b544; }
+    #startup-dependencies { height: auto; margin: 1 3 0 3; padding: 0 1; color: #ef9a91; border-left: solid $error; }
     Screen:nocolor #startup-dependencies { text-style: bold; }
-    #application-update { display: none; height: auto; margin: 0 3; }
-    #application-update-message { width: 1fr; height: auto; }
-    #application-update-run { width: 15; margin: 0 0 0 1; }
+    #application-update {
+        display: none; height: auto; margin: 1 3 0 3; padding: 0 1;
+        background: #30291d; border-left: solid $warning;
+    }
+    #document-search-section { height: auto; min-height: 1; padding: 0 3; margin: 0 0 1 0; background: #25292e; }
+    .settings-review #document-search-section { margin: 0; }
+    #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
+    #document-search-section.focused-setting { padding: 0; background: transparent; }
+    #document-search-summary { width: auto; height: auto; }
+    #configure-document-search { width: auto; margin: 0 0 0 2; padding: 0 2; }
+    #document-search-fields { height: auto; max-height: 68vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
+    #document-search-fields .setting { margin: 0; }
+    DocumentSearchDialog.-simple-mode #document-search-fields { padding-bottom: 1; }
+    #document-search-fields Feedback.error { margin-bottom: 1; }
+    #embedding-catalogue-status { height: auto; margin: 0 0 1 0; }
+    .tall-terminal DocumentSearchDialog .dialog-actions { margin: 0; }
+    #embedding-catalogue-message { height: auto; width: 1fr; }
+    #retry-embedding-catalogue { width: auto; margin: 0 0 0 2; padding: 0 2; }
+    #embedding-server-fields { height: auto; padding: 1 1 0 2; }
+    #embedding-mode-setting { margin: 0; }
+    .spaced-form-fields .setting > Select, .spaced-form-fields .setting > Input { margin: 1 0; }
+    .spaced-form-fields .setting > .path-row { margin: 1 0; }
+    .form .spaced-form-fields .setting > Select:last-child, .form .spaced-form-fields .setting > Input:last-child,
+    .form .spaced-form-fields .setting > .path-row:last-child, .form.spaced-form-fields .setting > .path-row:last-child,
+    .form.spaced-form-fields .setting > Select:last-child, .form.spaced-form-fields .setting > Input:last-child { margin: 1 0 0 0; }
+    .form .spaced-form-fields Button, .form.spaced-form-fields Button,
+    CommunicationsForm Button, SkillSelection Button { padding: 0 2; }
+    DocumentSearchDialog #embedding-catalogue SelectOverlay { max-height: 6; offset: 0 -9; }
+    .compact-terminal DocumentSearchDialog #embedding-catalogue SelectOverlay { offset: 0 -7; }
+    .compact-terminal DocumentSearchDialog #confirm-box { height: auto; max-height: 96%; padding: 0 2; }
+    .compact-terminal DocumentSearchDialog #document-search-fields { height: auto; max-height: 78vh; }
+    .compact-terminal DocumentSearchDialog.-custom-server #confirm-box { padding: 1 2 0 2; border-title-color: #f2b544; }
+    .compact-terminal DocumentSearchDialog.-custom-server #document-search-fields { max-height: 80vh; }
+    .compact-terminal DocumentSearchDialog .dialog-actions { margin: 0; }
+    .compact-terminal DocumentSearchDialog.-field-error #document-search-fields { max-height: 74vh; }
+    .compact-terminal DocumentSearchDialog.-field-error .dialog-actions { margin: 1 0 0 0; }
+    .compact-terminal .spaced-form-fields .setting > Select,
+    .compact-terminal .spaced-form-fields .setting > Select > SelectCurrent { height: 1; border: none; padding: 0; }
+    DocumentSearchDialog Select:focus > SelectCurrent { background: #fff1d2; }
+    DocumentSearchDialog Select:focus > SelectCurrent > #label,
+    DocumentSearchDialog Select:focus > SelectCurrent > .arrow { color: #17191b; text-style: bold; }
+    DocumentSearchDialog Feedback.error { color: #ff9184; text-style: bold; }
+    DocumentSearchDialog:nocolor Feedback.error { color: white; text-style: bold reverse; }
+    #application-update-row { height: auto; }
+    #application-update-message { width: auto; height: auto; text-style: bold; }
+    #application-update-hint { display: none; width: auto; height: auto; margin: 0 0 0 2; }
+    #application-update-run { width: auto; margin: 0 0 0 2; }
+    #factory-update-details { height: auto; max-height: 55vh; padding: 0 2 0 0; }
+    #application-update-help { width: auto; margin: 0 0 0 2; }
+    Screen:nocolor #application-update { border-left: solid white; }
     #home { width: 100%; padding: 1 3; }
     .compact-terminal #home { padding: 1 3 0 3; }
-    .compact-terminal.missing-dependencies #details { padding: 0; min-height: 2; }
-    #dashboard-filters { height: 4; margin: 0 0 1 0; }
+    .compact-terminal.missing-dependencies #details { padding: 0 0 1 0; min-height: 3; }
+    .toolbar-control { height: 1; margin: 0; }
+    Input.toolbar-control, .toolbar-control > SelectCurrent, Button.toolbar-control {
+        height: 1; padding: 0 2;
+    }
+    Input.toolbar-control:focus { background: #34383d; }
+    Button.toolbar-control:focus, Select.toolbar-control:focus > SelectCurrent {
+        background: #fff1d2; color: #17191b; text-style: bold;
+    }
+    Select.toolbar-control:focus > SelectCurrent > #label,
+    Select.toolbar-control:focus > SelectCurrent > .arrow { color: #17191b; }
+    Screen:nocolor Button.toolbar-control:focus,
+    Screen:nocolor Select.toolbar-control:focus > SelectCurrent { background: white; color: black; }
+    #dashboard-filters { height: 3; margin: 0 0 1 0; }
+    #dashboard-filters Label { margin: 0 0 1 0; }
+    #dashboard-search Input { margin: 0; }
     #dashboard-search { width: 1fr; }
-    #dashboard-filters Input, #dashboard-filters Select { height: 3; margin: 0; }
-    #sandbox-sort { width: 22; margin: 0 2; }
-    #sort-direction { margin: 1 0 0 0; height: 3; padding: 1 2; min-width: 16; }
-    #sandboxes { padding-right: 1; height: 1fr; min-height: 5; }
+    #sandbox-sort { width: auto; margin: 0 0 0 2; }
+    #sandbox-sort-controls { height: 1; width: auto; }
+    #sort-field { width: 18; }
+    #sort-direction { min-width: 16; margin: 0 0 0 2; }
+    #sandboxes { height: 1fr; min-height: 4; }
     #details { height: auto; min-height: 3; padding: 1 0; }
     .compact-terminal #details { text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
@@ -3372,7 +3592,7 @@ class Cockpit(App):
     #ssh-key-feedback.unlock-succeeded { color: #87c99b; text-style: bold; }
     Screen:nocolor #ssh-key-feedback { color: white; text-style: bold; }
     Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error { color: white; text-style: bold reverse; }
-    #home-error { height: auto; color: #b75b52; }
+    #home-error { height: auto; margin: 0 0 1 0; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }
     #operation-status { height: auto; color: #f2b544; text-style: bold; margin-bottom: 1; }
@@ -3380,7 +3600,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, EditPrompt,
+    Confirm, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
@@ -3388,23 +3608,34 @@ class Cockpit(App):
     #confirm-box Static { height: auto; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
-    SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 24; }
-    SettingsMenu #settings-actions { height: 1fr; }
+    SandboxAlerts #confirm-box { padding: 1 2; }
+    #sandbox-alerts-list { height: auto; max-height: 56vh; margin: 0 0 1 0; }
+    .sandbox-alert { height: auto; padding: 1 2; margin: 0 0 1 0; background: #25292e; }
+    .sandbox-alert:last-child { margin: 0; }
+    .sandbox-alert-heading { height: auto; }
+    .sandbox-alert-title { width: 1fr; text-style: bold; }
+    .sandbox-alert.-blocking .sandbox-alert-title { color: #ff9184; }
+    .tall-terminal .sandbox-alert-title { height: 3; padding: 1 0; }
+    .sandbox-alert-action { width: auto; margin: 0 0 0 2; padding: 0 2; }
+    .tall-terminal .sandbox-alert-action { height: 3; padding: 1 2; }
+    .sandbox-alert-action:focus { background: #f2b544; color: #17191b; text-style: bold; }
+    Screen:nocolor .sandbox-alert-action:focus { background: white; color: black; }
+    .sandbox-alert-description { height: auto; margin-top: 1; }
+    SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 26; }
+    .compact-terminal SettingsMenu #confirm-box { height: 100%; max-height: 100%; }
+    SettingsMenu #confirm-box > #settings-actions { height: 1fr; max-height: 100%; margin: 0; }
+    InstallPackage #package-error { margin: 0 3; }
     #folder-box { width: 98; max-width: 95%; height: 94%; max-height: 30; padding: 1 2; background: #34383d; border: solid #f2b544; }
-    #folder-box .path-row { align: left middle; }
-    .folder-path-label { width: 12; height: 3; content-align: left middle; }
-    #folder-box .path-row Button { padding: 1 2; margin: 0 0 0 1; }
+    #folder-box .path-row { height: 1; align: left middle; }
+    .folder-input-label { height: 1; margin: 0 0 1 0; }
+    #folder-filename-label { margin: 1 0; }
+    #folder-box .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
     #folder-places { height: 1; margin: 1 0; }
     #folder-columns { height: 1; padding: 0 3 0 6; text-style: bold; background: #31353a; }
     #folder-name-column { width: 1fr; }
     #folder-size-column { width: 10; text-align: right; }
     #folder-modified-column { width: 20; text-align: right; }
     #folder-box DirectoryNavigation { height: 1fr; border: none; }
-    #folder-filename-row { height: 3; align: left middle; margin: 1 0 0 0; }
-    .compact-terminal #folder-filename-row { height: 1; }
-    #folder-filename-row Label { width: 12; }
-    #folder-filename-row Input { width: 1fr; height: 3; }
-    .compact-terminal #folder-filename-row Input { height: 1; border: none; padding: 0 1; }
     #folder-browse-error { margin: 1 0 0 0; text-style: bold; }
     ChatTransfer:nocolor Feedback, FolderPicker:nocolor Feedback { color: #f1f3f5; text-style: bold; }
     #folders { height: 1fr; padding-right: 1; }
@@ -3433,9 +3664,12 @@ class Cockpit(App):
         yield Header()
         yield Static(banner(self.version, compact=True), id='title-banner')
         yield Feedback('', id='startup-dependencies', markup=False)
-        with Horizontal(id='application-update'):
-            yield Static('', id='application-update-message', markup=False)
-            yield Button('Upgrade now', id='application-update-run', variant='primary')
+        with Vertical(id='application-update'):
+            with Horizontal(id='application-update-row'):
+                yield Static('', id='application-update-message', markup=False)
+                yield Button('Upgrade now', id='application-update-run', variant='primary', classes='toolbar-control')
+                yield Button('Update instructions…', id='application-update-help', classes='toolbar-control')
+                yield Static('', id='application-update-hint', markup=False)
         with Vertical(id='home'):
             with Horizontal(classes='buttons'):
                 yield Label('Sandboxes', classes='title')
@@ -3445,11 +3679,16 @@ class Cockpit(App):
             with Horizontal(id='dashboard-filters'):
                 with Vertical(id='dashboard-search'):
                     yield Label('Search sandboxes')
-                    yield Input(id='search')
+                    yield Input(id='search', compact=True, classes='toolbar-control')
                 with Vertical(id='sandbox-sort'):
                     yield Label('Sort by')
-                    yield Select([(label, key) for key, label in [('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('name', 'Name'), ('dev', 'Status')]], value='started', allow_blank=False, id='sort-field')
-                yield Button('Newest first', id='sort-direction')
+                    with Horizontal(id='sandbox-sort-controls'):
+                        yield Select([(label, key) for key, label in [
+                            ('started', 'Last started'), ('edited', 'Last edited'),
+                            ('created', 'Created'), ('name', 'Name'), ('dev', 'Status'),
+                        ]], value='started', allow_blank=False, id='sort-field', compact=True,
+                            classes='toolbar-control')
+                        yield Button('Newest first', id='sort-direction', classes='toolbar-control')
             yield SandboxTable(id='sandboxes', cursor_type='cell', cursor_background_priority='renderable',
                                cursor_foreground_priority='renderable', zebra_stripes=True)
             yield Static('Choose a sandbox, or create your first one.', id='details', markup=False)
@@ -3461,6 +3700,8 @@ class Cockpit(App):
         yield Footer()
 
     def on_mount(self):
+        self.screen.AUTO_FOCUS = '#new'
+        self.query_one('#new', Button).focus()
         for key, label in [('name', 'Name'), ('open', ''), ('alerts', 'Alerts'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
             self.query_one('#sandboxes', DataTable).add_column(label, key=key)
         self.action_refresh_inventory()
@@ -3488,10 +3729,15 @@ class Cockpit(App):
     def show_update(self, latest):
         self.available_version = latest
         self.query_one('#application-update-message', Static).update(
-            f'v{latest} · Run pipx upgrade pi-sandbox-factory')
+            f'Update available · v{latest}')
         button = self.query_one('#application-update-run', Button)
-        button.disabled = not (updates.pipx_install() and shutil.which('pipx'))
-        button.tooltip = 'Available for pipx installations.' if button.disabled else None
+        pipx_install = updates.pipx_install()
+        button.display = pipx_install and bool(shutil.which('pipx'))
+        button.disabled = not button.display
+        hint = self.query_one('#application-update-hint', Static)
+        hint.display = pipx_install and not button.display
+        hint.update('Install pipx to upgrade.')
+        self.query_one('#application-update-help', Button).display = not pipx_install
         self.query_one('#application-update').display = True
 
     def confirm_update(self):
@@ -3505,10 +3751,17 @@ class Cockpit(App):
             return
         try:
             with self.suspend():
-                subprocess.run(updates.UPGRADE_COMMAND, check=True)
+                subprocess.run(updates.UPGRADE_COMMAND, check=True, stderr=subprocess.PIPE, text=True, errors='replace')
         except (OSError, subprocess.SubprocessError) as error:
-            self.query_one('#application-update-message', Static).update(
-                f'Upgrade failed: {error}. Retry or run pipx upgrade pi-sandbox-factory.')
+            if isinstance(error, subprocess.CalledProcessError):
+                detail = f'pipx exited with status {error.returncode}.'
+                diagnostic = safe_text(error.stderr or '').strip()
+            else:
+                detail = 'Could not run pipx.'
+                diagnostic = safe_text(error)
+            message = '\n\n'.join(filter(None, (detail, diagnostic,
+                'To retry from a terminal, run:\npipx upgrade pi-sandbox-factory')))
+            self.push_screen(FactoryUpdateDetails('Factory upgrade failed', message))
         else:
             self.exit(result=updates.RELAUNCH)
 
@@ -3699,6 +3952,15 @@ class Cockpit(App):
         if action == 'application-update-run':
             self.confirm_update()
             return
+        if action == 'application-update-help':
+            self.push_screen(FactoryUpdateDetails('Update Factory manually',
+                'If you run Factory from a Git checkout, open that checkout and run:\n'
+                'git pull --ff-only\n\n'
+                'If you installed Factory with pip, activate its Python environment and run:\n'
+                'python -m pip install --upgrade \\\n'
+                '  git+https://github.com/kyuz0/pi-sandbox-factory.git\n\n'
+                'Restart Factory after updating.'))
+            return
         try:
             self.perform_action(action, record=record)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
@@ -3716,6 +3978,8 @@ class Cockpit(App):
         profile = config.get('profile', {})
         value = {**DEFAULT_SETTINGS, **config, 'profile': profile.get('registry_name', profile.get('name', 'base')),
                  'options': options(config.get('options')), 'local_model_ports': config.get('local_model_ports')}
+        if 'model_providers' not in config and value['local_model_ports']:
+            value['model_providers'] = {'local': {}}
         if value['profile'] not in profile_titles():
             value['profile'] = profile['path']
         value['allowlist'] = (self.state_root / name / 'allowlist.txt').read_text()
@@ -3752,6 +4016,9 @@ class Cockpit(App):
                              lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'containers':
             self.push_screen(ContainersScreen(record))
+        elif action == 'profile-guide':
+            profile = sandbox.selected_profile(config)
+            self.push_screen(ProfileGuide(profile.get('description') or profile['name'], registry.profile_guide(profile['path'])))
         elif action == 'alerts' and sandbox_alerts(record):
             self.push_screen(SandboxAlerts(record),
                              lambda choice: self.perform(choice, record=record) if choice else None)

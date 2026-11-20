@@ -118,7 +118,12 @@ class HostedUITests(unittest.TestCase):
                 self.assertIs(app.focused, app.screen.query_one('#managed-key', Input))
                 feedback = app.screen.query_one('#credential-input-error', Static)
                 self.assertIn('Enter an API key.', str(feedback.render()))
-                self.assertEqual(feedback.region.y, app.focused.region.bottom)
+                self.assertEqual(feedback.region.y - app.focused.region.bottom, 1)
+                app.screen.query_one('#remember-key', Checkbox).value = True
+                app.screen.query_one('#replace-key', Select).value = work
+                await pilot.pause()
+                apply = app.screen.query_one('#credential-apply', Button)
+                self.assertIs(app.screen.get_widget_at(apply.region.x, apply.region.y)[0], apply)
                 app.screen.query_one('#saved-key', Select).value = work
                 app.screen.query_one('#credential-apply', Button).focus()
                 await pilot.press('enter')
@@ -187,6 +192,11 @@ class HostedUITests(unittest.TestCase):
                 app.screen.query_one('#local-key-choose', Button).focus()
                 await pilot.press('enter')
                 await pilot.pause()
+                app.screen.query_one('#remember-key', Checkbox).value = True
+                app.screen.query_one('#replace-key', Select).value = work
+                await pilot.pause()
+                apply = app.screen.query_one('#credential-apply', Button)
+                self.assertIs(app.screen.get_widget_at(apply.region.x, apply.region.y)[0], apply)
                 app.screen.query_one('#saved-key', Select).value = work
                 app.screen.query_one('#credential-apply', Button).focus()
                 await pilot.press('enter')
@@ -233,7 +243,8 @@ class HostedUITests(unittest.TestCase):
                     remember.value = True
                     await pilot.pause()
                     self.assertEqual(str(remember.label), label)
-                    self.assertEqual(app.screen.query_one('#credential-remember').region.x, key.region.x + 2)
+                    key_name = app.screen.query_one('#key-label', Input)
+                    self.assertEqual(key_name.region.x, remember.region.x)
                     remember.value = False
                     app.screen.query_one('#hosted-provider',Select).value='amazon-bedrock';await pilot.pause()
                     app.screen.query_one('#hosted-method',Select).value='iam';await pilot.pause()

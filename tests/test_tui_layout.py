@@ -16,6 +16,7 @@ from pi_sandbox_factory.sandbox_tui import (
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
+from tui_geometry import check_checkbox_alignment
 
 
 class TUILayoutTests(unittest.TestCase):
@@ -60,7 +61,7 @@ class TUILayoutTests(unittest.TestCase):
         await pilot.pause()
 
     async def test_workspace_controls_align_and_remain_reachable(self):
-        for size in ((80, 24), (120, 40)):
+        for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
                 await self.ready(app, pilot)
@@ -69,11 +70,13 @@ class TUILayoutTests(unittest.TestCase):
                 field = app.screen.query_one('#workspace', Input)
                 browse = app.screen.query_one('#browse', Button)
                 checkbox = app.screen.query_one('#mkdir', Checkbox)
+                check_checkbox_alignment(app.screen)
                 self.assertEqual(browse.region.y, field.region.y)
                 self.assertEqual(browse.region.height, field.region.height)
-                self.assertEqual(field.region.height, 3)
+                self.assertEqual(field.region.height, 1)
                 self.assertEqual(checkbox.region.y, field.region.bottom + 1)
-                self.assertEqual(checkbox.region.x, field.region.x + 2)
+                self.assertEqual(checkbox.region.x, field.region.x)
+                self.assertEqual(checkbox.region.x, app.screen.query_one('#name').region.x)
                 primary = app.screen.query_one('#continue', Button)
                 actions = app.screen.query_one('.wizard-actions')
                 self.assertEqual(primary.region.right, actions.content_region.right)
@@ -130,8 +133,9 @@ class TUILayoutTests(unittest.TestCase):
                 await pilot.pause()
                 self.assertTrue(copy.display)
                 self.assertFalse(copy.disabled)
+                check_checkbox_alignment(app.screen)
                 parent = choices.query_one('#' + prefix + 'claude', Checkbox)
-                self.assertEqual(copy.region.x, parent.region.x + 2)
+                self.assertEqual(copy.region.x, parent.region.x)
                 self.assertEqual(copy.region.y, parent.region.bottom + 1)
                 copy.value = True
                 self.assertEqual(choices.imports(), ['claude'])
@@ -217,18 +221,21 @@ class TUILayoutTests(unittest.TestCase):
 
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
-        expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
+        expected_order = ['Model Providers', 'Editor', 'Folders', 'Document search', 'Network and Web Search', 'Approvals & sandbox',
                           'Agent tools', 'System prompt', 'SSH & Git', 'Advisors', 'Communications',
                           'Skills', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
-            await app.push_screen(SettingsForm(self.draft()))
+            draft = self.draft()
+            draft['local_model_ports'] = self.record['config']['local_model_ports']
+            await app.push_screen(SettingsForm(draft))
             await pilot.pause()
             sections = {category.section for category in CATEGORIES.values()}
-            category_widgets = [section for section in app.screen.query(Collapsible) if section.id in sections]
-            titles = {section.id: section.title for section in category_widgets}
-            creation = [section.title.split(' · ', 1)[0] for section in category_widgets]
+            category_widgets = [section for section in app.screen.query('*') if section.id in sections]
+            titles = {section.id: (section.title if isinstance(section, Collapsible) else
+                                   str(section.query_one('#document-search-summary').render())) for section in category_widgets}
+            creation = [title.split(' · ', 1)[0] for title in titles.values()]
             models = app.screen.query_one('#hosted-section', Collapsible)
             self.assertTrue(models.collapsed)
             self.assertIs(app.focused, models.query_one('CollapsibleTitle'))
@@ -248,7 +255,7 @@ class TUILayoutTests(unittest.TestCase):
             self.assertEqual(creation, expected_order)
             self.assertEqual(editing, expected_order)
             for action in ('models', 'editor-settings', 'network-settings',
-                           'approval-settings', 'agent-tools', 'ssh-settings', 'communications'):
+                           'approval-settings', 'agent-tools', 'document-search', 'ssh-settings', 'communications'):
                 index = list(CATEGORIES).index(action)
                 self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
             self.assertIn('Model Providers · Local models on · 1 enabled', prompts)
@@ -294,8 +301,10 @@ class TUILayoutTests(unittest.TestCase):
                     local=form.query_one('#local-provider',Collapsible)
                     self.assertTrue(section.collapsed)
                     self.assertTrue(local.collapsed)
-                    self.assertEqual(local.title, 'Local models · On')
+                    self.assertEqual(local.title, 'Local models · Off')
                     control=form.query_one('#local-models',Checkbox)
+                    control.value = True
+                    await pilot.pause()
                     help_text = control.parent.query_one('.checkbox-help', Static)
                     copy=(str(control.label), str(help_text.render()))
                     field=form.query_one('#model-ports',Input)
@@ -324,6 +333,35 @@ class TUILayoutTests(unittest.TestCase):
                     self.assertFalse(field.disabled)
                     self.assertTrue(form.query_one('#local-model-details').display)
 
+    async def test_focused_settings_align_and_count_field_gaps_once(self):
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = self.app()
+            async with app.run_test(size=size) as pilot:
+                await self.ready(app, pilot)
+                for setting, field_id in (('agent-tools', 'compaction-recall'),
+                                          ('approval-settings', 'approval'), ('resources', 'memory')):
+                    form = SettingsForm(self.draft(), editing=True, setting=setting)
+                    await app.push_screen(form)
+                    await pilot.pause()
+                    field = form.query_one('#' + field_id)
+                    group = field.parent
+                    self.assertEqual(field.region.x, form.query_one('.wizard-actions').content_region.x)
+                    self.assertEqual(field.region.y - group.children[0].region.bottom, 1)
+                    if field_id == 'memory':
+                        next_label = form.query_one('#env-file').parent.parent.query_one(Label)
+                        self.assertEqual(field.region.height, 1)
+                        self.assertEqual(next_label.region.y - field.region.bottom, 1)
+                        env_file = form.query_one('#env-file-field')
+                        browse = env_file.query_one(Button)
+                        seed_label = form.query_one('#pi-config-field').parent.query_one(Label)
+                        self.assertEqual(browse.region.height, 1)
+                        self.assertEqual(browse.region.y, env_file.query_one(Input).region.y)
+                        self.assertEqual(seed_label.region.y - env_file.region.bottom, 1)
+                    else:
+                        self.assertEqual(group.query_one('.setting-help').region.y - field.region.bottom, 1)
+                        self.assertEqual(field.region.height, 1 if size[1] < 32 else 3)
+                    await app.pop_screen()
+
     async def test_agent_tools_summary_tracks_visible_controls(self):
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -333,15 +371,6 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.pause()
             section = form.query_one('#skills-section', Collapsible)
             self.assertIn('Agent tools', section.title)
-            file_search = form.query_one('#file-search-section', Collapsible)
-            embeddings = form.query_one('#knowledge-embedding', Checkbox)
-            help_text = form.query_one('#knowledge-model-help', Static)
-            copy = (str(embeddings.label), str(help_text.render()))
-            self.assertEqual(file_search.title, 'File search · Keywords')
-            self.assertTrue(file_search.collapsed)
-            self.assertFalse(embeddings.value)
-            self.assertNotIn('Search by meaning', section.title)
-            embeddings.value = True
             form.query_one('#browser', Checkbox).value = True
             form.query_one('#goals', Checkbox).value = False
             form.query_one('#compaction-recall', Select).value = 'full'
@@ -349,9 +378,110 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn('Browser on', section.title)
             self.assertIn('Recall Full', section.title)
             self.assertIn('Goals off', section.title)
-            self.assertEqual(file_search.title, 'File search · Keywords and meaning')
-            self.assertEqual((str(embeddings.label), str(help_text.render())), copy)
-            self.assertNotIn('Search by meaning', section.title)
+            self.assertFalse(form.query('#knowledge-embedding, #embedding-url, #embedding-model'))
+
+    async def test_document_search_dialog_cancel_validation_and_save_draft(self):
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            draft = self.draft()
+            form = SettingsForm(draft)
+            await app.push_screen(form)
+            await pilot.pause()
+            configure = form.query_one('#configure-document-search', Button)
+            self.assertEqual(form.query_one('#document-search-section').region.height, 1)
+            configure.focus()
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            dialog = app.screen
+            self.assertFalse(dialog.query_one('#embedding-server-fields').display)
+            dialog.query_one('#knowledge-embedding', Select).value = 'endpoint'
+            await pilot.pause()
+            self.assertTrue(dialog.query_one('#embedding-server-fields').display)
+            self.assertTrue(dialog.query_one('#save-document-search', Button).disabled)
+            dialog.query_one('#embedding-url', Input).value = 'bad'
+            await pilot.pause()
+            self.assertTrue(dialog.query_one('#embedding-url-error').display)
+            dialog.query_one('#embedding-url', Input).value = 'https://vectors.example/v1'
+            await pilot.pause()
+            dialog.query_one('#embedding-model', Input).value = 'invalid model'
+            await pilot.pause()
+            self.assertTrue(dialog.query_one('#embedding-model-error').display)
+            dialog.query_one('#embedding-model', Input).value = 'test-embedding'
+            await pilot.press('escape')
+            self.assertEqual(form.document_search['knowledge_embedding'], 'off')
+            await pilot.click('#configure-document-search')
+            await pilot.pause()
+            dialog = app.screen
+            self.assertEqual(dialog.query_one('#knowledge-embedding', Select).value, 'off')
+            dialog.query_one('#knowledge-embedding', Select).value = 'endpoint'
+            await pilot.pause()
+            dialog.query_one('#embedding-url', Input).value = 'https://vectors.example/v1'
+            dialog.query_one('#embedding-model', Input).value = 'test-embedding'
+            await pilot.pause()
+            await pilot.click('#save-document-search')
+            await pilot.pause()
+            self.assertIs(app.screen, form)
+            self.assertIn('Semantic search', str(form.query_one('#document-search-summary').render()))
+            self.assertEqual(form.collect()[0]['options']['knowledge_embedding_model'], 'test-embedding')
+            self.assertEqual(draft['options'].get('knowledge_embedding', 'off'), 'off')
+
+    async def test_existing_offline_search_can_be_kept_only_on_its_saved_sandbox(self):
+        app = self.app()
+        draft = self.draft()
+        draft['options']['knowledge_embedding'] = 'local'
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            for editing in (True, False):
+                form = SettingsForm(draft, editing=editing, setting='document-search' if editing else None)
+                await app.push_screen(form)
+                await pilot.pause()
+                form.query_one('#configure-document-search').focus()
+                await pilot.press('enter')
+                await pilot.pause()
+                dialog = app.screen
+                choice = dialog.query_one('#knowledge-embedding', Select)
+                self.assertEqual(choice.value, 'local' if editing else 'off')
+                if not editing:
+                    from textual.widgets._select import InvalidSelectValueError
+                    with self.assertRaises(InvalidSelectValueError):
+                        choice.value = 'local'
+                await pilot.click('#save-document-search')
+                await pilot.pause()
+                self.assertEqual(form.document_search['knowledge_embedding'], 'local' if editing else 'off')
+                await app.pop_screen()
+
+    async def test_agent_tools_excludes_configured_document_search_and_menu_opens_it_separately(self):
+        self.record['config']['options'] = {'knowledge_embedding': 'endpoint',
+            'knowledge_embedding_url': 'https://vectors.example/v1', 'knowledge_embedding_model': 'test-embedding'}
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            for action in ('agent-tools', 'document-search'):
+                await pilot.click('#settings')
+                menu = app.screen.query_one('#settings-actions', OptionList)
+                index = next(i for i, (_, key) in enumerate(SettingsMenu.ACTIONS) if key == action)
+                prompt = str(menu.get_option_at_index(index).prompt)
+                menu.highlighted = index
+                menu.focus()
+                await pilot.press('enter')
+                await pilot.pause()
+                form = app.screen
+                self.assertFalse(form.query('#embedding-url, #embedding-model, #knowledge-embedding'))
+                if action == 'agent-tools':
+                    self.assertFalse(form.query_one('#document-search-section').display)
+                    self.assertNotIn('search', prompt.lower())
+                    self.assertNotIn('search', form.query_one('#skills-section', Collapsible).title.lower())
+                else:
+                    self.assertEqual(prompt, 'Document search · Semantic search')
+                    self.assertEqual(app.focused.id, 'configure-document-search')
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    self.assertEqual(app.screen.query_one('#embedding-model', Input).value, 'test-embedding')
+                    await pilot.press('escape')
+                await pilot.press('escape')
+                await pilot.pause()
 
     async def test_research_profile_picker_explains_the_sources_and_keeps_actions_visible(self):
         app = self.app()
@@ -361,9 +491,17 @@ class TUILayoutTests(unittest.TestCase):
             await app.push_screen(screen)
             helper = screen.query_one('#profile-summary', Static)
             picker = screen.query_one('#profile', Select)
+            guide = screen.query_one('#new-profile-guide', Button)
+            self.assertFalse(guide.display)
             picker.value = 'deep-research'
             await pilot.pause()
-            self.assertIn('web and use your files', str(helper.render()))
+            self.assertIn('Web Search and subagents start on', str(helper.render()))
+            self.assertTrue(guide.display)
+            await pilot.click('#new-profile-guide')
+            await pilot.pause()
+            self.assertIn('Compare Python', app.screen.guide)
+            self.assertLess(app.screen.query_one('#close-profile-guide', Button).region.bottom, 24)
+            await pilot.press('escape')
             picker.value = 'local-knowledge'
             await pilot.pause()
             self.assertIn('Web Search starts off', str(helper.render()))
@@ -390,7 +528,9 @@ class TUILayoutTests(unittest.TestCase):
         app = self.app()
         async with app.run_test(size=(120, 40)) as pilot:
             await self.ready(app, pilot)
-            await app.push_screen(SettingsForm(self.draft()))
+            draft = self.draft()
+            draft['local_model_ports'] = '8000'
+            await app.push_screen(SettingsForm(draft))
             form = app.screen
             ports = form.query_one('#model-port-setting')
             section = form.query_one('#hosted-section', Collapsible)
@@ -418,7 +558,7 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.pause()
             recall = form.query_one('#compaction-recall', Select)
             help_text = recall.parent.query_one('.setting-help')
-            self.assertEqual(help_text.region.y, recall.region.bottom)
+            self.assertEqual(help_text.region.y, recall.region.bottom + 1)
             await pilot.press('escape')
             draft = self.draft()
             draft['options']['web_access']['enabled'] = True
@@ -590,7 +730,7 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertTrue(str(help_text.render()))
                 checkbox_copy[checkbox.id] = (str(checkbox.label), str(help_text.render()))
             self.assertIs(approval.parent, explanation.parent.parent)
-            self.assertEqual(approval.region.y, explanation.region.bottom)
+            self.assertEqual(approval.region.y, explanation.region.bottom + 1)
             explanation.scroll_visible(animate=False)
             await pilot.pause()
             await pilot.click('#explain-approval')
@@ -641,7 +781,7 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertEqual(profile.region.y, labels[1].region.bottom)
                 workspace = app.screen.query_one('#workspace')
                 label = next(x for x in labels if str(x.render()) == 'Workspace')
-                self.assertEqual(workspace.region.y, label.region.bottom)
+                self.assertEqual(workspace.region.y, label.region.bottom + 1)
                 self.assertLessEqual(app.screen.query_one('#name').region.bottom,
                                      app.screen.query_one('.wizard-actions').region.y)
                 await app.pop_screen()
@@ -665,6 +805,8 @@ class TUILayoutTests(unittest.TestCase):
                 button = app.screen.query_one('#operation-back')
                 bar = app.screen.query_one('.wizard-actions')
                 self.assertIs(button.parent, bar)
+                self.assertIs(app.focused, button)
+                self.assertGreaterEqual(button.content_region.width, len(str(button.label)))
                 self.assertEqual(button.region.x, 3)
                 self.assertGreater(button.region.y, bar.region.y)
                 self.assertLess(button.region.bottom, app.screen.query_one('Footer').region.y)

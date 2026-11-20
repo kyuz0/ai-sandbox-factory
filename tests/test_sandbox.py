@@ -252,7 +252,7 @@ class CreationInterruptTests(LifecycleTestCase):
                 (workspace / 'keep.txt').write_text('keep')
                 state = root / 'interrupted-demo'
                 args = sandbox.argparse.Namespace(profile='base', workspace=str(workspace), pi_config=None,
-                    allowlist=None, allow_domain=['example.com:443'], env_file=None, engine='docker',
+                    allowlist=None, allow_domain=[], env_file=None, engine='docker',
                     name=state.name, memory='4g')
                 outcomes = [profile] * (interrupt_at - 1) + [KeyboardInterrupt()]
                 with patch.object(sandbox, 'choose_engine', return_value='docker'), \
@@ -267,7 +267,11 @@ class CreationInterruptTests(LifecycleTestCase):
                      patch.object(sandbox.os, 'getgid', return_value=1000), \
                      patch.object(sandbox, 'snapshot_profile', return_value=profile):
                     sandbox.create(args, state)
-                self.assertTrue((state / 'config.json').exists())
+                saved = json.loads((state / 'config.json').read_text())
+                self.assertEqual(saved['model_providers'], [])
+                self.assertFalse(saved['local_model_gateway'])
+                self.assertTrue((state / 'squid.conf').read_text().strip().endswith('http_access deny all'))
+                self.assertNotIn('http_access allow', (state / 'squid.conf').read_text())
                 self.assertEqual((workspace / 'keep.txt').read_text(), 'keep')
 
     def test_delete_recovers_missing_config_but_rejects_unrecognized_contents(self):

@@ -231,7 +231,9 @@ class LocalKeysDialog(ModalScreen):
     LocalKeysDialog { align: center middle; background: #000000 70%; }
     #local-keys { width: 72; max-width: 94%; height: auto; padding: 1 2;
                   background: #34383d; border: solid #f2b544; }
-    #local-keys .buttons { margin: 0; }
+    #local-key-port { margin: 1 0; }
+    #local-keys .buttons { margin: 0 0 1 0; }
+    #local-keys .buttons Button { padding: 0 2; }
     #local-keys .dialog-actions { margin: 1 0 0 0; }
     '''
 
