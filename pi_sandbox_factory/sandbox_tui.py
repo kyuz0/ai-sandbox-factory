@@ -16,7 +16,7 @@ from rich.style import Style
 from rich.text import Text
 from typing import Optional
 
-from . import sandbox, editor_settings, sandbox_ssh
+from . import sandbox, editor_settings, sandbox_ssh, prompt_library
 from .creation import Creation, Cancelled
 from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
@@ -24,7 +24,7 @@ from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
     CATEGORIES, EDIT_FORMS, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
-    PROVIDER_PLUGINS_LABEL, WEB_SEARCH_LABEL,
+    PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm, communications_summary
@@ -36,6 +36,7 @@ from . import hosted_models, inference, provider_credentials
 from .tui_widgets import Checkbox, Feedback
 from . import sandbox_skills
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
+from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options, endpoint_rule, memory_limit, write_json
@@ -144,6 +145,7 @@ def copy_draft(record, state_root):
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
     value['editor'] = editor_settings.copy_choice(editor_settings.load(Path(state_root) / record['name']))
     value['allowlist'] = (Path(state_root) / record['name'] / 'allowlist.txt').read_text()
+    value['system_prompt'] = prompt_library.selection(Path(state_root) / record['name'])
     for row in value['options']['web_access']['providers'].values():
         row['has_key'] = False
     return value
@@ -219,6 +221,10 @@ class Service:
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
                     '--engine', draft['engine'], '--options-file', str(selected)]
+            if 'system_prompt' in draft:
+                prompt_file = Path(temp) / 'system-prompt.json'
+                write_json(prompt_file, draft['system_prompt'])
+                args += ['--system-prompt-file', str(prompt_file)]
             if creation_token:
                 args += ['--creation-token', creation_token]
             folder_file = Path(temp) / 'folders.json'
@@ -898,13 +904,16 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action, *, cancel_label='Cancel'):
-        super().__init__()
+    def __init__(self, message, action, *, cancel_label='Cancel', title=None):
+        super().__init__(classes='titled-confirm' if title else None)
         self.message, self.action = message, action
         self.cancel_label = cancel_label
+        self.title_text = title
 
     def compose(self):
         with Vertical(id='confirm-box'):
+            if self.title_text:
+                yield Label(self.title_text, markup=False)
             yield Static(self.message, markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button(self.cancel_label, id='cancel', variant='primary')
@@ -1060,10 +1069,11 @@ class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Close')]
     ACTIONS = [(category.label, action) for action, category in CATEGORIES.items()]
 
-    def __init__(self, name, config, editor_mode):
+    def __init__(self, name, config, editor_mode, system_prompt=None):
         super().__init__()
         self.sandbox_name = name
         self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
+        self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else 'None'
         if isinstance(config, dict) and config.get('engine'):
             local = bool(config.get('local_model_ports'))
             count = (int(local) + sum(row['name'] != 'local' for row in model_providers.selections(config))
@@ -1781,6 +1791,9 @@ class PackagesScreen(Screen):
                 with TabPane('Skills', id='skills'):
                     with VerticalScroll(classes='package-pane'):
                         yield SkillLibrary()
+                with TabPane(SYSTEM_PROMPT_LIBRARY_LABEL, id='system-prompts'):
+                    with VerticalScroll(classes='package-pane'):
+                        yield PromptLibrary()
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='packages-back')
             yield Button('Install profile…', id='package-install', variant='primary')
@@ -1795,7 +1808,7 @@ class PackagesScreen(Screen):
         self.query_one(Tabs).focus()
 
     async def on_screen_resume(self):
-        if self.is_mounted:
+        if self.is_mounted and self.kind != 'system-prompts':
             await self.show_packages()
 
     @on(TabbedContent.TabActivated, '#package-kind')
@@ -1810,6 +1823,10 @@ class PackagesScreen(Screen):
         if kind == 'skills':
             install.label = 'Add skills…'
             await self.query_one(SkillLibrary).refresh_library()
+            return
+        if kind == 'system-prompts':
+            install.label = 'New system prompt…'
+            await self.query_one(PromptLibrary).refresh_library()
             return
         install.label = 'Install ' + kind + '…'
         listing = self.query_one(f'#{kind}-packages', Vertical)
@@ -1834,6 +1851,8 @@ class PackagesScreen(Screen):
         if event.button.id == 'package-install':
             if self.kind == 'skills':
                 self.query_one(SkillLibrary).add_skills()
+            elif self.kind == 'system-prompts':
+                self.query_one(PromptLibrary).edit()
             else:
                 self.app.push_screen(InstallPackage(self.kind))
             return
@@ -2677,6 +2696,19 @@ class SettingsForm(Screen):
                 yield Label('Seed Pi agent directory · optional, fresh configuration by default')
                 yield Input(value.get('pi_config') or '', id='pi-config', disabled=self.editing)
 
+    def compose_system_prompt(self, category, value, selected):
+        if not self.editing and not self.defaults_mode:
+            current = value.get('system_prompt')
+            title = category.label + ' · ' + (current['name'] if current else 'None')
+            with Collapsible(title=title, collapsed=True, id=category.section):
+                yield PromptChoice(current, help_text='Pi uses this prompt in every chat in the new sandbox.')
+
+    @on(Select.Changed, '#system-prompt-choice')
+    def system_prompt_changed(self):
+        value = self.query_one(PromptChoice).selected()
+        self.query_one('#system-prompt-section', Collapsible).title = (
+            SYSTEM_PROMPT_LABEL + ' · ' + (value['name'] if value else 'None'))
+
     def on_mount(self):
         self.approval_summary()
         self.network_changed()
@@ -2895,6 +2927,7 @@ class SettingsForm(Screen):
                                               if port in self.local_key_choices}
         if not self.editing and not self.defaults_mode:
             draft.update(self.query_one(FolderFields).collect(private_paths=[inp('pi-config')]))
+            draft['system_prompt'] = self.query_one(PromptChoice).selected()
         selected = options(draft.get('options'))
         if not self.editing:
             from .repository_ui import GitIdentityFields
@@ -3145,6 +3178,25 @@ class Cockpit(App):
         color: white; text-style: bold;
     }
     .package-pane { height: 1fr; padding: 1 1 0 0; }
+    #system-prompts .package-pane { padding: 1 0 0 0; }
+    PromptLibrary, PromptChoice, #system-prompt-preview { height: auto; }
+    PromptChoice TextArea, #prompt-text { height: 7; padding: 0 1; }
+    #system-prompt-section { margin: 1 0; }
+    .settings-review #system-prompt-section.-collapsed { margin: 0; }
+    #system-prompt-preview { margin: 1 0 0 0; }
+    #system-prompt-preview > TextArea { margin: 0; }
+    #edit-prompt-copy { margin: 1 0 0 0; }
+    #prompt-fields { height: auto; max-height: 56vh; }
+    #prompt-fields > .setting:last-of-type { margin-bottom: 0; }
+    EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
+    .titled-confirm #yes { background: $error; color: white; }
+    .titled-confirm Button:focus { text-style: bold underline; }
+    Screen:nocolor .titled-confirm #yes { background: #454a51; color: white; }
+    .compact-terminal PromptChoice TextArea, .compact-terminal #prompt-text { height: 5; }
+    EditPrompt Feedback, #sandbox-prompt-error { color: #ef9a91; }
+    EditPrompt .prompt-invalid:focus { border: tall $error; }
+    #prompt-update-notice { color: $warning; }
+    Screen:nocolor EditPrompt Feedback, Screen:nocolor #sandbox-prompt-error { color: white; text-style: bold reverse; }
     ProfileDetails #confirm-box { height: auto; max-height: 90%; }
     #profile-details-body { height: auto; max-height: 60vh; padding: 0 1 0 0; }
     .compact-terminal #profile-details-body { max-height: 52vh; }
@@ -3315,7 +3367,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, EditPrompt { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
@@ -3679,8 +3731,8 @@ class Cockpit(App):
                 saved = self.service.config(name) if config.get('engine') else config
             except (OSError, ValueError):
                 saved = {}
-            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode']),
-                             lambda choice: self.perform(choice) if choice else None)
+            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode'], prompt_library.selection(state)),
+                             lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'folders':
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':
@@ -3690,6 +3742,11 @@ class Cockpit(App):
             self.push_screen(SSHScreen(record, key_focus=focus))
         elif action == 'advisors':
             self.push_screen(AdvisorsScreen(record))
+        elif action == 'system-prompt':
+            if not config.get('engine'):
+                raise ValueError('Repair the saved configuration before editing it.')
+            common = Path(config['common']['path'])
+            self.push_screen(SandboxPromptScreen(name, self.state_root / name, (common / 'system-prompt.mjs').is_file()))
         elif action == 'models':
             self.push_screen(ModelsScreen(record))
         elif action in EDIT_FORMS:

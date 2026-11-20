@@ -1,0 +1,80 @@
+"""Reusable system prompts and the saved copy assigned to each sandbox."""
+
+import json
+from pathlib import Path
+import uuid
+
+from . import registry
+from .sandbox_options import write_json
+
+LIBRARY_FILE = 'system-prompts.json'
+SANDBOX_FILE = 'runtime-config/sandbox-system-prompt.json'
+
+
+class InvalidPrompt(ValueError):
+    def __init__(self, field, message):
+        super().__init__(message)
+        self.field = field
+
+
+def prompt(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or value.keys() != {'name', 'text'}:
+        raise ValueError('A system prompt needs a name and instructions.')
+    name, text = value['name'], value['text']
+    if not isinstance(name, str) or not name.strip():
+        raise InvalidPrompt('name', 'Enter a name.')
+    if any(not character.isprintable() for character in name):
+        raise InvalidPrompt('name', 'Use a single line for the name.')
+    if not isinstance(text, str) or not text.strip() or '\x00' in text:
+        raise InvalidPrompt('text', 'Enter instructions for Pi.')
+    return {'name': name.strip(), 'text': text.strip()}
+
+
+def entries(base=None):
+    path = (base or registry.root()) / LIBRARY_FILE
+    try:
+        values = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return {}
+    if not isinstance(values, dict) or any(not isinstance(value, dict) for value in values.values()):
+        raise ValueError('The system prompt library has an invalid format.')
+    return {key: prompt(value) for key, value in values.items()}
+
+
+def save(name, text, key=None):
+    value = prompt({'name': name, 'text': text})
+    with registry.locked() as base:
+        values = entries(base)
+        if key is not None and key not in values:
+            raise ValueError('This system prompt was removed. Close the editor and add it again.')
+        if any(saved['name'].casefold() == value['name'].casefold() for other, saved in values.items() if other != key):
+            raise InvalidPrompt('name', 'A system prompt with that name already exists.')
+        values[key or uuid.uuid4().hex] = value
+        write_json(base / LIBRARY_FILE, values)
+
+
+def remove(key):
+    with registry.locked() as base:
+        values = entries(base)
+        if values.pop(key, None) is not None:
+            write_json(base / LIBRARY_FILE, values)
+
+
+def selection(state):
+    try:
+        value = json.loads((Path(state) / SANDBOX_FILE).read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return None
+    return prompt(value)
+
+
+def assign(state, value):
+    state = Path(state)
+    value = prompt(value)
+    with registry.locked():
+        if selection(state) != value:
+            write_json(state / SANDBOX_FILE, value)
+            return True
+    return False

@@ -7,7 +7,7 @@ from . import sandbox_extensions
 from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference
-from . import registry, model_providers, browser_viewer, folders, host_platform, updating
+from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
 from contextlib import closing
 import errno
 import hashlib
@@ -790,6 +790,9 @@ def create(args, state):
         if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', args.reuse_from):
             raise ValueError('Invalid source sandbox name')
         reuse = json.loads((state.parent / args.reuse_from / 'config.json').read_text())
+    prompt_file = getattr(args, 'system_prompt_file', None)
+    saved_prompt = (prompt_library.prompt(json.loads(Path(prompt_file).read_text(encoding='utf-8'))) if prompt_file else
+                    (prompt_library.selection(state.parent / args.reuse_from) if reuse else None))
     if reuse and args.profile == reuse['profile']['path']:
         profile = reuse['profile']
         if tree_digest(Path(profile['path'])) != profile['digest']:
@@ -864,6 +867,8 @@ def create(args, state):
             raise ValueError('Add an allowed destination, model provider, website category or search service.')
         config['profile'] = snapshot_profile(profile, state)
         config['common'] = snapshot_profile(common_profile(), state)
+        if saved_prompt:
+            prompt_library.assign(state, saved_prompt)
         config['extra_skills'] = []
         for skill in reuse.get('extra_skills', []):
             if skill['name'] in getattr(args, 'omit_skill', []):
@@ -1238,6 +1243,7 @@ def main():
     new.add_argument('--advisor', action='append', choices=['codex', 'claude', 'agy'], default=[],
                      help='Add an advisor companion during creation; repeat for multiple advisors, sign in afterwards')
     new.add_argument('--options-file', help='JSON agent, skill and MCP settings')
+    new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
     new.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Client to open (default: browser on supported hosts)')

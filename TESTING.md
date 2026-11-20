@@ -94,6 +94,10 @@ With the Deep Web Research image and the Web Search layer, use `--deep-research`
 to verify that Pi and FrostPi load the skill, delegate a search through a
 loopback provider, read a mounted reference and save a cited report and source log.
 
+Use `--system-prompt` with the current Factory image to check assigning, editing
+and removing a system prompt in Pi and in the same open FrostPi chat while
+preserving all previously saved transcript entries.
+
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.
 

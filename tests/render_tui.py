@@ -25,6 +25,7 @@ from pi_sandbox_factory.settings_catalog import EDIT_FORMS
 from pi_sandbox_factory.sandbox_tui import ContainersScreen
 from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
+from textual.containers import VerticalScroll
 from pi_sandbox_factory.tui_widgets import Checkbox
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
@@ -33,6 +34,8 @@ from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
 from pi_sandbox_factory import hosted_models, inference, provider_credentials
 from pi_sandbox_factory.communications_ui import SlackCredentials
 from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields
+from pi_sandbox_factory import prompt_library
+from pi_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
 
 class ReviewService(FakeService):
 
@@ -63,7 +66,8 @@ async def capture(size):
         (state / 'allowlist.txt').write_text('local-model.internal:8000\n')
         record = dict(name='demo', profile='base', engine='podman', dev='running', proxy='running', workspace=str(workspace), config=c)
         research_only = args.only and all(name.startswith('research-') for name in args.only)
-        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only else {}
+        prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
+        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only else {}
         with patch.dict(os.environ, variables), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('pi_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(root, ReviewService([record]))
             async with app.run_test(size=size) as pilot:
@@ -101,6 +105,52 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if prompts_only:
+                    await shot('prompt-sandbox-no-library', SandboxPromptScreen('demo', state, True))
+                    await app.push_screen(PackagesScreen(initial='system-prompts'))
+                    await shot('prompt-library-empty')
+                    await app.push_screen(EditPrompt('New system prompt', None, lambda value: None))
+                    await shot('prompt-new')
+                    save = app.screen.query_one('#save-prompt', Button)
+                    save.active_effect_duration = 0
+                    save.press()
+                    await shot('prompt-validation')
+                    await app.pop_screen()
+                    prompt_library.save('Research briefing', 'Prefer primary sources. Record the date for each source.\n\n'
+                                        'Flag uncertainty and cite evidence next to each claim.')
+                    key, value = next(iter(prompt_library.entries().items()))
+                    await app.pop_screen()
+                    await app.push_screen(PackagesScreen(initial='system-prompts'))
+                    await shot('prompt-library-populated')
+                    await shot('prompt-edit', EditPrompt('Edit system prompt', value, lambda value: None))
+                    await shot('prompt-remove', Confirm(
+                        'Remove “Research briefing” from the library? Existing sandboxes keep their saved copies.',
+                        'Remove', title='Remove system prompt'))
+                    await app.pop_screen()
+                    creation = preset('base', DEFAULT_SETTINGS)
+                    creation.update(name='demo', workspace=str(workspace))
+                    await app.push_screen(SettingsForm(creation))
+                    await pilot.pause()
+                    group = app.screen.query_one('#system-prompt-section', Collapsible)
+                    group.scroll_visible(animate=False)
+                    group.query_one('CollapsibleTitle').focus(scroll_visible=False)
+                    await shot('prompt-create-collapsed')
+                    group.collapsed = False
+                    app.screen.query_one('#system-prompt-choice', Select).value = key
+                    await pilot.pause()
+                    await shot('prompt-create-selected', focus='#system-prompt-choice')
+                    await shot('prompt-create-preview', focus='#system-prompt-preview TextArea')
+                    app.screen.query_one('.form', VerticalScroll).scroll_end(animate=False)
+                    await shot('prompt-create-bottom')
+                    await app.pop_screen()
+                    await shot('prompt-sandbox-empty', SandboxPromptScreen('demo', state, True))
+                    prompt_library.assign(state, value)
+                    await shot('prompt-sandbox-saved', SandboxPromptScreen('demo', state, True))
+                    await app.push_screen(SandboxPromptScreen('demo', state, False))
+                    await shot('prompt-sandbox-update')
+                    await shot('prompt-sandbox-update-edit', focus='#edit-prompt-copy')
+                    await app.pop_screen()
+                    return
                 if research_only:
                     package = root / 'sample-profile'
                     package.mkdir()

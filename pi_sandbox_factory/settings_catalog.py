@@ -1,7 +1,6 @@
 """Names and navigation shared by sandbox creation and editing."""
 from typing import NamedTuple
 
-
 class Category(NamedTuple):
     label: str
     section: str
@@ -14,6 +13,8 @@ WEB_SEARCH_LABEL = 'Web Search'
 LOCAL_MODELS_LABEL = 'Local models'
 HOSTED_PROVIDERS_LABEL = 'Built-in hosted providers'
 PROVIDER_PLUGINS_LABEL = 'Provider plugins'
+SYSTEM_PROMPT_LABEL = 'System prompt'
+SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompts'
 
 
 # In display order. A focus target opens the shared settings form for a saved
@@ -25,6 +26,7 @@ CATEGORIES = {
     'network-settings': Category(f'{NETWORK_LABEL} and {WEB_SEARCH_LABEL}', 'network-search-section', 'network-section'),
     'approval-settings': Category('Approvals & sandbox', 'agent-section', 'inner-sandbox'),
     'agent-tools': Category('Agent tools', 'skills-section', 'subagents'),
+    'system-prompt': Category(SYSTEM_PROMPT_LABEL, 'system-prompt-section'),
     'ssh-settings': Category('SSH & Git', 'git-identity-section'),
     'advisors': Category('Advisors', 'new-advisors-section'),
     'communications': Category('Communications', 'communications-section', 'slack-enabled'),

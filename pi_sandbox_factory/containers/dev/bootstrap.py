@@ -104,6 +104,7 @@ image_resources = {
     'extensions': [
                    '/opt/rpiv-ask-user-question/index.ts',
                    '/opt/pi-session-naming/factory.mjs',
+                   '/opt/sandbox/system-prompt.mjs',
                    '/opt/pi-security/packages/pi-auto-review/src/index.ts',
                    '/opt/pi-security/node_modules/@gotgenes/pi-permission-system/src/index.ts',
                    '/opt/pi-security/packages/pi-reviewed-escalation/index.ts',

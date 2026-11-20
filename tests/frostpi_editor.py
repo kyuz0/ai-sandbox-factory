@@ -3,6 +3,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from queue import Queue
@@ -25,7 +26,7 @@ APPROVAL_LABELS = {
     'manual': 'Manual approval (ask me)', 'off': 'YOLO (no approvals)',
 }
 sys.path.insert(0, str(REPO))
-from pi_sandbox_factory import folders, sandbox
+from pi_sandbox_factory import folders, prompt_library, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -480,10 +481,38 @@ def check_deep_research(page, frame, send, inside, workspace, output):
     print('PASS Deep Web Research loads its skill, delegates web search, reads a mounted source and writes a cited report in both clients.')
 
 
+def check_system_prompt(page, frame, send, inside, state, output):
+    earlier_history = None
+    find_chat = '''from pathlib import Path
+path = Path('/home/node/.pi/agent/sessions')
+matches = [file for file in path.rglob('*.jsonl')
+           if 'Factory sandbox system prompt fixture FIRST' in file.read_text()]
+assert len(matches) == 1, matches
+print(matches[0].read_text(), end='')
+'''
+    for label in ('FIRST', 'SECOND', 'NONE'):
+        value = None if label == 'NONE' else {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + label}
+        assert prompt_library.assign(state, value) or label == 'FIRST'
+        prompt = 'Factory sandbox system prompt fixture ' + label
+        reply = 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
+        send(prompt)
+        result = frame.get_by_text(reply, exact=True).or_(frame.get_by_text(re.compile(r'^FACTORY SANDBOX PROMPT FAILED')))
+        result.first.wait_for(timeout=20000)
+        assert frame.get_by_text(reply, exact=True).is_visible(), result.first.inner_text()
+        history = inside('python3', '-c', find_chat).splitlines()
+        assert any(reply in entry for entry in history), 'The new reply was not saved'
+        if earlier_history:
+            assert history[:len(earlier_history)] == earlier_history, 'Previously saved chat entries changed'
+        earlier_history = history
+        assert reply in inside('pi', '--print', '--no-session', prompt)
+    page.screenshot(path=str(output / 'system-prompt.png'))
+    print('PASS Pi and the same FrostPi chat read the assigned, replaced and removed prompt. Earlier chat entries are unchanged.')
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
-          local_knowledge=False, deep_research=False):
+          local_knowledge=False, deep_research=False, system_prompt=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -554,6 +583,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 for name in ('reference', 'output')
             ])
         sandbox.prepare_options(config, root)
+        if system_prompt:
+            os.environ['SANDBOX_REGISTRY_DIR'] = str(root / 'library')
+            prompt_library.assign(root, {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_FIRST'})
         if subagents:
             policy = root / 'runtime-config/permissions.json'
             permissions = json.loads(policy.read_text())
@@ -727,6 +759,11 @@ p.write_text(json.dumps(v))
                     return
                 if deep_research:
                     check_deep_research(page, frame, send, inside, root / 'workspace', output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if system_prompt:
+                    check_system_prompt(page, frame, send, inside, root, output)
                     assert not errors, errors
                     browser.close()
                     return
@@ -922,6 +959,7 @@ if __name__ == '__main__':
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
     scope.add_argument('--local-knowledge', action='store_true', help='Check offline embeddings from a read-only mount in Pi and FrostPi.')
     scope.add_argument('--deep-research', action='store_true', help='Check Deep Web Research from search to report in Pi and FrostPi.')
+    scope.add_argument('--system-prompt', action='store_true', help='Check reusable system prompt changes in Pi and FrostPi.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     scope.add_argument('--nonblocking-questions', action='store_true', help='Check deferred questions while the model works, stops and reloads.')
@@ -943,4 +981,4 @@ if __name__ == '__main__':
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
-          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research)
+          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt)

@@ -121,6 +121,14 @@ http.createServer((request, response) => {
       const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
+    } else if (userText.startsWith('Factory sandbox system prompt fixture ')) {
+      const label = userText.split(' ').at(-1);
+      const system = messages[0].role === 'system' ? JSON.stringify(messages[0].content) : '';
+      const markers = [...system.matchAll(/FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g)].map(match => match[1]);
+      const inHistory = /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/.test(JSON.stringify(messages.slice(1)));
+      delta = { content: !inHistory && markers.join() === (label === 'NONE' ? '' : label) && system.includes('You are')
+        ? 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
+        : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') };
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
       delta = tools.includes('web_search')
         ? choice('web_search', { query: 'Factory research source', numResults: 1 })
