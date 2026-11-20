@@ -23,6 +23,7 @@ def tool_server():
 def command(agent, action, settings, context):
     browser = settings['browser']
     if agent == 'codex':
+        (HOME / '.codex').mkdir(mode=0o700, exist_ok=True)
         options = ['-c', 'cli_auth_credentials_store="file"']
         if action == 'login':
             return options + ['login', '--device-auth']

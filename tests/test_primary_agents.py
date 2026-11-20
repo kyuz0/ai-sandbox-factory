@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import runpy
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -53,6 +54,15 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 self.assertEqual(command[:4], ['podman', 'exec', '-i', primary_agents.names(config)[0]])
                 self.assertEqual(run.call_args.kwargs['input'], fake_credential)
                 self.assertNotIn(fake_credential, ' '.join(command))
+
+    def test_native_codex_login_initializes_a_fresh_private_home(self):
+        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
+        with TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            with patch.dict(launcher['command'].__globals__, {'HOME': home}):
+                args = launcher['command']('codex', 'login', {'browser': False}, '')
+            self.assertEqual(args[-2:], ['login', '--device-auth'])
+            self.assertTrue((home / '.codex').is_dir())
 
     def test_executable_guidance_matches_active_choices(self):
         with TemporaryDirectory() as temp:
