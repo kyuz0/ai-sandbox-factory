@@ -7,7 +7,9 @@ built around the same mainline `pi` executable as Pi CLI. Earlier versions used
 [Pendant](https://github.com/cdervis/Pendant). Pi CLI and VS Code on host are
 also available.
 
-![Pi Sandbox Factory terminal interface](docs/sandboxes.png)
+![FrostPi beside the updated Python route planner, with edits and a passing test run visible](docs/frostpi.png)
+
+*FrostPi updates a hiking route planner and runs its tests in the sandbox.*
 
 ## Install
 
@@ -24,6 +26,8 @@ pi-sandbox-factory
 Open a new terminal if `pi-sandbox-factory` is not found.
 
 ## Create a sandbox
+
+![Pi Sandbox Factory dashboard](docs/sandboxes.png)
 
 1. Choose **New sandbox**, select a **Profile** and **Workspace**, check the
    **Sandbox name**, then choose **Continue**.
