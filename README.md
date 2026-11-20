@@ -41,19 +41,6 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 **Connect to models on this computer**. [Linux local model requirements](docs/platforms.md#linux-local-models)
 
-## Research with Pi
-
-- **Local Knowledge** searches your documents and cites the files it used. Mount
-  a document folder read-only, start with keyword search, and add `pi-knowledge`
-  with a connected provider or your own embedding server for semantic search. [Set up Local Knowledge](docs/local-knowledge.md) ·
-  [Turn embeddings on](docs/local-knowledge.md#turn-embeddings-on) · [Turn them off](docs/local-knowledge.md#turn-embeddings-off)
-- **Deep Web Research** uses web search and can bring in local references. Choose
-  a search provider and the sites Pi can read, then ask for a cited report.
-  [Set up Deep Web Research](docs/deep-web-research.md)
-
-Choose **Getting started…** beside either profile in Factory, or type
-`/profile-guide` in Pi or FrostPi.
-
 ## What the sandbox can access
 
 - **Files:** `/workspace` is your project folder. Edits change the host files.
@@ -98,6 +85,16 @@ local folder. Packages can run code, so install only from sources you trust.
 Save reusable instructions in **Library → System prompts** and assign a copy in
 **Settings → System prompt**. Pi uses changes on its next reply, including in an
 open chat. [System prompt settings](docs/usage.md#system-prompts)
+
+### Optional research profiles
+
+- **Local Knowledge** searches a folder of documents and cites the files it uses. [Setup guide](docs/local-knowledge.md) · [Enable embeddings](docs/local-knowledge.md#turn-embeddings-on) · [Disable embeddings](docs/local-knowledge.md#turn-embeddings-off)
+- **Deep Web Research** searches the web and writes a report with sources. [Setup guide](docs/deep-web-research.md)
+
+For a walkthrough, choose **Getting started…** beside either profile or type
+`/profile-guide` in Pi or FrostPi.
+
+## Further reading
 
 - [Browser editor](docs/browser-editor.md) · [Agent browser and vault protection](docs/usage.md#see-and-interact-with-the-agents-browser) · [Slack](docs/communications.md)
 - [Approval modes](docs/approvals.md) · [SSH](docs/ssh.md) · [Git repository permissions](docs/repository-access.md) · [Advisors](docs/advisors.md)
