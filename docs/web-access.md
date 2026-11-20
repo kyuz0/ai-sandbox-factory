@@ -53,9 +53,10 @@ Search requests go to Exa. Reading `docs.python.org` goes directly to that host
 through the sandbox gateway. Exa can also include text from other sites in its
 search response. Hosted page-reader fallbacks are off.
 
-Search and stored results skip approval review and do not trigger background page
-downloads. Direct reads use `fetch_content` and follow the selected approval mode,
-including when networking is unrestricted.
+Pi can search and read the text the search provider returned without asking for
+approval. Searching does not open the pages in the background. When Pi needs to
+open a result, it uses `fetch_content`. Your approval mode still applies to that
+request, even in **Unrestricted** mode.
 
 ## Website categories
 

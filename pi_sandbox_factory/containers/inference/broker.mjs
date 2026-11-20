@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {pipeline} from 'node:stream';
 import {SignatureV4} from '@smithy/signature-v4';
 import {Sha256} from '@aws-crypto/sha256-js';
-import {localGatewayOptions, readCredentials} from './credentials.mjs';
+import {checkCredential, localGatewayOptions, readCredentials} from './credentials.mjs';
 
 const requestHeaders = ['content-type', 'accept', 'anthropic-version', 'anthropic-beta'];
 const responseHeaders = ['content-type', 'content-encoding', 'retry-after'];
@@ -24,6 +24,13 @@ export function compileRoutes(values, {allowHttpFixture=false}={}) {
     if (!['bearer', 'header', 'sigv4'].includes(value.auth.type)) throw Error('Invalid authentication type.');
     if (value.auth.type === 'header' && !['api-key', 'x-api-key'].includes(value.auth.header)) throw Error('Invalid authentication header.');
     if (value.auth.type === 'sigv4' && !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(value.auth.region)) throw Error('Invalid AWS region.');
+    if (value.credentialCheckId !== undefined && (local || value.auth.type === 'sigv4' ||
+        !/^[a-f0-9]{64}$/.test(value.credentialCheckId) ||
+        !/^\/[A-Za-z0-9_./-]+$/.test(value.credentialCheck?.path ?? '') ||
+        value.credentialCheck.path.includes('..') || value.credentialCheck.path.includes('//') ||
+        Object.keys(value.credentialCheck).some(key => !['path','method'].includes(key)) ||
+        (value.credentialCheck.method !== undefined && value.credentialCheck.method !== 'GET')))
+      throw Error('Invalid credential check.');
     const operations = value.operations.map(op => {
       if (!['GET','POST'].includes(op.method) || !op.path.startsWith('/') || op.path.includes('..')) throw Error('Invalid route operation.');
       if (op.upstreamPath && (!op.upstreamPath.startsWith('/') || /[?%\\{}]/.test(op.upstreamPath) || op.upstreamPath.includes('..') || op.upstreamPath.includes('//'))) throw Error('Invalid upstream path.');
@@ -36,6 +43,13 @@ export function compileRoutes(values, {allowHttpFixture=false}={}) {
     routes.set(id, {...value, origin, operations});
   }
   return routes;
+}
+
+function matchesCredentialScope(route, secret) {
+  return !secret.scope || (
+    secret.scope.basePath === (route.basePath ?? '') && secret.scope.auth === route.auth.type &&
+    secret.scope.header === (route.auth.header ?? null)
+  );
 }
 
 export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=32*1024*1024, maxBuffered=64*1024*1024, concurrency=Infinity}={}) {
@@ -88,6 +102,24 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         return fail(res,503,'Inference service is busy. Retry shortly.');
       }
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\\\x00-\x20#]/.test(req.url) || req.headers.upgrade) return fail(res,400);
+      const check = /^\/check\/([a-z][a-z0-9-]{0,63})\/([a-f0-9]{64})$/.exec(req.url);
+      if (check) {
+        if (req.method !== 'GET' || req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) !== 0)
+          return fail(res,400);
+        const route = routes.get(check[1]);
+        if (!route || route.credentialCheckId !== check[2]) return fail(res,404);
+        const secret = credentials(check[1]) || {};
+        const controller = new AbortController();
+        res.once('close', () => controller.abort());
+        active++; counted = true;
+        const status = secret.key && secret.origin === route.origin.origin && matchesCredentialScope(route, secret)
+          ? await checkCredential(route, secret.key, fetch, controller.signal).catch(() => 'unavailable')
+          : 'not_configured';
+        if (finished) return;
+        // Never forward provider headers, bodies, URLs, or exception messages.
+        res.writeHead(200, {'content-type':'application/json', 'cache-control':'no-store'});
+        return res.end(JSON.stringify({status}));
+      }
       const match = /^\/r\/([a-z][a-z0-9-]{0,63})(\/[^?]*)(?:\?(.*))?$/.exec(req.url);
       if (!match) return fail(res,404);
       const route = routes.get(match[1]);
@@ -106,9 +138,7 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
       }
       const secret = credentials(match[1]) || {};
       if ((!route.local || secret.key) && secret.origin !== route.origin.origin) return fail(res,503);
-      if (secret.scope && (secret.scope.basePath !== (route.basePath ?? '') ||
-          secret.scope.auth !== route.auth.type || secret.scope.header !== (route.auth.header ?? null)))
-        return fail(res,503);
+      if (!matchesCredentialScope(route, secret)) return fail(res,503);
       if (!route.local && (route.auth.type === 'sigv4' ? !(secret.accessKeyId && secret.secretAccessKey) : !secret.key)) return fail(res,503);
       if (Number(req.headers['content-length']) > maxBody) return fail(res,413);
       active++; counted = true;

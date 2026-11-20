@@ -80,7 +80,23 @@ def routes(config):
             if row['name'] in result:
                 raise ValueError('Duplicate inference connection: ' + row['name'])
             result[row['name']] = route
+    for provider, route in result.items():
+        if route.get('credentialCheck') and route['auth']['type'] in ('bearer', 'header'):
+            identity = {key: route.get(key) for key in ('origin', 'auth', 'basePath', 'credentialCheck')}
+            fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+            result[provider] = {**route, 'credentialCheckId': fingerprint}
     return result
+
+
+def connection_checks(config):
+    return {provider: {'id': route['credentialCheckId'],
+                       'target': route['origin'].rstrip('/') + route['credentialCheck']['path']}
+            for provider, route in routes(config).items() if 'credentialCheckId' in route}
+
+
+def write_connection_checks(config, state):
+    from .sandbox_options import write_json
+    write_json(Path(state) / 'runtime-config/provider-connection-checks.json', connection_checks(config))
 
 
 def enabled(config):

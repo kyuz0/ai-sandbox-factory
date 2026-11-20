@@ -947,6 +947,7 @@ def prepare_options(config, state):
         'text': registry.profile_system_prompt(profile['path'], profile['name']),
     })
     write_json(target / 'web-providers.json', selected['web_access'])
+    inference.write_connection_checks(config, state)
     write_json(target / 'web-search.json', web_access.extension_config(selected['web_access'], network_mode(config) == 'allowlist'))
     source = Path(config['common']['path']) / 'security/config'
     for path in source.glob('*.json'):

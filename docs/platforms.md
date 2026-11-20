@@ -126,7 +126,8 @@ on `127.0.0.1`. Keep this generated name in the browser address: it separates
 sandbox cookies and is checked on every request. Linux retains its individual
 `127.x.x.x` addresses. Passwords and HTTPS are configured in **Settings → Editor**.
 
-Use **Settings → Advisors** to sign in inside an advisor container. Host sign-in
-copies read the manager’s environment: WSL credentials on Windows, not Windows
-application credentials. macOS Claude and Antigravity keychain imports are not
-supported; use their sign-in buttons. Codex file-based sign-ins can be copied.
+Use **Settings → Advisors** to sign in for each advisor. On Windows, Factory
+can copy sign-ins from apps you’ve configured in WSL. For a sign-in from a
+Windows app, use the advisor’s sign-in button instead. On macOS, use that button
+for Claude or Antigravity accounts stored in Keychain. Factory can copy a Codex
+sign-in stored in a file.

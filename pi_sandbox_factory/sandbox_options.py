@@ -155,6 +155,9 @@ def guidance(selected, subagents=False):
                      'Container /tmp is also writable scratch space shared between calls; it is not the host /tmp. '
                      'Private runtime files live outside it.')
         if mode != 'off':
+            lines.append('For Pi resource files outside the workspace, use request_file_access to ask to read a specific '
+                         'instruction, skill or prompt text file, or list one resource folder. '
+                         'Check active tools and skills to explain the sandbox’s capabilities.')
             lines.append('The inner sandbox blocks Unix sockets, which tmux needs. '
                          'Use bash_escalate for tmux creation, send-keys, capture-pane, session checks and cleanup. '
                          "Use tmux -S with the session's socket path on every call. "

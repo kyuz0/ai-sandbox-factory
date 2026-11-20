@@ -64,6 +64,20 @@ then resumes and completes it in the same session.
 Use `--nonblocking-questions` to verify a deferred answer reaches Pi while
 work continues. The FrostPi check stops and restarts the session with a question
 pending. The terminal check answers through `/questions`.
+
+Use `--reviewed-file-access automatic`, `assisted` and `manual` in separate runs
+to check one-time access to Pi resources. The fixture verifies the exact file
+and folder sent for review, the manual dialog, the interactive fallback, and
+denial of credential paths and links before review. Replacing a file while the
+manual dialog is open invalidates the request. The check also opens a separate
+Pi terminal session against the same image.
+
+Use `--provider-connection-check` with `automatic`, `assisted`, `manual` and
+`off` to check when Pi can request a stored-credential check. The fixture counts
+upstream requests before and after each approval, verifies direct file reads
+are denied, and checks that an upstream response containing the fake credential
+reaches Pi as a status only. `tests/inference_container.py` verifies the same
+response boundary across separate containers alongside the normal inference stream.
 Screenshots and the editor log remain in the output directory. Add
 `--startup-only automatic` to test first launch without a configured model. The
 same check accepts `assisted`, `manual`, and `off`.

@@ -49,10 +49,10 @@ it. Disabling Slack removes its tools and automatic network destinations while
 preserving credentials for later use. To revoke access, remove the tokens in the
 form and revoke them in Slack.
 
-Slack tools follow the sandbox's selected approval mode. Automatic approval can
-permit a send without a human dialog; choose **Agent → Ask me** if you want to
-approve each Slack operation yourself. Omitting `chat:write` makes the Slack app
-read-only regardless of approval mode.
+Slack tools follow the sandbox’s approval mode. In an automatic mode, the
+reviewer can approve a send without asking you. To decide yourself, choose
+**Settings → Approvals & sandbox → Manual approval (ask me)**. To make the bot
+read-only in any mode, leave out the `chat:write` scope.
 
 Enabling Slack allows HTTPS to `slack.com` and `files.slack.com`. Links to other
 websites use your normal network rules. View the allowed service destinations under **Settings → Network and Web Search → Network**.

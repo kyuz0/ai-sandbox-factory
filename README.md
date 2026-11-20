@@ -59,8 +59,8 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 
 ## Use and update sandboxes
 
-Click **Open** beside a sandbox’s name. **Open with…** launches another client,
-such as Pi CLI. [Everyday use and creation recovery](docs/usage.md)
+Click **Open** beside a sandbox’s name to start working. To use a different
+client, choose **Open with…** and pick one, such as Pi CLI. [Using a sandbox](docs/usage.md)
 
 ![FrostPi beside the updated Python route planner, with edits and a passing test run visible](docs/frostpi.png)
 
@@ -74,11 +74,13 @@ Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes)
 
 ## Profiles and providers
 
-A **Profile** can add tools, skills, and Pi instructions. Its Dockerfile can
-extend Factory’s base image with its own software and dependencies. A
-**Provider** connects Pi to a model service. Install either through **Library…**
-from a Git repository or local folder. Install packages you trust because they
-can run code. [Profiles](docs/profiles.md) · [Providers](docs/providers.md)
+- A **Profile** can add tools, skills, and instructions for Pi. It can also
+  provide a Dockerfile that adds software and dependencies to Factory’s base
+  image. [Profiles](docs/profiles.md)
+- A **Provider** connects Pi to a model service. [Providers](docs/providers.md)
+
+Use **Library…** to install a profile or provider from a Git repository or a
+local folder. Packages can run code, so install only from sources you trust.
 
 Save reusable instructions in **Library → System prompts** and assign a copy in
 **Settings → System prompt**. Pi uses changes on its next reply, including in an

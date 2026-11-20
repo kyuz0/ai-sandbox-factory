@@ -1,11 +1,13 @@
 # Browser editor
 
-The browser editor runs FrostPi and its Node extensions inside the sandbox.
-FrostPi shows previews of the images Pi receives from tools such as `read` and
-Betterwright. Click a thumbnail to enlarge it. Images remain in the saved chat.
-It is the default with rootless Podman on Linux, Windows through WSL2, and macOS
-through Podman Machine. Pi CLI and host VS Code remain available through **Open with…**.
-It supports amd64 and arm64 containers; see [platform setup](platforms.md).
+The browser editor is the default with rootless Podman on Linux, Windows
+through WSL2, and macOS through Podman Machine. It runs FrostPi and its Node
+extensions inside the sandbox. Choose **Open with…** if you want Pi CLI or
+VS Code on your computer instead. The browser editor supports amd64 and arm64
+containers. [Platform setup](platforms.md)
+
+FrostPi previews images Pi receives from tools such as `read` and Betterwright.
+Click an image to enlarge it. You can see it again when you reopen the saved chat.
 
 ## Open a sandbox
 

@@ -1,8 +1,8 @@
 # Providers
 
-Providers configure Pi’s models independently of the sandbox profile. A provider
-package supplies a discovery adapter and can include an extension for refreshing
-models during a conversation.
+A provider tells Pi where to find models. Your provider choice applies
+regardless of the profile you pick. A provider package can discover models and
+add a command to refresh the model list while you’re in a chat.
 
 ## Local inference servers
 
@@ -16,11 +16,14 @@ provider…** under **Built-in hosted providers** in **Model Providers**. Factor
 keeps their keys in a separate inference container and configures Pi/FrostPi for you.
 See [hosted model setup](hosted-models.md) for deployment names and model selection.
 
-For another service, a provider package can declare its API routes and keep the
-same credential isolation. The adapter discovers models through a local proxy.
-Pi’s `models.json` also supports manual endpoints. Its credentials live in the
-development container, and the endpoint must be allowed
-under **Settings → Network and Web Search → Network**.
+To connect another service, install a provider package. If the package declares
+which API requests it needs, Factory can keep the key in a separate container
+and let the package discover models through a local proxy.
+
+You can also configure a service by editing Pi’s `models.json`. In that case the
+key lives in the development container. If your sandbox uses **Restricted**
+networking, allow the service’s host and port under
+**Settings → Network and Web Search → Network**.
 
 ## Install and select
 
@@ -110,7 +113,9 @@ Managed API-key providers can use Factory's saved-key picker. Declare a
 `credentialCheck` object with a fixed authenticated GET `path` on the inference
 origin. Factory uses it to check a new key before changing the active assignment.
 If omitted, Factory uses the first declared GET operation ending in `/models`.
-Use a check that returns 401 or 403 for invalid credentials.
+Use a check that returns 401 or 403 for invalid credentials. An explicit check
+also lets Pi request a status-only test of the saved connection. Factory sends
+no prompt and discards the provider’s response body and headers.
 
 Preserve other providers and user customizations. Validate responses before
 writing, retain the old catalogue on failure, and replace files atomically.

@@ -33,11 +33,14 @@ const upstream=https.createServer({key:fs.readFileSync('/fixture/tls.key'),cert:
  req.resume();req.on('end',()=>{
   const key=readCredentials('/private/credentials.json').sample?.key;
   if(!key||req.headers.authorization!=='Bearer '+key){res.writeHead(401);return res.end();}
+  if(req.method==='GET' && req.url==='/v1/key'){
+   res.writeHead(200,{'x-private':key});return res.end(key);
+  }
   res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: authenticated\\n\\n');setTimeout(()=>res.end('data: done\\n\\n'),30);
  });
 });
 await new Promise(resolve=>upstream.listen(18444,'127.0.0.1',resolve));
-const routes=compileRoutes({sample:{origin:'https://127.0.0.1:18444',auth:{type:'bearer'},operations:[{method:'POST',path:'/v1/chat/completions'}]}});
+const routes=compileRoutes({sample:{origin:'https://127.0.0.1:18444',auth:{type:'bearer'},operations:[{method:'POST',path:'/v1/chat/completions'}],credentialCheck:{path:'/v1/key'},credentialCheckId:'a'.repeat(64)}});
 const server=createBroker(routes,id=>readCredentials('/private/credentials.json')[id]);
 fs.rmSync('/run/inference/proxy.sock',{force:true});server.listen('/run/inference/proxy.sock',()=>fs.chmodSync('/run/inference/proxy.sock',0o666));
 ''')
@@ -45,6 +48,10 @@ fs.rmSync('/run/inference/proxy.sock',{force:true});server.listen('/run/inferenc
 const fs=require('fs'),http=require('http'),assert=require('assert/strict');
 assert(!JSON.stringify(process.env).includes('hidden-inference-fixture'));
 assert(!fs.existsSync('/private/credentials.json'));assert(!fs.existsSync('/fixture'));
+const check=http.get({socketPath:'/run/inference/proxy.sock',path:'/check/sample/'+'a'.repeat(64)},res=>{
+ let body='';res.on('data',chunk=>body+=chunk);res.on('end',()=>{assert.equal(res.statusCode,200);assert.equal(res.headers['x-private'],undefined);assert.deepEqual(JSON.parse(body),{status:'accepted'});console.log('PASS stored connection check returns only status');});
+});
+check.on('error',error=>{throw error;});
 const req=http.request({socketPath:'/run/inference/proxy.sock',path:'/r/sample/v1/chat/completions',method:'POST',headers:{authorization:'hostile',host:'attacker.invalid'}},res=>{
  let body='';res.on('data',chunk=>body+=chunk);res.on('end',()=>{assert.equal(res.statusCode,200);assert.equal(body,'data: authenticated\\n\\ndata: done\\n\\n');console.log('PASS agent request: authenticated stream, no key file/env, hostile headers replaced');});
 });req.on('error',error=>{throw error;});req.end('{}');

@@ -175,6 +175,45 @@ http.createServer((request, response) => {
       } else {
         delta = { content: 'FACTORY FOLDER CHECK FINISHED' };
       }
+    } else if (!tools.length && context.includes('test_provider_connection') &&
+               /Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+      const { request: action } = JSON.parse(typeof last.content === 'string' ? last.content : last.content[0].text);
+      if (action?.toolName !== 'test_provider_connection') throw new Error('Unexpected provider review request');
+      const deny = action.toolInputPreview.includes('PROVIDER_FIXTURE_DENY');
+      console.log('PROVIDER CHECK REVIEW', deny ? 'deny' : 'allow', action.destination);
+      delta = { content: JSON.stringify({ outcome: deny ? 'deny' : 'allow', risk_level: 'medium',
+        user_authorization: 'high', rationale: 'Fixture decision for this provider check.' }) };
+    } else if (userText === 'Factory provider check capability') {
+      delta = { content: tools.includes('test_provider_connection') ? 'PROVIDER CHECK AVAILABLE' : 'PROVIDER CHECK HIDDEN' };
+    } else if (userText.startsWith('Factory protected provider file ')) {
+      delta = choice('read', { path: '/home/node/.pi/agent/' + userText.split(' ').at(-1) });
+    } else if (last.role === 'tool' && context.includes('Factory protected provider file ') &&
+               last.tool_call_id?.startsWith('factory-read-')) {
+      console.log('PROVIDER FILE RESULT', JSON.stringify(last.content));
+      delta = { content: 'PROVIDER FILE CHECK COMPLETE' };
+    } else if (userText.startsWith('Factory provider check request ')) {
+      if (!tools.includes('test_provider_connection')) throw new Error('Provider check tool is missing');
+      delta = choice('test_provider_connection', { provider: 'sample', justification: userText.endsWith('deny')
+        ? 'PROVIDER_FIXTURE_DENY' : 'Check the saved provider connection.' });
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-test_provider_connection-')) {
+      console.log('PROVIDER CHECK RESULT', JSON.stringify(last.content));
+      delta = { content: 'PROVIDER CHECK COMPLETE' };
+    } else if (!tools.length && context.includes('request_file_access') &&
+               /Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+      const action = JSON.parse(typeof last.content === 'string' ? last.content : last.content[0].text).request;
+      if (action?.toolName !== 'request_file_access') throw new Error('Unexpected file review request');
+      console.log('FILE ACCESS REVIEW', action.operation, action.path);
+      delta = { content: JSON.stringify({
+        outcome: action.path.endsWith('restricted.md') ? 'deny' : 'allow',
+        risk_level: 'medium', user_authorization: 'high', rationale: 'Fixture decision for this exact resource.',
+      }) };
+    } else if (userText.startsWith('Factory file access ')) {
+      const [operation, path] = userText.slice('Factory file access '.length).split(' ');
+      if (!tools.includes('request_file_access')) throw new Error('File access tool is missing');
+      delta = choice('request_file_access', { operation, resource: path, justification: 'Check the requested Pi resource.' });
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-request_file_access-')) {
+      console.log('FILE ACCESS RESULT', JSON.stringify(last.content));
+      delta = { content: 'FILE ACCESS CHECK COMPLETE' };
     } else if (!tools.length && context.includes(suffix)) {
       delta = { content: JSON.stringify({
         outcome: 'deny', risk_level: 'medium', user_authorization: 'high',

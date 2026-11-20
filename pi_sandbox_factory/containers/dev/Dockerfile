@@ -69,6 +69,7 @@ COPY --from=pi-session-naming /pi-packages/session-naming/config.ts /pi-packages
 COPY --from=pi-session-naming /pi-packages/session-naming/extensions/index.ts /opt/pi-session-naming/extensions/
 COPY session-naming.mjs /opt/pi-session-naming/factory.mjs
 COPY system-prompt.mjs /opt/sandbox/system-prompt.mjs
+COPY local-knowledge-status.mjs /opt/sandbox/local-knowledge-status.mjs
 RUN rm -rf /opt/pi-security/node_modules/pi-goal
 COPY bootstrap.py /usr/local/lib/sandbox-bootstrap.py
 COPY ssh-status.py /usr/local/bin/sandbox-ssh-status

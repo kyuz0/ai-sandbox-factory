@@ -13,9 +13,11 @@ Pi can ask Codex (OpenAI), Claude (Anthropic) or Antigravity (Google) for a seco
 3. Use **Check advisors** to check login status and available models or quota.
    Antigravity also needs an exact Gemini model ID, quota group and matching effort;
    enter these after login and **Apply**.
-4. Reopen Pi/FrostPi, run `/advisor status`, then ask Pi to consult an advisor.
-   `/advisor usage` shows usage; `/advisor cancel` stops an active request.
-   `start` and `resume` keep a conversation reference for follow-up.
+4. Reopen Pi or FrostPi and run `/advisor status` to see which advisors are ready.
+   Then ask Pi to consult one, for example “Ask Claude to review this plan.”
+   For a follow-up, ask Pi to continue the same consultation. Pi can return to the
+   advisor’s conversation using its saved reference. Run `/advisor usage` to see
+   usage or `/advisor cancel` to stop a request.
 
 Set an optional per-session call limit under **Usage and network**.
 

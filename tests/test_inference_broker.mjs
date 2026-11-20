@@ -71,6 +71,46 @@ test('candidate verification uses its fixed route without following a redirect',
   assert.equal(redirected, 0);
 });
 
+test('installed connection check returns only status and stays bound to the saved route', async t => {
+  const id = 'a'.repeat(64);
+  const seen = [];
+  let upstreamStatus = 200;
+  const upstream = http.createServer((req, res) => {
+    seen.push([req.method, req.url, req.headers.authorization, req.headers.cookie]);
+    res.writeHead(upstreamStatus, {location: '/redirected', 'x-echo': secret}).end(secret);
+  });
+  await listen(upstream);
+  const origin = 'http://127.0.0.1:' + upstream.address().port;
+  const route = {origin, basePath: '/v1', auth: {type: 'bearer'}, operations: [operation],
+    credentialCheck: {path:'/v1/key'}, credentialCheckId:id};
+  const routes = compileRoutes({sample:route, unsupported:{origin,auth:{type:'bearer'},operations:[operation]}}, {allowHttpFixture:true});
+  let stored = {key:secret, origin, scope:{basePath:'/v1',auth:'bearer',header:null}};
+  const broker = createBroker(routes, () => stored);
+  await listen(broker);
+  t.after(async () => { await close(broker); await close(upstream); });
+  const base = 'http://127.0.0.1:' + broker.address().port;
+  const url = base + '/check/sample/' + id;
+  for (const [code, status] of [[200,'accepted'], [401,'rejected'], [403,'rejected'], [302,'unavailable'], [500,'unavailable']]) {
+    upstreamStatus = code;
+    const response = await fetch(url, {headers:{authorization:'Bearer caller', cookie:'caller-cookie'}});
+    assert.equal(response.headers.get('x-echo'), null);
+    assert.equal(response.headers.get('location'), null);
+    assert.deepEqual(await response.json(), {status});
+  }
+  assert.deepEqual(seen, Array.from({length:5}, () => ['GET','/v1/key','Bearer '+secret,undefined]));
+  for (const [target, options] of [[url + '?host=other', {}], [base+'/check/sample/'+'b'.repeat(64), {}],
+    [base+'/check/unsupported/'+id, {}], [url, {method:'POST', body:'{}'}]]) {
+    const response = await fetch(target, options);
+    assert(response.status >= 400);
+    assert(!(await response.text()).includes(secret));
+  }
+  stored = {...stored, scope:{...stored.scope, basePath:'/changed'}};
+  assert.deepEqual(await (await fetch(url)).json(), {status:'not_configured'});
+  stored = undefined;
+  assert.deepEqual(await (await fetch(url)).json(), {status:'not_configured'});
+  assert.equal(seen.length, 5);
+});
+
 test('the next request uses the new assignment and a different path cannot reuse it', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'factory-keys-'));
   t.after(() => fs.rmSync(dir, {recursive:true, force:true}));

@@ -7,11 +7,11 @@ Enter the name and email to record on commits. For an existing sandbox, use
 **Settings → SSH & Git → Git commit identity**, then apply the settings.
 You can also set this under **Defaults for new sandboxes**.
 
-The identity applies over sandbox-global Git values at startup. Factory leaves host Git
-settings unchanged and preserves repository-local `user.name` and `user.email`
-overrides. Turning the setting off removes its default without deleting manually
-configured Git values. The identity is optional and is not copied from the host
-automatically.
+Factory sets the default name and email for commits inside the sandbox. If a
+repository already has its own `user.name` or `user.email`, those values take
+precedence. Turning off **Set Git commit identity** removes Factory’s default
+and preserves any Git settings you entered yourself. Factory leaves your
+computer’s Git settings untouched and only uses an identity you enter.
 
 Creating a commit needs no SSH key or network access. SSH keys authenticate
 clone, fetch and push; cryptographic commit signing is configured separately.
@@ -42,7 +42,9 @@ choose an approval mode first. Without the inner sandbox, use ordinary Bash.
 Use the managed SSH configuration without overriding `GIT_SSH_COMMAND` or host-key
 checking. Inner-shell DNS and TCP probes cannot test the companion's socket route.
 
-Generate creates an unencrypted key inside the private companion volume and refuses to replace an existing key. Import replaces the companion’s saved key.
+**Generate repository key** creates an unencrypted key in the private SSH
+container. If a key is already saved, Factory keeps it. To replace it, select a
+key file and choose **Import and unlock**.
 
 Keys unlock for eight hours by default. Set **Keep SSH key unlocked for** before
 importing or unlocking a key to use a different duration. When the dashboard shows

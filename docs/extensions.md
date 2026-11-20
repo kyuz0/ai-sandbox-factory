@@ -32,8 +32,9 @@ Pause a goal before moving between clients, close the original chat, and resume 
 
 `rpiv-ask-user-question` loads by default in both clients. The agent uses `ask_user_question` to request a choice or clarification. Both clients accept option selections and free-text answers. The terminal displays a tabbed questionnaire with toggles for multiple choices. FrostPi shows successive prompts and asks for option numbers when multiple choices are allowed. Questions go directly to you, bypassing automatic permission review.
 
-The agent can ask a question and keep working. Answer it from the pending question
-in FrostPi or use `/questions` in Pi CLI. The answer is delivered back to the same chat.
+If Pi can keep working while it waits, it leaves the question pending. Open
+the question in FrostPi or type `/questions` in Pi’s terminal. Pi gets the
+answer in the chat that asked the question.
 
 To disable these forms, open **Settings → Agent tools**,
 clear **Question forms**, then **Apply and recreate**. The agent can still ask

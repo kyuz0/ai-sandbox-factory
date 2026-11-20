@@ -1,43 +1,52 @@
 # Usage
 
-The **Default Developer Sandbox** profile includes Pi, FrostPi, goal tools and
-document tools. For other environments,
-install a profile through **Library…** or choose **Custom profile…**. [Create a sandbox](../README.md#create-a-sandbox)
+Use Factory to create, open, and manage your Pi sandboxes. Start with the
+**Default Developer Sandbox** for Pi, FrostPi, goal tools, and document tools.
+For a different setup, pick **Custom profile…** or install a profile from
+**Library…**. [Create a sandbox](../README.md#create-a-sandbox)
 
-**Create from existing…**, beside **New sandbox**, lets you reuse a saved setup.
-Choose the source, enter a new name and workspace, then review its profile, model
-providers, network rules, features and advisor settings before creating. Added
-skills are included; you can deselect them in **Skills**.
+## Open a sandbox
 
-Select **Include search API keys** to copy those keys from a running source.
-Model and advisor logins, SSH credentials, browser sessions and conversations
-start fresh. Environment files and Pi seed directories must be selected again.
-The new sandbox keeps independent copies of its packages.
+Choose **Open** on the dashboard. On supported hosts, Factory opens the browser
+editor on this computer without a password by default. Use **Open with…** to
+pick a different client for this launch. During creation, expand **Editor** to
+choose **Pi CLI** or **VS Code on host** as the default. Clear **Open sandbox after
+creation** if you want to open it yourself later. For an existing sandbox,
+**Settings → Editor** lets you change the default client, address, port, or password.
 
-**Browser editor** is the default on supported hosts and opens locally without a
-password. During creation, expand **Editor** to choose **Pi CLI** or **VS Code on
-host**. Clear **Open sandbox after creation** to launch later.
-Use **Settings → Editor** to change the launch choice, address, port or password.
+Pi CLI opens in your current terminal. Exit Pi to return to Factory. You can
+open it alongside the browser editor. Both clients use the same files and model
+settings and can have separate chats open. They start in the folder you choose
+under **Settings → Folders**.
+Use a separate sandbox for VS Code on your computer after using the browser
+editor. [Editor setup and access](browser-editor.md)
 
-**Open with…** opens another client without changing the default. Pi CLI runs in
-the current terminal; exit Pi to return to the manager. You can use it alongside
-the browser editor. Both share files and model settings, with separate conversations,
-and start in the folder configured under **Settings → Folders**.
+Pi uses your first prompt to name a new chat. It asks the current model for a
+short title and falls back to the first few words if the request fails. The
+title appears in both clients. Use `/name` in Pi or **Rename** in FrostPi to set
+it yourself.
 
-Pi names new conversations from the first prompt. It uses the current model for
-a short title and falls back to the first few words if the request fails. The
-name is saved with the chat in Pi and FrostPi. Use `/name` in Pi or **Rename**
-in FrostPi to set your own title.
+## Copy a setup to a new sandbox
 
-Use a separate sandbox for host VS Code after browser-editor use.
-See [browser editor setup](browser-editor.md) for connection settings and access boundaries.
+Choose **Create from existing…** beside **New sandbox**. Pick the sandbox to
+copy, then enter a new name and workspace. Review the profile, model providers,
+network rules, features, and advisors before creating it. Factory includes the
+source’s added skills. Clear any you don’t need under **Skills**.
 
-Use **Actions…** to start, stop, inspect or delete a sandbox. **Containers…** shows
-each container’s role and status, including stopped containers. Press **D** on
-the home screen to edit defaults for new sandboxes.
+Select **Include search API keys** if you want to copy those keys from a running
+source. The new sandbox has its own package copies. It starts with fresh chats,
+browser sessions, model and advisor logins, and SSH credentials. Select any
+environment file or Pi configuration folder you want to use again.
 
-Closing the manager or editor leaves containers running. Deleting a sandbox removes
-its containers, private home and editor state and keeps the workspace.
+## Stop, inspect, or delete a sandbox
+
+Use **Actions…** to start, stop, inspect, or delete a sandbox. **Containers…**
+shows what each container does and whether it’s running. Press **D** on the
+dashboard to change the defaults for new sandboxes.
+
+Closing Factory or the editor leaves the sandbox running. Deleting it removes
+its containers, private home, saved chats, and editor settings. Your workspace
+folder stays on your computer.
 
 ## Recover from a failed creation
 
@@ -314,24 +323,26 @@ JSON passed to `--options-file`.
 
 ## Sandbox activity
 
-The dashboard records **Created**, **Last edited** (saved Factory settings) and
-**Last started** (a successful container start). Dates use your local timezone.
-Opening an already-running sandbox does not change its start time.
+The dashboard shows when you created the sandbox, last saved its Factory
+settings, and last started its containers. Editing a project file leaves
+**Last edited** as it was. Opening a sandbox that’s already running leaves
+**Last started** as it was. Dates use your local timezone.
 
-Use **Sort by** or click a date column heading; **Newest first / Oldest first**
-changes the order. Missing dates stay at the bottom. **—** means the event was
-not recorded, including events before this version. Project file edits do not
-change **Last edited**.
+Use **Sort by** or select a date column to sort the list. Choose **Newest first**
+or **Oldest first** to change the order. A dash means Factory has no date for
+that event, and rows missing the selected date stay at the bottom.
 
 ## Testing a local web application
 
-Ask Pi to start the development server with `bash_escalate`, then open
-`http://localhost:PORT` with the browser tool. You can also start the server in
-the editor terminal. When using `bash_escalate`, keep the server in the background
-and redirect output to a log, for example `nohup npm run dev >/tmp/dev.log 2>&1 </dev/null &`.
-Ordinary `bash` has a separate network namespace, so its
-servers are not reachable by the managed browser. Escalation runs inside the
-development container, not on your computer.
+To preview a local web app, ask Pi to start its development server and open
+`http://localhost:PORT` in the agent browser. Pi starts the server with
+`bash_escalate` because the browser can’t reach servers started with ordinary
+`bash`. The server runs inside the development container. You can also start
+it yourself from the editor terminal.
+
+With `bash_escalate`, run the server in the background and write its output to
+a log so Pi can continue. For an npm app, use
+`nohup npm run dev >/tmp/dev.log 2>&1 </dev/null &`.
 
 Local browser pages, API requests, WebSockets and popup tabs work without network
 approval. External websites still use your network rules. Container `/tmp` is

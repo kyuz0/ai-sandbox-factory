@@ -2,7 +2,13 @@
 
 ## Files and processes
 
-The terminal manager runs on the host and manages rootless Podman containers. The default browser editor runs its backend, FrostPi and Pi inside the development container. Optional desktop VS Code runs on the host and attaches through Dev Containers. The selected host folder is mounted at `/workspace`, so edits are real changes to that folder.
+The Factory terminal app runs on your computer and manages rootless Podman
+containers. The browser editor runs Pi, FrostPi, and the editor server inside the
+development container. If you choose desktop VS Code, the app runs on your
+computer and connects to the sandbox through Dev Containers.
+
+The folder you choose on your computer appears as `/workspace`. When Pi edits a
+file there, it changes the original file on your computer.
 
 Desktop VS Code and its extensions remain trusted host software. A remote extension
 can use VS Code APIs that request client-side resources; Dev Containers alone is
@@ -20,7 +26,13 @@ The editor supervisor continuously collects exited helper processes.
 
 ## Restricted networking
 
-The development container uses `--network=none`. HTTP clients use its inherited proxy environment and a local relay to a Unix socket in a shared volume. A separate gateway container runs the socket relay and Squid, which checks exact destination hostname/port pairs. The development container mounts the socket volume read-only.
+In **Restricted** mode, programs inside the development container have no
+direct network connection. They send HTTP and HTTPS requests through the proxy
+Factory puts in their environment. The proxy relays those requests to a separate
+gateway container, where Squid checks the destination hostname and port.
+
+The development container runs with `--network=none`. It reaches the gateway
+through a Unix socket in a shared volume that it mounts read-only.
 
 For host-local models, the rootless Podman gateway uses pasta's host-loopback mapping. `local-model.internal:8000` reaches the host model server at port 8000. The discovery extension reads that server’s metadata and updates Pi’s model catalogue.
 

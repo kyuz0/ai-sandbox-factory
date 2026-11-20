@@ -2,9 +2,10 @@
 
 During creation or in **Settings → Model Providers**, look under
 **Built-in hosted providers** and choose **Connect hosted provider…**.
-Save the connection, choose a model, then select **Use as default**. During creation,
-model selection opens after the container starts. **Continue** then opens your
-selected editor.
+Save your connection. When you create a sandbox, wait for it to start, then
+choose a model, select **Use as default**, and select **Continue** to open your
+editor. In an existing sandbox you can choose the default model in
+**Model Providers** after saving the connection.
 
 | Provider | What to enter | Model selection |
 | --- | --- | --- |
@@ -18,6 +19,12 @@ settings. Bedrock profile ARNs must use the configured AWS
 region. For models absent from the catalogue, use Pi’s `models.json`; see [custom providers](providers.md#hosted-services).
 
 Use **Test selected model** to check the connection with a short prompt.
+
+To see whether your OpenRouter key works, ask Pi “Can you check my OpenRouter
+connection?” This sends a connection check without running a model. It’s also
+available for managed provider plugins that supply their own connection test.
+If you’ve just added your first provider that supports this check, reload Pi or
+FrostPi before asking. [How approval works](approvals.md#check-a-saved-provider-key)
 
 ## Credential isolation
 

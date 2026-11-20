@@ -17,7 +17,9 @@ GitHub or GitLab controls what the key can do. Factory holds one key per sandbox
    In GitLab, use **Settings → Repository → Deploy keys → Add new key** and
    leave **Grant write permissions** unchecked. **Add repository… → Open deploy-key
    settings** opens the appropriate page.
-5. In the sandbox, clone through the `repository` alias:
+5. In the sandbox, clone through the `repository` alias. Replace
+   `OWNER/PROJECT.git` with the path from your repository’s SSH URL. Include any
+   parent groups in the path.
 
    ```sh
    git clone git@repository:OWNER/PROJECT.git

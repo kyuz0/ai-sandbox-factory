@@ -11,7 +11,7 @@ export function readCredentials(file) {
   catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
 }
 
-export async function checkCredential(route, key, fetchImpl = fetch) {
+export async function checkCredential(route, key, fetchImpl = fetch, requestSignal) {
   const auth = route?.auth;
   if (!['bearer', 'header'].includes(auth?.type) || typeof key !== 'string' || !/^[!-~]{1,16384}$/.test(key))
     throw Error('Unsupported credential check.');
@@ -27,7 +27,8 @@ export async function checkCredential(route, key, fetchImpl = fetch) {
     url.searchParams.set(name, values[0]);
   }
   const headers = auth.type === 'bearer' ? { authorization: 'Bearer ' + key } : { [auth.header]: key };
-  const signal = AbortSignal.timeout(20000);
+  const timeout = AbortSignal.timeout(20000);
+  const signal = requestSignal ? AbortSignal.any([timeout, requestSignal]) : timeout;
   const verdict = status => status === 401 || status === 403 ? 'rejected'
     : status >= 200 && status < 300 ? 'accepted' : 'unavailable';
   if (route.local) {

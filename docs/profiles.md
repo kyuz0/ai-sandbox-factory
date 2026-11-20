@@ -1,8 +1,8 @@
 # Profiles
 
-A profile sets up a sandbox for a particular kind of work, with the tools, skills,
-extensions and instructions the agent needs. Providers are chosen separately,
-so the same profile can use local or hosted models.
+Choose a profile for the kind of work you want to do. A profile can add
+software, skills, extensions, and instructions for Pi. Choose your model
+provider separately so the same profile can work with a local or hosted model.
 
 ## What profiles inherit
 
@@ -21,10 +21,10 @@ instructions. They do not inherit other profiles’ additions.
   files and mounted folders and cites the relevant passages. You can enable Web
   Search or subagents in the same settings as any other profile.
 
-Both profiles can search file contents and names without a model. To add semantic
-search, open **Agent tools → File search** and enable **Search by meaning**.
-Factory installs `pi-knowledge` and downloads roughly 470 MB of model weights
-when building the image.
+Pi can search file names and text as soon as it can read your files. If you
+also want it to find passages that use different words for the same idea, open
+**Agent tools → File search** and enable **Search by meaning**. Factory installs
+`pi-knowledge` and downloads about 470 MB for the local search model during the build.
 For sandboxes built before this setting was available, choose
 **Actions → Update sources and recreate…** first.
 Indexing and search then run inside the sandbox without an embedding service.
@@ -57,9 +57,10 @@ For a repository containing several plugins, select the folder:
 pi-sandbox-factory profile add reporting git@git.example.com:team/plugins.git --subdir reporting
 ```
 
-Only the selected subfolder becomes the package’s build input; updates reuse it.
-Use `--ref TAG_OR_COMMIT` to pin it. Local Git repositories install their committed
-files; commit edits before updating. A plain folder installs its current files.
+Factory installs the selected subfolder and uses that same folder when you
+update the profile. To stick to a tag or commit, pass `--ref TAG_OR_COMMIT`.
+Factory uses committed files from a local Git repository, so commit your edits
+before updating. For an ordinary folder it uses the files as they are.
 
 ```sh
 pi-sandbox-factory profile update reporting

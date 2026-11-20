@@ -76,6 +76,11 @@ class HostedModelsTests(unittest.TestCase):
                 service.hosted_save('fixture', {'provider': 'openrouter', 'key': 'private-fixture'})
                 saved = service.config('fixture')
                 self.assertEqual(saved['hosted_connections'], {'openrouter': {}})
+                checks_file = state / 'runtime-config/provider-connection-checks.json'
+                checks_text = checks_file.read_text()
+                checks = json.loads(checks_text)
+                self.assertEqual(checks['openrouter']['target'], 'https://openrouter.ai/api/v1/key')
+                self.assertNotIn('private-fixture', checks_text)
                 self.assertNotIn('private-fixture', (state / 'config.json').read_text())
                 self.assertNotIn('state_path', saved)
                 self.assertEqual(credentials.call_args.args[2]['credentials'],{'key':'private-fixture'})
@@ -83,6 +88,7 @@ class HostedModelsTests(unittest.TestCase):
                 self.assertEqual(request.call_args.kwargs['endpoint'],'http://127.0.0.1:19431/r/openrouter/api/v1')
                 service.hosted_remove('fixture', 'openrouter')
                 self.assertEqual(service.config('fixture')['hosted_connections'], {})
+                self.assertEqual(json.loads(checks_file.read_text()), {})
                 self.assertEqual(request.call_args.args[1], 'remove')
 
     def test_stopped_sandbox_has_actionable_error(self):

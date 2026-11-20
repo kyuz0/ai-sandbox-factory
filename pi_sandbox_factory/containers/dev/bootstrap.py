@@ -105,6 +105,7 @@ image_resources = {
                    '/opt/rpiv-ask-user-question/index.ts',
                    '/opt/pi-session-naming/factory.mjs',
                    '/opt/sandbox/system-prompt.mjs',
+                   '/opt/sandbox/local-knowledge-status.mjs',
                    '/opt/pi-security/packages/pi-auto-review/src/index.ts',
                    '/opt/pi-security/node_modules/@gotgenes/pi-permission-system/src/index.ts',
                    '/opt/pi-security/packages/pi-reviewed-escalation/index.ts',
@@ -146,6 +147,7 @@ if goals_enabled:
 managed['extensions'].add('/opt/pi-advisor/extensions/advisor.js')
 managed['skills'].add('/opt/pi-advisor/skills/advisor')
 managed['extensions'].update(['/opt/pi-security/approval-mode.ts', '/opt/pi-security/packages/pi-auto-review/src/container-approval-mode.ts'])
+managed['extensions'].add('/opt/pi-security/reviewed-actions.mjs')
 managed['extensions'].add('/opt/betterwright/extension.mjs')
 managed['extensions'].add('/opt/pi-web-access/node_modules/pi-web-access/dist/index.js')
 web_extension = '/opt/pi-web-access/extension.mjs'
@@ -189,6 +191,8 @@ if not inner_sandbox:
     image_resources['extensions'].remove('/opt/pi-security/packages/pi-sandbox/src/index.ts')
 if not inner_sandbox or approval == 'off':
     image_resources['extensions'].remove('/opt/pi-security/packages/pi-reviewed-escalation/index.ts')
+else:
+    image_resources['extensions'].append('/opt/pi-security/reviewed-actions.mjs')
 if not selection.get('question_forms', True):
     image_resources['extensions'].remove('/opt/rpiv-ask-user-question/index.ts')
 if not scheduling_enabled:

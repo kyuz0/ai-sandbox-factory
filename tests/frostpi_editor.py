@@ -1,6 +1,7 @@
 """Exercise the shipped FrostPi webview and shared Pi tools in a disposable Factory container."""
 import argparse
 import base64
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -26,7 +27,7 @@ APPROVAL_LABELS = {
     'manual': 'Manual approval (ask me)', 'off': 'YOLO (no approvals)',
 }
 sys.path.insert(0, str(REPO))
-from pi_sandbox_factory import folders, prompt_library, sandbox
+from pi_sandbox_factory import folders, inference, prompt_library, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -568,15 +569,164 @@ def check_scheduled_tasks(page, frame, send, inside, output):
     print('PASS FrostPi preserves pending and delivered schedules across restart and delivers the prompt once.')
 
 
+def check_reviewed_file_access(page, frame, send, inside, output, mode):
+    base = '/home/node/.pi/agent'
+    notes = base + '/skills/fixture/notes.md'
+    restricted = base + '/skills/fixture/restricted.md'
+    approved = frame.get_by_role('button', name='Allow once', exact=True)
+    denied = frame.get_by_role('button', name='Deny', exact=True)
+
+    def request(operation, path, ask=False, allow=True, after_prompt=None):
+        count = frame.get_by_text('FILE ACCESS CHECK COMPLETE', exact=True).count()
+        send(f'Factory file access {operation} {path}')
+        if ask:
+            approved.wait_for(timeout=20000)
+            expect(frame.get_by_text(path, exact=False).last).to_be_visible()
+            expect(frame.get_by_text('Check the requested Pi resource.', exact=False).last).to_be_visible()
+            if after_prompt:
+                after_prompt()
+            (approved if allow else denied).click()
+        expect(frame.get_by_text('FILE ACCESS CHECK COMPLETE', exact=True)).to_have_count(count + 1, timeout=25000)
+        assert not approved.count()
+        trace = inside('cat', '/tmp/fixture.log')
+        assert 'SECRET_FILE_CANARY' not in trace
+        return [line for line in trace.splitlines() if line.startswith('FILE ACCESS RESULT ')][-1]
+
+    assert 'READABLE_FILE_CANARY' in request('read', notes, mode == 'manual')
+    listing = request('list', base + '/skills/fixture', mode == 'manual')
+    assert 'notes.md' in listing and 'restricted.md' in listing and 'link.md' not in listing
+    assert 'READABLE_FILE_CANARY' not in listing
+    root_listing = request('list', base, mode == 'manual')
+    assert 'skills/' in root_listing and 'auth.json' not in root_listing and 'notes.md' not in root_listing
+    if mode == 'automatic':
+        assert 'Reviewer denied access' in request('read', restricted)
+    elif mode == 'assisted':
+        assert 'RESTRICTED_FILE_CANARY' in request('read', restricted, ask=True)
+        assert 'declined or cancelled' in request('read', restricted, ask=True, allow=False)
+    else:
+        assert 'declined or cancelled' in request('read', restricted, ask=True, allow=False)
+        def replace_file():
+            inside('mv', notes, notes + '.old')
+            inside('tee', notes, input='REPLACED_FILE_CANARY')
+        assert 'changed during approval' in request('read', notes, ask=True, after_prompt=replace_file)
+    before = inside('cat', '/tmp/fixture.log').count('FILE ACCESS REVIEW')
+    for path in (base + '/auth.json', base + '/skills/fixture/link.md', base + '/sessions/private.md'):
+        assert 'Blocked by sandbox policy' in request('read', path)
+    trace = inside('cat', '/tmp/fixture.log')
+    assert trace.count('FILE ACCESS REVIEW') == before
+    if mode == 'manual':
+        assert before == 0
+    else:
+        assert before == (4 if mode == 'automatic' else 5), trace
+        assert f'FILE ACCESS REVIEW read {notes}' in trace
+        assert f'FILE ACCESS REVIEW list {base}/skills/fixture' in trace
+    (output / 'reviewed-file-access.log').write_text(trace)
+    if mode == 'automatic':
+        # Use the same eligible file as the webview in a separate native Pi session.
+        result = inside('sh', '-c', 'cd /workspace && exec pi --approve --no-session --print "$@"', 'pi',
+                        f'Factory file access read {notes}')
+        assert 'FILE ACCESS CHECK COMPLETE' in result, result
+        trace = inside('cat', '/tmp/fixture.log')
+        assert 'READABLE_FILE_CANARY' in trace.splitlines()[-1]
+        assert 'SECRET_FILE_CANARY' not in trace
+    else:
+        def tmux(*args):
+            return inside('tmux', '-S', '/tmp/factory-file-access-test.sock', *args)
+        def wait_for_text(text):
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                snapshot = tmux('capture-pane', '-p', '-t', 'pi')
+                if text in snapshot:
+                    return
+                time.sleep(.2)
+            raise AssertionError(f'Expected {text!r} in Pi terminal.\n{snapshot}')
+        tmux('new-session', '-d', '-s', 'pi', '-c', '/workspace', '-x', '120', '-y', '40', 'pi --approve --no-session')
+        try:
+            wait_for_text('pi-sandbox enabled')
+            tmux('send-keys', '-t', 'pi', '-l', f'Factory file access read {restricted}')
+            tmux('send-keys', '-t', 'pi', 'Enter')
+            wait_for_text('Allow once')
+            if mode == 'assisted':
+                wait_for_text('Fixture decision for this exact resource.')
+            tmux('send-keys', '-t', 'pi', 'Enter')
+            wait_for_text('FILE ACCESS CHECK COMPLETE')
+            trace = inside('cat', '/tmp/fixture.log')
+            assert 'RESTRICTED_FILE_CANARY' in trace.splitlines()[-1]
+            assert 'SECRET_FILE_CANARY' not in trace
+        finally:
+            tmux('kill-server')
+    page.screenshot(path=output / 'reviewed-file-access.png')
+    print(f'PASS {mode} exact reads and listings, policy denials and approval handling in FrostPi and Pi.', flush=True)
+
+
+def check_provider_connection(page, frame, send, inside, output, mode, root, target):
+    approved = frame.get_by_role('button', name='Allow once', exact=True)
+    denied = frame.get_by_role('button', name='Deny', exact=True)
+    available = 'PROVIDER CHECK HIDDEN' if mode == 'off' else 'PROVIDER CHECK AVAILABLE'
+    send('Factory provider check capability')
+    frame.get_by_text(available, exact=True).wait_for(timeout=15000)
+
+    def requests():
+        return (root / 'provider.log').read_text().count('PROVIDER CHECK SENT')
+
+    def request(verdict, ask=False, allow=True):
+        prior = requests()
+        count = frame.get_by_text('PROVIDER CHECK COMPLETE', exact=True).count()
+        send(f'Factory provider check request {verdict}')
+        if ask:
+            approved.wait_for(timeout=20000)
+            expect(frame.get_by_text(target, exact=False)).to_be_visible()
+            assert requests() == prior
+            (approved if allow else denied).click()
+        expect(frame.get_by_text('PROVIDER CHECK COMPLETE', exact=True)).to_have_count(count + 1, timeout=25000)
+        assert not approved.count()
+        trace = inside('cat', '/tmp/fixture.log')
+        assert 'FACTORY_PRIVATE_PROVIDER_TEST_KEY' not in trace
+        return [line for line in trace.splitlines() if line.startswith('PROVIDER CHECK RESULT')][-1]
+
+    if mode != 'off':
+        assert 'accepted the connection check' in request('allow', ask=mode == 'manual')
+        assert requests() == 1
+        if mode == 'automatic':
+            assert 'Reviewer denied access' in request('deny')
+        else:
+            assert 'declined or cancelled' in request('deny', ask=True, allow=False)
+        assert requests() == 1
+        (root / 'provider-outcome').write_text('401')
+        assert 'refused authentication or access' in request(
+            'deny' if mode == 'assisted' else 'allow', ask=mode in ('assisted', 'manual'))
+        assert requests() == 2
+    else:
+        assert requests() == 0
+    for count, filename in enumerate(('auth.json', 'models.json', 'sandbox-web-keys.json', 'web-search.json'), 1):
+        send(f'Factory protected provider file {filename}')
+        expect(frame.get_by_text('PROVIDER FILE CHECK COMPLETE', exact=True)).to_have_count(count, timeout=20000)
+    trace = inside('cat', '/tmp/fixture.log')
+    file_results = [line for line in trace.splitlines() if line.startswith('PROVIDER FILE RESULT')]
+    assert len(file_results) == 4 and all(re.search(r'deni|block', line, re.I) for line in file_results), file_results
+    assert 'FACTORY_PRIVATE_PROVIDER_TEST_KEY' not in trace
+    expected_reviews = 3 if mode in ('automatic', 'assisted') else 0
+    assert trace.count('PROVIDER CHECK REVIEW') == expected_reviews, trace
+    if expected_reviews:
+        assert f'PROVIDER CHECK REVIEW allow {target}' in trace
+    assert 'UNEXPECTED CHECK' not in (root / 'provider.log').read_text()
+    assert inside('sh', '-c', 'test ! -e /private/credentials.json && printf isolated') == 'isolated'
+    (output / 'provider-check.log').write_text(trace)
+    page.screenshot(path=output / 'provider-check.png')
+    print(f'PASS {mode} provider check availability, approval and status in FrostPi.', flush=True)
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
-          local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False):
+          local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
+          reviewed_file_access=None, provider_connection_check=None):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
         subagents = 'automatic'
-    mode = 'manual' if folder_access else startup_only or (subagents if subagents != 'disabled' else None) or 'assisted'
+    mode = ('manual' if folder_access else provider_connection_check or reviewed_file_access or startup_only
+            or (subagents if subagents != 'disabled' else None) or 'assisted')
     web_workers = subagent_case == 'web-tools'
     worker_prompt = subagents == 'automatic' and subagent_case == 'named'
 
@@ -586,7 +736,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
     def inside(*args, **kwargs):
         return podman('exec', '-i', name, *args, **kwargs)
 
-    with tempfile.TemporaryDirectory(prefix='factory-frostpi-check-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='factory-frostpi-check-') as tmp, ExitStack() as resources:
         root = Path(tmp)
         for directory in ('workspace', 'editor', 'code-server-data'):
             (root / directory).mkdir()
@@ -596,6 +746,33 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         (root / 'allowlist.txt').write_text('')
         config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
                   'engine': 'podman'}
+        if provider_connection_check:
+            provider_socket = root / 'provider-socket'
+            provider_socket.mkdir()
+            sock = provider_socket / 'proxy.sock'
+            routes = root / 'provider-routes.json'
+            outcome = root / 'provider-outcome'
+            outcome.write_text('200')
+            log = resources.enter_context((root / 'provider.log').open('w'))
+            worker = subprocess.Popen(['node', str(REPO / 'tests/provider_check_fixture.mjs'),
+                                       str(sock), str(routes), str(outcome)], stdout=log, stderr=log)
+            resources.callback(worker.wait, timeout=10)
+            resources.callback(worker.terminate)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                lines = (root / 'provider.log').read_text().splitlines()
+                if lines:
+                    break
+                time.sleep(.05)
+            assert lines and lines[0].startswith('http://127.0.0.1:'), lines
+            config['model_providers'] = [{'name': 'sample', 'manifest': {'inference': {
+                'origin': lines[0], 'auth': {'type': 'bearer'}, 'credentialCheck': {'path': '/v1/key'},
+                'operations': [{'method': 'POST', 'path': '/v1/chat/completions'}],
+            }}}]
+            routes.write_text(json.dumps(inference.routes(config)))
+            while not sock.is_socket() and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert sock.is_socket(), (root / 'provider.log').read_text()
         if deep_research:
             profile = sandbox.load_profile(str(REPO / 'pi_sandbox_factory/profiles/deep-research'))
             config.update(profile=profile, subagents=profile['defaults']['subagents'], network='unrestricted')
@@ -662,6 +839,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             (Path(__file__).with_name(model_script).resolve(), '/tmp/frostpi_model.mjs', 'ro'),
             (Path(__file__).with_name('frostpi_subagent_model.mjs').resolve(), '/tmp/frostpi_subagent_model.mjs', 'ro'),
         ]
+        if provider_connection_check:
+            mounts.append((provider_socket, '/run/inference', 'ro'))
         if folder_access:
             mounts.append((Path(__file__).with_name('folder_access_cases.json').resolve(),
                            '/tmp/folder-access-cases.json', 'ro'))
@@ -692,6 +871,20 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         supervisor = relay = None
         try:
             inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
+            if provider_connection_check:
+                for filename in ('sandbox-web-keys.json', 'web-search.json'):
+                    inside('tee', '/home/node/.pi/agent/' + filename, input='{"key":"FACTORY_PRIVATE_PROVIDER_TEST_KEY"}')
+            if reviewed_file_access:
+                inside('python3', '-c', '''
+from pathlib import Path
+agent = Path('/home/node/.pi/agent')
+fixture = agent / 'skills/fixture'
+fixture.mkdir(parents=True)
+(fixture / 'notes.md').write_text('READABLE_FILE_CANARY')
+(fixture / 'restricted.md').write_text('RESTRICTED_FILE_CANARY')
+(agent / 'auth.json').write_text('{"fixture-secret":{"type":"api_key","key":"SECRET_FILE_CANARY"}}')
+(fixture / 'link.md').symlink_to(agent / 'auth.json')
+''')
             if profile_prompt:
                 inside('python3', '-c', '''
 from pathlib import Path
@@ -784,6 +977,15 @@ p.write_text(json.dumps(v))
                 assert notice.count() == 1
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if provider_connection_check:
+                    check_provider_connection(page, frame, send, inside, output, mode, root,
+                                              inference.connection_checks(config)['sample']['target'])
+                    assert not errors, errors
+                    return
+                if reviewed_file_access:
+                    check_reviewed_file_access(page, frame, send, inside, output, mode)
+                    assert not errors, errors
+                    return
                 if subagent_compaction:
                     compact_fixture.check_frostpi(page, frame, send, inside, output, subagent_compaction)
                     assert not errors, errors
@@ -1035,6 +1237,10 @@ if __name__ == '__main__':
     scope.add_argument('--deep-research', action='store_true', help='Check Deep Web Research from search to report in Pi and FrostPi.')
     scope.add_argument('--system-prompt', action='store_true', help='Check reusable system prompt changes in Pi and FrostPi.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
+    scope.add_argument('--reviewed-file-access', choices=('automatic', 'assisted', 'manual'),
+                       help='Check one-time access to Pi resources and protected-path denials.')
+    scope.add_argument('--provider-connection-check', choices=APPROVAL_LABELS,
+                       help='Check the status-only provider probe in one approval mode.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     scope.add_argument('--nonblocking-questions', action='store_true', help='Check deferred questions while the model works, stops and reloads.')
     scope.add_argument('--profile-prompt', type=Path, help='Check a profile addendum in the model request from Pi CLI and FrostPi.')
@@ -1056,4 +1262,5 @@ if __name__ == '__main__':
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
-          scheduled_tasks=args.scheduled_tasks)
+          scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
+          provider_connection_check=args.provider_connection_check)

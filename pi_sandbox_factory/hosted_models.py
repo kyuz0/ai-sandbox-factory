@@ -134,6 +134,7 @@ def save(config, state, value):
         raise
     # Save a recoverable connection before configuring the client; credentials stay in its companion.
     activity.save_config(state, updated)
+    inference.write_connection_checks(updated, state)
     if sandbox.network_mode(updated) == 'allowlist':
         sandbox.update_network(updated, state, (state / 'allowlist.txt').read_text())
     activity.record(state, 'edited')
@@ -151,6 +152,7 @@ def remove(config, state, provider):
     activity.save_config(state, updated)
     if inference.enabled(updated): inference.up(updated, state)
     else: inference.down(config, remove=True)
+    inference.write_connection_checks(updated, state)
     if sandbox.network_mode(updated) == 'allowlist':
         sandbox.update_network(updated, state, (state / 'allowlist.txt').read_text())
     request(updated, 'remove', provider=provider)
