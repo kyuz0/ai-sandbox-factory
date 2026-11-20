@@ -25,11 +25,16 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
-          if [[ "$BEFORE" =~ ^0+$ ]]; then
-            BEFORE=$(git hash-object -t tree /dev/null)
+          # Include package changes left unpublished by an earlier failed run.
+          if release=$(git describe --tags --abbrev=0 --first-parent --match 'v[0-9]*' "$AFTER" 2>/dev/null); then
+            baseline=$release
+          elif [[ "$BEFORE" =~ ^0+$ ]]; then
+            baseline=$(git hash-object -t tree /dev/null)
+          else
+            baseline=$BEFORE
           fi
           status=0
-          git diff --quiet "$BEFORE" "$AFTER" -- pi_sandbox_factory/ pyproject.toml MANIFEST.in || status=$?
+          git diff --quiet "$baseline" "$AFTER" -- pi_sandbox_factory/ pyproject.toml MANIFEST.in || status=$?
           case "$status" in
             0) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
             1) echo 'changed=true' >> "$GITHUB_OUTPUT" ;;
