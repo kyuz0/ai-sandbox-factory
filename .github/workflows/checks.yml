@@ -2,6 +2,10 @@ name: Checks and release
 on:
   push:
     branches: [main]
+    paths:
+      - 'pi_sandbox_factory/**'
+      - 'pyproject.toml'
+      - 'MANIFEST.in'
   pull_request:
   workflow_dispatch:
 permissions:
@@ -91,20 +95,47 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Version and tag
         run: |
           python - <<'PYTHON'
           from datetime import datetime, timezone
           from pathlib import Path
           import re, subprocess
-          now = datetime.now(timezone.utc)
-          version = f'{now.year}.{now.month}.{now.day}.{int(now.strftime("%H%M%S"))}'
-          path = Path('pyproject.toml')
-          path.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"', path.read_text(), flags=re.M))
-          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
-          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
-          subprocess.run(['git', 'add', 'pyproject.toml'], check=True)
-          subprocess.run(['git', 'commit', '-m', f'Release {version}'], check=True)
-          subprocess.run(['git', 'tag', 'v' + version], check=True)
-          subprocess.run(['git', 'push', '--atomic', 'origin', 'HEAD:main', 'v' + version], check=True)
+
+          def git(*args, check=True):
+              return subprocess.run(['git', *args], check=check)
+
+          def revision(ref):
+              return subprocess.check_output(['git', 'rev-parse', ref], text=True).strip()
+
+          tested = revision('HEAD')
+          git('config', 'user.name', 'github-actions[bot]')
+          git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
+          git('fetch', 'origin', 'main')
+          for attempt in range(3):
+              latest = revision('FETCH_HEAD')
+              git('merge-base', '--is-ancestor', tested, latest)
+              # Docs may have landed since the tests started. Release only the tested package.
+              diff = git('diff', '--quiet', tested, latest, '--',
+                         'pi_sandbox_factory/', 'pyproject.toml', 'MANIFEST.in', check=False)
+              if diff.returncode == 1:
+                  print('Main has newer package changes. The newer push will run its own release checks.')
+                  break
+              diff.check_returncode()
+
+              git('checkout', '--detach', latest)
+              now = datetime.now(timezone.utc)
+              version = f'{now.year}.{now.month}.{now.day}.{int(now.strftime("%H%M%S"))}'
+              path = Path('pyproject.toml')
+              path.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"',
+                                     path.read_text(), flags=re.M))
+              git('add', 'pyproject.toml')
+              git('commit', '-m', f'Release {version}')
+              push = git('push', '--atomic', 'origin', 'HEAD:main', f'HEAD:refs/tags/v{version}', check=False)
+              if push.returncode == 0:
+                  break
+              git('fetch', 'origin', 'main')
+              if attempt == 2 or latest == revision('FETCH_HEAD'):
+                  push.check_returncode()
           PYTHON
