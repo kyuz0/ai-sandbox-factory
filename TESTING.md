@@ -1027,7 +1027,8 @@ instructions for other clients. Render those states with
 `test_activity.py`, `test_sandbox.py` and the dashboard tests cover saved lifecycle
 times, no-op saves, successful starts, stale-runtime recovery, sorting, missing
 dates, filtering and selection preservation. Each sandbox and its actions occupy
-one line. One blank line separates entries. Clicking that gap must leave the
+one line. One blank line follows the header and separates adjacent entries.
+Clicking a gap must leave the
 selection unchanged. Check that every sandbox is reachable by keyboard. Render `tests/render_dashboard.py`
 at its three built-in sizes, in colour and with `--mono`.
 

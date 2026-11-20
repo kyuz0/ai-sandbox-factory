@@ -1289,13 +1289,11 @@ def sandbox_alerts(record):
 
 
 class SandboxTable(DataTable):
-    # DataTable has no row margins. Reserve one line after each entry and
-    # paint it with the table background, without cell selection or click targets.
+    # The header and entries each use one content line and one inert margin.
     ROW_PITCH = 2
 
     def _render_line(self, y, x1, x2, base_style):
-        header = self.header_height if self.show_header else 0
-        if y >= header and (y - header) % self.ROW_PITCH:
+        if y % self.ROW_PITCH:
             return Strip.blank(self.size.width, base_style)
         return super()._render_line(y, x1, x2, base_style)
 
@@ -3680,7 +3678,8 @@ class Cockpit(App):
                             classes='toolbar-control')
                         yield Button('Newest first', id='sort-direction', classes='toolbar-control')
             yield SandboxTable(id='sandboxes', cursor_type='cell', cursor_background_priority='renderable',
-                               cursor_foreground_priority='renderable', zebra_stripes=True)
+                               cursor_foreground_priority='renderable', zebra_stripes=True,
+                               header_height=SandboxTable.ROW_PITCH)
             yield Static('Choose a sandbox, or create your first one.', id='details', markup=False)
             yield Feedback('', id='home-error', markup=False)
             with Horizontal(classes='buttons'):
