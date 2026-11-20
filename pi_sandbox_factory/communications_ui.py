@@ -3,9 +3,8 @@ import asyncio
 from textual import on, work
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Link, Static
-from .tui_widgets import Checkbox, Feedback
+from .tui_widgets import EntryDialog, Checkbox, Feedback
 from .settings_catalog import CATEGORIES
 from . import communications
 
@@ -14,7 +13,7 @@ def communications_summary(slack):
     return 'Slack' if slack else 'Off'
 
 
-class SlackCredentials(ModalScreen):
+class SlackCredentials(EntryDialog):
     BINDINGS = [Binding('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = '''
     SlackCredentials { align: center middle; }

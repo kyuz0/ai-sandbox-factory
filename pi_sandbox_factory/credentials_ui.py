@@ -7,7 +7,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static
 
 from . import inference, provider_credentials
-from .tui_widgets import Checkbox, Feedback
+from .tui_widgets import EntryDialog, Checkbox, Feedback
 
 
 def key_caption(label=None):
@@ -166,7 +166,7 @@ class CredentialFields(Vertical):
             self.query_one('#credential-error', Feedback).update(str(error))
 
 
-class CredentialDialog(ModalScreen):
+class CredentialDialog(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = '''
     CredentialDialog { align: center middle; background: #000000 70%; }

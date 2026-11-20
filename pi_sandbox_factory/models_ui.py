@@ -4,14 +4,13 @@ import subprocess
 from textual import on, work
 from textual.message import Message
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from rich.text import Text
 from . import hosted_models, settings_effects, editor_settings
 from .credentials_ui import CredentialFields, choice_key_caption, key_caption
 from .settings_catalog import HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL
-from .tui_widgets import Feedback
+from .tui_widgets import EntryDialog, Feedback
 
 
 def local_models_title(enabled):
@@ -22,7 +21,7 @@ def hosted_provider_names(connected=()):
     return ', '.join(label for provider, label in hosted_models.PROVIDERS.items() if provider not in connected)
 
 
-class ProviderDialog(ModalScreen):
+class ProviderDialog(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = '''
     ProviderDialog, ModelDialog { align: center middle; }
@@ -81,9 +80,6 @@ class ProviderDialog(ModalScreen):
 
     def on_mount(self):
         self.sync()
-        provider = self.query_one('#hosted-provider', Select)
-        if not provider.disabled:
-            provider.focus()
 
     def credential_binding(self, value):
         try:
@@ -288,7 +284,7 @@ class HostedProviders(Vertical):
             self.query_one('#hosted-add',Button).disabled = False
 
 
-class ModelDialog(ModalScreen):
+class ModelDialog(EntryDialog):
     BINDINGS = [('escape','cancel','Cancel')]
     DEFAULT_CSS = '''
     ModelDialog { align: center middle; }

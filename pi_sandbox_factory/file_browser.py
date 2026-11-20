@@ -61,7 +61,7 @@ class FolderPicker(ModalScreen[str | None]):
             yield DirectoryNavigation(self.start)
             if self.mode == 'save':
                 yield Label('File name', classes='folder-input-label', id='folder-filename-label')
-                yield Input(self.filename, id='folder-filename', select_on_focus=False)
+                yield Input(self.filename, id='folder-filename')
             yield Feedback(id='folder-browse-error', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='folder-cancel')
@@ -77,7 +77,10 @@ class FolderPicker(ModalScreen[str | None]):
         navigation.show_files = self.mode != 'folder'
         if self.file_extensions:
             navigation.file_filter = Filter('Supported files', self.allowed_file)
-        navigation.focus()
+        if self.mode == 'save':
+            self.query_one('#folder-filename', Input).focus()
+        else:
+            navigation.focus()
 
     def action_cancel(self):
         self.dismiss(None)

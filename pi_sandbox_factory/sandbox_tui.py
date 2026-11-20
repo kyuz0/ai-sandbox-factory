@@ -36,7 +36,7 @@ from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL
                              assigned_key_label, choice_key_caption, key_caption)
 from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
-from .tui_widgets import Checkbox, Feedback
+from .tui_widgets import EntryDialog, Checkbox, Feedback
 from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
 from . import embedding_models
 from . import sandbox_skills
@@ -517,7 +517,7 @@ class WebsiteGroups(Vertical):
         return [name for name in network_groups.catalog() if self.query_one('#category-' + name, Checkbox).value]
 
 
-class SearchProviderDialog(ModalScreen):
+class SearchProviderDialog(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     SearchProviderDialog { align: center middle; background: #000000 70%; }
@@ -606,7 +606,7 @@ class SearchProviderDialog(ModalScreen):
             self.query_one('#search-provider-error', Static).update(str(error))
 
 
-class CopyWebAccess(ModalScreen):
+class CopyWebAccess(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     CopyWebAccess { align: center middle; background: #000000 70%; }
@@ -2350,7 +2350,7 @@ class CreationOperation(Operation):
             self.app.action_refresh_inventory()
 
 
-class CreateFromSandbox(ModalScreen):
+class CreateFromSandbox(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     CreateFromSandbox { align: center middle; background: #000000 70%; }

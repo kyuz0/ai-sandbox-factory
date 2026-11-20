@@ -4,15 +4,14 @@ from pathlib import Path
 
 from textual import on
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from . import folders
 from .file_browser import PathField
-from .tui_widgets import Checkbox, Feedback
+from .tui_widgets import EntryDialog, Checkbox, Feedback
 
 
-class FolderEditor(ModalScreen):
+class FolderEditor(EntryDialog):
     DEFAULT_CSS = '''
     FolderEditor { align: center middle; background: #000000 70%; }
     FolderEditor > Vertical { width: 70; max-width: 95%; height: auto; max-height: 95%; padding: 1 2; background: $panel; border: solid $primary; }

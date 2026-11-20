@@ -159,6 +159,9 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   every data row and a visibly different background for the gaps. A gap must
   ignore clicks. Check a populated table with the first, middle and last rows
   visible, then scroll and check the fixed header again.
+- Open text-entry dialogs with the cursor in the first editable field. If the
+  user must choose a provider or a saved key first, focus that selector. Test by
+  opening the dialog and typing immediately, including while search results load.
 - Give inputs persistent labels; placeholders are examples, not labels. Use the
   same title style and left edge across screens. Full-page forms and action bars
   use the available terminal width with consistent side padding; constrain modal

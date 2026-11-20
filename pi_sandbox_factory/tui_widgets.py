@@ -1,6 +1,17 @@
 """Shared terminal controls."""
 from textual.content import Content
-from textual.widgets import Checkbox as TextualCheckbox, Static
+from textual.screen import ModalScreen
+from textual.widgets import Checkbox as TextualCheckbox, Input, Select, Static, TextArea
+
+
+class EntryDialog(ModalScreen):
+    """Start at the first available field after the dialog configures its controls."""
+
+    def on_mount(self):
+        for field in self.focus_chain:
+            if isinstance(field, (Input, Select, TextArea)):
+                self.set_focus(field)
+                break
 
 
 class Checkbox(TextualCheckbox):

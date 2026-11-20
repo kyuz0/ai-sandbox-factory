@@ -6,7 +6,7 @@ from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
 
 from . import host_platform, sandbox_ssh, git_settings
 from .settings_catalog import CATEGORIES
-from .tui_widgets import Feedback, Checkbox
+from .tui_widgets import EntryDialog, Feedback, Checkbox
 
 
 def git_identity_summary(enabled):
@@ -85,7 +85,7 @@ class GitIdentityFields(Vertical):
             raise
 
 
-class RepositorySetup(ModalScreen):
+class RepositorySetup(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     RepositorySetup { align: center middle; background: #000000 70%; }

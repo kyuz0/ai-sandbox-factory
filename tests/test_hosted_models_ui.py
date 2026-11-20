@@ -56,6 +56,8 @@ class HostedUITests(unittest.TestCase):
                 await pilot.pause()
                 self.assertIsInstance(app.screen, ModelDialog)
                 self.assertEqual(str(app.screen.query_one('#model-cancel', Button).label), 'Skip')
+                await pilot.press('e', 'x')
+                self.assertEqual(app.screen.query_one('#model-search', Input).value, 'ex')
                 request.assert_called_once_with('test', 'catalogue', provider='company', refresh=False)
                 await pilot.click('#model-cancel')
                 self.assertIs(app.screen, screen)
