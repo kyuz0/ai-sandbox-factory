@@ -154,7 +154,7 @@ class CredentialFields(Vertical):
         if ref in self.saved:
             from .sandbox_tui import Confirm
             label = self.saved[ref]['label']
-            self.app.push_screen(Confirm(f'Forget {label} on this computer?\nExisting sandbox connections keep their keys.', 'Forget'),
+            self.app.push_screen(Confirm(f'Forget {label} on this computer?\nExisting sandbox connections keep their keys.', 'Forget', confirm_by_default=False),
                                  lambda yes: self.forget(ref) if yes else None)
 
     @work(exclusive=True)
@@ -218,7 +218,7 @@ class CredentialDialog(EntryDialog):
                 self.query_one('#credential-dialog-error', Feedback).update(str(error))
         elif event.button.id == 'disconnect-key':
             from .sandbox_tui import Confirm
-            self.app.push_screen(Confirm(f'Disconnect {self.provider} from this sandbox?', 'Disconnect'),
+            self.app.push_screen(Confirm(f'Disconnect {self.provider} from this sandbox?', 'Disconnect', confirm_by_default=False),
                                  lambda yes: self.dismiss({'disconnect': True}) if yes else None)
 
 
@@ -315,7 +315,7 @@ class LocalKeysDialog(ModalScreen):
         elif event.button.id == 'local-key-clear':
             if self.editing:
                 from .sandbox_tui import Confirm
-                self.app.push_screen(Confirm(f'Disconnect the API key for port {port}?', 'Disconnect'),
+                self.app.push_screen(Confirm(f'Disconnect the API key for port {port}?', 'Disconnect', confirm_by_default=False),
                                      lambda yes: self.selected(port, {'disconnect': True}) if yes else None)
             else:
                 self.selected(port, {'disconnect': True})

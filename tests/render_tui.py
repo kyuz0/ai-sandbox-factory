@@ -200,7 +200,7 @@ async def capture(size):
                     await shot('prompt-edit', EditPrompt('Edit system prompt', value, lambda value: None))
                     await shot('prompt-remove', Confirm(
                         'Remove “Research briefing” from the library? Existing sandboxes keep their saved copies.',
-                        'Remove', title='Remove system prompt'))
+                        'Remove', confirm_by_default=False, title='Remove system prompt'))
                     await app.pop_screen()
                     creation = preset('base', DEFAULT_SETTINGS)
                     creation.update(name='demo', workspace=str(workspace))
@@ -985,7 +985,7 @@ async def capture(size):
                 await shot('ssh', SSHScreen(record))
                 await shot('copy', CreateFromSandbox([record]))
                 await shot('search-provider', SearchProviderDialog(web_access.settings(None)['providers'], 'exa'))
-                await shot('confirm', Confirm('Apply settings? This recreates the sandbox and interrupts running processes.', 'Apply and recreate'))
+                await shot('confirm', Confirm('Apply settings? This recreates the sandbox and interrupts running processes.', 'Apply and recreate', confirm_by_default=True))
                 await shot('folder-picker', FolderPicker(str(workspace)))
                 await shot('install-profile', InstallPackage('profile'))
                 await shot('install-provider', InstallPackage('provider'))

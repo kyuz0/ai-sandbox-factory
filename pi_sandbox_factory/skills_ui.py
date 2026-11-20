@@ -169,7 +169,7 @@ class SkillLibrary(Vertical):
         elif identifier.startswith('remove-'):
             from .sandbox_tui import Confirm
             key = identifier.removeprefix('remove-')
-            self.app.push_screen(Confirm('Remove this skill from the library? Saved sandboxes keep their copies.', 'Remove'),
+            self.app.push_screen(Confirm('Remove this skill from the library? Saved sandboxes keep their copies.', 'Remove', confirm_by_default=False),
                                  lambda yes: self.remove_entry(key) if yes else None)
 
     @work(thread=True, exit_on_error=False)

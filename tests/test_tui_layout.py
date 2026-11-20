@@ -190,7 +190,7 @@ class TUILayoutTests(unittest.TestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             result = []
-            await app.push_screen(Confirm('Recreate this sandbox?', 'Recreate'), result.append)
+            await app.push_screen(Confirm('Recreate this sandbox?', 'Recreate', confirm_by_default=True), result.append)
             await pilot.press('escape')
             self.assertEqual(result, [False])
             await app.push_screen(FolderPicker(str(self.workspace)), result.append)

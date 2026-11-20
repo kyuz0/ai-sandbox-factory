@@ -941,7 +941,7 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action, *, cancel_label='Cancel', title=None, confirm_by_default=False):
+    def __init__(self, message, action, *, confirm_by_default, cancel_label='Cancel', title=None):
         super().__init__(classes='titled-confirm' if title else None)
         self.message, self.action = message, action
         self.cancel_label = cancel_label
@@ -954,9 +954,12 @@ class Confirm(ModalScreen[bool]):
             if self.title_text:
                 yield Label(self.title_text, markup=False)
             yield Static(self.message, markup=False)
-            with Horizontal(classes='buttons dialog-actions'):
-                yield Button(self.cancel_label, id='cancel', variant='default' if self.confirm_by_default else 'primary')
-                yield Button(self.action, id='yes', variant='primary' if self.confirm_by_default else 'error')
+            yield from self.action_buttons()
+
+    def action_buttons(self):
+        with Horizontal(classes='buttons dialog-actions'):
+            yield Button(self.cancel_label, id='cancel')
+            yield Button(self.action, id='yes', variant='primary' if self.confirm_by_default else 'error')
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -999,16 +1002,14 @@ class ApplySettingsReview(Confirm):
     def __init__(self, original, draft, mode='browser'):
         changes = settings_effects.configuration_changes(original, draft)
         summary = 'Changes\n' + settings_effects.bullets(changes) if changes else 'No configuration values changed.'
-        super().__init__(summary + '\n\nWhen you apply\n' + settings_effects.bullets(settings_effects.configuration_notes(original, draft, mode)), 'Apply and recreate')
+        super().__init__(summary + '\n\nWhen you apply\n' + settings_effects.bullets(settings_effects.configuration_notes(original, draft, mode)), 'Apply and recreate', confirm_by_default=True)
 
     def compose(self):
         with Vertical(id='apply-review'):
             yield Label('Review changes', classes='title')
             with VerticalScroll(id='apply-review-fields'):
                 yield Static(self.message, markup=False)
-            with Horizontal(classes='buttons dialog-actions'):
-                yield Button('Cancel', id='cancel', variant='primary')
-                yield Button(self.action, id='yes', variant='error')
+            yield from self.action_buttons()
 
 
 class ApprovalHelp(ModalScreen):
@@ -1251,7 +1252,7 @@ class FoldersScreen(Screen):
                     notes = ['This recreates the sandbox and interrupts running processes.',
                              *settings_effects.editor_migration(self.record['config'])]
                     self.app.push_screen(Confirm('Apply folder mounts?\n' + settings_effects.bullets(notes),
-                                                 'Apply and recreate'), lambda yes: apply() if yes else None)
+                                                 'Apply and recreate', confirm_by_default=True), lambda yes: apply() if yes else None)
                 else:
                     apply()
             except (ValueError, OSError) as error:
@@ -1493,7 +1494,7 @@ class SSHScreen(Screen):
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
                 notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
                          *settings_effects.editor_migration(self.record['config'])]
-                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
+                self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply', confirm_by_default=True), apply)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.notify(safe_text(error), severity='error')
 
@@ -1632,7 +1633,7 @@ class AdvisorsScreen(Screen):
                      *settings_effects.editor_migration(self.record['config'])]
             if imports:
                 notes.append('Selected host sign-ins replace the saved advisor logins.')
-            self.app.push_screen(Confirm('Apply advisor settings?\n' + settings_effects.bullets(notes), 'Apply'), apply)
+            self.app.push_screen(Confirm('Apply advisor settings?\n' + settings_effects.bullets(notes), 'Apply', confirm_by_default=True), apply)
 
     def action_back(self):
         self.app.pop_screen()
@@ -2004,7 +2005,7 @@ class PackagesScreen(Screen):
                 title = installed_profile_title(name) if row.record else row.description or name
                 self.app.push_screen(ProfileDetails(title, row.summary, prompt))
         elif action == 'remove':
-            self.app.push_screen(Confirm('Remove ' + kind + ' “' + name + '”? Existing sandboxes keep their saved copy.', 'Remove'),
+            self.app.push_screen(Confirm('Remove ' + kind + ' “' + name + '”? Existing sandboxes keep their saved copy.', 'Remove', confirm_by_default=False),
                                  lambda yes: self.run_package_action(kind, action, name) if yes else None)
         elif action == 'update':
             self.run_package_action(kind, action, name)
@@ -2281,7 +2282,7 @@ class UpdateOperation(Operation):
             self.check_phase()
             return
         self.confirmation = Confirm('Cancel this update? The sandbox will keep its current settings and containers.',
-                                    'Cancel update', cancel_label='Keep updating')
+                                    'Cancel update', confirm_by_default=False, cancel_label='Keep updating')
         self.app.push_screen(self.confirmation, self.confirm_cancel)
 
     def confirm_cancel(self, confirmed):
@@ -3350,10 +3351,10 @@ class Cockpit(App):
     #prompt-fields { height: auto; max-height: 56vh; }
     #prompt-fields > .setting:last-of-type { margin-bottom: 0; }
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
-    .titled-confirm #yes { background: $error; color: white; }
-    .titled-confirm Button:focus { text-style: bold underline; }
-    Confirm #cancel.-default:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
-    Screen:nocolor .titled-confirm #yes { background: #454a51; color: white; }
+    Confirm #yes.-error { background: $error; color: white; }
+    Confirm Button:focus { text-style: bold underline; }
+    Confirm #cancel:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
+    Confirm:nocolor #yes.-error { background: #454a51; color: white; }
     .compact-terminal PromptChoice TextArea, .compact-terminal #prompt-text { height: 5; }
     EditPrompt Feedback, #sandbox-prompt-error { color: #ef9a91; }
     EditPrompt TextArea.prompt-invalid:focus { border: tall $error; }
@@ -4074,7 +4075,7 @@ class Cockpit(App):
             notes = ['Workspace files, private home and saved chats are kept.']
             if record.get('dev') == 'running':
                 notes.insert(0, 'Active processes stop after the build.')
-            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), 'Update sources and recreate'),
+            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), 'Update sources and recreate', confirm_by_default=True),
                 lambda yes: self.push_screen(UpdateOperation('Updating ' + name,
                     lambda log, update: self.service.run_update(args, log, update),
                     done_on_success=True, completed_title='Updated ' + name)) if yes else None)

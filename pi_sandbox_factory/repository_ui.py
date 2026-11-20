@@ -198,8 +198,11 @@ class PublicKey(ModalScreen):
         self.public_key = public
         self.query_one('#key-public', TextArea).load_text(public)
         self.query_one('#key-status', Static).update(error or 'Public key ready. Its private key stays in the SSH companion.')
-        self.query_one('#key-close', Button).disabled = False
-        self.query_one('#key-copy', Button).disabled = not bool(public)
+        close = self.query_one('#key-close', Button)
+        copy = self.query_one('#key-copy', Button)
+        close.disabled = False
+        copy.disabled = not bool(public)
+        (copy if public else close).focus()
 
     @on(Button.Pressed)
     def pressed(self, event):

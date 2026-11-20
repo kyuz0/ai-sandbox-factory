@@ -139,6 +139,7 @@ class TUITests(unittest.TestCase):
                 await pilot.click('#application-update-run');await pilot.pause()
                 await pilot.press('shift+tab');await pilot.pause()
                 self.assertEqual(app.focused.id, 'cancel')
+                self.assertNotEqual(app.focused.styles.background, app.screen.query_one('#yes', Button).styles.background)
                 await pilot.press('enter');await pilot.pause()
                 run.assert_not_called()
                 await pilot.click('#application-update-run');await pilot.pause()
@@ -255,7 +256,7 @@ class TUITests(unittest.TestCase):
             app.screen.query_one('#advisor-agy',Checkbox).value=True
             await pilot.click('#advisor-apply');await pilot.pause()
             self.assertIsInstance(app.screen,Confirm)
-            await pilot.click('#yes');await self.ready(app,pilot)
+            await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][0:2],['advisors','alpha'])
             self.assertEqual(service.calls[0][2]['providers'],['agy'])
             self.assertEqual(service.calls[0][2]['agy_model'],'')
@@ -384,7 +385,7 @@ class TUITests(unittest.TestCase):
                     self.assertFalse(app.screen.query_one('#key-copy', Button).disabled)
                     self.assertLess(app.screen.query_one('#key-copy').region.bottom, size[1])
                     with patch.object(app, 'copy_to_clipboard') as copy_key:
-                        await pilot.click('#key-copy')
+                        await pilot.press('enter')
                         copy_key.assert_called_once_with('ssh-ed25519 AAAA fixture')
                     await pilot.press('escape')
                 with patch.object(service, 'ssh_key', create=True, side_effect=ValueError('Unlock first')):
@@ -392,7 +393,8 @@ class TUITests(unittest.TestCase):
                     await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()
                     self.assertTrue(app.screen.query_one('#key-copy', Button).disabled)
                     self.assertIn('Unlock first', str(app.screen.query_one('#key-status').render()))
-                    await pilot.press('escape')
+                    self.assertEqual(app.focused.id, 'key-close')
+                    await pilot.press('enter')
                 await pilot.press('escape')
 
     async def test_ssh_settings_keep_key_import_separate(self):
@@ -479,7 +481,7 @@ class TUITests(unittest.TestCase):
                 self.assertLess(app.screen.query_one('#ssh-apply', Button).region.bottom, size[1])
                 await pilot.click('#ssh-apply')
                 self.assertIsInstance(app.screen, Confirm)
-                await pilot.click('#yes'); await self.ready(app, pilot)
+                await pilot.press('enter'); await self.ready(app, pilot)
                 self.assertEqual(service.calls, [['ssh-git', {'name': 'Fixture Author', 'email': 'fixture@example.test'}]])
                 await app.pop_screen()
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
@@ -531,7 +533,7 @@ class TUITests(unittest.TestCase):
             await self.delete_menu(app,pilot)
             self.assertIsInstance(app.screen, DeleteSandbox)
             self.assertEqual(app.screen.sandbox_name, 'beta')
-            await pilot.click('#cancel');await pilot.pause();self.assertFalse(service.calls)
+            await pilot.press('enter');await pilot.pause();self.assertFalse(service.calls)
             await self.delete_menu(app,pilot);await pilot.click('#yes');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['delete','beta']])
             await pilot.click('#operation-back');await self.ready(app,pilot)
@@ -853,7 +855,7 @@ class TUITests(unittest.TestCase):
             form.query_one('#model-ports',Input).value='8080'
             with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 await pilot.click('#apply');await pilot.pause()
-            self.assertIsInstance(app.screen,Confirm);await pilot.click('#yes');await self.ready(app,pilot)
+            self.assertIsInstance(app.screen,Confirm);await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][0:2],['update','beta'])
             self.assertEqual(service.calls[0][2]['local_model_ports'],'8080')
             self.assertEqual(app.screen.title, 'Updated beta')
@@ -1054,7 +1056,7 @@ class TUITests(unittest.TestCase):
                 self.assertIsInstance(app.screen, Confirm)
                 self.assertFalse(app.check_action('quit', ()))
                 self.assertEqual(str(app.screen.query_one('#cancel', Button).label), 'Keep updating')
-                await pilot.click('#cancel')
+                await pilot.press('enter')
                 await pilot.pause()
                 self.assertIs(app.screen, screen)
                 self.assertTrue(screen.update.can_cancel)
@@ -1285,6 +1287,7 @@ class TUITests(unittest.TestCase):
             self.assertIs(app.focused, upgrade)
             await pilot.press('enter')
             self.assertIn('Update alpha to FrostPi?', app.screen.message)
+            self.assertEqual(app.focused.id, 'yes')
             await pilot.press('escape')
             table.move_cursor(row=1)
             await pilot.pause()

@@ -159,6 +159,10 @@ class FolderTests(unittest.TestCase):
                     await pilot.pause()
                     fields = app.screen.query_one(FolderFields)
                     self.assertTrue(fields.rows[0]['read_only'])
+                    app.screen.query_one('#folders-apply', Button).press()
+                    await pilot.pause()
+                    self.assertEqual(app.focused.id, 'yes')
+                    await pilot.press('escape')
                     await pilot.click('#folder-edit-0')
                     await pilot.pause()
                     app.screen.query_one('#folder-read-only', Checkbox).value = False

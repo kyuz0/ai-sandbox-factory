@@ -234,7 +234,7 @@ class HostedProviders(Vertical):
             provider = action.split(':')[1]
             if self.sandbox_name:
                 from .sandbox_tui import Confirm
-                self.app.push_screen(Confirm('Remove '+hosted_models.PROVIDERS[provider]+' credentials and its provider network rules?', 'Remove'), lambda yes: self.remove(provider) if yes else None)
+                self.app.push_screen(Confirm('Remove '+hosted_models.PROVIDERS[provider]+' credentials and its provider network rules?', 'Remove', confirm_by_default=False), lambda yes: self.remove(provider) if yes else None)
             else:
                 self.changes.pop(provider,None); self.call_later(self.render_rows)
         elif action.startswith('model:'):

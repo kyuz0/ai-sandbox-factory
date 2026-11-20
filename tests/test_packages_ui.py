@@ -52,7 +52,8 @@ class PackageUITests(unittest.TestCase):
                     await pilot.press('enter'); await pilot.pause()
                     self.assertIsInstance(app.screen, Confirm)
                     if not confirm:
-                        await pilot.press('escape'); await pilot.pause()
+                        self.assertEqual(app.screen.query_one('#cancel', Button).variant, 'default')
+                        await pilot.press('enter'); await pilot.pause()
                         self.assertEqual(len(service.calls), 1)
                     else:
                         await pilot.click('#yes'); await self.ready(app, pilot)

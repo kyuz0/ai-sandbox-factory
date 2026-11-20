@@ -133,7 +133,7 @@ class PromptLibrary(Vertical):
                     self.refresh_after(True)
 
         self.app.push_screen(Confirm(f'Remove “{name}” from the library? Existing sandboxes keep their saved copies.',
-                                     'Remove', title='Remove system prompt'), remove)
+                                     'Remove', confirm_by_default=False, title='Remove system prompt'), remove)
 
 
 class PromptChoice(Vertical):
