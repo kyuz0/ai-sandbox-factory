@@ -128,7 +128,7 @@ class SkillSelection(Vertical):
 
 class SkillLibrary(Vertical):
     def compose(self):
-        yield Static('Skills give Pi reusable instructions for specific tasks. Import and validate a skill once, '
+        yield Static('Skills give coding agents reusable instructions for specific tasks. Import and validate a skill once, '
                      'then select it for any sandbox.', classes='section-intro')
         yield Vertical(id='library-list')
         yield Feedback('', id='library-error', markup=False)

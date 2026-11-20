@@ -28,7 +28,7 @@ class EditPrompt(ModalScreen[bool]):
                     yield Input(self.initial['name'], id='prompt-name')
                     yield Feedback('', id='prompt-name-error')
                 with Vertical(classes='setting'):
-                    yield Label('Instructions for Pi')
+                    yield Label('Instructions')
                     yield TextArea(self.initial['text'], highlight_cursor_line=False, id='prompt-text')
                     yield Feedback('', id='prompt-text-error')
                 yield Feedback('', id='prompt-error')
@@ -137,11 +137,12 @@ class PromptLibrary(Vertical):
 
 
 class PromptChoice(Vertical):
-    def __init__(self, current, *, help_text, editable=False):
+    def __init__(self, current, *, help_text, editable=False, agent='Pi'):
         super().__init__(classes='setting')
         self.current = current
         self.help_text = help_text
         self.editable = editable
+        self.agent = agent
         self.prompts = {}
         self.error = ''
         try:
@@ -165,7 +166,7 @@ class PromptChoice(Vertical):
         elif not self.prompts:
             yield Static(f'Add reusable prompts in Library → {SYSTEM_PROMPT_LIBRARY_LABEL}.', classes='setting-help')
         with Vertical(id='system-prompt-preview'):
-            yield Label('Instructions for Pi (preview)')
+            yield Label(f'Instructions for {self.agent} (preview)')
             yield TextArea('', read_only=True, show_cursor=False, highlight_cursor_line=False)
             if self.editable:
                 yield Button('Edit sandbox copy…', id='edit-prompt-copy')
@@ -199,12 +200,13 @@ class PromptChoice(Vertical):
 class SandboxPromptScreen(Screen):
     BINDINGS = [('escape', 'back', 'Cancel')]
 
-    def __init__(self, name, state, supported):
+    def __init__(self, name, state, supported, *, agent='Pi'):
         super().__init__()
         self.sandbox_name = name
         self.state = state
         self.current = prompt_library.selection(state)
         self.supported = supported
+        self.agent = agent
 
     def compose(self):
         yield Header()
@@ -215,7 +217,9 @@ class SandboxPromptScreen(Screen):
                              id='prompt-update-notice', markup=False)
             help_text = ('Changes apply the next time Pi starts a reply, including in open chats.' if self.supported
                          else 'Save stores a copy of the prompt for after the update.')
-            yield PromptChoice(self.current, help_text=help_text, editable=True)
+            if self.agent != 'Pi':
+                help_text = f'The instructions apply when you next open {self.agent}.'
+            yield PromptChoice(self.current, help_text=help_text, editable=True, agent=self.agent)
             yield Feedback('', id='sandbox-prompt-error')
         with Horizontal(classes='wizard-actions'):
             yield Button('Cancel', id='prompt-back')
@@ -239,6 +243,9 @@ class SandboxPromptScreen(Screen):
             self.query_one('#sandbox-prompt-error', Feedback).update(str(error))
             return
         if changed:
-            self.app.notify('System prompt saved. It applies when Pi starts its next reply.' if self.supported else
-                            'System prompt saved. Update sources to use it.')
+            message = ('System prompt saved. It applies when Pi starts its next reply.' if self.supported else
+                       'System prompt saved. Update sources to use it.')
+            if self.agent != 'Pi':
+                message = f'System prompt saved. Reopen {self.agent} to use it.'
+            self.app.notify(message)
         self.dismiss()

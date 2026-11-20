@@ -24,7 +24,7 @@ from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
-    CATEGORIES, EDIT_FORMS, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
+    CATEGORIES, EDIT_FORMS, Category, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
     PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
@@ -41,6 +41,7 @@ from .aws_ui import AWSProfileChoices, AWSProfilePicker, profile_label
 from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
 from . import embedding_models
 from . import sandbox_skills
+from .primary_workspace import AGENTS as PRIMARY_AGENTS, agent as coding_agent
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from . import settings_effects
@@ -64,6 +65,35 @@ try:
                                  TabbedContent, TabPane, Tabs)
 except ImportError as error:
     raise SystemExit('Install Pi Sandbox Factory with pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git.') from error
+
+SIGN_IN_LABEL = 'Sign-in'
+SIGN_IN_OPTIONS = [
+    ('Sign in inside the sandbox', 'login'),
+    ('Copy sign-in from this computer', 'copy'),
+]
+SIGN_IN_HELP = {
+    'login': 'The first launch opens the agent’s sign-in flow.',
+    'copy': 'Uses the existing host account and its subscription.',
+}
+PRIMARY_CATEGORIES = {
+    'primary-sign-in': Category(SIGN_IN_LABEL, 'primary-sign-in-section'),
+    'folders': CATEGORIES['folders'],
+    'network-settings': Category(NETWORK_LABEL, 'network-section', 'network'),
+    'ssh-settings': CATEGORIES['ssh-settings'],
+    'aws-access': CATEGORIES['aws-access'],
+    'skills': CATEGORIES['skills'],
+    'primary-browser': Category('Browser', 'primary-browser-section', 'primary-browser'),
+    'system-prompt': CATEGORIES['system-prompt'],
+    'resources': CATEGORIES['resources'],
+}
+
+def can_copy_primary_sign_in(agent):
+    return not (host_platform.is_mac() and agent in ('claude', 'agy'))
+
+
+def settings_client(config, state):
+    return editor_settings.load(state)['mode'] if coding_agent(config) == 'pi' else None
+
 
 def profile_titles():
     installed = registry.installed('profile')
@@ -149,7 +179,8 @@ def copy_draft(record, state_root):
                   'model_providers', 'advisors', 'extra_skills', 'extra_folders'):
         if field in config:
             value[field] = copy.deepcopy(config[field])
-    value.update(profile=config['profile']['path'], options=options(config.get('options')),
+    value.update(primary_agent=coding_agent(config), primary_auth='login',
+                 profile=config['profile']['path'], options=options(config.get('options')),
                  name='', workspace='', workspace_parent='', env_file='', pi_config='', working_directory='.',
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
     value['editor'] = editor_settings.copy_choice(editor_settings.load(Path(state_root) / record['name']))
@@ -242,6 +273,8 @@ class Service:
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
                     '--engine', draft['engine'], '--options-file', str(selected)]
+            if coding_agent(draft) != 'pi':
+                args += ['--primary-agent', draft['primary_agent'], '--primary-auth', draft['primary_auth']]
             if draft.get('aws_access'):
                 grant_file = Path(temp) / 'aws-access.json'
                 write_json(grant_file, draft['aws_access'])
@@ -352,6 +385,8 @@ class Service:
             log('Slack credentials saved in the sandbox.')
 
     def setup(self, name, draft, key, log):
+        if coding_agent(draft) != 'pi':
+            return
         if local_keys := draft.get('_local_model_keys'):
             config = self.config(name)
             for port, choice in local_keys.items():
@@ -1068,10 +1103,14 @@ class MoreActions(ModalScreen[Optional[str]]):
                         ('Update sources and recreate…', 'rebuild')]
         if browser_running:
             self.actions.append(('Stop browser editor', 'stop-editor'))
+        native = coding_agent(record.get('config', {})) != 'pi'
+        if native:
+            self.actions = [('Rebuild sandbox…' if action == 'rebuild' else label, action)
+                            for label, action in self.actions if action != 'connections']
         profile = record.get('config', {}).get('profile') or {}
-        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
+        if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
             self.actions.append(('Getting started…', 'profile-guide'))
-        if record.get('config', {}).get('engine'):
+        if not native and record.get('config', {}).get('engine'):
             self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
         self.actions.append(('Delete sandbox…', 'delete'))
 
@@ -1146,7 +1185,13 @@ class SettingsMenu(ModalScreen[Optional[str]]):
     def __init__(self, name, config, editor_mode, system_prompt=None):
         super().__init__()
         self.sandbox_name = name
+        agent = coding_agent(config)
+        self.actions = ([(category.label, action) for action, category in PRIMARY_CATEGORIES.items()]
+                        if agent != 'pi' else self.ACTIONS)
+        self.set_class(agent != 'pi', 'native-settings-menu')
         self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
+        if agent != 'pi':
+            self.summaries['primary-sign-in'] = PRIMARY_AGENTS[agent]
         self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else 'None'
         if isinstance(config, dict) and config.get('engine'):
             local = bool(config.get('local_model_ports'))
@@ -1160,10 +1205,12 @@ class SettingsMenu(ModalScreen[Optional[str]]):
             except ValueError:
                 return
             self.summaries.update({
-                'network-settings': network_search_summary(network, selected['web_access']['enabled']),
+                'network-settings': (network_mode_label(network) if agent != 'pi' else
+                                     network_search_summary(network, selected['web_access']['enabled'])),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
                 'aws-access': profile_label(config.get('aws_access', {})),
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
+                'primary-browser': on_off(selected['browser']).capitalize(),
                 'document-search': search_summary(selected, embedding_models.sources(config)),
                 'ssh-settings': git_identity_summary(selected['git_identity']),
                 'communications': communications_summary(selected['communications']['slack']),
@@ -1171,7 +1218,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
 
     def compose(self):
         prompts = []
-        for label, action in self.ACTIONS:
+        for label, action in self.actions:
             prompt = Text(label)
             if summary := self.summaries.get(action):
                 prompt.append(' · ' + summary, style='dim')
@@ -1185,7 +1232,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
     @on(OptionList.OptionSelected)
     def selected(self, event):
         event.stop()
-        self.dismiss(self.ACTIONS[event.option_index][1])
+        self.dismiss(self.actions[event.option_index][1])
 
     @on(Button.Pressed)
     def back(self, event):
@@ -1253,7 +1300,7 @@ class FoldersScreen(Screen):
                     self.app.pop_screen()
                     self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.update_settings(self.record['name'], selected, log, update),
                         done_on_success=True,
-                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
+                        success_message=settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], self.app.state_root / self.record['name']))) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
                     notes = ['This recreates the sandbox and interrupts running processes.',
                              *settings_effects.editor_migration(self.record['config'])]
@@ -1291,7 +1338,7 @@ def sandbox_alerts(record):
     }.get(record.get('ssh_key_state'))
     if ssh_alert:
         alerts.append(ssh_alert)
-    if record.get('chat_editor') == 'pendant':
+    if coding_agent(record.get('config', {})) == 'pi' and record.get('chat_editor') == 'pendant':
         alerts.append(SandboxAlert('Editor update available',
             'This sandbox still uses Pendant. Switching to FrostPi restarts the sandbox and keeps your workspace and saved chats.',
             'Update to FrostPi…', 'rebuild'))
@@ -1497,7 +1544,7 @@ class SSHScreen(Screen):
                     self.app.pop_screen()
                     self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
                         done_on_success=True,
-                        success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
+                        success_message=settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], self.app.state_root / name)) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
                 notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
                          *settings_effects.editor_migration(self.record['config'])]
                 self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply', confirm_by_default=True), apply)
@@ -2389,7 +2436,7 @@ class CreateFromSandbox(EntryDialog):
                 yield Static('Copy its configuration, then choose a new name and workspace. Review the settings before creating.', classes='section-intro')
                 yield Checkbox('Include search API keys', value=False, id='copy-keys')
                 yield Static('', id='copy-keys-help', markup=False)
-                yield Static('Sign in to models and advisors again; SSH keys, browser sessions and chat history are not copied.', classes='setting-help')
+                yield Static('', id='copy-sign-in-help', classes='setting-help')
             yield Feedback('', id='copy-error', classes='error', markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='copy-cancel')
@@ -2403,10 +2450,15 @@ class CreateFromSandbox(EntryDialog):
         record = self.records[self.query_one('#copy-source', Select).value]
         checkbox = self.query_one('#copy-keys', Checkbox)
         checkbox.value = False
-        checkbox.disabled = record['dev'] != 'running'
+        native = coding_agent(record.get('config', {})) != 'pi'
+        checkbox.display = not native
+        checkbox.disabled = native or record['dev'] != 'running'
         help_text = self.query_one('#copy-keys-help', Static)
-        help_text.display = checkbox.disabled
-        help_text.update('Start the source sandbox to copy search API keys.' if checkbox.disabled else '')
+        help_text.display = checkbox.disabled and not native
+        help_text.update('Start the source sandbox to copy search API keys.')
+        self.query_one('#copy-sign-in-help', Static).update(
+            'Choose a sign-in for the new sandbox. SSH keys and saved chats stay with the original.'
+            if native else 'Sign in to models and advisors again; SSH keys, browser sessions and chat history are not copied.')
 
     def action_cancel(self):
         self.dismiss(None)
@@ -2439,6 +2491,7 @@ class NewSandbox(Screen):
         super().__init__()
         self.copied_draft = draft
         self.search_keys = search_keys
+        self.AUTO_FOCUS = '#workspace' if draft else '#primary-agent'
 
     BINDINGS = [Binding('escape', 'back', 'Back')]
 
@@ -2454,15 +2507,21 @@ class NewSandbox(Screen):
         yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
                     classes='title focused-settings-title', id='new-title')
         with VerticalScroll(classes='form'):
-            with Vertical(classes='setting'):
-                with Horizontal(classes='profile-guide-row'):
-                    yield Label('Profile')
-                    yield Static('', classes='action-spacer')
-                    yield Button('Getting started…', id='new-profile-guide')
-                yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
-                             value=settings['profile'] if settings['profile'] in profiles else 'custom',
-                             allow_blank=False, id='profile')
-                yield Static('', id='profile-summary', classes='setting-help', markup=False)
+            with Horizontal(classes='new-agent-choices'):
+                with Vertical(id='coding-agent-setting', classes='setting'):
+                    yield Label('Coding agent', id='primary-agent-label')
+                    yield Select([(label, agent) for agent, label in PRIMARY_AGENTS.items()],
+                                 value=coding_agent(settings), allow_blank=False, id='primary-agent',
+                                 disabled=bool(self.copied_draft))
+                with Vertical(id='profile-setting', classes='setting'):
+                    with Horizontal(classes='profile-guide-row'):
+                        yield Label('Profile', id='profile-label')
+                        yield Static('', classes='action-spacer')
+                        yield Button('Getting started…', id='new-profile-guide')
+                    yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
+                                 value=settings['profile'] if settings['profile'] in profiles else 'custom',
+                                 allow_blank=False, id='profile')
+            yield Static('', id='profile-summary', classes='setting-help section-intro', markup=False)
             with Vertical(id='custom-profile-fields', classes='setting'):
                 yield Label('Custom profile folder')
                 yield PathField('custom-profile', title='Choose custom profile folder', placeholder='~/profiles/my-profile')
@@ -2482,10 +2541,21 @@ class NewSandbox(Screen):
     def on_mount(self):
         self.profile_changed()
 
+    @on(Select.Changed, '#primary-agent')
+    def coding_agent_changed(self):
+        self.profile_changed()
+        self.suggest_name()
+
     @on(Select.Changed, '#profile')
     def profile_changed(self):
         profile = self.query_one('#profile', Select).value
-        self.query_one('#custom-profile-fields').display = profile == 'custom'
+        pi = self.query_one('#primary-agent', Select).value == 'pi'
+        self.query_one('#profile-setting').display = pi
+        self.query_one('#custom-profile-fields').display = pi and profile == 'custom'
+        if not pi:
+            self.query_one('#profile-summary', Static).display = False
+            self.guide = ''
+            return
         summary = self.summaries.get(profile, '')
         if self.copied_draft:
             web = options(self.copied_draft.get('options'))['web_access']['enabled']
@@ -2503,10 +2573,15 @@ class NewSandbox(Screen):
         self.query_one('#new-profile-guide').display = bool(self.guide)
 
     @on(Input.Changed, '#workspace')
-    def suggest_name(self, event):
+    def suggest_name(self):
         current = self.query_one('#name', Input)
         if not current.value or current.value == getattr(self, 'suggested', ''):
-            self.suggested = re.sub('[^a-z0-9-]+', '-', Path(event.value).name.lower()).strip('-')[:SANDBOX_NAME_LIMIT]
+            workspace = self.query_one('#workspace', Input).value
+            stem = re.sub('[^a-z0-9-]+', '-', Path(workspace).name.lower()).strip('-')
+            agent = self.query_one('#primary-agent', Select).value
+            suffixes = {'codex': '-codex', 'claude': '-claude', 'agy': '-antigravity'}
+            suffix = suffixes.get(agent, '')
+            self.suggested = stem[:SANDBOX_NAME_LIMIT - len(suffix)].rstrip('-') + suffix if stem else ''
             current.value = self.suggested
 
     @on(Button.Pressed)
@@ -2518,17 +2593,22 @@ class NewSandbox(Screen):
             profile = self.query_one('#profile', Select).value
             self.app.push_screen(ProfileGuide(profile_titles().get(profile, profile), self.guide))
         elif event.button.id == 'continue':
+            focus = '#profile'
             try:
-                profile = self.query_one('#profile', Select).value
+                agent = self.query_one('#primary-agent', Select).value
+                profile = self.query_one('#profile', Select).value if agent == 'pi' else 'base'
                 if profile == 'custom':
+                    focus = '#custom-profile'
                     profile = self.query_one('#custom-profile', Input).value
                 metadata = (self.copied_draft['reused_profile'] if self.copied_draft and profile == self.copied_draft['reused_profile']['path']
                             else sandbox.load_profile(profile))
+                focus = '#name'
                 name = self.query_one('#name', Input).value.strip()
                 if not SANDBOX_NAME.fullmatch(name):
                     raise ValueError(SANDBOX_NAME_ERROR)
                 if (self.app.state_root / name).exists():
                     raise ValueError('That name already exists. Choose another name.')
+                focus = '#workspace'
                 workspace_text = self.query_one('#workspace', Input).value.strip()
                 if not workspace_text:
                     raise ValueError('Choose a workspace folder.')
@@ -2543,13 +2623,66 @@ class NewSandbox(Screen):
                 draft = (copy.deepcopy(self.copied_draft) if self.copied_draft
                          else preset(metadata['name'], self.app.defaults, metadata.get('defaults')))
                 draft.update(profile=profile, name=name, workspace=str(workspace),
-                             mkdir=self.query_one('#mkdir', Checkbox).value)
+                             mkdir=self.query_one('#mkdir', Checkbox).value,
+                             primary_agent=agent, primary_auth='login')
+                if agent != 'pi' and not self.copied_draft:
+                    draft.update(model_providers={}, local_model_ports=None, subagents=False,
+                                 allowlist='', env_file='', pi_config='', editor={'mode': 'pi'})
+                    draft['options'] = options({'git_identity': draft['options']['git_identity'],
+                                                'website_groups': draft['options']['website_groups']})
                 self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys))
             except (OSError, ValueError) as error:
                 self.query_one('#new-error', Static).update(str(error))
+                self.query_one(focus).focus()
 
     def action_back(self):
         self.app.pop_screen()
+
+
+class PrimarySignIn(ModalScreen):
+    AUTO_FOCUS = '#primary-login'
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.record = record
+
+    def compose(self):
+        agent = coding_agent(self.record['config'])
+        with Vertical(id='confirm-box'):
+            yield Label(SIGN_IN_LABEL + ' · ' + PRIMARY_AGENTS[agent], classes='title')
+            yield Static('The sign-in is stored outside the workspace.',
+                         classes='setting-help')
+            with Vertical(classes='setting sign-in-actions'):
+                yield Button('Sign in', id='primary-login', variant='primary')
+                if can_copy_primary_sign_in(agent):
+                    yield Button('Copy sign-in from this computer', id='primary-import')
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='sign-in-close')
+
+    @on(Button.Pressed)
+    def pressed(self, event):
+        event.stop()
+        action = event.button.id
+        if action == 'sign-in-close':
+            self.action_close()
+        elif action == 'primary-login':
+            self.dismiss()
+            self.app.interactive('primary-login', self.record['name'])
+        elif action == 'primary-import':
+            name = self.record['name']
+            def replace(yes):
+                if yes:
+                    self.dismiss()
+                    self.app.operation('Copying sign-in', ['primary-import', name],
+                                       success_message='Sign-in copied. Choose Open to use it.', done_on_success=True)
+            confirmation = Confirm('Replace the saved sign-in with the account signed in on this computer?',
+                                   'Copy sign-in', confirm_by_default=True)
+            confirmation.add_class('sign-in-confirm')
+            self.app.push_screen(confirmation, replace)
+
+    def action_close(self):
+        self.dismiss()
 
 
 class SettingsForm(Screen):
@@ -2561,6 +2694,13 @@ class SettingsForm(Screen):
         self.provider_key_choices = dict(draft.get('_provider_credential_choices', {}))
         self.local_key_choices = dict(draft.get('_local_model_keys', {}))
         self.setting = setting
+        self.primary = coding_agent(draft)
+        self.native = self.primary != 'pi'
+        self.categories = PRIMARY_CATEGORIES if self.native else CATEGORIES
+        if self.native:
+            self.AUTO_FOCUS = '#' + self.categories[setting].focus if setting else '#primary-auth'
+        self.provider_forms = {}
+        self.set_class(self.native, 'native-primary-form')
         selected = options(draft.get('options'))
         self.document_search = {key: selected[key] for key in ('knowledge_embedding', 'knowledge_embedding_provider',
                                                                'knowledge_embedding_url', 'knowledge_embedding_model')}
@@ -2568,19 +2708,20 @@ class SettingsForm(Screen):
         self.allow_offline_search = editing and self.document_search['knowledge_embedding'] == 'local'
         if self.document_search['knowledge_embedding'] == 'local' and not editing:
             self.document_search['knowledge_embedding'] = 'off'
-        self.initial_section = EDIT_FORMS[setting].section if setting else section
+        self.initial_section = (self.categories[setting].section if self.native else EDIT_FORMS[setting].section) if setting else section
         self.search_keys = search_keys
         self.profile = (draft['reused_profile'] if draft.get('reused_profile') and draft['profile'] == draft['reused_profile']['path']
                         else sandbox.load_profile(draft['profile']))
         self.profile_name = self.profile['name']
-        self.guide = registry.profile_guide(self.profile['path']) if not editing and not defaults else ''
+        self.guide = registry.profile_guide(self.profile['path']) if not (editing or defaults or self.native) else ''
 
     def compose(self):
         value, selected = self.draft, options(self.draft.get('options'))
         review = self.has_class('settings-review')
         yield Header()
         if self.setting:
-            yield Label(EDIT_FORMS[self.setting].label + ' · ' + value['name'],
+            category = self.categories[self.setting] if self.native else EDIT_FORMS[self.setting]
+            yield Label(category.label + ' · ' + value['name'],
                         classes='title focused-settings-title')
         elif review:
             yield Label('Review sandbox · 2 of 2', classes='title focused-settings-title')
@@ -2598,26 +2739,75 @@ class SettingsForm(Screen):
                     yield PathField('workspace-parent', value.get('workspace_parent', ''), title='Choose workspace parent folder')
             if not self.defaults_mode and not self.setting:
                 with Horizontal(classes='profile-guide-row review-profile-row'):
-                    yield Static('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
-                                 + '\nWorkspace: ' + value['workspace'], id='review-project', markup=False)
+                    if self.native:
+                        summary = PRIMARY_AGENTS[self.primary] + ' · ' + value['name'] + ' · ' + value['workspace']
+                    else:
+                        summary = ('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
+                                   + '\nWorkspace: ' + value['workspace'])
+                    project = Static(summary, id='review-project', markup=False,
+                                     classes='primary-review-summary' if self.native else 'pi-review-summary')
+                    project.tooltip = value['workspace']
+                    yield project
                     if self.guide:
                         yield Button('Getting started…', id='review-profile-guide')
-            for action, category in CATEGORIES.items():
-                if action == 'aws-access' or (action == 'document-search' and self.setting != action):
+            for action, category in self.categories.items():
+                if self.native:
+                    if self.editing and action != self.setting:
+                        continue
+                elif action == 'aws-access' or (action == 'document-search' and self.setting != action):
                     continue
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
             yield Feedback('', id='form-error', classes='error', markup=False)
         with Vertical(classes='wizard-actions settings-actions'):
-            yield Checkbox('Open sandbox after applying' if self.editing else 'Open sandbox after creation',
-                           value=False if self.editing else value.get('open_editor', True), id='open-editor')
+            open_label = 'Open sandbox after applying' if self.editing else 'Open sandbox after creation'
+            if self.native:
+                open_label = 'Open ' + PRIMARY_AGENTS[self.primary] + (' after applying' if self.editing else ' when ready')
+            yield Checkbox(open_label, value=False if self.editing else value.get('open_editor', True), id='open-editor')
             with Horizontal(classes='action-buttons'):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
-                apply_label = 'Save defaults' if self.defaults_mode else 'Create and start'
+                apply_label = 'Save defaults' if self.defaults_mode else 'Create sandbox' if self.native else 'Create and start'
                 if self.editing:
                     apply_label = 'Apply' if self.setting == 'network-settings' else 'Apply and recreate'
                 yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
+
+    def compose_primary_sign_in(self, category, value, selected):
+        with Collapsible(title=category.label, collapsed=False, id=category.section,
+                         classes='spaced-form-fields'):
+            copy_supported = can_copy_primary_sign_in(self.primary)
+            if not copy_supported:
+                yield Static('Sign in the first time you open the sandbox. The sign-in is stored outside the workspace.',
+                             classes='setting-help')
+                return
+            with Vertical(classes='setting'):
+                yield Label('How to sign in')
+                yield Select(SIGN_IN_OPTIONS, value=value.get('primary_auth', 'login'),
+                             allow_blank=False, id='primary-auth')
+                yield Static('', classes='setting-help', id='primary-auth-help')
+
+    @on(Select.Changed, '#primary-auth')
+    def primary_auth_changed(self):
+        method = self.query_one('#primary-auth', Select).value
+        self.query_one('#primary-auth-help', Static).update(SIGN_IN_HELP[method] + '\nThe sign-in is stored outside the workspace.')
+
+    def compose_primary_browser(self, category, value, selected):
+        with Collapsible(title=category.label, collapsed=True, id=category.section,
+                         classes='spaced-form-fields'):
+            with Vertical(classes='setting'):
+                yield Checkbox('Enable the browser', id='primary-browser', value=selected['browser'])
+                yield Static('The agent can open websites through the workspace network. '
+                             'Open the viewer link to see and interact with its pages.', classes='setting-help checkbox-help')
+
+    @on(Checkbox.Changed, '#primary-browser')
+    def primary_browser_changed(self):
+        enabled = self.query_one('#primary-browser', Checkbox).value
+        self.query_one('#primary-browser-section', Collapsible).title = 'Browser · ' + on_off(enabled)
+
+    def compose_aws_access(self, category, value, selected):
+        with Collapsible(title=category.label + ' · ' + profile_label(value.get('aws_access', {})),
+                         collapsed=True, id=category.section):
+            yield Button('Configure…', id='configure-aws')
 
     def compose_approval_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -2715,34 +2905,41 @@ class SettingsForm(Screen):
                 yield FolderFields(value, self.app.state_root)
 
     def compose_network_settings(self, category, value, selected):
+        if self.native:
+            with Collapsible(title=NETWORK_LABEL, collapsed=True, id=category.section, classes='spaced-form-fields'):
+                yield from self.compose_network_fields(value, selected)
+            return
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             with Collapsible(title=NETWORK_LABEL, collapsed=True, id='network-section'):
-                with Vertical(classes='setting'):
-                    yield Label(NETWORK_MODE_LABEL)
-                    yield Select([('Restricted — only allowed destinations', 'allowlist'),
-                                  ('Unrestricted — ordinary container network', 'unrestricted')],
-                                 value=value['network'], allow_blank=False, id='network')
-                    if self.editing:
-                        yield Static('Changing the network mode recreates the sandbox.', classes='setting-help')
-                with Vertical(id='network-rules-setting'):
-                    if self.editing and value['network'] == 'allowlist':
-                        yield Static(settings_effects.bullets([
-                            'Changing only the rules updates the gateway.',
-                            'Development processes keep running.',
-                            'Active connections may disconnect.',
-                        ]), classes='section-intro')
-                    profile = self.profile_name if not self.editing or value['network'] == 'unrestricted' else None
-                    yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=profile)
-                    if self.editing and value['network'] == 'allowlist':
-                        search = web_access.destinations(selected['web_access'])
-                        if search:
-                            yield Static(f'Current {WEB_SEARCH_LABEL} destinations · ' + ', '.join(
-                                f'{host}:{port}' for host, port in search), markup=False, classes='setting-help')
-                        channels = communications.destinations(selected['communications'])
-                        if channels:
-                            yield Static('Current Slack destinations · ' + ', '.join(
-                                f'{host}:{port}' for host, port in channels), markup=False, classes='setting-help')
+                yield from self.compose_network_fields(value, selected)
             yield WebAccessForm(selected['web_access'], self.defaults_mode)
+
+    def compose_network_fields(self, value, selected):
+        with Vertical(classes='setting'):
+            yield Label(NETWORK_MODE_LABEL)
+            yield Select([('Restricted — only allowed destinations', 'allowlist'),
+                          ('Unrestricted — ordinary container network', 'unrestricted')],
+                         value=value['network'], allow_blank=False, id='network')
+            if self.editing:
+                yield Static('Changing the network mode recreates the sandbox.', classes='setting-help')
+        with Vertical(id='network-rules-setting'):
+            if self.editing and value['network'] == 'allowlist':
+                yield Static(settings_effects.bullets([
+                    'Changing only the rules updates the gateway.',
+                    'Development processes keep running.',
+                    'Active connections may disconnect.',
+                ]), classes='section-intro')
+            profile = self.profile_name if not self.native and (not self.editing or value['network'] == 'unrestricted') else None
+            yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=profile)
+            if not self.native and self.editing and value['network'] == 'allowlist':
+                search = web_access.destinations(selected['web_access'])
+                if search:
+                    yield Static(f'Current {WEB_SEARCH_LABEL} destinations · ' + ', '.join(
+                        f'{host}:{port}' for host, port in search), markup=False, classes='setting-help')
+                channels = communications.destinations(selected['communications'])
+                if channels:
+                    yield Static('Current Slack destinations · ' + ', '.join(
+                        f'{host}:{port}' for host, port in channels), markup=False, classes='setting-help')
 
     def compose_communications(self, category, value, selected):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
@@ -2752,7 +2949,10 @@ class SettingsForm(Screen):
         def saved(value):
             if value is not None:
                 self.draft['aws_access'] = value
-                self.query_one('#aws-summary', Static).update('AWS access · ' + profile_label(value))
+                if self.native:
+                    self.query_one('#aws-access-section', Collapsible).title = 'AWS access · ' + profile_label(value)
+                else:
+                    self.query_one('#aws-summary', Static).update('AWS access · ' + profile_label(value))
         self.app.push_screen(AWSProfilePicker(self.draft.get('aws_access')), saved)
 
     def compose_document_search(self, category, value, selected):
@@ -2822,7 +3022,7 @@ class SettingsForm(Screen):
     def compose_skills(self, category, value, selected):
         skills = SkillSelection(value)
         with Collapsible(title=category.label + ' · ' + skills.summary(), collapsed=True, id=category.section):
-            for skill in PROFILE_SKILLS.get(self.profile_name, []):
+            for skill in (() if self.native else PROFILE_SKILLS.get(self.profile_name, [])):
                 yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
             yield skills
 
@@ -2851,23 +3051,26 @@ class SettingsForm(Screen):
                 yield Select([('Automatic — prefer rootless Podman', 'auto'), ('Podman', 'podman'), ('Docker', 'docker')],
                              value=value.get('engine', 'auto'), allow_blank=False, id='engine', disabled=self.editing)
                 if self.editing:
-                    yield Static('Create a separate sandbox to change its engine or seed directory.', classes='setting-help')
+                    yield Static('Create a separate sandbox to change the engine.' if self.native else
+                                 'Create a separate sandbox to change its engine or seed directory.', classes='setting-help')
             with Vertical(classes='setting'):
                 yield Label('Memory limit · empty means no explicit limit')
                 yield Input(value.get('memory') or '', id='memory')
             with Vertical(classes='setting'):
                 yield Label('Credentials environment file · optional path')
                 yield PathField('env-file', value.get('env_file') or '', title='Choose environment file', mode='file')
-            with Vertical(classes='setting'):
-                yield Label('Seed Pi agent directory · optional, fresh configuration by default')
-                yield PathField('pi-config', value.get('pi_config') or '', title='Choose Pi agent folder', disabled=self.editing)
+            if not self.native:
+                with Vertical(classes='setting'):
+                    yield Label('Seed Pi agent directory · optional, fresh configuration by default')
+                    yield PathField('pi-config', value.get('pi_config') or '', title='Choose Pi agent folder', disabled=self.editing)
 
     def compose_system_prompt(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
             current = value.get('system_prompt')
             title = category.label + ' · ' + (current['name'] if current else 'None')
             with Collapsible(title=title, collapsed=True, id=category.section):
-                yield PromptChoice(current, help_text='Pi uses this prompt in every chat in the new sandbox.')
+                yield PromptChoice(current, help_text='The instructions apply when you open the agent.' if self.native else
+                                   'Pi uses this prompt in every chat in the new sandbox.', agent=PRIMARY_AGENTS[self.primary])
 
     @on(Select.Changed, '#system-prompt-choice')
     def system_prompt_changed(self):
@@ -2876,6 +3079,21 @@ class SettingsForm(Screen):
             SYSTEM_PROMPT_LABEL + ' · ' + (value['name'] if value else 'None'))
 
     def on_mount(self):
+        if self.native:
+            if self.setting:
+                category = self.categories[self.setting]
+                section = self.query_one('#' + category.section, Collapsible)
+                section.collapsed = False
+                section.add_class('focused-setting')
+                self.query_one('#' + category.focus).focus()
+            elif can_copy_primary_sign_in(self.primary):
+                self.primary_auth_changed()
+                self.set_focus(self.query_one('#primary-auth', Select), scroll_visible=False)
+            if self.setting in (None, 'primary-browser'):
+                self.primary_browser_changed()
+            if self.setting in (None, 'network-settings'):
+                self.network_changed()
+            return
         self.approval_summary()
         self.network_changed()
         self.local_models_changed()
@@ -3009,6 +3227,10 @@ class SettingsForm(Screen):
     @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
+        if self.native:
+            self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
+            self.query_one('#network-rules-setting').display = mode == 'allowlist'
+            return
         search = self.query_one('#web-enabled', Checkbox).value
         category = CATEGORIES['network-settings']
         self.query_one('#' + category.section, Collapsible).title = (
@@ -3021,13 +3243,15 @@ class SettingsForm(Screen):
             return sandbox.parse_rules(text)
         except ValueError as error:
             if self.setting in (None, 'network-settings'):
-                self.query_one('#network-search-section', Collapsible).collapsed = False
+                if not self.native:
+                    self.query_one('#network-search-section', Collapsible).collapsed = False
                 self.query_one('#network-section', Collapsible).collapsed = False
                 feedback = self.query_one('#network-error', Feedback)
                 field = self.query_one('#allowlist', TextArea)
                 field.add_class('-invalid')
                 field.focus()
-                feedback.update(str(error).replace('Allowlist line ', 'Line ', 1))
+                detail = str(error).replace('Allowlist line ', 'Line ', 1)
+                feedback.update('Network · ' + detail if self.native and not self.editing else detail)
                 self.call_after_refresh(feedback.scroll_visible, animate=False)
             raise
 
@@ -3042,14 +3266,48 @@ class SettingsForm(Screen):
                 path = Path(tmp) / 'allowlist.txt'
                 path.write_text(text)
                 service.run(['network', name, '--allowlist', str(path), '--website-groups', *groups], log)
-        mode = editor_settings.load(self.app.state_root / name)['mode']
+        mode = None if self.native else editor_settings.load(self.app.state_root / name)['mode']
         reopen = self.query_one('#open-editor', Checkbox).value
         self.app.pop_screen()
+        message = settings_effects.NETWORK
+        if self.native:
+            message = settings_effects.bullets(['Rules apply to new connections.', 'Retry interrupted connections.'])
         self.app.push_screen(Operation('Updating network rules · ' + name, apply,
-            success_message=settings_effects.NETWORK, done_on_success=True,
+            success_message=message, done_on_success=True,
             on_success=(lambda: self.app.launch_client(name, mode)) if reopen else None))
 
+    def collect_primary(self):
+        draft = dict(self.draft)
+        selected = options(draft.get('options'))
+        draft['open_editor'] = self.query_one('#open-editor', Checkbox).value
+        draft['skill_repo'] = draft['skill_path'] = ''
+        if self.setting in (None, 'network-settings'):
+            draft['network'] = self.query_one('#network', Select).value
+            draft['allowlist'] = self.query_one('#allowlist', TextArea).text if draft['network'] == 'allowlist' else ''
+            self.network_rules(draft['allowlist'])
+            selected['website_groups'] = self.query_one(WebsiteGroups).selected()
+        if self.setting in (None, 'resources'):
+            draft['memory'] = memory_limit(self.query_one('#memory', Input).value.strip())
+            draft['engine'] = self.query_one('#engine', Select).value
+            draft['env_file'] = self.query_one('#env-file', Input).value.strip() or None
+            sandbox.validate_env(draft['env_file'])
+        if self.setting in (None, 'skills'):
+            draft.update(self.query_one(SkillSelection).collect())
+        if self.setting in (None, 'primary-browser'):
+            selected['browser'] = self.query_one('#primary-browser', Checkbox).value
+        if not self.editing:
+            from .repository_ui import GitIdentityFields
+            draft['primary_auth'] = (self.query_one('#primary-auth', Select).value
+                                     if can_copy_primary_sign_in(self.primary) else 'login')
+            draft.update(self.query_one(FolderFields).collect(private_paths=[draft.get('env_file')]))
+            draft['system_prompt'] = self.query_one(PromptChoice).selected()
+            selected['git_identity'] = self.query_one(GitIdentityFields).collect()
+        draft['options'] = options(selected)
+        return draft, {}
+
     def collect(self):
+        if self.native:
+            return self.collect_primary()
         draft = dict(self.draft)
         def inp(id): return self.query_one('#' + id, Input).value.strip()
         def check(id): return self.query_one('#' + id, Checkbox).value
@@ -3195,7 +3453,7 @@ class SettingsForm(Screen):
                 if self.setting == 'network-settings':
                     mode = self.query_one('#network', Select).value
                     search = options(self.draft.get('options'))['web_access']
-                    if mode == self.draft['network'] and not self.query_one(WebAccessForm).has_changes(search):
+                    if mode == self.draft['network'] and (self.native or not self.query_one(WebAccessForm).has_changes(search)):
                         if mode == 'allowlist':
                             self.apply_network_rules()
                         else:
@@ -3220,16 +3478,18 @@ class SettingsForm(Screen):
                         service.save_communication_keys(draft['name'], draft['_communication_keys'], log),
                         success_message='Slack credentials are ready for the next tool call.', done_on_success=True))
                 elif self.editing:
-                    self.app.push_screen(ApplySettingsReview(self.draft, draft, editor_settings.load(self.app.state_root / draft['name'])['mode']),
+                    mode = None if self.native else editor_settings.load(self.app.state_root / draft['name'])['mode']
+                    self.app.push_screen(ApplySettingsReview(self.draft, draft, mode),
                         lambda yes: self.submit(draft, key) if yes else None)
                 else:
                     self.submit(draft, key)
         except (OSError, ValueError) as error:
             if any(message.display for message in self.query('SkillSelection Feedback')):
                 self.query_one('#skill-library-section', Collapsible).collapsed = False
-            if self.query_one('#skill-selection-error').display:
-                self.query_one('#skill-library-section', Collapsible).collapsed = False
-                self.query_one('#skill-selection-error').scroll_visible(animate=False)
+            for message in self.query('#skill-selection-error'):
+                if message.display:
+                    self.query_one('#skill-library-section', Collapsible).collapsed = False
+                    message.scroll_visible(animate=False)
             if not any(message.display for message in self.query(
                     '.provider-setting Feedback, #model-ports-error, SkillSelection Feedback, #network-error, #web-config-error')):
                 feedback = self.query_one('#form-error', Static)
@@ -3265,7 +3525,7 @@ class SettingsForm(Screen):
                 service.update(draft['name'], draft, key, log, update)
             else:
                 service.create(draft, key, log, cancellation=cancellation)
-            if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not choose_default:
+            if editing and not self.native and draft.get('open_editor') and editor['mode'] != 'pi' and not choose_default:
                 try:
                     service.run(['open', draft['name']], log)
                     opened = True
@@ -3275,8 +3535,11 @@ class SettingsForm(Screen):
         if editing:
             self.app.pop_screen()
         def open_after_models():
-            if not draft.get('open_editor'): return
-            if editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
+            if not draft.get('open_editor'):
+                return
+            if self.native:
+                self.app.interactive('open', draft['name'])
+            elif editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
             else: self.app.push_screen(Operation('Opening '+draft['name'], lambda log: service.run(['open',draft['name']],log)))
         def choose_models():
             if editing:
@@ -3294,11 +3557,13 @@ class SettingsForm(Screen):
         if editing:
             operation = UpdateOperation('Updating ' + draft['name'], task,
                 done_on_success=True, completed_title='Updated ' + draft['name'],
-                success_message=lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened)),
-                on_success=choose_models if choose_default else
-                (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None)
+                success_message=lambda: settings_effects.bullets(settings_effects.reconnect(
+                    None if self.native else editor['mode'], opened=opened or (self.native and draft['open_editor']))),
+                on_success=choose_models if choose_default else open_after_models
+                if draft.get('open_editor') and (self.native or editor['mode'] == 'pi') else None)
         else:
-            next_steps = [] if draft.get('open_editor') else [settings_effects.open_client(editor['mode'])]
+            next_steps = [] if draft.get('open_editor') else [
+                'Choose Open to start ' + PRIMARY_AGENTS[self.primary] + '.' if self.native else settings_effects.open_client(editor['mode'])]
             if self.guide:
                 client = 'Pi' if editor['mode'] == 'pi' else 'FrostPi'
                 next_steps.append(f'Type /profile-guide in {client} for first steps.')
@@ -3420,6 +3685,7 @@ class Cockpit(App):
     .available-providers { height: auto; margin-bottom: 1; }
     #model-ports-error, #network-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
     #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
+    .compact-terminal .native-primary-form #allowlist { height: 6; }
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
@@ -3477,9 +3743,14 @@ class Cockpit(App):
     .dialog-actions Button { min-width: 12; padding: 0 2; }
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
+    NewSandbox .new-agent-choices { height: auto; }
+    NewSandbox .new-agent-choices > .setting { width: 1fr; }
+    NewSandbox #profile-setting { margin: 0 0 1 2; }
     .profile-guide-row Button { padding: 0 2; margin: 0 1; }
     .review-profile-row { margin: 0 0 1 0; }
     .review-profile-row Static { width: 1fr; height: auto; }
+    .review-profile-row .primary-review-summary { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    .review-profile-row .pi-review-summary { height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
     Button { height: 1; max-height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
@@ -3611,14 +3882,13 @@ class Cockpit(App):
     #sandboxes > .datatable--even-row, #sandboxes > .datatable--odd-row {
         background: $surface-darken-1 40%;
     }
-    #details { height: auto; min-height: 3; padding: 1 0; }
-    .compact-terminal #details { text-wrap: nowrap; text-overflow: ellipsis; }
+    #details { height: auto; min-height: 3; padding: 1 0; text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
     #ssh-duration-error, #ssh-key-feedback.error { color: #ef9a91; }
     #ssh-key-feedback.unlock-succeeded { color: #87c99b; text-style: bold; }
     Screen:nocolor #ssh-key-feedback { color: white; text-style: bold; }
     Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error { color: white; text-style: bold reverse; }
-    #home-error { height: auto; margin: 0 0 1 0; color: #b75b52; }
+    #home-error, #open-error { height: auto; margin: 0 0 1 0; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }
     #operation-status { height: auto; color: #f2b544; text-style: bold; margin-bottom: 1; }
@@ -3626,7 +3896,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
@@ -3642,6 +3912,9 @@ class Cockpit(App):
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
     #confirm-box Static { height: auto; }
+    PrimarySignIn .sign-in-actions { margin: 1 0 0 0; }
+    PrimarySignIn .sign-in-actions > Button { width: 41; max-width: 100%; margin: 0 0 1 0; padding: 0 2; }
+    PrimarySignIn #confirm-box, Confirm.sign-in-confirm #confirm-box { width: 61; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
     SandboxAlerts #confirm-box { padding: 1 2; }
@@ -3658,6 +3931,8 @@ class Cockpit(App):
     SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 26; }
     .compact-terminal SettingsMenu #confirm-box { height: 100%; max-height: 100%; }
     SettingsMenu #confirm-box > #settings-actions { height: 1fr; max-height: 100%; margin: 0; }
+    SettingsMenu.native-settings-menu #confirm-box { height: auto; max-height: 95%; }
+    SettingsMenu.native-settings-menu #confirm-box > #settings-actions { height: auto; max-height: 60vh; }
     InstallPackage #package-error { margin: 0 3; }
     #folder-box { width: 98; max-width: 95%; height: 94%; max-height: 30; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #folder-box .path-row { height: 1; align: left middle; }
@@ -3728,6 +4003,7 @@ class Cockpit(App):
                                header_height=SandboxTable.ROW_PITCH)
             yield Static('Choose a sandbox, or create your first one.', id='details', markup=False)
             yield Feedback('', id='home-error', markup=False)
+            yield Feedback('', id='open-error', classes='error', markup=False)
             with Horizontal(classes='buttons'):
                 yield Button('Open with…', id='launch-with')
                 yield Button('Settings', id='settings')
@@ -3844,7 +4120,9 @@ class Cockpit(App):
         table.clear()
         text = self.query_one('#search', Input).value.casefold()
         for record in self.sorted_records():
-            if text not in (record['name'] + ' ' + record['profile'] + ' ' + (record.get('workspace') or '')).casefold():
+            agent = coding_agent(record['config'])
+            if text not in (record['name'] + ' ' + record['profile'] + ' ' + PRIMARY_AGENTS[agent]
+                            + ' ' + (record.get('workspace') or '')).casefold():
                 continue
             config = record['config']
             providers = config.get('model_providers', [])
@@ -3861,7 +4139,7 @@ class Cockpit(App):
                 SandboxTable.action_cell(f'Show Alerts ({alert_count})') if alert_count else '',
                 safe_text(record['dev'].capitalize()),
                 *(activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')),
-                safe_text(', '.join(sources)) or 'Not configured',
+                (safe_text(', '.join(sources)) or 'Not configured') if agent == 'pi' else PRIMARY_AGENTS[agent],
                 'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted',
             )
             table.add_row(*(Text(cell, no_wrap=True) if isinstance(cell, str) and cell else cell for cell in cells),
@@ -3947,10 +4225,13 @@ class Cockpit(App):
             text = 'Workspace: ' + str(record.get('workspace') or 'Unavailable')
             text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
             text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
-            text += ' · Profile: ' + str(record['profile'])
+            agent = coding_agent(record['config'])
+            text += ' · Profile: ' + str(record['profile']) if agent == 'pi' else ' · Coding agent: ' + PRIMARY_AGENTS[agent]
         details = self.query_one('#details', Static)
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
+        agent = coding_agent(record['config']) if record else 'pi'
+        self.query_one('#launch-with', Button).label = 'Open ' + PRIMARY_AGENTS[agent] if agent != 'pi' else 'Open with…'
         for action in ('launch-with', 'settings', 'more'):
             self.query_one('#' + action, Button).disabled = record is None
 
@@ -4039,7 +4320,12 @@ class Cockpit(App):
             self.notify('Choose a sandbox first.')
             return
         name, config = record['name'], record['config']
-        if action == 'launch-with':
+        native = coding_agent(config) != 'pi'
+        if action == 'launch-with' and native:
+            self.interactive('open', name)
+        elif action == 'primary-sign-in' and native:
+            self.push_screen(PrimarySignIn(record))
+        elif action == 'launch-with':
             self.push_screen(OpenWith(desktop_allowed=not (self.state_root / name / 'browser-editor.enabled').exists()), lambda mode: self.launch_client(name, mode) if mode else None)
         elif action == 'editor-settings':
             self.push_screen(EditorScreen(name))
@@ -4087,10 +4373,11 @@ class Cockpit(App):
             if not config.get('engine'):
                 raise ValueError('Repair the saved configuration before editing it.')
             common = Path(config['common']['path'])
-            self.push_screen(SandboxPromptScreen(name, self.state_root / name, (common / 'system-prompt.mjs').is_file()))
+            self.push_screen(SandboxPromptScreen(name, self.state_root / name, native or (common / 'system-prompt.mjs').is_file(),
+                                                 agent=PRIMARY_AGENTS[coding_agent(config)]))
         elif action == 'models':
             self.push_screen(ModelsScreen(record))
-        elif action in EDIT_FORMS:
+        elif action in EDIT_FORMS or (native and action == 'primary-browser'):
             self.push_screen(SettingsForm(self.configuration_draft(record), editing=True, setting=action))
         elif action in ('preview-models', 'refresh-models'):
             mode = 'preview' if action == 'preview-models' else 'refresh'
@@ -4103,7 +4390,7 @@ class Cockpit(App):
         elif action in ('pi', 'shell'):
             self.interactive(action, name)
         elif action == 'open':
-            self.launch_client(name, editor_settings.load(self.state_root / name)['mode'])
+            self.launch_client(name, None if native else editor_settings.load(self.state_root / name)['mode'])
         elif action == 'connections':
             args = ['exec', name, '--', 'pi', 'mcp', 'list']
             self.operation('Checking configured MCP connections', args)
@@ -4116,13 +4403,18 @@ class Cockpit(App):
         elif action == 'rebuild':
             profile = config.get('profile', {})
             source = profile.get('registry_name', profile.get('name', 'base'))
-            args = ['recreate', name, '--profile', source if source in profile_titles() else profile['path']]
-            migration = settings_effects.editor_migration(config)
-            question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
+            args = ['recreate', name]
+            migration = [] if native else settings_effects.editor_migration(config)
+            action_label = 'Rebuild sandbox' if native else 'Update sources and recreate'
+            if native:
+                question = f'Rebuild {name} with the current workspace and coding agent software?'
+            else:
+                args += ['--profile', source if source in profile_titles() else profile['path']]
+                question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
             notes = ['Workspace files, private home and saved chats are kept.']
             if record.get('dev') == 'running':
                 notes.insert(0, 'Active processes stop after the build.')
-            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), 'Update sources and recreate', confirm_by_default=True),
+            self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),
                 lambda yes: self.push_screen(UpdateOperation('Updating ' + name,
                     lambda log, update: self.service.run_update(args, log, update),
                     done_on_success=True, completed_title='Updated ' + name)) if yes else None)
@@ -4132,7 +4424,9 @@ class Cockpit(App):
             self.operation('Stopping ' + name, ['down', name])
 
     def launch_client(self, name, mode):
-        if mode == 'pi':
+        if mode is None:
+            self.interactive('open', name)
+        elif mode == 'pi':
             self.interactive('pi', name)
         else:
             self.push_screen(Operation('Opening ' + name, lambda log: self.open_ready(name, log, mode)))
@@ -4149,12 +4443,17 @@ class Cockpit(App):
 
     def interactive(self, command, name):
         with self.suspend():
-            if command == 'pi':
-                subprocess.run(self.service.command('pi', name), check=False)
+            if command in ('pi', 'open', 'primary-login'):
+                result = subprocess.run(self.service.command(command, name), check=False)
             else:
                 result = subprocess.run(self.service.command('up', name), check=False)
                 if result.returncode == 0:
                     subprocess.run(self.service.command(command, name), check=False)
+        if command in ('open', 'primary-login'):
+            action = 'open' if command == 'open' else 'sign in to'
+            feedback = self.screen_stack[0].query_one('#open-error', Feedback)
+            feedback.update(f'Could not {action} {name}. Open Settings → Sign-in to check the account.'
+                            if result.returncode else '')
         self.refresh_inventory()
 
 

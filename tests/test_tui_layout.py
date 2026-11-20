@@ -812,11 +812,13 @@ class TUILayoutTests(unittest.TestCase):
                 await self.ready(app, pilot)
                 await app.push_screen(NewSandbox())
                 await pilot.pause()
-                labels = list(app.screen.query(Label))
-                profile = app.screen.query_one('#profile')
-                self.assertEqual(profile.region.y, labels[1].region.bottom + 1)
+                for field_id in ('primary-agent', 'profile'):
+                    field = app.screen.query_one('#' + field_id)
+                    field_label = app.screen.query_one('#' + field_id + '-label', Label)
+                    self.assertEqual(field.region.y, field_label.region.bottom + 1)
+                    self.assertEqual(field.region.x, field_label.region.x)
                 workspace = app.screen.query_one('#workspace')
-                label = next(x for x in labels if str(x.render()) == 'Workspace')
+                label = next(x for x in app.screen.query(Label) if str(x.render()) == 'Workspace')
                 self.assertEqual(workspace.region.y, label.region.bottom + 1)
                 self.assertLessEqual(app.screen.query_one('#name').region.bottom,
                                      app.screen.query_one('.wizard-actions').region.y)

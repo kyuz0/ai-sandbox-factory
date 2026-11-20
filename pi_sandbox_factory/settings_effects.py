@@ -15,6 +15,7 @@ def reconnect(mode='browser', *, opened=False):
         'browser': open_client('browser'),
         'desktop': 'Reload the VS Code window.',
         'pi': 'Restart Pi CLI.',
+        None: 'Choose Open to start the coding agent again.',
     }[mode]
     return ['Resume your saved conversation in the reopened client.'] if opened else [action, 'Resume your saved conversation.']
 
@@ -51,7 +52,9 @@ OPTION_GROUPS = {
 def configuration_changes(original, draft):
     """Describe changes to sandbox settings without credential values."""
     before, after = options(original.get('options')), options(draft.get('options'))
-    groups = {title for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
+    native = original.get('primary_agent', 'pi') != 'pi'
+    groups = {'Browser' if native and key == 'browser' else title
+              for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
     for key, title in {'network': NETWORK_LABEL, 'memory': 'Memory limit',
                        'subagents': 'Agent tools and conversation recall',
                        'local_model_ports': 'Local model access', 'env_file': 'Environment file'}.items():
@@ -63,7 +66,7 @@ def configuration_changes(original, draft):
     providers = original.get('model_providers', {'local': {}})
     if isinstance(providers, list):
         providers = {row['name']: row.get('settings', {}) for row in providers}
-    if providers != draft.get('model_providers', {'local': {}}):
+    if not native and providers != draft.get('model_providers', {'local': {}}):
         groups.add('Model provider plugins')
     if draft.get('library_skills') or draft.get('remove_skills') or draft.get('skill_repo'):
         groups.add('Skills')
@@ -78,17 +81,24 @@ def configuration_changes(original, draft):
 
 def configuration_notes(original, draft, mode='browser'):
     groups = set(configuration_changes(original, draft))
-    notes = [RECREATE, *editor_migration(original), 'Workspace files and saved chats are kept.', *reconnect(mode)]
+    migration = editor_migration(original) if mode is not None else []
+    notes = [RECREATE, *migration, 'Workspace files and saved chats are kept.', *reconnect(mode)]
     if groups & {'Skills', 'Agent tools and conversation recall', APPROVALS_LABEL}:
         notes.append('Earlier chat messages stay unchanged; a new chat gives a clean context.')
     before, after = options(original.get('options')), options(draft.get('options'))
-    if 'Browser and saved vault protection' in groups and after['browser']:
-        notes.append('Reopen the browser viewer; websites may require login.')
+    if ('Browser and saved vault protection' in groups or 'Browser' in groups) and after['browser']:
+        if mode is None:
+            notes.append('Open a new browser viewer link from the coding agent.')
+        else:
+            notes.append('Reopen the browser viewer; websites may require login.')
     if 'Git commit identity' in groups:
         notes.append('Identity applies to future commits; repository-local Git settings take precedence.')
     previous = original.get('model_providers', {'local': {}})
     if isinstance(previous, list):
         previous = {row['name']: row.get('settings', {}) for row in previous}
-    if set(previous) - set(draft.get('model_providers', {'local': {}})) or (original.get('local_model_ports') and not draft.get('local_model_ports')):
-        notes.append('Select another model in chats using a removed connection.')
+    if mode is not None:
+        removed = set(previous) - set(draft.get('model_providers', {'local': {}}))
+        local_disabled = original.get('local_model_ports') and not draft.get('local_model_ports')
+        if removed or local_disabled:
+            notes.append('Select another model in chats using a removed connection.')
     return notes

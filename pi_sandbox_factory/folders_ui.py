@@ -94,7 +94,8 @@ class FolderFields(Vertical):
     def compose(self):
         yield Static('Main workspace: ' + str(self.config['workspace']) + ' → /workspace', markup=False, classes='section-intro')
         with Vertical(id='starting-folder-setting', classes='setting'):
-            yield Label('Start Pi and VS Code in · relative to /workspace', id='starting-folder-label')
+            caption = ('Start Pi and VS Code in' if self.config.get('primary_agent', 'pi') == 'pi' else 'Start the coding agent in')
+            yield Label(caption + ' · relative to /workspace', id='starting-folder-label')
             yield PathField('working-directory', self.config.get('working_directory', '.'), title='Choose starting folder',
                             root=self.config['workspace'], placeholder='.')
         with Vertical(classes='setting'):
