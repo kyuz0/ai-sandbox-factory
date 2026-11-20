@@ -169,6 +169,22 @@ clear the other margins. Verify the rendered gap, not just the stylesheet.
 
 ## Changes and docs
 
+### Definition of finished
+
+A request to make a change includes committing and pushing the verified change
+to the intended remote branch. Do this without waiting for a separate request.
+Follow any instruction to hold the push or show the change for review first.
+Keep unrelated changes in the checkout out of the commit.
+
+Before calling the job finished, check the requested behavior, commit the
+changes, push them and confirm the commit is on the remote branch. Verify any
+release or upstream pull request included in the request. Tell the user what
+shipped, where it landed and what checks passed.
+
+Stay on the current job until it is finished or the user changes priorities. If
+review, a user decision, a failed or unavailable test, or a push problem blocks
+completion, tell the user exactly what remains and why before moving on.
+
 Production changes must land on `main` after testing, both here and in every
 dependency repository changed for Factory. Temporary branches are allowed, but
 publishing Factory with production work left only on a dependency branch is
