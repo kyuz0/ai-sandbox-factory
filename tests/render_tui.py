@@ -62,7 +62,9 @@ async def capture(size):
         state.mkdir()
         (state / 'allowlist.txt').write_text('local-model.internal:8000\n')
         record = dict(name='demo', profile='base', engine='podman', dev='running', proxy='running', workspace=str(workspace), config=c)
-        with patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        research_only = args.only and all(name.startswith('research-') for name in args.only)
+        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only else {}
+        with patch.dict(os.environ, variables), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('pi_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(root, ReviewService([record]))
             async with app.run_test(size=size) as pilot:
                 await pilot.pause()
@@ -99,6 +101,53 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if research_only:
+                    package = root / 'sample-profile'
+                    package.mkdir()
+                    (package / 'profile.json').write_text('{"name":"example","description":"Run the reference document workflow."}')
+                    (package / 'profile.md').write_text('Reference document example.')
+                    (package / 'Dockerfile').write_text('ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\n')
+                    registry.add('profile', 'reference-document-review', str(package))
+                    await shot('research-profiles', PackagesScreen())
+                    await app.push_screen(NewSandbox())
+                    await pilot.pause()
+                    profile = app.screen.query_one('#profile', Select)
+                    profile.focus()
+                    profile.expanded = True
+                    await shot('research-profile-picker')
+                    profile.expanded = False
+                    profile.value = 'deep-research'
+                    await shot('research-web-selected', focus='#profile')
+                    profile.value = 'local-knowledge'
+                    await shot('research-local-selected', focus='#profile')
+                    await pilot.click('#continue')
+                    await shot('research-profile-error', focus='#name')
+                    await app.pop_screen()
+                    web_profile = sandbox.load_profile('deep-research')
+                    web_draft = preset('deep-research', DEFAULT_SETTINGS, web_profile['defaults'])
+                    web_draft.update(name='research', workspace=str(workspace))
+                    await app.push_screen(SettingsForm(web_draft))
+                    await shot('research-web-review')
+                    app.screen.query_one('#network-search-section CollapsibleTitle').focus()
+                    await shot('research-web-network')
+                    await app.pop_screen()
+                    metadata = sandbox.load_profile('local-knowledge')
+                    draft = preset('local-knowledge', DEFAULT_SETTINGS, metadata['defaults'])
+                    draft.update(name='research', workspace=str(workspace))
+                    await app.push_screen(SettingsForm(draft))
+                    file_search = app.screen.query_one('#file-search-section', Collapsible)
+                    app.screen.query_one('#skills-section', Collapsible).collapsed = False
+                    await pilot.pause()
+                    file_search.query_one('CollapsibleTitle').focus()
+                    await shot('research-file-search-collapsed-off')
+                    await shot('research-file-search-off', focus='#knowledge-embedding')
+                    app.screen.query_one('#knowledge-embedding', Checkbox).value = True
+                    await shot('research-file-search-on', focus='#knowledge-embedding')
+                    file_search.collapsed = True
+                    file_search.query_one('CollapsibleTitle').focus()
+                    await shot('research-file-search-collapsed-on')
+                    await app.pop_screen()
+                    return
                 if args.only and all(name.startswith('editor-migration-') for name in args.only):
                     common = root / 'legacy-common'
                     common.mkdir()

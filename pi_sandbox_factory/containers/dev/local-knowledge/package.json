@@ -1,0 +1,5 @@
+{
+  "name": "factory-local-knowledge",
+  "private": true,
+  "dependencies": {"pi-knowledge": "0.16.0"}
+}

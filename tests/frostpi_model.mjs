@@ -89,6 +89,16 @@ http.createServer((request, response) => {
       const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
+    } else if (userText === 'Factory knowledge fixture' && tools.length) {
+      if (!tools.includes('knowledge_search') || tools.some(name =>
+        ['knowledge_add', 'knowledge_configure', 'knowledge_export', 'knowledge_update'].includes(name))) {
+        delta = { content: 'FACTORY INVALID KNOWLEDGE TOOL SCOPE' };
+      } else {
+        delta = choice('knowledge_search', { query: 'When is the field unavailable?', mode: 'semantic' });
+      }
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-knowledge_search-')) {
+      delta = { content: String(last.content).includes('ORCHID_WINDOW_842')
+        ? 'FACTORY LOCAL KNOWLEDGE VERIFIED' : 'FACTORY KNOWLEDGE RESULT MISSING' };
     } else if (tools.length && userText === 'Factory live token meter fixture') {
       await streamReasoningAndAnswer(response);
       return;

@@ -32,7 +32,7 @@ APPROVAL_MODES = {
 DEFAULTS = {'approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
-            'disabled_skills': [], 'web_access': None, 'website_groups': [], 'communications': None,
+            'knowledge_embedding': 'off', 'disabled_skills': [], 'web_access': None, 'website_groups': [], 'communications': None,
             'git_identity': None}
 
 COMMON_CREDENTIAL_PATTERNS = ('*.pem', '*.key', '*.env', '*.env.*')
@@ -51,6 +51,8 @@ def options(value=None):
             raise ValueError(key + ' must be a boolean')
     if result['compaction_recall'] not in ('lite', 'full', 'off'):
         raise ValueError('Conversation recall must be lite, full or off')
+    if result['knowledge_embedding'] not in ('off', 'local'):
+        raise ValueError('Knowledge embeddings must be off or local')
     disabled = result['disabled_skills']
     if not isinstance(disabled, list) or any(x not in SKILLS for x in disabled):
         raise ValueError('Unknown disabled skill')
@@ -105,6 +107,9 @@ def permissions(template, selected):
     rules['bash'] = ('allow' if selected['inner_sandbox'] or selected['approval'] == 'off' else 'ask')
     if selected['browser']:
         rules.update({name: 'allow' for name in ('browser', 'browser_login', 'browser_evidence')})
+    if selected['knowledge_embedding'] == 'local':
+        rules.update({name: 'allow' for name in ('knowledge_search', 'knowledge_symbol_search',
+                                                 'knowledge_status', 'knowledge_show')})
     return policy
 
 

@@ -91,6 +91,11 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ### Relevance and cognitive load
 
+- Start with what the user wants to do and give each common workflow a usable default.
+  Show the effect of a choice beside it. Keep provider, model and tuning options in
+  clearly labeled advanced settings the user can open during setup or revisit later.
+  Apply this principle when reviewing the rest of Factory, including existing screens.
+
 - HARD GATE — clear, consistent labels: use plain, direct names for controls. The same concept must have the same label across screens and engines. Never expose an internal implementation term where an ordinary user-facing name exists. Keep a shared name for each repeated concept and regression-test rendered labels and errors. Review visible copy before release; inconsistent or opaque labels block release.
 
 - HARD GATE — stable checkbox copy: the label and help describe what checking

@@ -102,6 +102,13 @@ def manifest(kind, path):
             raise ValueError("Missing or unsafe package entry: " + filename)
     if kind == "profile":
         profile_system_prompt(path, data["name"])
+        summary = data.get("summary", "")
+        if not isinstance(summary, str) or '\n' in summary or '\r' in summary:
+            raise ValueError("Profile summary must be a single line of text")
+        defaults = data.get("defaults", {})
+        if (not isinstance(defaults, dict) or defaults.keys() - {"web_search", "subagents"}
+                or any(type(value) is not bool for value in defaults.values())):
+            raise ValueError("Profile defaults accept boolean web_search and subagents settings")
     else:
         settings = data.get("settings", {})
         if not isinstance(settings, dict) or any(
@@ -360,7 +367,16 @@ def choices(kind):
 
     folder = ROOT / ("profiles" if kind == "profile" else "providers")
     values = {
-        p.name: manifest(kind, p).get("description", p.name) for p in folder.iterdir() if p.is_dir()
+        p.name: manifest(kind, p).get("description", p.name) for p in sorted(folder.iterdir()) if p.is_dir()
     }
     values.update({name: r["description"] for name, r in installed(kind).items()})
     return values
+
+
+def profile_summaries():
+    from .sandbox import ROOT
+
+    summaries = {path.name: manifest('profile', path).get('summary', '')
+                 for path in (ROOT / 'profiles').iterdir() if path.is_dir()}
+    summaries.update({name: row['description'] for name, row in installed('profile').items()})
+    return summaries

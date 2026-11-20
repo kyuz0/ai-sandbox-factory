@@ -445,9 +445,23 @@ def check_pi_nonblocking_questions(inside, output):
         tmux('kill-server')
 
 
+def check_local_knowledge(page, frame, send, inside, output):
+    send('/knowledge-index /mnt/reference')
+    frame.get_by_text(re.compile(r'Indexed "reference":')).first.wait_for(timeout=120000)
+    send('/knowledge-index /workspace/outside-reference')
+    frame.get_by_text(re.compile('outside the allowed filesystem roots')).first.wait_for(timeout=20000)
+    send('Factory knowledge fixture')
+    frame.get_by_text('FACTORY LOCAL KNOWLEDGE VERIFIED', exact=True).wait_for(timeout=45000)
+    page.screenshot(path=str(output / 'local-knowledge.png'))
+    result = inside('pi', '--print', 'Factory knowledge fixture')
+    assert 'FACTORY LOCAL KNOWLEDGE VERIFIED' in result, result
+    print('PASS FrostPi indexes a read-only mounted folder offline and Pi CLI searches the same persisted corpus.')
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
-          subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False):
+          subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
+          local_knowledge=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -471,6 +485,12 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         (root / 'allowlist.txt').write_text('')
         config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
                   'engine': 'podman'}
+        if local_knowledge:
+            config['options']['knowledge_embedding'] = 'local'
+            (root / 'reference').mkdir()
+            (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
+            (root / 'workspace/outside-reference').symlink_to('/etc/passwd')
+            config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if subagents:
             config['subagents'] = subagents != 'disabled'
         if subagent_compaction:
@@ -531,6 +551,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if web_workers:
             args += ['-e', 'FACTORY_SUBAGENT_WEB_TOOLS=1']
             mounts.append((Path(__file__).with_name('subagent_web_tools.mjs').resolve(), '/tmp/subagent_web_tools.mjs', 'ro'))
+        if local_knowledge:
+            args += ['-e', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
+            mounts.append((root / 'reference', '/mnt/reference', 'ro'))
         if folder_access:
             args += ['--cap-drop=ALL', '--security-opt=no-new-privileges'] + folders.mounts(config)
         else:
@@ -661,6 +684,11 @@ p.write_text(json.dumps(v))
                     return
                 if tool_images:
                     check_tool_images(page, frame, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if local_knowledge:
+                    check_local_knowledge(page, frame, send, inside, output)
                     assert not errors, errors
                     browser.close()
                     return
@@ -854,6 +882,7 @@ if __name__ == '__main__':
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
+    scope.add_argument('--local-knowledge', action='store_true', help='Check offline embeddings from a read-only mount in Pi and FrostPi.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     scope.add_argument('--nonblocking-questions', action='store_true', help='Check deferred questions while the model works, stops and reloads.')
@@ -875,4 +904,4 @@ if __name__ == '__main__':
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
-          args.subagent_compaction, args.nonblocking_questions)
+          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge)

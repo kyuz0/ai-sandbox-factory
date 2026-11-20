@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "deep-research",
+  "description": "Deep Web Research",
+  "summary": "Research the web and use your files to write a cited report.",
+  "defaults": {"web_search": true, "subagents": true}
+}

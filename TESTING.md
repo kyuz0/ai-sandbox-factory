@@ -85,6 +85,12 @@ Use `--streaming-metrics` to verify the running count and average rate during
 reasoning and answer generation. The fixture also sends 420 estimated tokens in
 a burst after a delay and checks the final average uses the reported count.
 
+Use `--local-knowledge` with the optional model layer to index a read-only mount
+in FrostPi, reject a link outside the allowed folders, and search the same index
+in Pi CLI. The test container has no outbound network access. Use
+`--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web
+Research image to verify the profile addendum in both clients.
+
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.
 

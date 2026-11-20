@@ -328,6 +328,15 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.pause()
             section = form.query_one('#skills-section', Collapsible)
             self.assertIn('Agent tools', section.title)
+            file_search = form.query_one('#file-search-section', Collapsible)
+            embeddings = form.query_one('#knowledge-embedding', Checkbox)
+            help_text = form.query_one('#knowledge-model-help', Static)
+            copy = (str(embeddings.label), str(help_text.render()))
+            self.assertEqual(file_search.title, 'File search · Keywords')
+            self.assertTrue(file_search.collapsed)
+            self.assertFalse(embeddings.value)
+            self.assertNotIn('Search by meaning', section.title)
+            embeddings.value = True
             form.query_one('#browser', Checkbox).value = True
             form.query_one('#goals', Checkbox).value = False
             form.query_one('#compaction-recall', Select).value = 'full'
@@ -335,6 +344,42 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn('Browser on', section.title)
             self.assertIn('Recall Full', section.title)
             self.assertIn('Goals off', section.title)
+            self.assertEqual(file_search.title, 'File search · Keywords and meaning')
+            self.assertEqual((str(embeddings.label), str(help_text.render())), copy)
+            self.assertNotIn('Search by meaning', section.title)
+
+    async def test_research_profile_picker_explains_the_sources_and_keeps_actions_visible(self):
+        app = self.app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            screen = NewSandbox()
+            await app.push_screen(screen)
+            helper = screen.query_one('#profile-summary', Static)
+            picker = screen.query_one('#profile', Select)
+            picker.value = 'deep-research'
+            await pilot.pause()
+            self.assertIn('web and use your files', str(helper.render()))
+            picker.value = 'local-knowledge'
+            await pilot.pause()
+            self.assertIn('Web Search starts off', str(helper.render()))
+            self.assertLessEqual(helper.region.height, 2)
+            self.assertLess(screen.query_one('#continue', Button).region.bottom, 24)
+            await pilot.click('#continue')
+            await pilot.pause()
+            self.assertIn('for the sandbox name', str(screen.query_one('#new-error', Static).render()))
+            self.assertLessEqual(screen.query_one('#new-title').region.bottom, screen.query_one('.form').region.y)
+            profile = sandbox.load_profile('deep-research')
+            draft = preset('deep-research', DEFAULT_SETTINGS, profile['defaults'])
+            draft.update(name='research', workspace=str(self.workspace))
+            form = SettingsForm(draft)
+            await app.push_screen(form)
+            await pilot.pause()
+            title = form.query_one('.title', Label)
+            self.assertEqual(str(title.render()), 'Review sandbox · 2 of 2')
+            self.assertGreaterEqual(title.region.y, form.query_one('Header').region.bottom)
+            viewport = form.query_one('.form')
+            self.assertLessEqual(title.region.bottom, viewport.region.y)
+            self.assertGreaterEqual(form.query_one('#review-project').region.y, viewport.region.y)
 
     async def test_form_groups_and_disabled_fields_follow_selections(self):
         app = self.app()

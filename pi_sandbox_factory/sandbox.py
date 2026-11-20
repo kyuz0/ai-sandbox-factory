@@ -61,6 +61,8 @@ def load_profile(value):
             raise ValueError(f'Profile is missing {filename}: {path}')
     profile = {'name': metadata['name'], 'description': metadata.get('description', ''),
                'path': str(path), 'digest': tree_digest(path), 'registry_name': value}
+    if metadata.get('defaults'):
+        profile['defaults'] = metadata['defaults']
     if 'git_source' in metadata:
         source = metadata['git_source']
         if (not isinstance(source, str) or not source
@@ -252,6 +254,7 @@ def validate_env(path):
         if (key in {'HOME', 'PATH', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH',
                     'NODE_OPTIONS', 'NODE_USE_ENV_PROXY', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
                     'SSH_AUTH_SOCK', 'PI_ADVISOR_SOCKET', 'SANDBOX_NETWORK_MODE', 'SANDBOX_SUBAGENTS', 'SANDBOX_APPROVAL_MODE', 'COMPACTION_RECALL_MODE', 'PI_SANDBOX_CONTAINER', 'PI_AUTO_REVIEW_ALLOW_UNTRUSTED_DEV'}
+                or key.startswith('PI_KNOWLEDGE_') or key == 'SANDBOX_KNOWLEDGE_ROOTS'
                 or any(x in key for x in ('PROXY', 'PI_CODING_AGENT_DIR'))):
             raise ValueError(f'{key} is controlled by the sandbox, not the credentials file')
 
@@ -279,6 +282,8 @@ def image_names(config):
         suffix += '-web'
     if options(config.get('options'))['communications']['slack']:
         suffix += '-slack'
+    if options(config.get('options'))['knowledge_embedding'] == 'local':
+        suffix += '-knowledge'
     if 'model_providers' in config:
         suffix += '-models-' + model_providers.digest(config)
     return (f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}',
@@ -327,6 +332,9 @@ def build(config):
     common = config['common']
     if tree_digest(Path(common['path'])) != common['digest']:
         raise ValueError('Saved common image inputs were modified; use recreate --profile to refresh them')
+    knowledge = options(config.get('options'))['knowledge_embedding'] == 'local'
+    if knowledge and not (Path(common['path']) / 'local-knowledge' / 'Dockerfile').is_file():
+        raise ValueError('Choose Actions → Update sources and recreate… before enabling Search by meaning.')
     base = f'localhost/pi-sandbox-factory-base:{base_tag(config)}'
     engine = config['engine']
     pi, *pendant = pendant_versions(config) or (PI_VERSION,)
@@ -341,22 +349,27 @@ def build(config):
     has_providers = 'model_providers' in config
     web = options(config.get('options'))['web_access']['enabled']
     channels = options(config.get('options'))['communications']['slack']
-    tools = dev + '-tools' if config.get('extra_skills') or browser or web or channels or has_providers else dev
+    tools = dev + '-tools' if config.get('extra_skills') or browser or web or channels or knowledge or has_providers else dev
     run([engine, 'build', '-t', tools, '--build-arg', f'BASE_IMAGE={base}', profile['path']])
     if browser:
-        target = dev + '-browser' if config.get('extra_skills') or web or channels or has_providers else dev
+        target = dev + '-browser' if config.get('extra_skills') or web or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'browser'])
         tools = target
     if web:
-        target = dev + '-web' if config.get('extra_skills') or channels or has_providers else dev
+        target = dev + '-web' if config.get('extra_skills') or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'web-access'])
         tools = target
     if channels:
-        target = dev + '-communications' if config.get('extra_skills') or has_providers else dev
+        target = dev + '-communications' if config.get('extra_skills') or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'communications'])
+        tools = target
+    if knowledge:
+        target = dev + '-local-knowledge' if config.get('extra_skills') or has_providers else dev
+        run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
+             Path(common['path']) / 'local-knowledge'])
         tools = target
     if has_providers:
         target = dev + '-models' if config.get('extra_skills') else dev
@@ -645,6 +658,8 @@ def up(config, state):
             selected = options(config.get('options'))
             args += ['--env', 'SANDBOX_APPROVAL_MODE=' + selected['approval']]
             args += ['--env', 'COMPACTION_RECALL_MODE=' + ('full' if selected['compaction_recall'] == 'full' else 'lite')]
+            if selected['knowledge_embedding'] == 'local':
+                args += ['--env', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
             for key, value in runtime_env.items():
                 args += ['--env', f'{key}={value}']
             run(base + args + [dev_image])
@@ -784,7 +799,11 @@ def create(args, state):
     mode = getattr(args, 'network', 'allowlist')
     if mode == 'unrestricted' and (args.allowlist or args.allow_domain):
         raise ValueError('--network unrestricted cannot be combined with an allowlist')
-    selected_options = options(json.loads(Path(args.options_file).read_text()) if getattr(args, 'options_file', None) else None)
+    preset = profile.get('defaults', {})
+    selected_options = options(json.loads(Path(args.options_file).read_text()) if getattr(args, 'options_file', None)
+                               else {'web_access': {'enabled': preset.get('web_search', False)}})
+    if getattr(args, 'knowledge_embedding', None) is not None:
+        selected_options['knowledge_embedding'] = args.knowledge_embedding
     workspace = directory(args.workspace)
     host_platform.validate_data_path(workspace)
     shared = directory(args.pi_config) if args.pi_config else None
@@ -818,9 +837,10 @@ def create(args, state):
             raise ValueError('Podman mode requires rootless Podman')
     if uid == 0:
         raise ValueError('Run the launcher as your normal user, not sudo/root')
+    subagents = getattr(args, 'subagents', None)
     config = dict(name=args.name, engine=engine, uid=uid, gid=gid, workspace=str(workspace),
                   pi_config=str(shared) if shared else None, env_file=env_file, memory=memory_limit(args.memory),
-                  network=mode, subagents=getattr(args, 'subagents', False))
+                  network=mode, subagents=preset.get('subagents', False) if subagents is None else subagents)
     if connection:
         config['podman_connection'] = connection
     config['working_directory'] = folders.working_directory(workspace, getattr(args, 'working_directory', '.'))
@@ -1200,8 +1220,10 @@ def main():
                      help='Optional Pi agent directory: seed private models/settings/auth; share other resources read-only. Default: fresh private configuration')
     new.add_argument('--network', choices=['allowlist', 'unrestricted'], default='allowlist',
                      help='Outer container network policy (default: allowlist); unrestricted uses ordinary bridge networking')
-    new.add_argument('--subagents', action='store_true',
-                     help='Opt in to standard pi-subagents with the same review and Bash sandbox policy (default: disabled)')
+    new.add_argument('--subagents', action=argparse.BooleanOptionalAction, default=None,
+                     help='Enable or disable standard pi-subagents (defaults to the profile choice)')
+    new.add_argument('--knowledge-embedding', choices=['off', 'local'],
+                     help='Install pi-knowledge with offline embeddings, or use model-free file search (default: off)')
     new.add_argument('--browser', action='store_true', help='Install optional Betterwright browser tools and dependencies (default: disabled)')
     policy = new.add_mutually_exclusive_group()
     policy.add_argument('--allowlist')

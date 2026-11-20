@@ -85,6 +85,22 @@ class RegistryTests(unittest.TestCase):
         sandbox.prepare_options(config, state)
         self.assertEqual(json.loads(runtime.read_text())['text'], '')
 
+    def test_research_profile_defaults_are_optional_and_resolve(self):
+        from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
+
+        self.assertNotIn('defaults', sandbox.load_profile('base'))
+        self.assertEqual(registry.choices('profile')['deep-research'], 'Deep Web Research')
+        for name, web, delegates in [('deep-research', True, True), ('local-knowledge', False, False)]:
+            profile = sandbox.load_profile(name)
+            draft = preset(name, DEFAULT_SETTINGS, profile['defaults'])
+            self.assertEqual(draft['options']['web_access']['enabled'], web)
+            self.assertEqual(draft['subagents'], delegates)
+            self.assertEqual(draft['options']['knowledge_embedding'], 'off')
+            resources = json.loads((Path(profile['path']) / 'resources.json').read_text())
+            self.assertEqual(resources['skills'], ['/opt/research-skills/' + name])
+        self.assertFalse(DEFAULT_SETTINGS['subagents'])
+        self.assertFalse(preset('base', DEFAULT_SETTINGS)['options']['web_access']['enabled'])
+
     def test_rejects_invalid_profile_addendum(self):
         prompt = self.source / registry.PROFILE_PROMPT_FILE
         prompt.write_bytes(b'\xff')

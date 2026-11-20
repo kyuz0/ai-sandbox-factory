@@ -85,7 +85,9 @@ class PackageUITests(unittest.TestCase):
                 self.assertEqual(str(library.query_one('#package-install', Button).label), 'Add skills…')
                 await pilot.press('left', 'left')
                 self.assertEqual(tabs.active, 'profile')
-                details = library.query_one('#profile-packages Button')
+                profiles = {row.package_name: row for row in library.query('#profile-packages PackageRow')}
+                self.assertTrue({'base', 'deep-research', 'local-knowledge'}.issubset(profiles))
+                details = profiles['base'].query_one(Button)
                 details.focus()
                 await pilot.press('enter')
                 self.assertIsInstance(app.screen, ProfileDetails)

@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from textwrap import shorten
 import pyfiglet
 import shutil
 from rich.style import Style
@@ -55,7 +56,13 @@ except ImportError as error:
     raise SystemExit('Install Pi Sandbox Factory with pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git.') from error
 
 def profile_titles():
-    return registry.choices('profile')
+    installed = registry.installed('profile')
+    return {name: installed_profile_title(name) if name in installed else title
+            for name, title in registry.choices('profile').items()}
+
+
+def installed_profile_title(name):
+    return name.replace('-', ' ').title()
 DEFAULT_SETTINGS = {'profile': 'base', 'model_providers': {'local':{}}, 'workspace_parent': '', 'network': 'allowlist',
                     'engine': 'podman', 'memory': '8g', 'subagents': False, 'env_file': '',
                     'pi_config': '', 'skill_repo': '', 'skill_path': '', 'library_skills': [], 'open_editor': True,
@@ -110,10 +117,15 @@ def load_defaults():
     return result
 
 
-def preset(profile, defaults):
+def preset(profile, defaults, profile_defaults=None):
     value = {**defaults, 'profile': profile, 'options': options(defaults.get('options'))}
     value['options'] = dict(value['options'])
     value['options']['disabled_skills'] = list(value['options']['disabled_skills'])
+    profile_defaults = profile_defaults or {}
+    if 'web_search' in profile_defaults:
+        value['options']['web_access']['enabled'] = profile_defaults['web_search']
+    if 'subagents' in profile_defaults:
+        value['subagents'] = profile_defaults['subagents']
     rules = [f'local-model.internal:{p}' for p in sandbox.local_model_ports(value['local_model_ports'])] if value.get('local_model_ports') else []
     value['allowlist'] = '\n'.join(rules)
     return value
@@ -234,10 +246,9 @@ class Service:
             providers=Path(temp)/'providers.json'
             write_json(providers,draft.get('model_providers',{'local':{}}))
             args += ['--providers-file',str(providers)]
+            args += ['--subagents' if draft['subagents'] else '--no-subagents']
             for provider in draft.get('advisors', {}).get('providers', []):
                 args += ['--advisor', provider]
-            if draft['subagents']:
-                args += ['--subagents']
             self.run(args, log)
         pending = draft.get('_hosted_changes', {})
         if pending:
@@ -1124,6 +1135,10 @@ def agent_tools_summary(recall, browser, goals):
     return f'Recall {recall.capitalize()} · Browser {on_off(browser)} · Goals {on_off(goals)}'
 
 
+def file_search_title(semantic):
+    return 'File search · ' + ('Keywords and meaning' if semantic else 'Keywords')
+
+
 class FoldersScreen(Screen):
     BINDINGS = [('escape', 'back', 'Back')]
 
@@ -1681,18 +1696,22 @@ class ModelsScreen(Screen):
 
 
 class PackageRow(Vertical):
-    def __init__(self, kind, name, description, record=None):
+    def __init__(self, kind, name, description, record=None, summary=''):
         super().__init__(classes='package-row')
         self.kind, self.package_name, self.description, self.record = kind, name, description, record
+        self.summary = summary
 
     def compose(self):
+        title = self.description or self.package_name
+        if self.record:
+            title = installed_profile_title(self.package_name) if self.kind == 'profile' else 'Local name · ' + self.package_name
+        yield Static(title, classes='package-title', markup=False)
+        summary = self.summary if self.kind == 'profile' else self.description if self.record else ''
+        if summary:
+            yield Static(summary, markup=False)
         if self.record is None:
-            yield Static(self.description or self.package_name, classes='package-title', markup=False)
             yield Static('Included with Pi Sandbox Factory', markup=False)
         else:
-            yield Static('Local name · ' + self.package_name, classes='package-title', markup=False)
-            if self.description:
-                yield Static(self.description, markup=False)
             source = self.record['source']
             if self.record.get('subdir', '.') != '.':
                 source += ' · ' + self.record['subdir']
@@ -1796,7 +1815,8 @@ class PackagesScreen(Screen):
         listing = self.query_one(f'#{kind}-packages', Vertical)
         await listing.remove_children()
         installed = registry.installed(kind)
-        await listing.mount(*(PackageRow(kind, name, description, installed.get(name))
+        summaries = registry.profile_summaries() if kind == 'profile' else {}
+        await listing.mount(*(PackageRow(kind, name, description, installed.get(name), summaries.get(name, ''))
                               for name, description in registry.choices(kind).items()))
 
     def run_package_action(self, kind, action, name):
@@ -1829,8 +1849,8 @@ class PackagesScreen(Screen):
             except (OSError, ValueError) as error:
                 self.notify(safe_text(error), severity='error')
             else:
-                title = row.description if row.record is None and row.description else name
-                self.app.push_screen(ProfileDetails(title, row.description, prompt))
+                title = installed_profile_title(name) if row.record else row.description or name
+                self.app.push_screen(ProfileDetails(title, row.summary, prompt))
         elif action == 'remove':
             self.app.push_screen(Confirm('Remove ' + kind + ' “' + name + '”? Existing sandboxes keep their saved copy.', 'Remove'),
                                  lambda yes: self.run_package_action(kind, action, name) if yes else None)
@@ -2304,15 +2324,19 @@ class NewSandbox(Screen):
     def compose(self):
         settings = self.copied_draft or self.app.defaults
         profiles = profile_titles()
+        self.summaries = registry.profile_summaries()
         if self.copied_draft:
             profiles[settings['profile']] = profiles.get(settings['reused_profile'].get('registry_name'), settings['reused_profile']['name']) + ' (from ' + settings['reuse_from'] + ')'
         yield Header()
+        yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
+                    classes='title focused-settings-title', id='new-title')
         with VerticalScroll(classes='form'):
-            yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''), classes='title', id='new-title')
-            yield Label('Profile')
-            yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
-                         value=settings['profile'] if settings['profile'] in profiles else 'custom',
-                         allow_blank=False, id='profile')
+            with Vertical(classes='setting'):
+                yield Label('Profile')
+                yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
+                             value=settings['profile'] if settings['profile'] in profiles else 'custom',
+                             allow_blank=False, id='profile')
+                yield Static('', id='profile-summary', classes='setting-help', markup=False)
             with Vertical(id='custom-profile-fields', classes='setting'):
                 yield Label('Custom profile folder')
                 yield Input(id='custom-profile', placeholder='~/profiles/my-profile')
@@ -2336,7 +2360,15 @@ class NewSandbox(Screen):
 
     @on(Select.Changed, '#profile')
     def profile_changed(self):
-        self.query_one('#custom-profile-fields').display = self.query_one('#profile', Select).value == 'custom'
+        profile = self.query_one('#profile', Select).value
+        self.query_one('#custom-profile-fields').display = profile == 'custom'
+        summary = self.summaries.get(profile, '')
+        if self.copied_draft:
+            web = options(self.copied_draft.get('options'))['web_access']['enabled']
+            summary = f'Saved settings carry over. {WEB_SEARCH_LABEL} is {on_off(web)}.'
+        helper = self.query_one('#profile-summary', Static)
+        helper.update(shorten(safe_text(summary), width=130, placeholder='…'))
+        helper.display = bool(summary)
 
     @on(Input.Changed, '#workspace')
     def suggest_name(self, event):
@@ -2361,7 +2393,7 @@ class NewSandbox(Screen):
                             else sandbox.load_profile(profile))
                 name = self.query_one('#name', Input).value.strip()
                 if not re.fullmatch('[a-z0-9][a-z0-9-]{0,39}', name):
-                    raise ValueError('Name: use 1–40 lowercase letters, digits or hyphens.')
+                    raise ValueError('Use 1–40 lowercase letters, digits or hyphens for the sandbox name.')
                 if (self.app.state_root / name).exists():
                     raise ValueError('That name already exists. Choose another name.')
                 workspace_text = self.query_one('#workspace', Input).value.strip()
@@ -2375,7 +2407,8 @@ class NewSandbox(Screen):
                         raise ValueError('Choose an existing workspace or enable folder creation.')
                 elif not workspace.is_dir():
                     raise ValueError('Workspace is not a directory.')
-                draft = copy.deepcopy(self.copied_draft) if self.copied_draft else preset(metadata['name'], self.app.defaults)
+                draft = (copy.deepcopy(self.copied_draft) if self.copied_draft
+                         else preset(metadata['name'], self.app.defaults, metadata.get('defaults')))
                 draft.update(profile=profile, name=name, workspace=str(workspace),
                              mkdir=self.query_one('#mkdir', Checkbox).value)
                 self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys))
@@ -2406,14 +2439,16 @@ class SettingsForm(Screen):
 
     def compose(self):
         value, selected = self.draft, options(self.draft.get('options'))
+        review = self.has_class('settings-review')
         yield Header()
         if self.setting:
             yield Label(EDIT_FORMS[self.setting].label + ' · ' + value['name'],
                         classes='title focused-settings-title')
+        elif review:
+            yield Label('Review sandbox · 2 of 2', classes='title focused-settings-title')
         with VerticalScroll(classes='form'):
-            if not self.setting:
-                yield Label('Defaults for new sandboxes' if self.defaults_mode else
-                            'Sandbox settings' if self.editing else 'Review sandbox · 2 of 2', classes='title')
+            if not self.setting and not review:
+                yield Label('Defaults for new sandboxes' if self.defaults_mode else 'Sandbox settings', classes='title')
             if self.defaults_mode:
                 yield Label('Default profile')
                 yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
@@ -2569,6 +2604,13 @@ class SettingsForm(Screen):
     def compose_agent_tools(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section):
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
+            semantic = selected['knowledge_embedding'] == 'local'
+            with Collapsible(title=file_search_title(semantic), collapsed=True, id='file-search-section'):
+                with Vertical(classes='setting'):
+                    yield Checkbox('Search by meaning', value=semantic, id='knowledge-embedding')
+                    yield Static('Finds related passages in files you choose with /knowledge-index in Pi or FrostPi. '
+                                 'Enabling it downloads about 470 MB for the local model.',
+                                 id='knowledge-model-help', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
                 yield Select([('Lite — search history on demand', 'lite'),
@@ -2657,8 +2699,7 @@ class SettingsForm(Screen):
             self.call_after_refresh(section.scroll_visible, top=True, animate=False)
         elif self.has_class('settings-review'):
             models = self.query_one('#' + CATEGORIES['models'].section, Collapsible)
-            models.collapsed = False
-            models.query_one('CollapsibleTitle').focus()
+            models.query_one('CollapsibleTitle').focus(scroll_visible=False)
 
     @on(Checkbox.Changed, '#local-models')
     def local_models_changed(self):
@@ -2713,6 +2754,10 @@ class SettingsForm(Screen):
         recall = self.query_one('#compaction-recall', Select).value
         self.query_one('#skills-section', Collapsible).title = (
             CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(recall, browser, goals))
+
+    @on(Checkbox.Changed, '#knowledge-embedding')
+    def file_search_changed(self, event):
+        self.query_one('#file-search-section', Collapsible).title = file_search_title(event.value)
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -2866,7 +2911,8 @@ class SettingsForm(Screen):
                         protect_credentials=check('protect-credentials'),
                         protect_browser_credentials=check('protect-browser-credentials'),
                         goals=check('goals'), scheduling=check('scheduling'), question_forms=check('question-forms'), browser=check('browser'),
-                        compaction_recall=self.query_one('#compaction-recall', Select).value)
+                        compaction_recall=self.query_one('#compaction-recall', Select).value,
+                        knowledge_embedding='local' if check('knowledge-embedding') else 'off')
         selected['disabled_skills'] = [s for s in SKILLS if
             (s in PROFILE_SKILLS.get(self.profile_name, []) and not check('skill-' + s))
             or (s not in PROFILE_SKILLS.get(self.profile_name, []) and s in selected['disabled_skills'])]
@@ -3164,12 +3210,12 @@ class Cockpit(App):
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
     .settings-review .form > Collapsible.-collapsed,
     .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
-    .compact-terminal .settings-review #review-project { margin: 0; }
     Collapsible > Contents,
     #agent-section.focused-setting > Contents,
     #network-search-section.focused-setting > Contents,
     #hosted-section.focused-setting > Contents { padding: 1 3; }
     #local-provider > Contents { padding: 1 3 0 3; }
+    #file-search-section > Contents { padding: 1 3 0 3; }
     #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
     #provider-controls > CollapsibleTitle { padding: 0; }
     #local-provider.-local-off #local-enable-setting { margin: 0; }
@@ -3228,6 +3274,7 @@ class Cockpit(App):
     #home > .buttons { margin: 0 0 1 0; }
     #home > .buttons Label { width: 1fr; }
     .path-row { height: 3; }
+    NewSandbox .form > .path-row { padding: 0 1 0 0; }
     .path-row Input { width: 1fr; margin-bottom: 0; }
     .path-row Button { height: 3; padding: 1 1; margin: 0; }
     #mkdir { margin: 1 0 1 2; }

@@ -12,6 +12,30 @@ FrostPi, Node.js, Python, Git, document tools and the sandbox security component
 Custom profiles extend that base image with their own dependencies, skills and
 instructions. They do not inherit other profiles’ additions.
 
+## Research profiles
+
+- **Deep Web Research** enables Web Search and subagents. Its skill uses independent
+  research questions, then writes a cited `report.md` and `sources.md` under
+  `research/` in the workspace. It can use local files alongside web sources.
+- **Local Knowledge** starts with Web Search off. Its skill searches workspace
+  files and mounted folders and cites the relevant passages. You can enable Web
+  Search or subagents in the same settings as any other profile.
+
+Both profiles can search file contents and names without a model. To add semantic
+search, open **Agent tools → File search** and enable **Search by meaning**.
+Factory installs `pi-knowledge` and downloads roughly 470 MB of model weights
+when building the image.
+For sandboxes built before this setting was available, choose
+**Actions → Update sources and recreate…** first.
+Indexing and search then run inside the sandbox without an embedding service.
+In Pi or FrostPi, run `/knowledge-index reference` with the path to a file or folder
+in the workspace or a mounted folder. Run `/knowledge-refresh reference` to update
+the index after editing its sources. Pi can search what you indexed. Your indexes
+are stored in the sandbox's private home and survive a rebuild.
+
+Mount local reference folders read-only when you only need to search them. An
+index contains excerpts from its sources. Choose the material you want Pi to use.
+
 The profile’s Dockerfile starts with `ARG BASE_IMAGE` and `FROM ${BASE_IMAGE}`.
 The launcher supplies that image, then adds the selected browser support,
 providers and extra skills after building the profile.
@@ -63,6 +87,10 @@ Copy [examples/profile](../examples/profile) into a new repository. It contains:
 | `system-prompt.md` | Optional UTF-8 Markdown describing what the profile is intended for. Factory includes it in the Pi system prompt. |
 | `check.py` | Optional tool checks, copied to `/opt/sandbox/profile-check.py`. |
 | `resources.json` | Skills, prompts and extensions registered with Pi. |
+
+`profile.json` can include a one-line `summary` for the profile picker and Library.
+It can also set `defaults.web_search` and `defaults.subagents` for new sandboxes.
+Each is a boolean. Users can change both in configuration.
 
 Keep the addendum short. Factory identifies the profile and explains that the user
 can take the work in another direction. The addendum comes from the saved profile
