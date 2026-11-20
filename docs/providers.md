@@ -47,6 +47,11 @@ separate companion before discovery; the key is excluded from sandbox settings
 and workstation defaults. A missing credential does not prevent opening the editor.
 Use **Settings → Model Providers** to check, preview, refresh or replace a credential.
 
+When you first assign a managed key, Factory opens the model picker. Choose
+**Use as default** to use that model in new chats, or **Skip** to keep your
+current default. To pick a different model later, open
+**Settings → Model Providers → Provider plugins → Choose model…**.
+
 For the CLI, put settings in a JSON file:
 
 ```json

@@ -28,7 +28,7 @@ from .settings_catalog import (
 )
 from .folders_ui import FolderFields
 from .communications_ui import CommunicationsForm, communications_summary
-from .models_ui import HostedProviders, hosted_provider_names, local_models_title
+from .models_ui import HostedProviders, ModelDialog, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
                              assigned_key_label, choice_key_caption, key_caption)
 from .repository_ui import git_identity_summary
@@ -301,6 +301,22 @@ class Service:
 
     def hosted_test(self, name, provider, model, **values):
         return hosted_models.select(self.config(name), provider, model, test=True, **values)
+
+    def plugin_model(self, name, action, *, provider, refresh=False, model=None):
+        config = self.config(name)
+        manifest = next((row['manifest'] for row in config.get('model_providers', ())
+                         if row['name'] == provider), {})
+        if provider == 'local' or not provider_credentials.scope(provider, manifest.get('inference')):
+            raise ValueError('Choose an enabled provider plugin with a managed key.')
+        if action == 'catalogue':
+            if refresh:
+                self.provider(name, provider, 'refresh', None, lambda _: None)
+            return hosted_models.request(config, 'catalogue', provider=provider, plugin=True)
+        if action != 'select':
+            raise ValueError('Unsupported model operation.')
+        result = hosted_models.request(config, 'select', provider=provider, plugin=True, model=model)
+        activity.record(self.state / name, 'edited')
+        return result
 
     def save_communication_keys(self, name, changes, log):
         if changes:
@@ -1594,7 +1610,9 @@ class ModelsScreen(Screen):
                             yield Button('Configure', id='provider-auth')
                     with Vertical(classes='setting', id='managed-provider-key'):
                         yield Static(key_caption(), id='assigned-provider-key', markup=False)
-                        yield Button('Choose key…', id='provider-change-key')
+                        with Horizontal(classes='buttons'):
+                            yield Button('Choose key…', id='provider-change-key')
+                            yield Button('Choose model…', id='provider-model-choice')
                     yield from self.discovery_buttons('provider')
             else:
                 with Vertical(classes='setting'):
@@ -1641,14 +1659,28 @@ class ModelsScreen(Screen):
         if choice is None:
             return
         service, name = self.app.service, self.record['name']
+        choose_model = (not choice.get('disconnect') and self.credential_binding(provider)
+                        and provider not in self.key_status.get('configured', ()))
+
         def task(log):
             if choice.get('disconnect'):
                 service.disconnect_provider_key(name, provider)
                 log('API key disconnected from this sandbox.')
             else:
                 service.assign_provider_key(name, provider, choice, log)
+
+        def saved():
+            self.load_key_status()
+            if choose_model:
+                self.app.pop_screen()
+                self.open_plugin_model(provider, optional=True)
+
         self.app.push_screen(Operation('API key · ' + (label or provider), task, done_on_success=True,
-                                      on_success=self.load_key_status))
+                                      on_success=saved))
+
+    def open_plugin_model(self, provider, *, optional=False):
+        label = self.providers[provider].get('description') or provider
+        self.app.push_screen(ModelDialog(self.record['name'], provider, plugin_label=label, optional=optional))
 
     @work(exclusive=True, group='local-server-keys')
     async def open_local_keys(self):
@@ -1678,9 +1710,13 @@ class ModelsScreen(Screen):
         if action in ('local-status', 'local-preview', 'local-refresh'):
             self.run_discovery('local', action.removeprefix('local-'))
             return
-        if action not in ('provider-change-key', 'provider-status', 'provider-preview', 'provider-refresh', 'provider-auth'):
+        if action not in ('provider-change-key', 'provider-model-choice', 'provider-status',
+                          'provider-preview', 'provider-refresh', 'provider-auth'):
             return
         selected = self.query_one('#model-provider', Select).value
+        if action == 'provider-model-choice':
+            self.open_plugin_model(selected)
+            return
         if action == 'provider-change-key':
             provider = self.providers[selected]
             self.app.push_screen(CredentialDialog(provider.get('description', selected),
@@ -3083,6 +3119,9 @@ class SettingsForm(Screen):
         editing = self.editing
         cancellation = None if editing else Creation()
         editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
+        plugin_choices = list(draft.get('_provider_credential_choices', {}))
+        hosted_choices = draft.get('_hosted_changes')
+        choose_default = hosted_choices or plugin_choices
         opened = False
         def task(log, update=None):
             nonlocal opened
@@ -3092,7 +3131,7 @@ class SettingsForm(Screen):
                 service.update(draft['name'], draft, key, log, update)
             else:
                 service.create(draft, key, log, cancellation=cancellation)
-            if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not draft.get('_hosted_changes'):
+            if editing and draft.get('open_editor') and editor['mode'] != 'pi' and not choose_default:
                 try:
                     service.run(['open', draft['name']], log)
                     opened = True
@@ -3110,18 +3149,25 @@ class SettingsForm(Screen):
                 self.app.pop_screen()
             else:
                 operation.leave_wizard()
-            self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
+                self.app.refresh_inventory()
+            if len(plugin_choices) == 1 and not hosted_choices:
+                provider = plugin_choices[0]
+                label = self.provider_forms.get(provider, {}).get('description') or provider
+                self.app.push_screen(ModelDialog(draft['name'], provider, plugin_label=label, optional=True),
+                                     lambda _: open_after_models())
+            else:
+                self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
         if editing:
             operation = UpdateOperation('Updating ' + draft['name'], task,
                 done_on_success=True, completed_title='Updated ' + draft['name'],
                 success_message=lambda: settings_effects.bullets(settings_effects.reconnect(editor['mode'], opened=opened)),
-                on_success=choose_models if draft.get('_hosted_changes') else
+                on_success=choose_models if choose_default else
                 (lambda: self.app.interactive('pi', draft['name'])) if draft.get('open_editor') and editor['mode'] == 'pi' else None)
         else:
             operation = CreationOperation(self.app.state_root / draft['name'], task, cancellation,
                 retry=lambda: self.submit(draft, key),
                 success_message='' if draft.get('open_editor') else settings_effects.open_client(editor['mode']),
-                on_success=choose_models if draft.get('_hosted_changes') else
+                on_success=choose_models if choose_default else
                 open_after_models if draft.get('open_editor') else None)
         self.app.push_screen(operation)
 
@@ -3237,7 +3283,7 @@ class Cockpit(App):
     #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
-    ModelsScreen #managed-provider-key, ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
+    ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     .provider-setting Input.-invalid-credential { border: tall $error; }
     .setting > Checkbox, .setting > Input, .setting > Select, .setting > TextArea { margin-bottom: 0; }
     .setting > Button, .setting > .buttons, .setting > .path-row { margin: 0; }
@@ -3321,6 +3367,7 @@ class Cockpit(App):
     .search-provider-row Button { margin-right: 0; }
     .model-fields, #slack-fields, #copy-sandbox-fields, #search-provider-fields { padding-right: 1; }
     ProviderDialog .model-fields { padding: 0; }
+    .compact-terminal .plugin-model-dialog #model-results { max-height: 3; border: none; padding: 0 1; }
     OptionList > .option-list--option { padding: 0 1; }
     #custom-profile-fields, #network-rules-fields, #network-rules-setting, #provider-controls { height: auto; }
     #home > .buttons { margin: 0 0 1 0; }

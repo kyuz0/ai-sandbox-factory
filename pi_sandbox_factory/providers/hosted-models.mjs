@@ -34,7 +34,9 @@ function safeModel(model) {
 }
 async function main(r) {
   if (r.action === 'status') return {providers: ids.map(status)};
-  if (!ids.includes(r.provider)) throw Error('Unsupported provider.');
+  const plugin = r.plugin === true && ['catalogue', 'select'].includes(r.action) &&
+    typeof r.provider === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(r.provider);
+  if (!plugin && !ids.includes(r.provider)) throw Error('Unsupported provider.');
   const id = r.provider;
   if (r.action === 'configure') {
     if (!r.endpoint?.startsWith('http://127.0.0.1:19431/r/'+id)) throw Error('Invalid inference endpoint.');
@@ -65,7 +67,7 @@ async function main(r) {
   const rt = await runtime();
   if (r.action === 'catalogue') {
     let warning = '';
-    if (r.refresh) {
+    if (r.refresh && !plugin) {
       try {
         const result = await rt.refresh({providers: [id], allowNetwork: true, force: true, signal: AbortSignal.timeout(20000)});
         if (result.aborted || result.errors?.size) warning = 'Catalogue refresh failed; showing saved models.';
@@ -76,7 +78,7 @@ async function main(r) {
   const model = rt.getModel(id, r.model);
   if (!model) throw Error('Choose a model from the catalogue.');
   if (r.action === 'select') {
-    if (id === 'azure' && r.deployment) {
+    if (!plugin && id === 'azure' && r.deployment) {
       if (/[,=\r\n]/.test(r.deployment)) throw Error('Invalid Azure deployment name.');
       await auth.modify(id, async current => {
         if (!current) throw Error('Configure the provider first.');
@@ -88,7 +90,7 @@ async function main(r) {
       });
     }
     let chosen = model.id;
-    if (id === 'amazon-bedrock' && r.profile_id && r.profile_id !== model.id) {
+    if (!plugin && id === 'amazon-bedrock' && r.profile_id && r.profile_id !== model.id) {
       chosen = r.profile_id;
       const config = read(modelsPath, {providers: {}});
       config.providers ||= {};

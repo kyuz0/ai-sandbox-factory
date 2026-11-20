@@ -3,7 +3,7 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static
 from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ModelsScreen, SettingsForm, preset
 from pi_sandbox_factory.models_ui import HostedProviders, ModelDialog, ProviderDialog
@@ -30,6 +30,48 @@ class HostedUITests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.runner.close()
     def _callTestMethod(self,method): self.runner.run(method())
+
+    async def test_managed_plugin_key_opens_default_model_picker(self):
+        source = {'name': 'company', 'manifest': {
+            'description': 'Company models',
+            'inference': {'origin': 'https://example.test', 'auth': {'type': 'bearer'},
+                          'operations': [{'method': 'GET', 'path': '/models'}]},
+        }}
+        record = {'name': 'test', 'config': {'model_providers': [source]}}
+        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None):
+            service = ModelService([])
+            configured = []
+            service.provider_key_status = lambda name: {'configured': list(configured)}
+            service.assign_provider_key = lambda name, provider, choice, log: configured.append(provider)
+            request = service.plugin_model = Mock(side_effect=service.hosted_request)
+            app = Cockpit(Path(temp), service)
+            async with app.run_test(size=(80, 24)) as pilot:
+                screen = ModelsScreen(record)
+                await app.push_screen(screen)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                screen.change_key('company', {'ref': 'a' * 32})
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, ModelDialog)
+                self.assertEqual(str(app.screen.query_one('#model-cancel', Button).label), 'Skip')
+                request.assert_called_once_with('test', 'catalogue', provider='company', refresh=False)
+                await pilot.click('#model-cancel')
+                self.assertIs(app.screen, screen)
+                screen.query_one('#provider-controls', Collapsible).collapsed = False
+                screen.query_one('#provider-model-choice', Button).focus()
+                await pilot.press('enter')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, ModelDialog)
+                app.screen.query_one('#model-results', OptionList).highlighted = 0
+                await pilot.pause()
+                await pilot.click('#model-save')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertIs(app.screen, screen)
+                request.assert_called_with('test', 'select', provider='company', model='model-1')
 
     async def test_saved_key_picker_returns_a_reference_and_filters_by_connection(self):
         binding = hosted_models.credential_scope({'provider': 'openrouter'})

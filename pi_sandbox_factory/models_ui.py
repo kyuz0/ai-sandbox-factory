@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
+from rich.text import Text
 from . import hosted_models, settings_effects, editor_settings
 from .credentials_ui import CredentialFields, choice_key_caption, key_caption
 from .settings_catalog import HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL
@@ -293,58 +294,73 @@ class ModelDialog(ModalScreen):
     ModelDialog { align: center middle; }
     ModelDialog #model-results { height: 8; margin-bottom: 1; }
     ModelDialog .model-dialog { width: 96; max-width: 94%; height: 94%; max-height: 44; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    ModelDialog .plugin-model-dialog { height: 26; max-height: 94%; }
+    ModelDialog .plugin-model-dialog #model-results { height: auto; max-height: 8; }
     ModelDialog .model-fields { height: 1fr; min-height: 1; }
+    ModelDialog #model-error.error { color: #ff9184; text-style: bold; }
     ModelDialog Static { height: auto; }
     '''
 
-    def __init__(self,name,provider):
+    def __init__(self, name, provider, *, plugin_label=None, optional=False):
         super().__init__()
         self.sandbox_name, self.provider = name,provider
+        self.plugin_label, self.optional = plugin_label, optional
         self.models = []; self.filtered = []; self.busy = False
 
     def compose(self):
-        with Vertical(classes='model-dialog'):
-            yield Label('Choose a model · '+hosted_models.PROVIDERS[self.provider],classes='title')
+        classes = 'model-dialog plugin-model-dialog' if self.plugin_label else 'model-dialog'
+        with Vertical(classes=classes):
+            yield Label('Choose a model · ' + (self.plugin_label or hosted_models.PROVIDERS[self.provider]),
+                        classes='title', markup=False)
             with VerticalScroll(classes='model-fields'):
                 with Vertical(classes='setting'):
-                    yield Label('Search Pi’s model catalogue')
+                    yield Label('Search models' if self.plugin_label else 'Search Pi’s model catalogue')
                     yield Input(id='model-search')
                 yield OptionList(id='model-results')
                 yield Static('',id='model-details',markup=False,classes='setting')
-                if self.provider == 'azure':
+                if not self.plugin_label and self.provider == 'azure':
                     with Vertical(classes='setting'):
                         yield Label('Azure deployment name for the selected model')
                         yield Input(id='model-deployment')
                         yield Static('Select the underlying model above, then enter its deployment name from Azure.',classes='setting-help')
-                if self.provider == 'amazon-bedrock':
+                if not self.plugin_label and self.provider == 'amazon-bedrock':
                     with Vertical(classes='setting'):
                         yield Label('Bedrock model / inference profile ID or ARN · optional')
                         yield Input(id='model-profile')
                         yield Static('Leave empty to use the exact catalogue ID. For a custom profile, select its underlying model above.',classes='setting-help')
-                yield Static('The catalogue supplies model capabilities and limits.',classes='section-intro')
-                with Vertical(classes='setting'):
-                    yield Button('Refresh catalogue',id='model-refresh')
-                with Vertical(classes='setting'):
-                    yield Button('Test selected model · sends a short request',id='model-test',disabled=True)
+                if not self.plugin_label:
+                    yield Static('The catalogue supplies model capabilities and limits.',classes='section-intro')
+                    with Vertical(classes='setting'):
+                        yield Button('Refresh catalogue',id='model-refresh')
+                    with Vertical(classes='setting'):
+                        yield Button('Test selected model · sends a short request', id='model-test', disabled=True)
             yield Static('Default for new conversations only.',classes='section-intro')
             yield Static('Loading catalogue…',id='model-error',markup=False)
             with Horizontal(classes='buttons dialog-actions'):
-                yield Button('Cancel',id='model-cancel')
+                if self.plugin_label:
+                    yield Button('Refresh catalogue', id='model-refresh')
+                    yield Static('', classes='action-spacer')
+                yield Button('Skip' if self.optional else 'Cancel',id='model-cancel')
                 yield Button('Use as default',id='model-save',variant='primary',disabled=True)
 
-    def on_mount(self): self.load(True)
+    def on_mount(self): self.load(not self.plugin_label)
     def action_cancel(self):
         if not self.busy: self.dismiss(None)
 
     @work(exclusive=True,group='catalogue')
     async def load(self,refresh=False):
-        self.query_one('#model-error',Static).update('Refreshing catalogue…' if refresh else 'Loading catalogue…')
+        status = self.query_one('#model-error', Static)
+        status.remove_class('error')
+        status.update('Refreshing catalogue…' if refresh else 'Loading catalogue…')
         try:
-            reply = await asyncio.to_thread(self.app.service.hosted_request,self.sandbox_name,'catalogue',provider=self.provider,refresh=refresh)
+            request = self.app.service.plugin_model if self.plugin_label else self.app.service.hosted_request
+            reply = await asyncio.to_thread(request, self.sandbox_name, 'catalogue', provider=self.provider, refresh=refresh)
             self.models = reply['models']
             self.filter_models()
-            self.query_one('#model-error',Static).update(reply.get('warning',''))
-        except (ValueError, OSError, subprocess.SubprocessError) as error: self.query_one('#model-error',Static).update(str(error))
+            status.update(reply.get('warning', ''))
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            status.add_class('error')
+            status.update(str(error))
 
     @on(Input.Changed,'#model-search')
     def filter_models(self):
@@ -352,19 +368,25 @@ class ModelDialog(ModalScreen):
         self.filtered = [m for m in self.models if text in (m['id']+' '+m['name']).lower()]
         results = self.query_one('#model-results',OptionList)
         results.clear_options()
-        results.add_options([Option(m['name']+' · '+m['id'],id=str(i)) for i,m in enumerate(self.filtered)])
+        results.add_options([Option(Text(m['name'] + ' · ' + m['id'] if m['name'] != m['id'] else m['id']), id=str(i))
+                             for i, m in enumerate(self.filtered)])
         results.display = bool(self.filtered)
         results.highlighted = None
-        self.query_one('#model-test',Button).disabled = True
+        if not self.plugin_label:
+            self.query_one('#model-test',Button).disabled = True
         self.query_one('#model-save',Button).disabled = True
-        self.query_one('#model-details',Static).update('Select a model to see its limits.' if self.filtered else 'No matching model. Refresh the catalogue or add the model to Pi’s models.json.')
+        empty = ('No models found. Check your provider key and refresh the catalogue.' if self.plugin_label and not self.models
+                 else 'No models match your search.' if self.plugin_label
+                 else 'No matching model. Refresh the catalogue or add the model to Pi’s models.json.')
+        self.query_one('#model-details',Static).update('Select a model to see its limits.' if self.filtered else empty)
 
     @on(OptionList.OptionHighlighted,'#model-results')
     def highlighted(self,event):
         model = self.filtered[event.option_index]
         self.query_one('#model-details',Static).update(f"{model['contextWindow']:,} context tokens · {model['maxTokens']:,} output tokens · " + ', '.join(model['input']) + (' · reasoning' if model['reasoning'] else ''))
         self.query_one('#model-save',Button).disabled = False
-        self.query_one('#model-test',Button).disabled = False
+        if not self.plugin_label:
+            self.query_one('#model-test',Button).disabled = False
 
     @on(Button.Pressed)
     def pressed(self,event):
@@ -379,18 +401,26 @@ class ModelDialog(ModalScreen):
         index = self.query_one('#model-results',OptionList).highlighted
         if index is None: return
         self.busy = True
-        self.query_one('#model-error',Static).update('Testing…' if test else 'Saving…')
+        status = self.query_one('#model-error', Static)
+        status.remove_class('error')
+        status.update('Testing…' if test else 'Saving…')
         try:
             model = self.filtered[index]['id']
             fields = {}
-            if self.provider == 'azure': fields['deployment'] = self.query_one('#model-deployment',Input).value.strip()
-            if self.provider == 'amazon-bedrock': fields['profile_id'] = self.query_one('#model-profile',Input).value.strip()
+            if not self.plugin_label and self.provider == 'azure': fields['deployment'] = self.query_one('#model-deployment',Input).value.strip()
+            if not self.plugin_label and self.provider == 'amazon-bedrock': fields['profile_id'] = self.query_one('#model-profile',Input).value.strip()
             # Test uses the same deployment/profile mapping as selection, without changing the default.
             if test:
                 await asyncio.to_thread(self.app.service.hosted_test,self.sandbox_name,self.provider,model,**fields)
-                self.query_one('#model-error',Static).update('The model responded successfully.')
+                status.update('The model responded successfully.')
             else:
-                await asyncio.to_thread(self.app.service.hosted_select,self.sandbox_name,self.provider,model,**fields)
+                if self.plugin_label:
+                    await asyncio.to_thread(self.app.service.plugin_model, self.sandbox_name, 'select',
+                                            provider=self.provider, model=model)
+                else:
+                    await asyncio.to_thread(self.app.service.hosted_select,self.sandbox_name,self.provider,model,**fields)
                 self.dismiss(model)
-        except (ValueError, OSError, subprocess.SubprocessError) as error: self.query_one('#model-error',Static).update(str(error))
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            status.add_class('error')
+            status.update(str(error))
         finally: self.busy = False
