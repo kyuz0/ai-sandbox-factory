@@ -11,8 +11,8 @@ export default function systemPrompt(pi) {
       if (error.code === 'ENOENT') return;
       throw error;
     }
-    if (saved?.text) {
-      return { systemPrompt: systemPrompt + '\n\n' + saved.text };
-    }
+    if (!saved?.text) return;
+    const addendum = '\n\n' + saved.text;
+    if (!systemPrompt.includes(addendum)) return { systemPrompt: systemPrompt + addendum };
   });
 }

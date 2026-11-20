@@ -194,6 +194,12 @@ export function subagentReply({ messages, tools, choice }) {
     console.log('SUBAGENT', actor, role, 'FAIL', message);
     return { content: 'FACTORY SUBAGENT FIXTURE FAILED ' + actor + ' ' + role + ' ' + message };
   }
+  if (process.env.FACTORY_TEST_WORKER_SYSTEM_PROMPT === '1' && (child || role === 'NAMED')) {
+    const system = content(messages.find(message => message.role === 'system'));
+    if (system.split('FACTORY_SANDBOX_PROMPT_FIRST').length !== 2) {
+      return failure('expected one copy of the saved sandbox system prompt');
+    }
+  }
   if (!child && role === 'DISABLED' && tools.some(name => ['subagent', 'subagents_enable', 'bg_wait'].includes(name))) {
     return failure('unexpected delegation tools');
   }

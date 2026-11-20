@@ -73,6 +73,10 @@ directory to test steering, switching between branches in one session, and
 forking into a separate session. The check continues the original after the fork
 and verifies that the new messages stay in their respective session files.
 
+Use `--scheduled-tasks` to check that the list appears with pending jobs, survives
+a session restart, and shows a named delivery once. A second restart preserves
+the delivered job and its transcript entry.
+
 Use `--session-naming` with the rebuilt image to check the generated title and
 the first-prompt fallback after a provider error. The check verifies both titles
 in FrostPi and in standalone Pi and confirms a later turn keeps the original name.
@@ -172,7 +176,9 @@ markers and saved run statuses verify what actually happened.
 The named-worker case opens two live transcripts in succession and verifies
 that each shows its own worker’s instructions and output. It also checks
 elapsed time, the final transcript, and resuming a completed child through
-**New or resume session → Resume session**. The mixed-approval case opens a live
+**New or resume session → Resume session**. Run with `--subagent-case named`
+to check that the parent chat and both kinds of worker receive the saved sandbox
+system prompt exactly once. The mixed-approval case opens a live
 worker at a shorter viewport while verifying that the parent approval and
 composer stay accessible.
 The `interrupt-goal` case stops a parent goal while a named worker is running.

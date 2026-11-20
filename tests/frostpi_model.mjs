@@ -151,6 +151,14 @@ http.createServer((request, response) => {
     } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-knowledge_search-')) {
       delta = { content: String(last.content).includes('ORCHID_WINDOW_842')
         ? 'FACTORY LOCAL KNOWLEDGE VERIFIED' : 'FACTORY KNOWLEDGE RESULT MISSING' };
+    } else if (tools.length && userText === 'Schedule the fixture check in 45 seconds.') {
+      if (!tools.includes('schedule_prompt')) throw new Error('The schedule tool is unavailable');
+      delta = choice('schedule_prompt', { action: 'add', type: 'once', schedule: '+45s',
+        name: 'Fixture status check', prompt: 'Run the scheduled fixture check now.' });
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-schedule_prompt-')) {
+      delta = { content: 'The fixture check is scheduled.' };
+    } else if (tools.length && userText === 'Run the scheduled fixture check now.') {
+      delta = { content: 'The scheduled fixture check completed.' };
     } else if (tools.length && userText === 'Factory live token meter fixture') {
       await streamReasoningAndAnswer(response);
       return;

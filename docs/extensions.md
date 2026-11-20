@@ -4,10 +4,10 @@ Pi Sandbox Factory installs extensions from their repositories:
 
 | Extension | Repository |
 | --- | --- |
-| FrostPi editor | [Factory fork](https://github.com/kyuz0/pi-vscode-ui) |
+| FrostPi editor | [Factory fork, `pi-sandbox-factory` branch](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory) |
 | Goals | [@ethanthoma/pi-goal](https://github.com/ethanthoma/pi-goal) |
 | Local model discovery | [pi-local-model-manager](https://github.com/kyuz0/pi-local-model-manager) |
-| Questions and answer forms | [rpiv-ask-user-question](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question) |
+| Questions and answer forms | [rpiv-ask-user-question, Factory fork](https://github.com/kyuz0/rpiv-mono/tree/main/packages/rpiv-ask-user-question) |
 | Codex, Claude and Antigravity advisors | [pi-advisor](https://github.com/kyuz0/pi-advisor) |
 | Automatic approval, inner sandbox and escalation | [pi-packages](https://github.com/kyuz0/pi-packages) |
 
@@ -31,6 +31,9 @@ Pause a goal before moving between clients, close the original chat, and resume 
 ## Questions in Pi and FrostPi
 
 `rpiv-ask-user-question` loads by default in both clients. The agent uses `ask_user_question` to request a choice or clarification. Both clients accept option selections and free-text answers. The terminal displays a tabbed questionnaire with toggles for multiple choices. FrostPi shows successive prompts and asks for option numbers when multiple choices are allowed. Questions go directly to you, bypassing automatic permission review.
+
+The agent can ask a question and keep working. Answer it from the pending question
+in FrostPi or use `/questions` in Pi CLI. The answer is delivered back to the same chat.
 
 To disable these forms, open **Settings → Agent tools**,
 clear **Question forms**, then **Apply and recreate**. The agent can still ask

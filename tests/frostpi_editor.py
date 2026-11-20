@@ -16,7 +16,7 @@ import time
 from threading import Thread
 import uuid
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 
 REPO = Path(__file__).resolve().parents[1]
 DEV = REPO / 'pi_sandbox_factory/containers/dev'
@@ -509,16 +509,76 @@ print(matches[0].read_text(), end='')
     print('PASS Pi and the same FrostPi chat read the assigned, replaced and removed prompt. Earlier chat entries are unchanged.')
 
 
+def check_scheduled_tasks(page, frame, send, inside, output):
+    tasks = frame.locator('details.schedule-widget')
+    summary = tasks.locator('summary')
+    row = tasks.locator('li')
+
+    def open_list():
+        if tasks.get_attribute('open') is None:
+            summary.click()
+
+    def pi_processes():
+        processes = inside('ps', '-eo', 'pid,ppid,comm,args')
+        return {line.split()[0] for line in processes.splitlines()
+                if line.split()[2] == 'pi' or '--mode rpc' in line}
+
+    def restart_session():
+        previous = pi_processes()
+        assert previous, 'The current Pi RPC process was not found'
+        frame.get_by_role('button', name='Session actions').click()
+        frame.locator('.session-menu button').filter(has_text='Restart session').click(timeout=8000)
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            current = pi_processes()
+            if current and current.isdisjoint(previous):
+                break
+            page.wait_for_timeout(200)
+        else:
+            raise AssertionError(f'Pi did not start a new process after restart: {previous}')
+        expect(summary).to_have_text('Scheduled tasks (1)', timeout=30000)
+        open_list()
+
+    def saved_job():
+        return json.loads(inside('cat', '/workspace/.pi/schedule-prompts.json'))['jobs'][0]
+
+    expect(summary).to_have_count(0)
+    send('Schedule the fixture check in 45 seconds.')
+    expect(frame.get_by_text('The fixture check is scheduled.', exact=True)).to_be_visible(timeout=25000)
+    expect(summary).to_have_text('Scheduled tasks (1)')
+    open_list()
+    pending = saved_job()
+    for value in (pending['name'], pending['id'], pending['schedule'], 'Pending'):
+        expect(row).to_contain_text(value)
+    page.screenshot(path=output / 'pending.png')
+    restart_session()
+    expect(row).to_contain_text('Pending')
+    expect(row).to_contain_text(pending['id'])
+    expect(frame.get_by_text('The scheduled fixture check completed.', exact=True)).to_be_visible(timeout=60000)
+    expect(row).to_contain_text('Delivered')
+    marker = frame.get_by_text('Scheduled prompt delivered: Fixture status check', exact=True)
+    expect(marker).to_be_visible()
+    page.screenshot(path=output / 'delivered.png')
+    restart_session()
+    expect(row).to_contain_text('Delivered')
+    expect(marker).to_be_visible()
+    expect(frame.get_by_role('article').get_by_text('Run the scheduled fixture check now.', exact=True)).to_have_count(1)
+    fired = saved_job()
+    assert fired['runCount'] == 1 and not fired['enabled']
+    print('PASS FrostPi preserves pending and delivered schedules across restart and delivers the prompt once.')
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
-          local_knowledge=False, deep_research=False, system_prompt=False):
+          local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
         subagents = 'automatic'
     mode = 'manual' if folder_access else startup_only or (subagents if subagents != 'disabled' else None) or 'assisted'
     web_workers = subagent_case == 'web-tools'
+    worker_prompt = subagents == 'automatic' and subagent_case == 'named'
 
     def podman(*args, **kwargs):
         return subprocess.check_output(['podman', *args], text=True, **kwargs).strip()
@@ -528,7 +588,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
 
     with tempfile.TemporaryDirectory(prefix='factory-frostpi-check-') as tmp:
         root = Path(tmp)
-        for directory in ('workspace', 'editor'):
+        for directory in ('workspace', 'editor', 'code-server-data'):
             (root / directory).mkdir()
         if tool_images:
             fixture = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nO3NQQkAAAgEsCtpODsZyhQ+hMH+S/WcikAgEAgEAoFAIPgSLCQx6Fu1gaoXAAAAAElFTkSuQmCC'
@@ -583,7 +643,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 for name in ('reference', 'output')
             ])
         sandbox.prepare_options(config, root)
-        if system_prompt:
+        if system_prompt or worker_prompt:
             os.environ['SANDBOX_REGISTRY_DIR'] = str(root / 'library')
             prompt_library.assign(root, {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_FIRST'})
         if subagents:
@@ -595,6 +655,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         mounts = [
             (root / 'workspace', '/workspace', 'rw'),
             (root / 'editor', '/home/node/.local/share/pi-browser-editor', 'rw'),
+            (root / 'code-server-data', '/home/node/.local/share/code-server', 'rw'),
             (root / 'options.json', '/opt/sandbox/options.json', 'ro'),
             (root / 'runtime-config', '/opt/pi-security/config', 'ro'),
             (code_server, '/opt/test-code-server', 'ro'),
@@ -610,6 +671,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if subagents or deep_research:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
+        if worker_prompt:
+            args += ['-e', 'FACTORY_TEST_WORKER_SYSTEM_PROMPT=1']
         if subagent_compaction:
             args += ['-e', 'COMPACTION_RECALL_MODE=' + ('full' if subagent_compaction == 'full' else 'lite')]
         if web_workers or deep_research:
@@ -699,7 +762,12 @@ p.write_text(json.dumps(v))
                 page.locator('.monaco-workbench').wait_for(timeout=60000)
                 deadline = time.monotonic() + 40
                 while time.monotonic() < deadline:
-                    frame = next((f for f in page.frames if f.locator('[aria-label="Message Pi"]').count()), None)
+                    try:
+                        frame = next((f for f in page.frames if f.locator('[aria-label="Message Pi"]').count()), None)
+                    except PlaywrightError as error:
+                        if 'Frame was detached' not in str(error):
+                            raise
+                        frame = None
                     if frame:
                         break
                     page.wait_for_timeout(150)
@@ -739,6 +807,11 @@ p.write_text(json.dumps(v))
                     return
                 if chat_workflows:
                     check_chat_workflows(page, frame, composer, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if scheduled_tasks:
+                    check_scheduled_tasks(page, frame, send, inside, output)
                     assert not errors, errors
                     browser.close()
                     return
@@ -955,6 +1028,7 @@ if __name__ == '__main__':
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
+    scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
     scope.add_argument('--local-knowledge', action='store_true', help='Check offline embeddings from a read-only mount in Pi and FrostPi.')
@@ -981,4 +1055,5 @@ if __name__ == '__main__':
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
-          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt)
+          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
+          scheduled_tasks=args.scheduled_tasks)

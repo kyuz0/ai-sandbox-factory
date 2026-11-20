@@ -6,7 +6,7 @@ project folder, choose your models and create a sandbox from the terminal UI.
 Network access is restricted by default; commands needing broader permissions
 go through approval and still run inside the container.
 
-The default editor runs in your browser with [Factory’s FrostPi fork](https://github.com/kyuz0/pi-vscode-ui).
+The default editor runs in your browser with [Factory’s FrostPi fork](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory).
 We switched from Pendant because FrostPi is open source and we can adapt it to
 Factory. It runs the same mainline `pi` executable as Pi CLI, so the editor
 and terminal stay in sync on Pi versions, models and extensions.
