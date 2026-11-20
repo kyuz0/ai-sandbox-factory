@@ -46,7 +46,6 @@ def validate(value):
     if not isinstance(value, dict) or set(value) - {'hosts'} or not isinstance(value.get('hosts', []), list):
         raise ValueError('SSH settings require a hosts list')
     hosts = value.get('hosts', [])
-    if len(hosts) > 32: raise ValueError('At most 32 SSH destinations are supported')
     seen = set()
     for host in hosts:
         if not isinstance(host, dict) or set(host) != {'alias','hostname','port','user','host_keys'}:

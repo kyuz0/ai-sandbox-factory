@@ -78,6 +78,15 @@ class SSHTests(unittest.TestCase):
         for name in ['*.example.test','host;touch /tmp/x','-bad','a..b','user@host','host:22']:
             with self.assertRaises(ValueError):ssh.validate({'hosts':[{**HOST,'hostname':name}]})
 
+    def test_parses_more_than_32_destinations(self):
+        aliases = [f'build-{index}' for index in range(1, 34)]
+        with tempfile.TemporaryDirectory() as tmp:
+            known_hosts = Path(tmp) / 'known_hosts'
+            known_hosts.write_text(f'{HOST["hostname"]} {HOST["host_keys"][0]}\n')
+            lines = '\n'.join(f'{alias} {HOST["user"]} {HOST["hostname"]}' for alias in aliases)
+            config = ssh.parse_hosts(lines, known_hosts)
+        self.assertEqual(config['hosts'], [{**HOST, 'alias': alias} for alias in aliases])
+
     def test_rejects_shell_control_in_all_target_fields(self):
         for field,value in [('alias','a/../x'),('user','root;true'),('port',True),('host_keys',['@cert-authority * ssh-ed25519 AAAA'])]:
             with self.assertRaises(ValueError):ssh.validate({'hosts':[{**HOST,field:value}]})
