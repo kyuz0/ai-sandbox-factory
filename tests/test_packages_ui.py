@@ -155,7 +155,7 @@ class PackageUITests(unittest.TestCase):
                         self.assertEqual(primary.region.right, bar.content_region.right)
                         self.assertGreater(primary.region.y, bar.region.y)
                         self.assertLess(primary.region.bottom, app.screen.query_one('Footer').region.y)
-                        self.assertEqual(primary.region.height, 3 if size[1] >= 32 else 1)
+                        self.assertEqual(primary.region.height, 1)
                         self.assertIs(app.screen.get_widget_at(primary.region.x, primary.region.y)[0], primary)
                         if primary_id == 'package-install':
                             await pilot.click('#package-install'); await pilot.pause()

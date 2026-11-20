@@ -154,8 +154,9 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   dialogs separately.
 - Align page Back/Cancel left and the primary action right, at the form edges.
   Group dialog actions on the right, Cancel before Save. Keep contextual actions
-  beside their object. Use three-row page action buttons at 32 terminal rows or
-  more; below that, use one row with two columns of inner padding.
+  beside their object. Every button uses one terminal row at every screen size. Keep vertical padding
+  outside the button. A taller button requires explicit user consent and a
+  named exception in the build check. There are no approved exceptions.
   Dock page actions below scrollable
   fields, with three columns of side padding and a blank row above and below
   their contents. Reserve the status-bar row separately; it must not cover the
@@ -165,7 +166,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   Escape cancels dialogs without applying changes.
 - Put common tasks in the visible Settings menu. A shortcut should open and focus
   the existing form, not duplicate its save logic. Keep optional setup collapsed
-  and show its state in the heading. Disable fields whose controlling option is off.
+  and show its state in the heading. Open Model Providers on initial sandbox review.
+  Separate adjacent review sections with one blank row. Disable fields whose controlling option is off.
 - Review rendered screens at 80×24, 120×40 and 220×50, including expanded sections, long
   paths, errors and keyboard focus. Check monochrome checkbox states too. Geometry
   tests complement visual inspection; neither replaces the other.

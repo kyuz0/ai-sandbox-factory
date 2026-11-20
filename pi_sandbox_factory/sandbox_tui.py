@@ -2584,6 +2584,8 @@ class SettingsForm(Screen):
                     if self.guide:
                         yield Button('Getting started…', id='review-profile-guide')
             for action, category in CATEGORIES.items():
+                if action == 'document-search' and self.setting != action:
+                    continue
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
             yield Feedback('', id='form-error', classes='error', markup=False)
@@ -2624,7 +2626,7 @@ class SettingsForm(Screen):
         available=registry.choices('provider')
         available.update({name:row['manifest'].get('description',name) for name,row in saved_rows.items() if name not in available})
         self.provider_forms={}
-        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+        with Collapsible(title=category.label, collapsed=self.editing or self.defaults_mode, id=category.section, classes='spaced-form-fields'):
             ports = value.get('local_model_ports')
             with Collapsible(title=local_models_title(bool(ports)), id='local-provider'):
                 with Vertical(classes='setting', id='local-enable-setting'):
@@ -2733,7 +2735,7 @@ class SettingsForm(Screen):
 
     def document_search_summary(self):
         mode = search_summary(self.document_search, self.document_search_sources)
-        return mode if self.setting else f'{CATEGORIES["document-search"].label} · {mode}'
+        return mode if self.setting == 'document-search' else f'{CATEGORIES["document-search"].label} · {mode}'
 
     @on(Button.Pressed, '#configure-document-search')
     def configure_document_search(self, event):
@@ -2759,6 +2761,8 @@ class SettingsForm(Screen):
 
     def compose_agent_tools(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+            if self.setting != 'document-search':
+                yield from self.compose_document_search(CATEGORIES['document-search'], value, selected)
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
@@ -3333,7 +3337,7 @@ class Cockpit(App):
     PromptLibrary, PromptChoice, #system-prompt-preview { height: auto; }
     PromptChoice TextArea, #prompt-text { height: 7; padding: 0 1; }
     #system-prompt-section { margin: 1 0; }
-    .settings-review #system-prompt-section.-collapsed { margin: 0; }
+    .settings-review #system-prompt-section { margin: 0 0 1 0; }
     #system-prompt-preview { margin: 1 0 0 0; }
     #system-prompt-preview > TextArea { margin: 0; }
     #edit-prompt-copy { margin: 1 0 0 0; }
@@ -3420,8 +3424,6 @@ class Cockpit(App):
     #hosted-section Button:focus, ModelsScreen Button:focus,
     .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
-    .settings-review .form > Collapsible.-collapsed,
-    .settings-review .form > CommunicationsForm > Collapsible.-collapsed { margin: 0; }
     Collapsible > Contents { padding: 1 3; }
     #local-provider > Contents { padding: 1 3 0 3; }
     #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
@@ -3436,22 +3438,16 @@ class Cockpit(App):
     .wizard-actions { dock: bottom; height: 3; padding: 1 3; margin-bottom: 1; width: 100%; }
     .settings-actions { height: 5; padding: 1 3; }
     .action-buttons { height: 1; }
-    .wizard-actions Button { min-width: 12; padding: 0 1; }
+    .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }
-    .tall-terminal .wizard-actions { height: 5; }
-    .tall-terminal .wizard-actions Button { height: 3; padding: 1 1; }
-    .tall-terminal .settings-actions { height: 7; }
-    .tall-terminal .action-buttons { height: 3; }
     .dialog-actions { align-horizontal: right; height: 1; min-height: 1; margin: 1 0 0 0; }
-    .tall-terminal .dialog-actions { height: 3; min-height: 3; }
-    .tall-terminal .dialog-actions Button { height: 3; padding: 1 1; }
-    .dialog-actions Button { min-width: 12; padding: 0 1; }
+    .dialog-actions Button { min-width: 12; padding: 0 2; }
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
     .profile-guide-row Button { padding: 0 2; margin: 0 1; }
     .review-profile-row { margin: 0 0 1 0; }
     .review-profile-row Static { width: 1fr; height: auto; }
-    Button { height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
+    Button { height: 1; max-height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
     .key-dialog .key-dialog-fields { max-height: 65vh; }
@@ -3487,9 +3483,6 @@ class Cockpit(App):
     #home > .buttons { margin: 0 0 1 0; }
     #home > .buttons Label { width: 1fr; }
     #home > .buttons Button:last-child { margin-right: 0; }
-    .tall-terminal #home > .buttons, .tall-terminal #home > .buttons Button { height: 3; }
-    .tall-terminal #home > .buttons Button { padding: 1 2; }
-    .tall-terminal #home > .buttons Label { padding: 1 0; }
     .path-row { height: 1; margin: 1 0; }
     NewSandbox .form > .path-row { padding: 0 1 0 0; }
     .path-row Input { width: 1fr; margin: 0; }
@@ -3516,8 +3509,7 @@ class Cockpit(App):
         display: none; height: auto; margin: 1 3 0 3; padding: 0 1;
         background: #30291d; border-left: solid $warning;
     }
-    #document-search-section { height: auto; min-height: 1; padding: 0 3; margin: 0 0 1 0; background: #25292e; }
-    .settings-review #document-search-section { margin: 0; }
+    #document-search-section { height: auto; min-height: 1; padding: 0; margin: 0 0 1 0; }
     #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
     #document-search-section.focused-setting { padding: 0; background: transparent; }
     #document-search-summary { width: auto; height: auto; }
@@ -3610,9 +3602,7 @@ class Cockpit(App):
     .sandbox-alert-heading { height: auto; }
     .sandbox-alert-title { width: 1fr; text-style: bold; }
     .sandbox-alert.-blocking .sandbox-alert-title { color: #ff9184; }
-    .tall-terminal .sandbox-alert-title { height: 3; padding: 1 0; }
     .sandbox-alert-action { width: auto; margin: 0 0 0 2; padding: 0 2; }
-    .tall-terminal .sandbox-alert-action { height: 3; padding: 1 2; }
     .sandbox-alert-action:focus { background: #f2b544; color: #17191b; text-style: bold; }
     Screen:nocolor .sandbox-alert-action:focus { background: white; color: black; }
     .sandbox-alert-description { height: auto; margin-top: 1; }

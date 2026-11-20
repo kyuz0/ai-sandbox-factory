@@ -35,6 +35,8 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
     async def open_form(self, pilot, editing=False):
         form = SettingsForm(self.draft, editing=editing, setting='document-search' if editing else None)
         await self.app.push_screen(form)
+        if not editing:
+            form.query_one('#skills-section').collapsed = False
         await pilot.pause()
         return form
 
@@ -86,12 +88,30 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press('escape')
                 self.assertEqual(form.document_search['knowledge_embedding_provider'], 'openrouter')
 
+    async def test_plugin_without_catalogue_explains_update_for_each_workflow(self):
+        del self.draft['model_providers'][0]['manifest']['inference']['embeddingCatalogue']
+        for editing in (False, True):
+            self.app = Cockpit(Path(self.temp.name), FakeService([]))
+            async with self.app.run_test(size=(80, 24)) as pilot:
+                form = await self.open_form(pilot, editing=editing)
+                dialog = await self.configure(form, pilot)
+                help_field = dialog.query_one('#knowledge-model-help')
+                self.assertNotIn('Library', str(help_field.render()))
+                dialog.query_one('#knowledge-embedding', Select).value = 'endpoint'
+                await pilot.pause()
+                help_text = str(help_field.render())
+                self.assertIn('This version of Example Models does not list embedding models', help_text)
+                self.assertIn('Library → Providers', help_text)
+                self.assertEqual('Update sources and recreate' in help_text, editing)
+                self.assertNotIn('example', dialog.sources)
+
     async def test_visible_fields_have_blank_rows_above_and_below_at_all_sizes(self):
         for size in ((80, 24), (120, 40), (220, 50)):
             app = Cockpit(Path(self.temp.name), FakeService([]))
             async with app.run_test(size=size) as pilot:
                 form = SettingsForm(self.draft)
                 await app.push_screen(form)
+                form.query_one('#skills-section').collapsed = False
                 await pilot.pause()
                 form.query_one('#configure-document-search').focus()
                 with patch.object(embedding_models, 'catalogue', return_value=['example-embedding-v2']):

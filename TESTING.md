@@ -760,6 +760,10 @@ Node runtime, which Pendant uses. Check both when updating this package.
 
 ## Terminal layout
 
+CI runs the Python suite with `python tests/check_button_heights.py discover -s tests`.
+The check fails if a rendered button requests or occupies more than one terminal
+row, including buttons shown after opening a dialog or expanding a section.
+
 Run the TUI suites, including `test_tui_layout.py` and `test_packages_ui.py`.
 Review new and edited forms at 80×24, 120×40 and 220×50, including expanded sections,
 validation errors and long paths. Inspect the rendered view as well as geometry;

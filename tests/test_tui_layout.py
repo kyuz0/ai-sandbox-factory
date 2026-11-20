@@ -80,7 +80,7 @@ class TUILayoutTests(unittest.TestCase):
                 primary = app.screen.query_one('#continue', Button)
                 actions = app.screen.query_one('.wizard-actions')
                 self.assertEqual(primary.region.right, actions.content_region.right)
-                self.assertEqual(primary.region.height, 3 if size[1] >= 32 else 1)
+                self.assertEqual(primary.region.height, 1)
                 self.assertLess(primary.region.bottom, app.screen.query_one('Footer').region.y)
                 app.screen.query_one('#name', Input).focus()
                 await pilot.pause()
@@ -259,13 +259,15 @@ class TUILayoutTests(unittest.TestCase):
             draft['local_model_ports'] = self.record['config']['local_model_ports']
             await app.push_screen(SettingsForm(draft))
             await pilot.pause()
-            sections = {category.section for category in CATEGORIES.values()}
+            sections = {v.section for k, v in CATEGORIES.items() if k != 'document-search'}
             category_widgets = [section for section in app.screen.query('*') if section.id in sections]
             titles = {section.id: (section.title if isinstance(section, Collapsible) else
                                    str(section.query_one('#document-search-summary').render())) for section in category_widgets}
             creation = [title.split(' · ', 1)[0] for title in titles.values()]
             models = app.screen.query_one('#hosted-section', Collapsible)
-            self.assertTrue(models.collapsed)
+            self.assertFalse(models.collapsed)
+            for before, after in zip(category_widgets, category_widgets[1:]):
+                self.assertEqual(after.region.y - before.region.bottom, 1, (before.id, after.id))
             self.assertIs(app.focused, models.query_one('CollapsibleTitle'))
             form = app.screen.query_one('.form')
             primary = app.screen.query_one('#apply', Button)
@@ -280,10 +282,10 @@ class TUILayoutTests(unittest.TestCase):
             menu = app.screen.query_one('#settings-actions', OptionList)
             prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
             editing = [prompt.split(' · ', 1)[0] for prompt in prompts]
-            self.assertEqual(creation, expected_order)
+            self.assertEqual(creation, [label for label in expected_order if label != 'Document search'])
             self.assertEqual(editing, expected_order)
             for action in ('models', 'editor-settings', 'network-settings',
-                           'approval-settings', 'agent-tools', 'document-search', 'ssh-settings', 'communications'):
+                           'approval-settings', 'agent-tools', 'ssh-settings', 'communications'):
                 index = list(CATEGORIES).index(action)
                 self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
             self.assertIn('Model Providers · Local models on · 1 enabled', prompts)
@@ -327,7 +329,7 @@ class TUILayoutTests(unittest.TestCase):
                     await pilot.pause()
                     section=form.query_one('#hosted-section',Collapsible)
                     local=form.query_one('#local-provider',Collapsible)
-                    self.assertTrue(section.collapsed)
+                    self.assertEqual(section.collapsed, context != 'create')
                     self.assertTrue(local.collapsed)
                     self.assertEqual(local.title, 'Local models · Off')
                     control=form.query_one('#local-models',Checkbox)
@@ -416,6 +418,8 @@ class TUILayoutTests(unittest.TestCase):
             form = SettingsForm(draft)
             await app.push_screen(form)
             await pilot.pause()
+            form.query_one('#skills-section', Collapsible).collapsed = False
+            await pilot.pause()
             configure = form.query_one('#configure-document-search', Button)
             self.assertEqual(form.query_one('#document-search-section').region.height, 1)
             configure.focus()
@@ -465,6 +469,9 @@ class TUILayoutTests(unittest.TestCase):
                 form = SettingsForm(draft, editing=editing, setting='document-search' if editing else None)
                 await app.push_screen(form)
                 await pilot.pause()
+                if not editing:
+                    form.query_one('#skills-section', Collapsible).collapsed = False
+                    await pilot.pause()
                 form.query_one('#configure-document-search').focus()
                 await pilot.press('enter')
                 await pilot.pause()
@@ -480,7 +487,7 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertEqual(form.document_search['knowledge_embedding'], 'local' if editing else 'off')
                 await app.pop_screen()
 
-    async def test_agent_tools_excludes_configured_document_search_and_menu_opens_it_separately(self):
+    async def test_agent_tools_contains_document_search_and_menu_shortcut_opens_it(self):
         self.record['config']['options'] = {'knowledge_embedding': 'endpoint',
             'knowledge_embedding_url': 'https://vectors.example/v1', 'knowledge_embedding_model': 'test-embedding'}
         app = self.app()
@@ -498,7 +505,7 @@ class TUILayoutTests(unittest.TestCase):
                 form = app.screen
                 self.assertFalse(form.query('#embedding-url, #embedding-model, #knowledge-embedding'))
                 if action == 'agent-tools':
-                    self.assertFalse(form.query_one('#document-search-section').display)
+                    self.assertIn(form.query_one('#skills-section'), form.query_one('#document-search-section').ancestors)
                     self.assertNotIn('search', prompt.lower())
                     self.assertNotIn('search', form.query_one('#skills-section', Collapsible).title.lower())
                 else:
@@ -663,7 +670,7 @@ class TUILayoutTests(unittest.TestCase):
                     apply = form.query_one('#apply', Button)
                     self.assertIs(choice.parent, actions)
                     self.assertEqual(apply.region.right, actions.content_region.right)
-                    self.assertEqual(apply.region.height, 3 if size[1] >= 32 else 1)
+                    self.assertEqual(apply.region.height, 1)
                     self.assertEqual(choice.region.x, form.query_one('.form').content_region.x)
                     self.assertEqual(choice.region.x, form.query_one('#back').region.x)
                     self.assertEqual(choice.value, not editing)
@@ -729,7 +736,7 @@ class TUILayoutTests(unittest.TestCase):
                 save = app.screen.query_one('#repository-add', Button)
                 cancel = app.screen.query_one('#repository-cancel', Button)
                 self.assertEqual(save.region.right, actions.content_region.right)
-                self.assertEqual(save.region.height, 3 if size[1] >= 32 else 1)
+                self.assertEqual(save.region.height, 1)
                 self.assertEqual(cancel.region.height, save.region.height)
                 self.assertGreater(cancel.region.x, actions.content_region.x)
                 self.assertGreater(actions.region.y, app.screen.query_one('VerticalScroll').region.bottom)
@@ -772,7 +779,7 @@ class TUILayoutTests(unittest.TestCase):
                                  f'{label} {description}')
             self.assertIn('Settings → Approvals & sandbox.', str(list(help_box.query(Static))[-1].render()))
             close = app.screen.query_one('#close-approval-help', Button)
-            self.assertEqual(close.region.height, 3)
+            self.assertEqual(close.region.height, 1)
             for y in range(close.region.y, close.region.bottom):
                 self.assertIs(app.screen.get_widget_at(close.region.x + 1, y)[0], close)
             await pilot.click('#close-approval-help')

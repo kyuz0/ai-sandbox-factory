@@ -28,7 +28,7 @@ installs `pi-knowledge`. When you index files, Pi sends passages to the embeddin
 provider you choose. When you search the index, Pi sends your query to the same
 provider. Factory downloads no embedding model. [pi-knowledge package](https://pi.dev/packages/pi-knowledge)
 
-1. On **Review sandbox**, choose **Document search → Configure…**. For an
+1. On **Review sandbox**, expand **Agent tools** and choose **Configure…** beside **Document search**. For an
    existing sandbox, open **Settings → Document search → Configure…**.
 2. Set **Search mode** to **Semantic search with pi-knowledge**, then choose where to run it.
    - **Connected provider.** Pick OpenRouter or a supported provider plugin under

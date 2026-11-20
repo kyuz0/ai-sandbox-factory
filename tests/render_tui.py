@@ -358,6 +358,8 @@ async def capture(size):
                     draft.update(name='research', workspace='/home/user/projects/research')
                     await app.push_screen(SettingsForm(draft))
                     await shot('research-local-review')
+                    app.screen.query_one('#skills-section', Collapsible).collapsed = False
+                    await pilot.pause()
                     configure = app.screen.query_one('#configure-document-search', Button)
                     configure.focus()
                     await pilot.pause()

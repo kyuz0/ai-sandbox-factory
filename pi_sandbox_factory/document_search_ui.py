@@ -38,6 +38,9 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
         self.credentials = credentials
         self.saved_config = saved_config
         self.sources = embedding_models.sources(config)
+        self.unlisted_plugins = [row['manifest'].get('description') or row['name']
+                                 for row in config.get('model_providers', []) if row['name'] not in self.sources
+                                 and row['name'] != 'local']
         provider = current.get('knowledge_embedding_provider')
         if not provider and current['knowledge_embedding_url']:
             matches = [key for key, source in self.sources.items() if source['url'] == current['knowledge_embedding_url']]
@@ -108,11 +111,18 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
         self.query_one('#embedding-provider-setting').display = bool(self.sources or self.missing_provider)
         self.query_one('#embedding-url-setting').display = provider == CUSTOM
         source = self.sources.get(provider)
-        self.query_one('#knowledge-model-help').update({
+        help_text = {
             'off': 'Pi searches file names and text. No embedding model is needed.',
             'local': 'This sandbox already has an offline embedding model.',
             'endpoint': 'An embedding model can be used to find passages even when they use different words from your search.',
-        }[mode])
+        }[mode]
+        if mode == 'endpoint' and self.unlisted_plugins:
+            for plugin in self.unlisted_plugins:
+                help_text += f'\nThis version of {plugin} does not list embedding models.'
+            help_text += ' If the plugin supports embeddings, update it in Library → Providers.'
+            if self.saved_config:
+                help_text += ' Then choose Actions… → Update sources and recreate… for this sandbox.'
+        self.query_one('#knowledge-model-help').update(help_text)
         missing = provider != CUSTOM and not source
         self.query_one('#embedding-provider-error', Feedback).update(
             'This provider is no longer configured. Choose another provider or a custom server.' if missing else '')
