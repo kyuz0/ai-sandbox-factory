@@ -10,8 +10,8 @@
       "commit": "cd2cebfe5029c7a25010a1902515f58cd6832cf6"
     },
     "rpiv-ask-user-question": {
-      "repository": "https://github.com/juicesharp/rpiv-mono.git",
-      "commit": "46dbdfd78ab631bbf3ce41c2618bb173a5ec2725"
+      "repository": "https://github.com/kyuz0/rpiv-mono.git",
+      "commit": "c786918e8f3443106b158b1d52b77c030202f9c7"
     },
     "pi-session-naming": {
       "repository": "https://github.com/jmfederico/pi-web.git",
@@ -25,7 +25,7 @@
     },
     "frostpi": {
       "repository": "https://github.com/kyuz0/pi-vscode-ui.git",
-      "commit": "368001e38b4326edc15106c0d4a7b8b380bb937f"
+      "commit": "9fbf7af0f82514af4db461306eb7783b0a5e26a1"
     }
   }
 }
