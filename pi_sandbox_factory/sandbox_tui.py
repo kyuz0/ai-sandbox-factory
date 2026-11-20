@@ -3575,6 +3575,9 @@ class Cockpit(App):
     #sort-field { width: 18; }
     #sort-direction { min-width: 16; margin: 0 0 0 2; }
     #sandboxes { height: 1fr; min-height: 4; }
+    #sandboxes > .datatable--even-row, #sandboxes > .datatable--odd-row {
+        background: $surface-darken-1 40%;
+    }
     #details { height: auto; min-height: 3; padding: 1 0; }
     .compact-terminal #details { text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }

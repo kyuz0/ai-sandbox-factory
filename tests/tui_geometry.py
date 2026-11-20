@@ -1,6 +1,23 @@
 """Layout checks for the controls in rendered Factory screens."""
 from textual.containers import Horizontal
-from textual.widgets import Button, Input, Label, Select
+from textual.widgets import Button, DataTable, Input, Label, Select
+
+
+def check_table_layout(screen):
+    for table in screen.query(DataTable):
+        if not table.region.width or not all(node.display and node.visible for node in (table, *table.ancestors)):
+            continue
+        if table.show_header and table.header_height != 2:
+            raise AssertionError(f'#{table.id} needs one header line followed by one blank line')
+        if any(row.height != 2 for row in table.ordered_rows):
+            raise AssertionError(f'#{table.id} needs one data line and one gap per entry')
+        for y in range(table.content_size.height):
+            in_header = table.show_header and y < table.header_height
+            virtual_y = y if in_header else y + table.scroll_offset.y
+            if virtual_y % 2:
+                line = table.render_line(y)
+                if line.text.strip() or any(segment.style and segment.style.meta for segment in line):
+                    raise AssertionError(f'#{table.id} line {y} must be a blank, inactive gap')
 
 
 def check_dropdown_layout(screen):

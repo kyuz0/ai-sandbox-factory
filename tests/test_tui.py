@@ -13,6 +13,7 @@ from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
 from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
 from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static
 from textual_fspicker.parts import DirectoryNavigation
+from tui_geometry import check_table_layout
 
 class FakeService:
     def __init__(self,records): self.records=records;self.calls=[]
@@ -1762,6 +1763,16 @@ class DashboardActivityTests(unittest.TestCase):
             async with app.run_test(size=size) as pilot:
                 await self.ready(app, pilot)
                 search = app.query_one('#search', Input)
+                check_table_layout(app.screen)
+                table = app.query_one(DataTable)
+                row_backgrounds = {
+                    segment.style.bgcolor
+                    for name in ('alpha', 'beta')
+                    for segment in table.render_line(table._get_row_region(table.get_row_index(name)).y)
+                    if segment.text.strip() == 'Running'
+                }
+                self.assertEqual(len(row_backgrounds), 1)
+                self.assertNotIn(table.rich_style.bgcolor, row_backgrounds)
                 field = app.query_one('#sort-field', Select)
                 direction = app.query_one('#sort-direction', Button)
                 self.assertEqual(search.region.y - app.query_one('#dashboard-search Label').region.bottom, 1)

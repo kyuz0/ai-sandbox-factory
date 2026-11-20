@@ -148,6 +148,11 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   correct conflicting assertions and review the rendered result before updating screenshots.
 - Keep related choices in a consistent order and use the same label pattern.
   Advisors are Codex (OpenAI), Claude (Anthropic), Antigravity (Google).
+- Give table headers and data rows one line each. Leave exactly one blank line
+  below the header and between adjacent rows. Use the same dark background for
+  every data row and a visibly different background for the gaps. A gap must
+  ignore clicks. Check a populated table with the first, middle and last rows
+  visible, then scroll and check the fixed header again.
 - Give inputs persistent labels; placeholders are examples, not labels. Use the
   same title style and left edge across screens. Full-page forms and action bars
   use the available terminal width with consistent side padding; constrain modal

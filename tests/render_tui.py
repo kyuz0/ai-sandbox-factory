@@ -19,7 +19,7 @@ from unittest.mock import patch
 root = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(root), str(root / 'tests')]
 from test_tui import FakeService
-from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
+from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout, check_table_layout
 from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
 from pi_sandbox_factory.creation import Creation
@@ -107,6 +107,7 @@ async def capture(size):
                     p.write_text(app.export_screenshot())
                     check_checkbox_alignment(app.screen)
                     check_dropdown_layout(app.screen)
+                    check_table_layout(app.screen)
                     coverage.append(dict(file=p.name, screen=type(app.screen).__name__, size=size,
                                          inputs=check_input_layout(app.screen)))
                     print(p.name, flush=True)
