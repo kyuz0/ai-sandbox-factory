@@ -10,7 +10,7 @@ OpenRouter or another hosted provider.
 
 Check support with `pasta --help 2>&1 | grep -- --map-host-loopback`. On Ubuntu,
 try `sudo apt update && sudo apt install --only-upgrade passt`. If the distribution
-still supplies an older version, disable **Connect to models on this host** for
+still supplies an older version, disable **Connect to models on this computer** for
 hosted-provider use, or install a supported passt package for local models.
 
 [Upstream release](https://passt.top/passt/tag/?h=2024_08_21.1d6142f).
@@ -71,7 +71,7 @@ watching. You can also select a Windows project through `/mnt/c/...` or paste a
 For OpenRouter, Azure, Bedrock or Together, use **Settings → Model Providers**; see
 [model setup](providers.md#hosted-services).
 
-**Connect to models on this host** refers to WSL. Run the model there, or create
+**Connect to models on this computer** refers to WSL. Run the model there, or create
 its SSH tunnel there, for example `ssh -N -L 8000:localhost:8000 MODEL_HOST`.
 For a model running directly on Windows, Windows 11 mirrored networking lets WSL
 reach Windows through localhost. Add `networkingMode=mirrored` to the existing
@@ -115,7 +115,7 @@ may not cross the VM share. See [Node's file-watching caveats](https://nodejs.or
 After restarting your Mac, run `podman machine start` before opening the manager.
 To update Factory, run `pipx upgrade pi-sandbox-factory`.
 
-**Connect to models on this host** reaches model servers on the Mac. For
+**Connect to models on this computer** reaches model servers on the Mac. For
 OpenRouter or a custom endpoint, follow [model setup](providers.md#hosted-services).
 Apple Silicon runs native ARM64 containers, including the editor and Chromium.
 

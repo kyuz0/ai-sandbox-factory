@@ -9,24 +9,24 @@ It supports amd64 and arm64 containers; see [platform setup](platforms.md).
 
 ## Open a sandbox
 
-Run `pi-sandbox-factory`, choose **New sandbox**, select your project folder and
-model connection, then **Create and start**. The browser opens automatically unless
-you clear **Open selected editor after creation**. The first launch downloads a
-pinned code-server release for the container’s architecture into the existing development container.
+Leave **Open sandbox after creation** checked to open the editor when the sandbox
+starts. First launch downloads the pinned version of code-server for the
+container’s architecture.
+[Create a sandbox](../README.md#create-a-sandbox)
 
 The selected workspace opens trusted, in dark mode, with FrostPi in the right
 secondary sidebar. The first chat opens and shows the approval mode. Select your
 model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
 
-Closing the tab or manager leaves the editor running. **Open in browser** returns
-to it. **Actions → Stop browser editor** stops the editor and its terminals,
+Closing the tab or manager leaves the editor running. Choose **Open** beside the
+sandbox to return to it. **Actions… → Stop browser editor** stops the editor and its terminals,
 active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
 Stopping the sandbox stops both clients.
 
 ## Connection settings
 
-During creation, expand **Open with → Browser connection**. For a saved sandbox,
+During creation, expand **Editor → Browser connection**. For a saved sandbox,
 use **Settings → Editor → Browser connection**.
 
 - **Listen address:** empty chooses a separate local-only address for each sandbox.
@@ -49,6 +49,9 @@ stays on the host and must have permissions `0600`; encrypted keys are unsupport
 
 **Settings → Editor** changes the default client. **Open with…** selects a client
 for one launch. Use Pi CLI alongside either editor.
+
+For **VS Code on host**, put `code` on your PATH. Factory installs the Dev
+Containers extension if needed.
 
 A sandbox used in the browser cannot subsequently attach to host VS Code: that
 would give its installed extensions a bridge back to the host client. Create a

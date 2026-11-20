@@ -1,8 +1,32 @@
 # Web search and website access
 
-Enable **Web Search** when creating a sandbox or through **Settings → Network and Web Search → Web Search**. This installs
-[pi-web-access](https://github.com/nicobailon/pi-web-access) and adds `web_search`
-and `fetch_content` to Pi and FrostPi.
+## Network access
+
+**Restricted** is the default. Sandbox HTTP and HTTPS traffic goes through
+a gateway that checks allowed hostnames and ports. Shell approvals leave these
+rules in effect. **Unrestricted** gives the container ordinary network access.
+[How isolation works](architecture.md#restricted-networking)
+
+Open **Network and Web Search → Network** during creation or under **Settings**
+for an existing sandbox. Pick **Website categories** such as **Python** for PyPI,
+**npm** for JavaScript packages, **GitHub** for repositories and release downloads,
+or **Hugging Face** for models and datasets. For private registries, redirects or
+binaries hosted elsewhere, add the relevant DNS name and port under
+**Additional allowed destinations**, one per line, for example
+`packages.example.com:443`.
+
+Use `curl` against the service’s HTTP or HTTPS URL to test access. **Restricted**
+mode blocks external `ping` and direct DNS queries. Configure Git over SSH
+through **SSH & Git**. [Managed SSH](ssh.md)
+
+Choose **Apply** to save. Changing only hosts or categories restarts the gateway
+and may disconnect active requests. The sandbox and its terminals keep running.
+Changing **Network mode** or **Web Search** prompts you to recreate the sandbox.
+
+## Web search
+
+Enable **Web Search** under **Network and Web Search** to add `web_search` and
+`fetch_content` in Pi and FrostPi. [Search extension](https://github.com/nicobailon/pi-web-access)
 
 **Search mode** starts with **Automatic fallback** and keyless Exa. Add OpenAI,
 Brave, Tavily or a SearXNG server with **Add provider**. Exa accepts an optional
@@ -16,11 +40,10 @@ required settings are inactive. In an **Only…** mode, other providers stay sav
 for later use. **Edit** lets you replace or explicitly remove a key; leaving the
 key field empty keeps it. Changing a custom endpoint requires its own key.
 
-Active search providers' endpoints are allowed automatically. Exa includes both
-`mcp.exa.ai` for keyless search and `api.exa.ai` for keyed search. To let the agent read
-websites directly, select **Network and Web Search → Network → Website categories** or add individual
-`hostname:port` entries. You can change these later in **Settings → Network and Web Search → Network**
-without recreating the development container.
+Factory allows the active search providers’ endpoints automatically, including
+`mcp.exa.ai` for keyless Exa and `api.exa.ai` for keyed Exa. To read a result directly
+in **Restricted** mode, allow the website through a category or an exact hostname
+and port.
 
 For example, enable Exa and the **Python** category, then ask:
 
@@ -151,10 +174,8 @@ Pass an options file during creation or as `options` in an `update` settings fil
 
 Save Brave’s key with the command above to activate it.
 
-Category IDs are `auth-microsoft`, `dev-python`, `dev-npmjs`, `dev-rust`, `dev-github`,
-`dev-huggingface`, `dev-stackexchange`, `dev-readthedocs`, `ut1-press`,
-`ut1-financial`, `ut1-bank` and `ut1-liste_bu`. For an existing sandbox, retain your manual rules in a file
-and select categories with:
+For an existing sandbox, keep your manual rules in a file and pass category IDs
+such as `dev-python` and `ut1-press`. [Category IDs](../pi_sandbox_factory/network-catalog/groups.json)
 
 ```sh
 pi-sandbox-factory network my-project --allowlist hosts.txt \

@@ -1,11 +1,8 @@
 # Usage
 
-Run `pi-sandbox-factory` to open the manager. See [installation](../README.md#install)
-and [platform setup](platforms.md) for prerequisites. `--version` prints the
-installed version. Pipx installations can update from the manager; source checkouts
-use Git and a package reinstall.
-
-Select **New sandbox**, choose a name and workspace, review settings, then create the sandbox. The base profile includes Pi, the FrostPi editor, goal tools, and document tools. Install additional profiles through **Library…**, or select a custom profile folder.
+The **Default Developer Sandbox** profile includes Pi, FrostPi, goal tools and
+document tools. For other environments,
+install a profile through **Library…** or choose **Custom profile…**. [Create a sandbox](../README.md#create-a-sandbox)
 
 **Create from existing…**, beside **New sandbox**, lets you reuse a saved setup.
 Choose the source, enter a new name and workspace, then review its profile, model
@@ -17,9 +14,9 @@ Model and advisor logins, SSH credentials, browser sessions and conversations
 start fresh. Environment files and Pi seed directories must be selected again.
 The new sandbox keeps independent copies of its packages.
 
-**Open in browser** is the default on supported hosts. The editor opens locally
-without a password. During creation, expand **Editor** to choose Pi CLI or
-VS Code on host; clear **Open sandbox after creation** to launch later.
+**Browser editor** is the default on supported hosts and opens locally without a
+password. During creation, expand **Editor** to choose **Pi CLI** or **VS Code on
+host**. Clear **Open sandbox after creation** to launch later.
 Use **Settings → Editor** to change the launch choice, address, port or password.
 
 **Open with…** opens another client without changing the default. Pi CLI runs in
@@ -35,23 +32,45 @@ in FrostPi to set your own title.
 Use a separate sandbox for host VS Code after browser-editor use.
 See [browser editor setup](browser-editor.md) for connection settings and access boundaries.
 
-Use **Settings** for configuration and **Actions** for start/stop, shell, logs,
-rebuild and deletion. Press **D** on the home screen to configure defaults for
-new sandboxes.
+Use **Actions…** to start, stop, inspect or delete a sandbox. **Containers…** shows
+each container’s role and status, including stopped containers. Press **D** on
+the home screen to edit defaults for new sandboxes.
 
-Open **Actions → Containers…** to see each container's name, status and purpose.
-The list includes stopped containers and reflects the last sandbox list refresh.
+Closing the manager or editor leaves containers running. Deleting a sandbox removes
+its containers, private home and editor state and keeps the workspace.
 
-Deleting a sandbox removes its containers, private home and editor state while preserving the workspace. Closing the manager or editor leaves containers running.
+## Recover from a failed creation
+
+Factory reports missing host dependencies at startup. The first build downloads
+Pi, FrostPi and their dependencies. If creation fails, use
+**Retry creation** to keep your settings or **Back to configuration** to edit
+them. If cleanup fails, select the failed sandbox and choose **Actions… →
+Delete sandbox…**.
+
+**Cancel creation** removes that attempt’s containers, private volumes and
+saved settings. Cancellation and failure cleanup keep your project files and
+the build cache.
+
+## Update Factory and sandboxes
+
+`pi-sandbox-factory --version` shows the installed Factory version. With pipx,
+use **Upgrade now** or `pipx upgrade pi-sandbox-factory`. For a source checkout,
+pull the changes and reinstall the package.
+
+Update a sandbox with **Actions… → Update sources and recreate…**. Use **Cancel
+update** while Factory prepares the image to keep the current sandbox running.
+Once Factory starts applying the update, it finishes before returning to the
+sandbox list. Reopen the editor and resume your saved chat.
+
+For a sandbox that still uses Pendant, open **Show Alerts → Update to FrostPi…**
+when you’re ready to switch.
 
 ## Change approval and sandbox settings
 
-Settings show the effect before applying and the reconnect steps afterwards.
-
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
-| Approvals & sandbox, Agent tools, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose Open in browser in Factory, reload an open VS Code window or restart Pi CLI. Resume your saved chat; a new conversation is optional for a clean context. Reopen the browser viewer; websites may require login. |
-| Network rules: allowed hosts and website groups | The gateway reloads. Development processes continue; connections may disconnect. | Retry interrupted connections. No editor reload or new conversation is needed. |
+| Approvals & sandbox, Agent tools, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
 | SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
@@ -122,6 +141,14 @@ Each sandbox keeps its own skill snapshots. Updating or removing a library entry
 does not change saved sandboxes. To use an updated version, deselect its saved
 copy and select the new library version. Applying skill changes rebuilds the
 sandbox while preserving project files and private home state.
+
+### System prompts
+
+Save reusable instructions in **Library → System prompts**, then select a prompt
+during creation or in **Settings → System prompt**. Each sandbox keeps an
+editable copy. Changes apply the next time Pi starts a reply, including in open
+chats. If this setting shows an update notice, run **Actions… → Update sources and
+recreate…** once.
 
 ## Workspace and additional folders
 
@@ -222,31 +249,10 @@ before the command for a separate inventory. TUI defaults live in
 
 ### Package downloads and website categories
 
-During creation, under **Network and Web Search → Network → Website categories**, select **Python** for PyPI,
-**npm** for JavaScript packages, **GitHub** for repositories and release downloads,
-or **Hugging Face** for models and datasets.
-For Microsoft sign-in and MFA, select **Authentication → Microsoft Entra / Microsoft 365**.
-For an existing sandbox, use **Settings → Network and Web Search → Network → Website categories**.
-[Web Search](web-access.md) describes the category sources and automatic updates.
-
 Node.js and npm are already installed. Yarn and pnpm can use the same npm registry.
-Packages whose install scripts fetch binaries elsewhere may need additional
-`hostname:port` entries, as may private registries.
-
-Choose **Apply** to save. When only destination rules or website categories
-change, Factory updates the gateway and active connections may need to reconnect.
-Changing **Network mode** or **Web Search** shows a confirmation before recreating
-the sandbox. Change host model ports in **Settings → Model Providers → Local models & provider plugins**.
-
-CLI equivalent:
-
-```sh
-pi-sandbox-factory network NAME --allowlist /path/to/allowlist.txt \
-  --website-groups dev-python dev-npmjs dev-github
-```
-
-For SSH hosts or authenticated Git access with an isolated key, see
-[SSH and Git repositories](ssh.md).
+Allow package registries and download hosts in the sandbox’s network settings.
+Configure SSH destinations separately to use an isolated Git key.
+[Network settings](web-access.md#network-access) · [SSH and Git](ssh.md)
 
 ### Included command-line tools
 
@@ -256,13 +262,9 @@ Alongside Git, SSH, Python and Node.js, development containers include:
 - Text and files: `jq`, `less`, `nano`, `vi`, `file`, `ripgrep`, `rsync` and the standard shell utilities.
 - Archives: `tar`, `gzip`, `zip`, `unzip`, `bzip2`, `xz`.
 
-Restricted mode forwards allowed HTTP/HTTPS destinations through the gateway;
-external ICMP (`ping`) and direct DNS queries remain blocked. Use `curl` against
-an allowed endpoint to check connectivity in that mode.
-
 ## See and interact with the agent’s browser
 
-Enable **Browser** when creating the sandbox, then open it normally. Ask Pi or
+Enable **Agent browser · Betterwright** under **Agent tools**. Ask Pi or
 FrostPi to show its browser. Its local link opens the live browser window,
 including the tab bar and popup windows. Type, click, navigate and switch tabs
 normally. When you have finished, tell the agent to continue; it keeps the same
@@ -278,9 +280,23 @@ host loopback and requires a session-specific link. Keep that link private: it
 allows browser control and appears in the conversation. Website traffic still
 passes through the sandbox’s configured network policy.
 
-If a link stops loading, use **Open in browser** in the launcher again, then ask
+If a link stops loading, reopen the sandbox in the browser, then ask
 for a fresh link. This repairs the viewer without restarting the browser. Stopping
 the sandbox ends its running browser sessions.
+
+### Browser credential protection
+
+**Protect saved browser vault files** blocks Pi’s file tools from reading
+`~/.betterwright/vault` by default. Browser account selection and login still work.
+An authorized service login can be passed directly to a local script without
+exposing the saved vault.
+
+The inner Bash sandbox hides the private home, and reviewed commands follow
+the credential policy. Disabling vault protection removes the extra file-tool
+guard. With the inner sandbox and approval reviews both off, Bash can read the
+vault even with the checkbox enabled. Editor and Pi extensions running as the
+same user can access container files and active browser sessions.
+[VS Code extension permissions](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security)
 
 ## Conversation recall
 

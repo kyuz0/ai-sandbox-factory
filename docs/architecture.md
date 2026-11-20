@@ -24,7 +24,10 @@ The development container uses `--network=none`. HTTP clients use its inherited 
 
 For host-local models, the rootless Podman gateway uses pasta's host-loopback mapping. `local-model.internal:8000` reaches the host model server at port 8000. The discovery extension reads that server’s metadata and updates Pi’s model catalogue.
 
-Updating allowed destinations restarts only the gateway. Existing network requests may fail and need retrying. Changing networking mode or model-port configuration through Configuration recreates containers and interrupts their processes. Unrestricted mode instead gives the development container ordinary bridge networking.
+Updating allowed destinations restarts only the gateway. Retry interrupted requests.
+Changing the network mode or host model ports recreates the sandbox and stops its
+processes. **Unrestricted** mode gives the development container ordinary bridge
+networking. [Network settings](web-access.md#network-access)
 
 ## Inference credentials
 
