@@ -1,0 +1,15 @@
+{
+  "factory-search": {
+    "PreToolUse": [
+      {
+        "matcher": "^search_web$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh /proof/deny-fixture-search.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
