@@ -941,9 +941,6 @@ and the project’s `APPEND_SYSTEM.md`.
 ## Repository SSH access
 
 Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion.
-When reviewing the dashboard, check that each row’s text and actions share
-the middle line, with equal space above and below. The TUI suite checks that
-clicking the padding only selects the row and every sandbox is reachable by keyboard.
 
 ```sh
 .venv/bin/python tests/repository_ssh_container.py --dev-image YOUR_FACTORY_DEV_IMAGE
@@ -1029,7 +1026,9 @@ instructions for other clients. Render those states with
 
 `test_activity.py`, `test_sandbox.py` and the dashboard tests cover saved lifecycle
 times, no-op saves, successful starts, stale-runtime recovery, sorting, missing
-dates, filtering and selection preservation. Render `tests/render_dashboard.py`
+dates, filtering and selection preservation. Each sandbox and its actions occupy
+one line. One blank line separates entries. Clicking that gap must leave the
+selection unchanged. Check that every sandbox is reachable by keyboard. Render `tests/render_dashboard.py`
 at its three built-in sizes, in colour and with `--mono`.
 
 Run `node --test tests/test_editor_watch_fallback.cjs` for watcher events,

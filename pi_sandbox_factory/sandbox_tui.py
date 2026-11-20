@@ -54,6 +54,7 @@ try:
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.coordinate import Coordinate
     from textual.screen import ModalScreen, Screen
+    from textual.strip import Strip
     from textual.theme import Theme
     from textual.worker import get_current_worker
     from textual.widgets import (Button, Collapsible, DataTable, Footer, Header,
@@ -1288,11 +1289,15 @@ def sandbox_alerts(record):
 
 
 class SandboxTable(DataTable):
-    ROW_HEIGHT = 3
+    # DataTable has no row margins. Reserve one line after each entry and
+    # paint it with the table background, without cell selection or click targets.
+    ROW_PITCH = 2
 
-    @staticmethod
-    def centered_cell(value):
-        return Text.assemble('\n', value, '\n', no_wrap=True)
+    def _render_line(self, y, x1, x2, base_style):
+        header = self.header_height if self.show_header else 0
+        if y >= header and (y - header) % self.ROW_PITCH:
+            return Strip.blank(self.size.width, base_style)
+        return super()._render_line(y, x1, x2, base_style)
 
     @staticmethod
     def action_cell(label, *, primary=False):
@@ -3814,8 +3819,8 @@ class Cockpit(App):
                 safe_text(', '.join(sources)) or 'Not configured',
                 'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted',
             )
-            table.add_row(*(SandboxTable.centered_cell(cell) if cell else '' for cell in cells),
-                          height=SandboxTable.ROW_HEIGHT, key=record['name'])
+            table.add_row(*(Text(cell, no_wrap=True) if isinstance(cell, str) and cell else cell for cell in cells),
+                          height=SandboxTable.ROW_PITCH, key=record['name'])
         if selected in table.rows:
             table.move_cursor(row=table.get_row_index(selected))
         self.update_details()

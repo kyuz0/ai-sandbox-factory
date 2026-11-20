@@ -1165,9 +1165,9 @@ class TUITests(unittest.TestCase):
             with patch.object(app, 'launch_client') as launch:
                 name_cell = table.get_cell_coordinate('beta', 'name')
                 name_region = table._get_cell_region(name_cell)
-                await pilot.click('#sandboxes', offset=(3, name_region.y + 1))
+                await pilot.click('#sandboxes', offset=(3, name_region.y))
                 self.assertEqual(app.selected_name(), 'beta')
-                await pilot.click('#sandboxes', offset=(3, name_region.y + 1), times=2)
+                await pilot.click('#sandboxes', offset=(3, name_region.y), times=2)
                 table.focus()
                 await pilot.press('enter')
                 launch.assert_not_called()
@@ -1177,31 +1177,31 @@ class TUITests(unittest.TestCase):
                 cell = table.get_cell_coordinate('beta', 'open')
                 region = table._get_cell_region(cell)
                 first = table._get_cell_region(table.get_cell_coordinate('alpha', 'open'))
-                self.assertEqual(region.y - first.y, 3)
-                self.assertIn('alpha', table.render_line(first.y + 1).text)
-                self.assertIn('Running', table.render_line(first.y + 1).text)
-                action_line = table.render_line(first.y + 1).crop(first.x, first.right)
+                self.assertEqual(region.y - first.y, 2)
+                self.assertIn('alpha', table.render_line(first.y).text)
+                self.assertIn('Running', table.render_line(first.y).text)
+                action_line = table.render_line(first.y).crop(first.x, first.right)
                 self.assertTrue(any(segment.style and segment.style.meta.get('sandbox_action')
                                     for segment in action_line))
-                for y in (first.y, first.y + 2):
-                    gap_line = table.render_line(y).crop(first.x, first.right)
-                    self.assertFalse(gap_line.text.strip())
-                    self.assertFalse(any(segment.text and segment.style
-                                         and segment.style.meta.get('sandbox_action') for segment in gap_line))
-                    await pilot.click('#sandboxes', offset=(first.x + 3, y), times=2)
-                    self.assertEqual(app.selected_name(), 'alpha')
-                    launch.assert_not_called()
-                await pilot.click('#sandboxes', offset=(region.x + 3, region.y + 1), button=3)
+                # The gap belongs to neither sandbox, including on double-click.
+                table.move_cursor(row=cell.row, column=cell.column, animate=False)
+                gap = table.render_line(first.y + 1)
+                self.assertFalse(gap.text.strip())
+                self.assertTrue(all(segment.style == table.rich_style for segment in gap))
+                await pilot.click('#sandboxes', offset=(first.x + 3, first.y + 1), times=2)
+                self.assertEqual(app.selected_name(), 'beta')
                 launch.assert_not_called()
-                await pilot.click('#sandboxes', offset=(region.x + 3, region.y + 1), times=2)
+                await pilot.click('#sandboxes', offset=(region.x + 3, region.y), button=3)
+                launch.assert_not_called()
+                await pilot.click('#sandboxes', offset=(region.x + 3, region.y), times=2)
                 launch.assert_called_once_with('beta', 'browser')
                 launch.reset_mock()
                 table.move_cursor(row=cell.row, column=cell.column)
                 await pilot.press('enter')
                 launch.assert_called_once_with('beta', 'browser')
 
-    async def test_padded_dashboard_rows_remain_reachable_by_keyboard(self):
-        records = [dict(self.records[0], name=f'sandbox-{i}') for i in range(6)]
+    async def test_dashboard_rows_remain_reachable_by_keyboard(self):
+        records = [dict(self.records[0], name=f'sandbox-{i}') for i in range(9)]
         app = Cockpit(self.root, FakeService(records))
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
@@ -1238,7 +1238,7 @@ class TUITests(unittest.TestCase):
             cell = table.get_cell_coordinate('alpha', 'alerts')
             region = table._get_cell_region(cell)
             self.assertLess(table.region.x + region.right, app.size.width)
-            await pilot.click('#sandboxes', offset=(region.x + 3, region.y + 1))
+            await pilot.click('#sandboxes', offset=(region.x + 3, region.y))
             self.assertIsInstance(app.screen, SandboxAlerts)
             self.assertEqual(len(app.screen.query('.sandbox-alert')), 2)
             descriptions = [str(widget.render()) for widget in app.screen.query('.sandbox-alert-description')]
