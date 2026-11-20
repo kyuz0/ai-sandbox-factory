@@ -695,6 +695,8 @@ class RecoveryTests(LifecycleTestCase):
                     self.assertIn('--security-opt=label=disable', dev)
                     self.assertIn('--network=none', dev)
                     self.assertIn('--cap-drop=ALL', dev)
+                    self.assertEqual(dev[dev.index('--sysctl') + 1], 'net.ipv4.ping_group_range=1000 1000')
+                    self.assertNotIn('net.ipv4.ping_group_range=1000 1000', proxy)
                     self.assertIn('--security-opt=no-new-privileges', dev)
                     self.assertIn('/absolute/path/to/project:/workspace:rw', dev)
                     self.assertIn('/absolute/path/to/agent:/pi-config:ro', dev)

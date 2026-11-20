@@ -650,6 +650,8 @@ def up(config, state):
             # Disable label separation only for the development container;
             # the gateway keeps its SELinux confinement and labeled volumes.
             args = ['--network=' + ('none' if restricted else 'bridge'), '--cap-drop=ALL',
+                    # Allow ordinary echo requests without granting raw sockets.
+                    '--sysctl', f'net.ipv4.ping_group_range={config["gid"]} {config["gid"]}',
                     '--security-opt=label=disable',
                     '--user', f'{config["uid"]}:{config["gid"]}',
                     '-v', f'{config["workspace"]}:/workspace:rw',

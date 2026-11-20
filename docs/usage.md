@@ -279,11 +279,17 @@ Configure SSH destinations separately to use an isolated Git key.
 
 ### Included command-line tools
 
-Alongside Git, SSH, Python and Node.js, development containers include:
+Every profile includes Bash, Git, SSH, Python and Node.js. Read command manuals offline with
+`man ls` or `man git`, or use `apropos` to find a command by topic.
 
-- Downloads and networking: `curl`, `wget`, `ping`, `ip`, `ss`, `getent`, `dig`, `nslookup`, `nc`.
-- Text and files: `jq`, `less`, `nano`, `vi`, `file`, `ripgrep`, `rsync` and the standard shell utilities.
-- Archives: `tar`, `gzip`, `zip`, `unzip`, `bzip2`, `xz`.
+| Task | Commands |
+| --- | --- |
+| Find files and search text | `fd`, `find`, `rg` (ripgrep), `grep`, `tree` |
+| Inspect and edit files | `file`, `less`, `nano`, `vi`, `vim`, `sed`, `awk`, `jq`, `column`, `hexdump`, `xxd` |
+| Build and patch code | `make`, `gcc`, `g++`, `diff`, `patch`, `pkg-config` |
+| Copy and archive files | `rsync`, `tar`, `gzip`, `zip`, `unzip`, `bzip2`, `xz`, `zstd`, `cpio` |
+| Inspect processes and open files | `ps`, `top`, `pstree`, `lsof`, `fuser`, `/usr/bin/time` |
+| Check network connections | `curl`, `wget`, `ping`, `ip`, `ss`, `netstat`, `getent`, `dig`, `nslookup`, `nc`, `traceroute` |
 
 ## See and interact with the agent’s browser
 

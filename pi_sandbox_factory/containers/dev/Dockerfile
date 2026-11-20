@@ -10,9 +10,17 @@ ARG PI_VERSION=1.4.0
 ARG USER_UID=1000
 ARG USER_GID=1000
 # Strip ping privileges so the executable can start with all container capabilities dropped.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Keep manuals for packages installed here and restore the shell manuals stripped from node:slim.
+RUN echo 'path-include=/usr/share/man/*' > /etc/dpkg/dpkg.cfg.d/zz-cli-manuals \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --reinstall \
+    bash coreutils diffutils findutils grep gzip mawk sed tar util-linux \
+    && apt-get install -y --no-install-recommends \
+    bash-completion man-db manpages manpages-dev git-man \
+    build-essential patch tree bsdextrautils xxd acl bc time gettext-base \
+    zstd cpio lsof psmisc net-tools traceroute \
     ca-certificates curl wget git python3 socat tini procps ripgrep iproute2 iputils-ping \
-    dnsutils netcat-openbsd jq less nano vim-tiny file zip unzip bzip2 xz-utils rsync tmux \
+    dnsutils netcat-openbsd jq less nano vim file zip unzip bzip2 xz-utils rsync tmux \
     && python3 -c 'import os; p="/usr/bin/ping"; os.removexattr(p, "security.capability") if "security.capability" in os.listxattr(p) else None' \
     && chmod u-s /usr/bin/ping \
     && rm -rf /var/lib/apt/lists/* \
@@ -28,7 +36,7 @@ RUN apt-get update \
 COPY check-document-tools.py /opt/document-tools/check.py
 COPY document-tools.md /opt/sandbox/document-tools.md
 RUN npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}"
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev libseccomp-dev meson ninja-build pkg-config libcap-dev libselinux1-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends libseccomp-dev meson ninja-build pkg-config libcap-dev libselinux1-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY security/ /opt/pi-security/
 RUN python3 /opt/pi-security/fetch.py \
@@ -73,6 +81,8 @@ RUN set -eu; \
     curl -fsSL --retry 3 "https://github.com/sharkdp/fd/releases/download/v${version}/${asset}.tar.gz" -o /tmp/fd.tar.gz; \
     echo "$sha  /tmp/fd.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/fd.tar.gz -C /usr/local/bin --no-same-owner --strip-components=1 "$asset/fd"; \
+    install -d /usr/local/share/man/man1; \
+    tar -xOzf /tmp/fd.tar.gz "$asset/fd.1" > /usr/local/share/man/man1/fd.1; \
     rm /tmp/fd.tar.gz; \
     test "$(fd --no-require-git --glob fd /usr/local/bin)" = /usr/local/bin/fd
 COPY --from=pi-advisor / /opt/pi-advisor/
