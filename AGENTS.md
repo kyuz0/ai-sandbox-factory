@@ -181,9 +181,11 @@ changes, push them and confirm the commit is on the remote branch. Verify any
 release or upstream pull request included in the request. Tell the user what
 shipped, where it landed and what checks passed.
 
-Stay on the current job until it is finished or the user changes priorities. If
-review, a user decision, a failed or unavailable test, or a push problem blocks
-completion, tell the user exactly what remains and why before moving on.
+Check `git status` before taking on the next job. Finish, commit and push the
+current job's changes before switching tasks. If the user asks you to pause or
+review the work, or if a decision, test or push is blocked, report the exact
+uncommitted files, what is still pending and why. Keep the paused work accounted
+for so it can be picked up without being forgotten.
 
 Production changes must land on `main` after testing, both here and in every
 dependency repository changed for Factory. Temporary branches are allowed, but
