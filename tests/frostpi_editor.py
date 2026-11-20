@@ -458,10 +458,32 @@ def check_local_knowledge(page, frame, send, inside, output):
     print('PASS FrostPi indexes a read-only mounted folder offline and Pi CLI searches the same persisted corpus.')
 
 
+def check_deep_research(page, frame, send, inside, workspace, output):
+    prompt = 'Factory Deep Web Research fixture'
+    success = 'FACTORY RESEARCH REPORT SAVED'
+    send(prompt)
+    result = frame.get_by_text(success, exact=True).or_(frame.get_by_text(re.compile(r'^FACTORY RESEARCH FAILED')))
+    result.first.wait_for(timeout=60000)
+    assert frame.get_by_text(success, exact=True).is_visible(), result.first.inner_text()
+    page.screenshot(path=str(output / 'deep-research.png'))
+    for client in ('frostpi', 'pi'):
+        if client == 'pi':
+            result = inside('pi', '--print', '--no-session', prompt)
+            assert success in result, result
+        for artifact in ('report.md', 'sources.md'):
+            path = workspace / 'research/factory-fixture' / artifact
+            content = path.read_text()
+            assert 'MAPLE_WEB_EVIDENCE_185' in content and 'CEDAR_LOCAL_EVIDENCE_746' in content, content
+            assert 'https://example.org/research-fixture' in content and '/mnt/reference/fixture.md' in content, content
+            (output / f'{client}-{artifact}').write_text(content)
+            path.unlink()
+    print('PASS Deep Web Research loads its skill, delegates web search, reads a mounted source and writes a cited report in both clients.')
+
+
 def check(image, code_server, output, chromium, startup_only, chat_workflows, session_naming, tool_images,
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
-          local_knowledge=False):
+          local_knowledge=False, deep_research=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -485,6 +507,16 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         (root / 'allowlist.txt').write_text('')
         config = {'options': {'approval': mode, 'browser': tool_images}, 'common': {'path': str(DEV)},
                   'engine': 'podman'}
+        if deep_research:
+            profile = sandbox.load_profile(str(REPO / 'pi_sandbox_factory/profiles/deep-research'))
+            config.update(profile=profile, subagents=profile['defaults']['subagents'], network='unrestricted')
+            config['options']['web_access'] = {
+                'enabled': profile['defaults']['web_search'], 'mode': 'searxng',
+                'providers': {'searxng': {'endpoint': 'http://localhost:19382'}},
+            }
+            (root / 'reference').mkdir()
+            (root / 'reference/fixture.md').write_text('# Local source\nCEDAR_LOCAL_EVIDENCE_746\n')
+            config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if local_knowledge:
             config['options']['knowledge_embedding'] = 'local'
             (root / 'reference').mkdir()
@@ -543,16 +575,17 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         args = ['run', '-d', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
                 '--user', '1000:1000', '--security-opt', 'label=disable',
                 '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
-        if subagents:
+        if subagents or deep_research:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
         if subagent_compaction:
             args += ['-e', 'COMPACTION_RECALL_MODE=' + ('full' if subagent_compaction == 'full' else 'lite')]
-        if web_workers:
+        if web_workers or deep_research:
             args += ['-e', 'FACTORY_SUBAGENT_WEB_TOOLS=1']
             mounts.append((Path(__file__).with_name('subagent_web_tools.mjs').resolve(), '/tmp/subagent_web_tools.mjs', 'ro'))
         if local_knowledge:
             args += ['-e', 'SANDBOX_KNOWLEDGE_ROOTS=' + json.dumps([path for path, _ in folders.roots(config)])]
+        if local_knowledge or deep_research:
             mounts.append((root / 'reference', '/mnt/reference', 'ro'))
         if folder_access:
             args += ['--cap-drop=ALL', '--security-opt=no-new-privileges'] + folders.mounts(config)
@@ -689,6 +722,11 @@ p.write_text(json.dumps(v))
                     return
                 if local_knowledge:
                     check_local_knowledge(page, frame, send, inside, output)
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if deep_research:
+                    check_deep_research(page, frame, send, inside, root / 'workspace', output)
                     assert not errors, errors
                     browser.close()
                     return
@@ -883,6 +921,7 @@ if __name__ == '__main__':
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
     scope.add_argument('--tool-images', action='store_true', help='Check model-visible image results from Pi read and Betterwright.')
     scope.add_argument('--local-knowledge', action='store_true', help='Check offline embeddings from a read-only mount in Pi and FrostPi.')
+    scope.add_argument('--deep-research', action='store_true', help='Check Deep Web Research from search to report in Pi and FrostPi.')
     scope.add_argument('--folder-access', action='store_true', help='Check Bash and native tools in mounted folders and /tmp.')
     scope.add_argument('--streaming-metrics', action='store_true', help='Check the live token meter during reasoning and answer output.')
     scope.add_argument('--nonblocking-questions', action='store_true', help='Check deferred questions while the model works, stops and reloads.')
@@ -904,4 +943,4 @@ if __name__ == '__main__':
     check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
-          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge)
+          args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research)

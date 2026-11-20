@@ -49,6 +49,38 @@ async function streamOutputBurst(response) {
   response.end('data: [DONE]\n\n');
 }
 
+function researchReply(messages, tools) {
+  const prefix = 'factory-research-';
+  const checked = messages.filter(message => message.role === 'tool' && message.tool_call_id?.startsWith(prefix));
+  const system = JSON.stringify(messages.filter(message => message.role === 'system'));
+  const output = '/workspace/research/factory-fixture/';
+  const web = 'Example research source (https://example.org/research-fixture) gives MAPLE_WEB_EVIDENCE_185.';
+  const local = 'Local source (/mnt/reference/fixture.md) gives CEDAR_LOCAL_EVIDENCE_746.';
+  const steps = [
+    ['read', { path: '/opt/research-skills/deep-research/SKILL.md' }, /Write `report\.md`/],
+    ['subagent', { agent: 'assistant', name: 'Maple', async: false,
+      task: 'Find FACTORY_RESEARCH_WEB_EVIDENCE with web_search and return the source URL.' },
+      /https:\/\/example\.org\/research-fixture.*MAPLE_WEB_EVIDENCE_185/],
+    ['read', { path: '/mnt/reference/fixture.md' }, /CEDAR_LOCAL_EVIDENCE_746/],
+    ['write', { path: output + 'sources.md', content: '# Sources\n\n- ' + web + '\n- ' + local + '\n' }, /wrote/i],
+    ['write', { path: output + 'report.md', content: '# Research report\n\n' + web + '\n\n' + local + '\n' }, /wrote/i],
+  ];
+  if (!system.includes('deep-research/SKILL.md')) {
+    return { content: 'FACTORY RESEARCH FAILED skill absent from system prompt' };
+  }
+  for (const [index, result] of checked.entries()) {
+    if (!steps[index][2].test(String(result.content))) {
+      return { content: 'FACTORY RESEARCH FAILED ' + steps[index][0] + ' returned ' + String(result.content).slice(0, 400) };
+    }
+  }
+  if (checked.length === steps.length) return { content: 'FACTORY RESEARCH REPORT SAVED' };
+  const [tool, args] = steps[checked.length];
+  if (!tools.includes(tool)) return { content: 'FACTORY RESEARCH FAILED missing ' + tool };
+  const delta = choice(tool, args);
+  delta.tool_calls[0].id = prefix + checked.length;
+  return delta;
+}
+
 http.createServer((request, response) => {
   let body = '';
   request.on('data', chunk => body += chunk);
@@ -89,6 +121,18 @@ http.createServer((request, response) => {
       const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
+    } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
+      delta = tools.includes('web_search')
+        ? choice('web_search', { query: 'Factory research source', numResults: 1 })
+        : { content: 'FACTORY RESEARCH FAILED worker has no web search' };
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-web_search-') &&
+               context.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
+      const result = String(last.content);
+      delta = { content: result.includes('MAPLE_WEB_EVIDENCE_185') && result.includes('https://example.org/research-fixture')
+        ? 'Example research source (https://example.org/research-fixture) gives MAPLE_WEB_EVIDENCE_185.'
+        : 'FACTORY RESEARCH FAILED web evidence missing' };
+    } else if (tools.length && context.includes('Factory Deep Web Research fixture')) {
+      delta = researchReply(messages, tools);
     } else if (userText === 'Factory knowledge fixture' && tools.length) {
       if (!tools.includes('knowledge_search') || tools.some(name =>
         ['knowledge_add', 'knowledge_configure', 'knowledge_export', 'knowledge_update'].includes(name))) {

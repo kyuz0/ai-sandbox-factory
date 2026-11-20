@@ -90,6 +90,9 @@ in FrostPi, reject a link outside the allowed folders, and search the same index
 in Pi CLI. The test container has no outbound network access. Use
 `--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web
 Research image to verify the profile addendum in both clients.
+With the Deep Web Research image and the Web Search layer, use `--deep-research`
+to verify that Pi and FrostPi load the skill, delegate a search through a
+loopback provider, read a mounted reference and save a cited report and source log.
 
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.

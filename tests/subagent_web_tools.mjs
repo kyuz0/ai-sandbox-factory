@@ -25,6 +25,12 @@ function whenBothArrive(operation, worker, respond) {
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost:19382');
   const worker = url.searchParams.get('q') ?? url.searchParams.get('worker');
+  if (url.pathname === '/search' && worker === 'Factory research source') {
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ results: [{
+      title: 'Example research source', url: 'https://example.org/research-fixture', content: 'MAPLE_WEB_EVIDENCE_185',
+    }] }));
+    return;
+  }
   if (!workers.has(worker)) {
     res.writeHead(404).end();
     return;
