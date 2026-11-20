@@ -136,7 +136,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   doubled gaps using rendered positions. Check the whole ordinary form,
   from its heading through its buttons, at 80×24, 120×40 and 220×50.
   Long forms and errors can scroll inside the dialog while actions stay visible.
-- Every single-line text input uses one terminal row at every terminal size.
+- Single-line text inputs and closed dropdowns use one terminal row at every
+  terminal size, including when focused. Opening a dropdown shows its option list.
   Leave one blank row between its label and the field. Keep adjacent Browse,
   Generate or other field buttons on the same row and at the same height.
   Check that the text stays visible on focus and after validation errors.

@@ -16,7 +16,7 @@ from pi_sandbox_factory.sandbox_tui import (
 from pi_sandbox_factory.folders_ui import FolderEditor
 from pi_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
-from tui_geometry import check_checkbox_alignment
+from tui_geometry import check_checkbox_alignment, check_dropdown_layout
 
 
 class TUILayoutTests(unittest.TestCase):
@@ -88,6 +88,34 @@ class TUILayoutTests(unittest.TestCase):
                                      app.screen.query_one('.wizard-actions').region.y)
                 await pilot.press('escape')
                 await pilot.press('q')
+
+    async def test_profile_and_provider_dropdowns_open_from_a_single_row(self):
+        from pi_sandbox_factory.models_ui import ProviderDialog
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = self.app()
+            async with app.run_test(size=size) as pilot:
+                await self.ready(app, pilot)
+                for form, selector in ((NewSandbox(), '#profile'), (ProviderDialog(), '#hosted-provider')):
+                    await app.push_screen(form)
+                    await pilot.pause()
+                    field = form.query_one(selector, Select)
+                    before = field.value
+                    check_dropdown_layout(form)
+                    field.focus()
+                    await pilot.pause()
+                    check_dropdown_layout(form)
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    overlay = field.query_one('SelectOverlay')
+                    self.assertTrue(field.expanded)
+                    self.assertGreater(overlay.content_region.height, 1)
+                    self.assertIs(form.get_widget_at(overlay.content_region.x, overlay.content_region.y)[0], overlay)
+                    await pilot.press('down', 'enter')
+                    await pilot.pause()
+                    self.assertFalse(field.expanded)
+                    self.assertNotEqual(field.value, before)
+                    check_dropdown_layout(form)
+                    await app.pop_screen()
 
     async def test_review_uses_terminal_width_with_padded_actions(self):
         for size in ((80, 24), (120, 40), (220, 50)):
@@ -359,7 +387,7 @@ class TUILayoutTests(unittest.TestCase):
                         self.assertEqual(seed_label.region.y - env_file.region.bottom, 1)
                     else:
                         self.assertEqual(group.query_one('.setting-help').region.y - field.region.bottom, 1)
-                        self.assertEqual(field.region.height, 1 if size[1] < 32 else 3)
+                        self.assertEqual(field.region.height, 1)
                     await app.pop_screen()
 
     async def test_agent_tools_summary_tracks_visible_controls(self):
@@ -778,7 +806,7 @@ class TUILayoutTests(unittest.TestCase):
                 await pilot.pause()
                 labels = list(app.screen.query(Label))
                 profile = app.screen.query_one('#profile')
-                self.assertEqual(profile.region.y, labels[1].region.bottom)
+                self.assertEqual(profile.region.y, labels[1].region.bottom + 1)
                 workspace = app.screen.query_one('#workspace')
                 label = next(x for x in labels if str(x.render()) == 'Workspace')
                 self.assertEqual(workspace.region.y, label.region.bottom + 1)
@@ -787,7 +815,7 @@ class TUILayoutTests(unittest.TestCase):
                 await app.pop_screen()
                 await app.push_screen(CreateFromSandbox([self.record]))
                 await pilot.pause()
-                self.assertEqual(app.screen.query_one('#copy-source').region.height, 3)
+                self.assertEqual(app.screen.query_one('#copy-source').region.height, 1)
                 await app.pop_screen()
                 await app.push_screen(ProviderDialog())
                 feedback = app.screen.query_one('#hosted-error', Static)

@@ -1,6 +1,16 @@
 """Layout checks for the controls in rendered Factory screens."""
 from textual.containers import Horizontal
-from textual.widgets import Button, Input, Label
+from textual.widgets import Button, Input, Label, Select
+
+
+def check_dropdown_layout(screen):
+    for field in screen.query(Select):
+        if not field.region.width or not all(widget.display and widget.visible for widget in (field, *field.ancestors)):
+            continue
+        face = field.query_one('SelectCurrent')
+        label = face.query_one('#label')
+        if (field.region.height, face.content_region.height, label.region.height) != (1, 1, 1):
+            raise AssertionError(f'{type(screen).__name__} #{field.id} should display its selection in one row')
 
 
 def check_checkbox_alignment(screen):

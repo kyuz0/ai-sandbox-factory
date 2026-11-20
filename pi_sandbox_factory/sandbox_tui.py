@@ -3386,7 +3386,7 @@ class Cockpit(App):
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
-    .setting > Checkbox, .setting > Select, .setting > TextArea { margin-bottom: 0; }
+    .setting > Checkbox, .setting > TextArea { margin-bottom: 0; }
     .setting > Button, .setting > .buttons { margin: 0; }
     AdvisorChoices .setting > .copy-login { margin: 1 0 0 0; }
     .setting-help { height: auto; color: #b8bdc3; }
@@ -3399,8 +3399,13 @@ class Cockpit(App):
     Input:focus { border: none; border-left: thick $primary; background: #505965; }
     Input.-invalid, Input.-invalid-credential, Input.prompt-invalid:focus { border-left: thick $error; }
     Screen:nocolor Input:focus { background: white; color: black; border-left: thick black; }
-    .setting > Input:last-child, .setting > .path-row:last-child { margin: 1 0 0 0; }
-    Select { margin-bottom: 1; }
+    .setting > Input:last-child, .setting > Select:last-child, .setting > .path-row:last-child { margin: 1 0 0 0; }
+    Select { height: 1; margin: 1 0; }
+    Select > SelectCurrent, Select:focus > SelectCurrent { height: 1; border: none; padding: 0 1; }
+    Select > SelectCurrent > #label { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    Select:focus > SelectCurrent { background: #fff1d2; }
+    Select:focus > SelectCurrent > #label, Select:focus > SelectCurrent > .arrow { color: #17191b; text-style: bold; }
+    Screen:nocolor Select:focus > SelectCurrent { background: white; }
     TextArea { height: 9; margin-bottom: 1; }
     .group-title { text-style: bold; margin-bottom: 1; }
     Checkbox { height: 1; border: none; padding: 0; margin: 0 0 1 0; }
@@ -3456,12 +3461,8 @@ class Cockpit(App):
     .compact-terminal .key-dialog .key-dialog-fields { height: 1fr; max-height: 100%; }
     .compact-terminal .key-dialog.-saved-key-selected,
     .compact-terminal .key-dialog.-saved-key-selected .key-dialog-fields { height: auto; }
-    .compact-terminal .key-dialog #hosted-provider { margin: 0; }
     .compact-terminal CredentialDialog #credential-dialog { height: auto; }
     .compact-terminal CredentialDialog #credential-dialog-fields { height: auto; max-height: 55vh; }
-    CredentialFields Select, CredentialFields Select > SelectCurrent,
-    CredentialFields Select:focus > SelectCurrent { height: 1; border: none; padding: 0; }
-    CredentialFields Select { margin: 1 0; }
     .key-dialog #remember-key { margin: 1 0 0 0; }
     .key-dialog #credential-remember { margin: 1 0; }
     SSHScreen #ssh-hosts { height: 5; }
@@ -3538,8 +3539,7 @@ class Cockpit(App):
     .form.spaced-form-fields .setting > Select:last-child, .form.spaced-form-fields .setting > Input:last-child { margin: 1 0 0 0; }
     .form .spaced-form-fields Button, .form.spaced-form-fields Button,
     CommunicationsForm Button, SkillSelection Button { padding: 0 2; }
-    DocumentSearchDialog #embedding-catalogue SelectOverlay { max-height: 6; offset: 0 -9; }
-    .compact-terminal DocumentSearchDialog #embedding-catalogue SelectOverlay { offset: 0 -7; }
+    DocumentSearchDialog #embedding-catalogue SelectOverlay { max-height: 6; offset: 0 -7; }
     .compact-terminal DocumentSearchDialog #confirm-box { height: auto; max-height: 96%; padding: 0 2; }
     .compact-terminal DocumentSearchDialog #document-search-fields { height: auto; max-height: 78vh; }
     .compact-terminal DocumentSearchDialog.-custom-server #confirm-box { padding: 1 2 0 2; border-title-color: #f2b544; }
@@ -3547,11 +3547,6 @@ class Cockpit(App):
     .compact-terminal DocumentSearchDialog .dialog-actions { margin: 0; }
     .compact-terminal DocumentSearchDialog.-field-error #document-search-fields { max-height: 74vh; }
     .compact-terminal DocumentSearchDialog.-field-error .dialog-actions { margin: 1 0 0 0; }
-    .compact-terminal .spaced-form-fields .setting > Select,
-    .compact-terminal .spaced-form-fields .setting > Select > SelectCurrent { height: 1; border: none; padding: 0; }
-    DocumentSearchDialog Select:focus > SelectCurrent { background: #fff1d2; }
-    DocumentSearchDialog Select:focus > SelectCurrent > #label,
-    DocumentSearchDialog Select:focus > SelectCurrent > .arrow { color: #17191b; text-style: bold; }
     DocumentSearchDialog Feedback.error { color: #ff9184; text-style: bold; }
     DocumentSearchDialog:nocolor Feedback.error { color: white; text-style: bold reverse; }
     #application-update-row { height: auto; }
