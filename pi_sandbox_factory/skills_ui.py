@@ -10,6 +10,7 @@ from textual.message import Message
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 
 from . import skill_library
+from .file_browser import PathField
 from .tui_widgets import Checkbox, Feedback
 
 
@@ -200,9 +201,7 @@ class ImportSkills(Screen):
             yield Label('Add skills to library', classes='title')
             with Vertical(classes='setting'):
                 yield Label('Git repository, GitHub skill link or local folder')
-                with Horizontal(classes='path-row'):
-                    yield Input(self.source, id='skill-source')
-                    yield Button('Browse', id='skill-browse')
+                yield PathField('skill-source', self.source, title='Choose local skill folder', browse_id='skill-browse')
                 yield Static('Validation checks format and files without running skill code. Only import sources you trust.', classes='setting-help')
             with Vertical(classes='setting'):
                 yield Label('Tag, branch or commit · optional')
@@ -282,10 +281,6 @@ class ImportSkills(Screen):
         event.stop()
         if event.button.id == 'skill-import-cancel':
             self.action_back()
-        elif event.button.id == 'skill-browse':
-            from .sandbox_tui import FolderPicker
-            self.app.push_screen(FolderPicker(self.query_one('#skill-source', Input).value or str(Path.home())),
-                                 lambda value: setattr(self.query_one('#skill-source', Input), 'value', str(value)) if value else None)
         elif event.button.id == 'skill-discover':
             self.set_busy(True)
             self.query_one('#skill-import-error', Feedback).update('')

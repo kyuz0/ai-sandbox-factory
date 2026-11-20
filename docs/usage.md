@@ -48,6 +48,21 @@ Closing Factory or the editor leaves the sandbox running. Deleting it removes
 its containers, private home, saved chats, and editor settings. Your workspace
 folder stays on your computer.
 
+## Back up and restore chats
+
+- **Save a backup.** Choose **Actions… → Export chat history…**. Factory saves
+  the original Pi and FrostPi chats, including branches, to a ZIP file on this
+  computer. The same action is available when you confirm deletion. Export
+  works while the sandbox is stopped and leaves deletion up to you.
+- **Restore to another sandbox.** Choose that sandbox, then **Actions… → Import
+  chat history…**. Select the ZIP backup or a Pi `.jsonl` file. Factory adds
+  chats to the destination’s starting folder and skips chats already saved
+  there. Use **Resume session** in FrostPi or `/resume` in Pi to open them.
+
+A backup contains chats only. Keep it private because transcripts can include
+tool output and file contents. Project files and sandbox settings are managed
+separately.
+
 ## Recover from a failed creation
 
 Factory reports missing host dependencies at startup. The first build downloads

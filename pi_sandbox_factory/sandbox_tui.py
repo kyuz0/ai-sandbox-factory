@@ -17,6 +17,8 @@ from rich.text import Text
 from typing import Optional
 
 from . import sandbox, editor_settings, sandbox_ssh, prompt_library
+from . import chat_history
+from .chat_history_ui import ChatTransfer, DeleteSandbox, EXPORT, IMPORT
 from .creation import Creation, Cancelled
 from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
@@ -27,6 +29,7 @@ from .settings_catalog import (
     PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
+from .file_browser import FolderPicker, PathField
 from .communications_ui import CommunicationsForm, communications_summary
 from .models_ui import HostedProviders, ModelDialog, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
@@ -194,6 +197,18 @@ class Service:
 
     def config(self, name):
         return json.loads((self.state / name / 'config.json').read_text())
+
+    def export_chats(self, name, path):
+        return chat_history.export_chats(self.chat_config(name), self.state / name, path)
+
+    def import_chats(self, name, path):
+        return chat_history.import_chats(self.chat_config(name), path)
+
+    def chat_config(self, name):
+        config = self.config(name)
+        if config.get('name') != name:
+            raise ValueError('Factory could not verify this sandbox’s saved configuration.')
+        return config
 
     def communication_status(self, name):
         result = subprocess.run(self.command('communication-key', name, '--status'), text=True, capture_output=True)
@@ -872,7 +887,8 @@ class NetworkRulesFields(Vertical):
         with Collapsible(title='Import or export rules', collapsed=True):
             with Vertical(classes='setting'):
                 yield Label('Allowlist file path')
-                yield Input(placeholder='~/network-rules.txt', id='network-file')
+                yield PathField('network-file', title='Choose allowlist file', mode='save',
+                                placeholder='~/network-rules.txt', initial=Path.home() / 'network-rules.txt')
             with Horizontal(classes='buttons'):
                 yield Button('Import file', id='network-import')
                 yield Button('Export file', id='network-export')
@@ -1013,9 +1029,12 @@ class MoreActions(ModalScreen[Optional[str]]):
         self.actions = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                         ('Container shell', 'shell'),
                         ('Test MCP connections', 'connections'), ('Container logs', 'logs'), ('Containers…', 'containers'),
-                        ('Update sources and recreate…', 'rebuild'), ('Delete sandbox…', 'delete')]
+                        ('Update sources and recreate…', 'rebuild')]
         if browser_running:
             self.actions.append(('Stop browser editor', 'stop-editor'))
+        if record.get('config', {}).get('engine'):
+            self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
+        self.actions.append(('Delete sandbox…', 'delete'))
 
     def compose(self):
         with Vertical(id='confirm-box'):
@@ -1325,7 +1344,8 @@ class SSHScreen(Screen):
             with Collapsible(title='Host identity', collapsed=True):
                 with Vertical(classes='setting'):
                     yield Label('Trusted known_hosts file')
-                    yield Input(str(Path.home() / '.ssh/known_hosts'), id='ssh-known-hosts')
+                    yield PathField('ssh-known-hosts', str(Path.home() / '.ssh/known_hosts'),
+                                    title='Choose trusted known_hosts file', mode='file')
                     yield Static('Verify unknown hosts in your host terminal before applying destinations.', classes='setting-help')
             with Collapsible(title='SSH key · one per sandbox', collapsed=not bool(hosts), id='ssh-key-section'):
                 with Vertical(classes='setting'):
@@ -1335,8 +1355,9 @@ class SSHScreen(Screen):
                     yield Static('Creates a new key inside the companion. An existing key is never replaced.', classes='setting-help')
                 with Vertical(classes='setting'):
                     yield Label('Or import a private key from this computer')
-                    with Horizontal(classes='path-row'):
-                        yield Input(placeholder='~/.ssh/id_ed25519', id='ssh-key-file')
+                    yield PathField('ssh-key-file', title='Choose SSH private key', mode='file',
+                                    initial=Path.home() / '.ssh', placeholder='~/.ssh/id_ed25519', disabled=not hosts)
+                    with Horizontal(classes='buttons'):
                         yield Button('Import and unlock', id='ssh-import-key', disabled=not hosts)
                     yield Static('Import replaces this sandbox’s key and keeps its server permissions. Encrypted keys ask for their passphrase in the terminal.', classes='setting-help')
                 with Vertical(classes='setting'):
@@ -1929,14 +1950,14 @@ class InstallPackage(Screen):
             yield Label('Install '+self.kind,classes='title')
             with Vertical(classes='setting'):
                 yield Label('Git URL or local folder')
-                yield Input(id='package-source')
+                yield PathField('package-source', title=f'Choose local {self.kind} folder')
             with Vertical(classes='setting'):
                 yield Label('Local name')
                 yield Input(placeholder='reporting' if self.kind=='profile' else 'company',id='package-name')
             with Collapsible(title='Repository subfolder and revision', collapsed=True):
                 with Vertical(classes='setting'):
                     yield Label('Subfolder in the repository · optional')
-                    yield Input(placeholder='profiles/reporting',id='package-subdir')
+                    yield PathField('package-subdir', title='Choose repository subfolder', placeholder='profiles/reporting')
                 with Vertical(classes='setting'):
                     yield Label('Tag, branch or commit · optional')
                     yield Input(id='package-ref')
@@ -1946,6 +1967,20 @@ class InstallPackage(Screen):
             yield Button('Cancel',id='package-cancel')
             yield Button('Install',id='package-add',variant='primary')
         yield Footer()
+
+    @on(Input.Changed, '#package-source')
+    def local_source_changed(self, event):
+        value = event.value.strip()
+        field = self.query_one('#package-subdir-field', PathField)
+        try:
+            path = host_platform.local_path(value) if value and '://' not in value else None
+            field.root = path if path and path.is_dir() else None
+        except (OSError, RuntimeError, subprocess.CalledProcessError):
+            field.root = None
+        field.query_one(Button).display = field.root is not None
+
+    def on_mount(self):
+        self.query_one('#package-subdir-browse', Button).display = False
 
     @on(Button.Pressed)
     def pressed(self,event):
@@ -2232,73 +2267,6 @@ class CreationOperation(Operation):
             self.app.action_refresh_inventory()
 
 
-class FolderPicker(ModalScreen[Optional[str]]):
-    """Browse directories without requiring a desktop file dialog."""
-    BINDINGS = [('escape', 'cancel', 'Cancel')]
-
-    def action_cancel(self):
-        self.dismiss(None)
-
-    def __init__(self, start):
-        super().__init__()
-        candidate = Path(start).expanduser()
-        self.folder = candidate if candidate.is_dir() else Path.home()
-
-    def compose(self):
-        with Vertical(id='folder-box'):
-            yield Label('Choose workspace folder', classes='title')
-            yield Label('Folder path')
-            yield Input(str(self.folder), id='folder-path')
-            yield DataTable(id='folders', cursor_type='row')
-            with Horizontal(classes='dialog-actions'):
-                yield Button('Up', id='folder-up')
-                yield Button('Open folder', id='folder-open')
-                yield Static('', classes='action-spacer')
-                yield Button('Cancel', id='folder-cancel')
-                yield Button('Use this folder', id='folder-use', variant='primary')
-
-    def on_mount(self):
-        self.query_one(DataTable).show_header = False
-        self.query_one(DataTable).add_column('Folders')
-        self.refresh_folders()
-
-    def refresh_folders(self):
-        table = self.query_one(DataTable)
-        table.clear()
-        self.query_one(Input).value = str(self.folder)
-        try:
-            for path in sorted(self.folder.iterdir()):
-                if path.is_dir() and not path.name.startswith('.'):
-                    table.add_row(safe_text(path.name), key=str(path))
-        except OSError as error:
-            self.notify(str(error), severity='error')
-
-    @on(DataTable.RowSelected)
-    def enter_folder(self, event):
-        event.stop()
-        self.folder = Path(event.row_key.value)
-        self.refresh_folders()
-
-    @on(Button.Pressed)
-    def pressed(self, event):
-        event.stop()
-        action = event.button.id
-        if action == 'folder-cancel':
-            self.dismiss(None)
-        elif action == 'folder-up':
-            self.folder = self.folder.parent
-            self.refresh_folders()
-        elif action in ('folder-use', 'folder-open'):
-            path = Path(self.query_one(Input).value).expanduser()
-            if not path.is_dir():
-                self.notify('Enter an existing folder.', severity='error')
-            elif action == 'folder-use':
-                self.dismiss(str(path.resolve()))
-            else:
-                self.folder = path
-                self.refresh_folders()
-
-
 class CreateFromSandbox(ModalScreen):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
@@ -2394,12 +2362,10 @@ class NewSandbox(Screen):
                 yield Static('', id='profile-summary', classes='setting-help', markup=False)
             with Vertical(id='custom-profile-fields', classes='setting'):
                 yield Label('Custom profile folder')
-                yield Input(id='custom-profile', placeholder='~/profiles/my-profile')
+                yield PathField('custom-profile', title='Choose custom profile folder', placeholder='~/profiles/my-profile')
                 yield Static('Folder containing profile.json, Dockerfile and profile.md.', classes='setting-help')
             yield Label('Workspace')
-            with Horizontal(classes='path-row'):
-                yield Input(settings['workspace_parent'], id='workspace')
-                yield Button('Browse', id='browse')
+            yield PathField('workspace', settings['workspace_parent'], title='Choose workspace folder', browse_id='browse')
             yield Checkbox('Create this workspace folder if it does not exist', id='mkdir')
             with Vertical(classes='setting'):
                 yield Label('Sandbox name')
@@ -2437,8 +2403,6 @@ class NewSandbox(Screen):
         event.stop()
         if event.button.id == 'cancel':
             self.action_back()
-        elif event.button.id == 'browse':
-            self.app.push_screen(FolderPicker(self.query_one('#workspace', Input).value), self.choose_folder)
         elif event.button.id == 'continue':
             try:
                 profile = self.query_one('#profile', Select).value
@@ -2469,10 +2433,6 @@ class NewSandbox(Screen):
                 self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys))
             except (OSError, ValueError) as error:
                 self.query_one('#new-error', Static).update(str(error))
-
-    def choose_folder(self, value):
-        if value:
-            self.query_one('#workspace', Input).value = value
 
     def action_back(self):
         self.app.pop_screen()
@@ -2508,8 +2468,9 @@ class SettingsForm(Screen):
                 yield Label('Default profile')
                 yield Select([(v, k) for k, v in profile_titles().items()], value=self.profile_name if self.profile_name in profile_titles() else 'base',
                              allow_blank=False, id='default-profile')
-                yield Label('Workspace parent folder')
-                yield Input(value.get('workspace_parent', ''), id='workspace-parent')
+                with Vertical(classes='setting'):
+                    yield Label('Workspace parent folder')
+                    yield PathField('workspace-parent', value.get('workspace_parent', ''), title='Choose workspace parent folder')
             if not self.defaults_mode and not self.setting:
                 yield Static('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
                              + '\nWorkspace: ' + value['workspace'], id='review-project', markup=False)
@@ -2727,10 +2688,10 @@ class SettingsForm(Screen):
                 yield Input(value.get('memory') or '', id='memory')
             with Vertical(classes='setting'):
                 yield Label('Credentials environment file · optional path')
-                yield Input(value.get('env_file') or '', id='env-file')
+                yield PathField('env-file', value.get('env_file') or '', title='Choose environment file', mode='file')
             with Vertical(classes='setting'):
                 yield Label('Seed Pi agent directory · optional, fresh configuration by default')
-                yield Input(value.get('pi_config') or '', id='pi-config', disabled=self.editing)
+                yield PathField('pi-config', value.get('pi_config') or '', title='Choose Pi agent folder', disabled=self.editing)
 
     def compose_system_prompt(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
@@ -3376,6 +3337,11 @@ class Cockpit(App):
     NewSandbox .form > .path-row { padding: 0 1 0 0; }
     .path-row Input { width: 1fr; margin-bottom: 0; }
     .path-row Button { height: 3; padding: 1 1; margin: 0; }
+    PathField.path-row Button { padding: 1 2; margin: 0 0 0 1; }
+    .chat-success { color: #91caa6; }
+    DeleteSandbox Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
+    DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
+    DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
     #mkdir { margin: 1 0 1 2; }
     .error { color: #b75b52; height: auto; }
     .model-dialog > Feedback, FolderEditor Feedback { margin-top: 1; }
@@ -3414,7 +3380,8 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, EditPrompt { align: center middle; background: #000000 70%; }
+    Confirm, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, EditPrompt,
+    ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
@@ -3423,7 +3390,23 @@ class Cockpit(App):
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
     SettingsMenu #confirm-box { width: 80; max-width: 98%; height: 95%; max-height: 24; }
     SettingsMenu #settings-actions { height: 1fr; }
-    #folder-box { width: 85%; height: 85%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    #folder-box { width: 98; max-width: 95%; height: 94%; max-height: 30; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    #folder-box .path-row { align: left middle; }
+    .folder-path-label { width: 12; height: 3; content-align: left middle; }
+    #folder-box .path-row Button { padding: 1 2; margin: 0 0 0 1; }
+    #folder-places { height: 1; margin: 1 0; }
+    #folder-columns { height: 1; padding: 0 3 0 6; text-style: bold; background: #31353a; }
+    #folder-name-column { width: 1fr; }
+    #folder-size-column { width: 10; text-align: right; }
+    #folder-modified-column { width: 20; text-align: right; }
+    #folder-box DirectoryNavigation { height: 1fr; border: none; }
+    #folder-filename-row { height: 3; align: left middle; margin: 1 0 0 0; }
+    .compact-terminal #folder-filename-row { height: 1; }
+    #folder-filename-row Label { width: 12; }
+    #folder-filename-row Input { width: 1fr; height: 3; }
+    .compact-terminal #folder-filename-row Input { height: 1; border: none; padding: 0 1; }
+    #folder-browse-error { margin: 1 0 0 0; text-style: bold; }
+    ChatTransfer:nocolor Feedback, FolderPicker:nocolor Feedback { color: #f1f3f5; text-style: bold; }
     #folders { height: 1fr; padding-right: 1; }
     '''
 
@@ -3801,9 +3784,10 @@ class Cockpit(App):
         elif action in ('preview-models', 'refresh-models'):
             mode = 'preview' if action == 'preview-models' else 'refresh'
             self.push_screen(Operation('Local models · ' + name, lambda log: self.service.models(name, mode, log)))
+        elif action in ('export-chats', 'import-chats'):
+            self.push_screen(ChatTransfer(name, importing=(action == 'import-chats')))
         elif action == 'delete':
-            self.push_screen(Confirm('Delete ' + name + '?\nRemoves private credentials, configuration, sessions and editor state.\n'
-                                     'The host workspace and shared images are preserved.', 'Delete sandbox'),
+            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine'))),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
         elif action in ('pi', 'shell'):
             self.interactive(action, name)

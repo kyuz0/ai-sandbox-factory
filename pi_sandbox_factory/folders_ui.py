@@ -8,6 +8,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
 from . import folders
+from .file_browser import PathField
 from .tui_widgets import Checkbox, Feedback
 
 
@@ -33,7 +34,8 @@ class FolderEditor(ModalScreen):
             yield Label('Edit folder' if self.row else 'Add host folder', classes='title')
             with VerticalScroll(id='folder-fields'):
                 yield Label('Folder on your computer')
-                yield Input((self.row or {}).get('source', ''), placeholder='~/Documents/reference', id='folder-source')
+                yield PathField('folder-source', (self.row or {}).get('source', ''), title='Choose a host folder',
+                                placeholder='~/Documents/reference')
                 with Vertical(classes='setting'):
                     yield Label('Name under /mnt · leave empty to use the folder name')
                     yield Input((self.row or {}).get('name', ''), id='folder-name')
@@ -96,7 +98,8 @@ class FolderFields(Vertical):
     def compose(self):
         yield Static('Main workspace: ' + str(self.config['workspace']) + ' → /workspace', markup=False, classes='section-intro')
         yield Label('Start Pi and VS Code in · relative to /workspace')
-        yield Input(self.config.get('working_directory', '.'), placeholder='.', id='working-directory')
+        yield PathField('working-directory', self.config.get('working_directory', '.'), title='Choose starting folder',
+                        root=self.config['workspace'], placeholder='.')
         yield Label('Additional host folders')
         yield Vertical(id='folder-rows')
         with Vertical(classes='setting'):

@@ -9,8 +9,10 @@ import unittest
 from unittest.mock import patch
 
 from pi_sandbox_factory import sandbox
+from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
 from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
-from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList
+from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static
+from textual_fspicker.parts import DirectoryNavigation
 
 class FakeService:
     def __init__(self,records): self.records=records;self.calls=[]
@@ -25,6 +27,15 @@ class FakeService:
     def update(self,name,draft,key,log,update=None):self.calls.append(['update',name,draft]);log('updated')
     def provider(self,name,provider,mode,key,log):self.calls.append(['provider',name,provider,mode,key]);log('Provider ready')
     def models(self,name,mode,log):self.calls.append(['models',name,mode]);log('Model catalogue')
+    def export_chats(self, name, path):
+        self.calls.append(['export-chats', name, path])
+        if Path(path).name == 'existing.zip':
+            raise ValueError('A file already exists there. Choose another name.')
+        return Path(path), 3
+
+    def import_chats(self, name, path):
+        self.calls.append(['import-chats', name, path])
+        return 2, 1
 
 class TUITests(unittest.TestCase):
     @classmethod
@@ -56,9 +67,12 @@ class TUITests(unittest.TestCase):
         await pilot.press('enter');await pilot.pause()
 
     async def delete_menu(self, app, pilot):
+        await self.choose_more_action(app, pilot, 'delete')
+
+    async def choose_more_action(self, app, pilot, action):
         await pilot.click('#more');await pilot.pause()
         menu=app.screen.query_one('#more-actions',OptionList)
-        menu.highlighted=next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'delete');menu.focus()
+        menu.highlighted=next(i for i, (_, key) in enumerate(app.screen.actions) if key == action);menu.focus()
         await pilot.press('enter');await pilot.pause()
 
     async def test_banner_and_update_notice_fit_small_and_large_terminals(self):
@@ -472,14 +486,129 @@ class TUITests(unittest.TestCase):
             table=app.query_one(DataTable);self.assertEqual(table.row_count,2)
             table.move_cursor(row=1);await pilot.pause()
             await self.delete_menu(app,pilot)
-            self.assertIsInstance(app.screen,Confirm);self.assertIn('beta',app.screen.message)
-            self.assertIn('workspace',app.screen.message)
+            self.assertIsInstance(app.screen, DeleteSandbox)
+            self.assertEqual(app.screen.sandbox_name, 'beta')
             await pilot.click('#cancel');await pilot.pause();self.assertFalse(service.calls)
             await self.delete_menu(app,pilot);await pilot.click('#yes');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['delete','beta']])
             await pilot.click('#operation-back');await self.ready(app,pilot)
             self.assertEqual([r['name'] for r in app.records],['alpha'])
             await pilot.press('q')
+
+    async def test_backup_from_delete_stays_separate_and_recovers_from_error(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await self.delete_menu(app, pilot)
+            self.assertEqual(app.focused.id, 'cancel')
+            self.assertTrue(any('permanently deleted' in str(widget.render()) for widget in app.screen.query(Static)))
+            await pilot.press('tab', 'enter')
+            self.assertIsInstance(app.screen, ChatTransfer)
+            await pilot.press('escape')
+            self.assertIsInstance(app.screen, DeleteSandbox)
+            self.assertEqual(app.focused.id, 'cancel')
+            self.assertFalse(service.calls)
+            await pilot.click('#delete-export-chats')
+            field = app.screen.query_one('#chat-transfer-path', Input)
+            field.value = str(self.root / 'existing.zip')
+            await pilot.click('#chat-transfer-apply')
+            await self.ready(app, pilot)
+            self.assertIn('already exists', str(app.screen.query_one('#chat-transfer-error').render()))
+            self.assertEqual(app.focused.id, field.id)
+            field.value = str(self.root / 'saved.zip')
+            await pilot.press('enter')
+            await self.ready(app, pilot)
+            self.assertIsInstance(app.screen, DeleteSandbox)
+            self.assertEqual(app.focused.id, 'cancel')
+            self.assertIn('saved.zip', str(app.screen.query_one('#chat-backup-status').render()))
+            self.assertEqual([call[0] for call in service.calls], ['export-chats', 'export-chats'])
+            await pilot.press('enter')
+            self.assertEqual(len(service.calls), 2)
+
+    async def test_import_targets_selected_stopped_sandbox_and_shows_resume_path(self):
+        self.records[1]['dev'] = 'exited'
+        backup = self.root / 'saved.zip'
+        backup.touch()
+        (self.root / 'do-not-show.txt').touch()
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            app.query_one(DataTable).move_cursor(row=1)
+            await pilot.pause()
+            with patch('pi_sandbox_factory.chat_history.backup_folder', return_value=self.root):
+                await self.choose_more_action(app, pilot, 'import-chats')
+                self.assertEqual(app.screen.sandbox_name, 'beta')
+                await pilot.click('#chat-transfer-browse')
+                await pilot.pause()
+            await self.ready(app, pilot)
+            files = app.screen.query_one(DirectoryNavigation)
+            locations = [files.get_option_at_index(index).location for index in range(files.option_count)]
+            self.assertNotIn(self.root / 'do-not-show.txt', locations)
+            files.highlighted = locations.index(backup)
+            await pilot.pause()
+            self.assertFalse(app.screen.query_one('#folder-use', Button).disabled)
+            await pilot.click('#folder-use')
+            await pilot.pause()
+            self.assertEqual(app.screen.query_one('#chat-transfer-path', Input).value, str(backup))
+            await pilot.click('#chat-transfer-apply')
+            await self.ready(app, pilot)
+            result = str(app.screen.query_one('#chat-transfer-result').render())
+            self.assertIn('Imported 2 chats', result)
+            self.assertIn('Skipped 1 chat', result)
+            self.assertIn('Resume session', result)
+            self.assertEqual(app.focused.id, 'chat-transfer-cancel')
+            self.assertEqual(service.calls, [['import-chats', 'beta', str(backup)]])
+
+    async def test_workspace_browser_navigates_and_returns_the_selected_folder(self):
+        project = self.root / 'my-project'
+        project.mkdir()
+        (self.root / '.hidden-project').mkdir()
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await app.push_screen(NewSandbox())
+            await pilot.pause()
+            app.screen.query_one('#workspace', Input).value = str(self.root)
+            await pilot.click('#browse')
+            await self.ready(app, pilot)
+            listing = app.screen.query_one(DirectoryNavigation)
+
+            def filenames():
+                return [listing.get_option_at_index(index).location.name for index in range(listing.option_count)]
+
+            self.assertNotIn('.hidden-project', filenames())
+            await pilot.click('#folder-hidden')
+            self.assertIn('.hidden-project', filenames())
+            await pilot.press('ctrl+l')
+            field = app.screen.query_one('#folder-path', Input)
+            self.assertEqual(app.focused.id, field.id)
+            field.value = project.name
+            await pilot.press('enter')
+            await self.ready(app, pilot)
+            self.assertEqual(listing.location, project)
+            await pilot.click('#folder-use')
+            await pilot.pause()
+            self.assertEqual(app.screen.query_one('#workspace', Input).value, str(project))
+            self.assertEqual(app.screen.query_one('#name', Input).value, 'my-project')
+
+    async def test_export_browser_chooses_a_new_filename_without_saving_it(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await self.choose_more_action(app, pilot, 'export-chats')
+            app.screen.query_one('#chat-transfer-path', Input).value = str(self.root / 'backup.zip')
+            await pilot.click('#chat-transfer-browse')
+            await self.ready(app, pilot)
+            filename = app.screen.query_one('#folder-filename', Input)
+            self.assertEqual(filename.value, 'backup.zip')
+            filename.value = 'chats.zip'
+            await pilot.click('#folder-use')
+            await pilot.pause()
+            self.assertEqual(app.screen.query_one('#chat-transfer-path', Input).value, str(self.root / 'chats.zip'))
+            self.assertFalse(service.calls)
 
     async def test_create_from_is_visible_and_copies_settings_without_credentials(self):
         from pi_sandbox_factory.sandbox_tui import CreateFromSandbox, WebAccessForm

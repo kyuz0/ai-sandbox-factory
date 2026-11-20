@@ -979,6 +979,12 @@ using the layout rules in `AGENTS.md`. Re-render corrected views; passing tests 
 is insufficient. Use `--size 80x24 --monochrome` for the monochrome check, or
 `--only STATE` to repeat a corrected view. Also exercise keyboard focus and scrolling.
 
+`PYTHONPATH=tests .venv/bin/python -m unittest test_chat_history test_tui`
+checks chat backup and restore, including branching history, duplicate detection,
+failed transfers, file selection, and the separate delete confirmation. The
+`chat-history-*` visual states cover Actions, both file pickers and the transfer
+results.
+
 ## Skill library
 
 `PYTHONPATH=tests .venv/bin/python -m unittest test_skill_library test_skills_ui`

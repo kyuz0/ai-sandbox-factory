@@ -36,6 +36,8 @@ from pi_sandbox_factory.communications_ui import SlackCredentials
 from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields
 from pi_sandbox_factory import prompt_library
 from pi_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
+from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox, backup_message
+from textual_fspicker.parts import DirectoryNavigation
 
 class ReviewService(FakeService):
 
@@ -105,6 +107,51 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if not args.only or any(name.startswith('chat-history-') for name in args.only):
+                    sample = '/home/sam/.local/share/pi-sandbox-factory/chat-backups/demo-chats-20261120-164101.zip'
+                    (workspace / 'demo-chats.zip').touch()
+                    (workspace / 'old-chat.jsonl').touch()
+                    await shot('chat-history-actions', MoreActions(record))
+                    await shot('chat-history-delete', DeleteSandbox('demo', has_config=True))
+                    await app.push_screen(DeleteSandbox('demo', has_config=True))
+                    await pilot.pause()
+                    app.screen.show_backup(backup_message(sample, 3))
+                    await shot('chat-history-delete-backed-up')
+                    await app.pop_screen()
+                    for importing in (False, True):
+                        action = 'import' if importing else 'export'
+                        await app.push_screen(ChatTransfer('demo', importing=importing))
+                        await pilot.pause()
+                        if not importing:
+                            app.screen.query_one('#chat-transfer-path', Input).value = sample
+                        await shot('chat-history-' + action)
+                        if importing:
+                            app.screen.query_one('#chat-transfer-path', Input).value = str(workspace / 'demo-chats.zip')
+                        app.screen.failed('The chat backup is incomplete or damaged.' if importing
+                                          else 'A file already exists there. Choose another name.')
+                        await shot('chat-history-' + action + '-error')
+                        app.screen.query_one('#chat-transfer-error').update('')
+                        app.screen.query_one('#chat-transfer-result').display = True
+                        app.screen.completed(2, 1) if importing else app.screen.completed(sample, 3)
+                        await shot('chat-history-' + action + '-complete')
+                        if importing:
+                            app.screen.completed(0, 3)
+                            await shot('chat-history-import-duplicates')
+                        await app.pop_screen()
+                    await app.push_screen(FolderPicker(str(workspace), title='Choose chat backup or Pi chat file', mode='file',
+                                                       file_extensions={'.zip', '.jsonl'}, places={'Chat backups': workspace}))
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    await shot('chat-history-import-picker')
+                    listing = app.screen.query_one(DirectoryNavigation)
+                    listing.highlighted = next(index for index in range(listing.option_count)
+                                               if listing.get_option_at_index(index).location.name == 'demo-chats.zip')
+                    await shot('chat-history-import-file-selected')
+                    await app.pop_screen()
+                    await shot('chat-history-export-picker', FolderPicker(str(workspace), title='Choose where to save the backup',
+                                                                         mode='save', file_extensions={'.zip'}, filename='demo-chats.zip'))
+                    if args.only and all(name.startswith('chat-history-') for name in args.only):
+                        return
                 if prompts_only:
                     await shot('prompt-sandbox-no-library', SandboxPromptScreen('demo', state, True))
                     await app.push_screen(PackagesScreen(initial='system-prompts'))

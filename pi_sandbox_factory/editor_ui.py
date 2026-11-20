@@ -8,6 +8,7 @@ from textual.widgets.option_list import Option
 from textual.widgets import Button, Collapsible, Footer, Header, Input, Label, OptionList, Select, Static
 
 from . import editor_settings
+from .file_browser import PathField
 from .settings_catalog import CATEGORIES
 from .tui_widgets import Checkbox, Feedback
 
@@ -56,10 +57,10 @@ class EditorFields(Vertical):
                 yield Static('Access from another computer requires a password and HTTPS for FrostPi to work.', classes='section-intro')
                 with Vertical(classes='setting'):
                     yield Label('HTTPS certificate file on this host')
-                    yield Input(self.value.get('certificate', ''), id='editor-certificate')
+                    yield PathField('editor-certificate', self.value.get('certificate', ''), title='Choose HTTPS certificate', mode='file')
                 with Vertical(classes='setting'):
                     yield Label('HTTPS private key file on this host')
-                    yield Input(self.value.get('private_key', ''), id='editor-private-key')
+                    yield PathField('editor-private-key', self.value.get('private_key', ''), title='Choose HTTPS private key', mode='file')
                     yield Static('Use a certificate trusted by the connecting browser for the listen address.', classes='setting-help')
 
     def on_mount(self):
