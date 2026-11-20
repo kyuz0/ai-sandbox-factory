@@ -218,7 +218,7 @@ class TUILayoutTests(unittest.TestCase):
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
         expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
-                          'Agent tools', 'SSH & Git', 'Advisors', 'Communications',
+                          'Agent tools', 'System prompt', 'SSH & Git', 'Advisors', 'Communications',
                           'Skills', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -230,11 +230,16 @@ class TUILayoutTests(unittest.TestCase):
             titles = {section.id: section.title for section in category_widgets}
             creation = [section.title.split(' · ', 1)[0] for section in category_widgets]
             models = app.screen.query_one('#hosted-section', Collapsible)
-            self.assertFalse(models.collapsed)
+            self.assertTrue(models.collapsed)
             self.assertIs(app.focused, models.query_one('CollapsibleTitle'))
-            models.collapsed = True
+            form = app.screen.query_one('.form')
+            primary = app.screen.query_one('#apply', Button)
+            primary_region = primary.region
+            category_widgets[-1].scroll_visible(animate=False)
             await pilot.pause()
-            self.assertLessEqual(category_widgets[-1].region.bottom, app.screen.query_one('.form').region.bottom)
+            self.assertLessEqual(category_widgets[-1].region.bottom, form.region.bottom)
+            self.assertEqual(primary.region, primary_region)
+            self.assertLess(primary.region.bottom, app.screen.query_one('Footer').region.y)
             await app.pop_screen()
             await pilot.click('#settings')
             menu = app.screen.query_one('#settings-actions', OptionList)
@@ -287,7 +292,7 @@ class TUILayoutTests(unittest.TestCase):
                     await pilot.pause()
                     section=form.query_one('#hosted-section',Collapsible)
                     local=form.query_one('#local-provider',Collapsible)
-                    self.assertEqual(section.collapsed, context != 'create')
+                    self.assertTrue(section.collapsed)
                     self.assertTrue(local.collapsed)
                     self.assertEqual(local.title, 'Local models · On')
                     control=form.query_one('#local-models',Checkbox)
