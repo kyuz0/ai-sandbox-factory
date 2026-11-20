@@ -292,8 +292,20 @@ class CreationInterruptTests(LifecycleTestCase):
 class LocalModelSetupTests(unittest.TestCase):
     def test_ports_are_bounded_and_deduplicated(self):
         self.assertEqual(sandbox.local_model_ports('8000-8002,8001'), [8000,8001,8002])
-        for value in ('0','65536','9000-8000','1-1000','8000,x'):
+        self.assertEqual(sandbox.local_model_ports('1-3200,2800-4096,65535'), [*range(1, 4097), 65535])
+        for value in ('0','65536','9000-8000','1-65536','8000,x'):
             with self.assertRaises(ValueError): sandbox.local_model_ports(value)
+
+    def test_sandbox_name_fits_all_generated_resource_names(self):
+        from pi_sandbox_factory import inference, sandbox_advisors, sandbox_ssh
+        from pi_sandbox_factory.sandbox_options import SANDBOX_NAME, SANDBOX_NAME_LIMIT
+        name = 'a' * SANDBOX_NAME_LIMIT
+        config = {'name': name}
+        resources = (*sandbox.names(config), *inference.names(config),
+                     *sandbox_advisors.names(config), *sandbox_ssh.names(config))
+        self.assertTrue(SANDBOX_NAME.fullmatch(name))
+        self.assertFalse(SANDBOX_NAME.fullmatch(name + 'a'))
+        self.assertEqual(max(len(name) for name in resources), 255)
 
     def test_gateway_requires_exact_allowed_ports(self):
         c={'engine':'podman','network':'allowlist'}

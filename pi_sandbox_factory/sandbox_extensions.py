@@ -42,6 +42,23 @@ def cache_root():
     return Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'pi-sandbox-factory/extensions'
 
 
+@contextmanager
+def temporary_build_context(prefix, cache=None):
+    root = Path(cache) if cache is not None else cache_root()
+    # Unpacking large sources in the cache also works when /tmp is a small tmpfs.
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.TemporaryDirectory(prefix=prefix, dir=root) as temp:
+            yield Path(temp)
+    except OSError as error:
+        if error.errno not in (errno.ENOSPC, errno.EDQUOT):
+            raise
+        raise ValueError(
+            f'Not enough storage to prepare the build in {root}. '
+            'Free disk space or file entries there, or set XDG_CACHE_HOME to a directory on another filesystem.'
+        ) from None
+
+
 def archive(source, cache=None):
     """Git uses host authentication; only git-archive output reaches the builder."""
     root = Path(cache) if cache is not None else cache_root()
@@ -102,14 +119,17 @@ def unpack(blob, destination):
 def build_contexts(common_path, *, names=None, cache=None, fetch=archive):
     sources = read_lock(common_path)
     selected = list(sources) if names is None else list(names)
-    with tempfile.TemporaryDirectory(prefix='pi-sandbox-extensions-') as temp:
+    if not selected:
+        yield []
+        return
+    with temporary_build_context('pi-sandbox-extensions-', cache) as temp:
         args = []
         for name in selected:
             if name not in sources:
                 raise ValueError('Missing extension source: ' + name)
             source = sources[name]
             print(f'Loading {name} at {source["commit"][:12]}', flush=True)
-            target = Path(temp) / name
+            target = temp / name
             unpack(fetch(source, cache), target)
             (target / 'source-commit').write_text(source['commit'] + '\n')
             args += ['--build-context', f'{name}={target}']

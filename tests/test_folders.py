@@ -72,6 +72,10 @@ class FolderTests(unittest.TestCase):
         rows[0]['read_only'] = False
         self.assertTrue(folders.mounts(dict(self.config, extra_folders=rows))[1].endswith(',rw'))
         self.assertEqual(folders.suggested_name(self.extra, rows), 'reference-2')
+        name = 'a' * 255
+        self.assertEqual(self.validate([dict(source=str(self.extra), name=name)])[0]['name'], name)
+        with self.assertRaisesRegex(ValueError, 'filename limit'):
+            self.validate([dict(source=str(self.extra), name=name + 'a')])
 
     def test_sources_and_overlaps(self):
         child = self.extra / 'child'; child.mkdir()

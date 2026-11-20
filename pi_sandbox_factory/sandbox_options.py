@@ -7,6 +7,14 @@ from . import web_access, network_groups, communications, git_settings
 
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
+RESOURCE_PREFIX = 'pi-sandbox-factory-'
+# The longest generated name is a Podman volume stored as a Linux directory.
+SANDBOX_NAME_LIMIT = 255 - len(RESOURCE_PREFIX + '-inference-socket')
+SANDBOX_NAME = re.compile(rf'[a-z0-9][a-z0-9-]{{0,{SANDBOX_NAME_LIMIT - 1}}}')
+SANDBOX_NAME_ERROR = (
+    f'Use up to {SANDBOX_NAME_LIMIT} lowercase letters, digits or hyphens for the sandbox name. '
+    'Start with a letter or digit.'
+)
 # Label, inline help, and the full explanation shown by Explain.
 APPROVAL_MODES = {
     'automatic': ('Auto (non-interactive)',
@@ -83,7 +91,7 @@ def options(value=None):
         raise ValueError('Choose keyword search or an embedding server.')
     if result['knowledge_embedding'] == 'endpoint':
         provider = result['knowledge_embedding_provider']
-        if not isinstance(provider, str) or (provider not in ('', '@custom') and not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', provider)):
+        if not isinstance(provider, str) or (provider not in ('', '@custom') and not re.fullmatch(r'[a-z][a-z0-9-]{0,254}', provider)):
             raise ValueError('Choose a valid embedding provider.')
         result['knowledge_embedding_url'] = embedding_url(result['knowledge_embedding_url'])
         result['knowledge_embedding_model'] = embedding_model(result['knowledge_embedding_model'])

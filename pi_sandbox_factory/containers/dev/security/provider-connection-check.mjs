@@ -69,7 +69,7 @@ export function registerProviderCheck(pi, approve) {
     async execute(id, { provider, justification }, signal, _onUpdate, ctx) {
       const checks = configuredChecks();
       const check = Object.hasOwn(checks, provider) ? checks[provider] : undefined;
-      if (!check || !/^[a-z][a-z0-9-]{0,63}$/.test(provider) || !/^[a-f0-9]{64}$/.test(check.id)) {
+      if (!check || !/^[a-z][a-z0-9-]{0,254}$/.test(provider) || !/^[a-f0-9]{64}$/.test(check.id)) {
         return result('No connection check is available for this provider.', true);
       }
       if (!justification.trim()) return result('Explain why this provider connection needs to be checked.', true);

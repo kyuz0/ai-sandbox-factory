@@ -87,6 +87,14 @@ class SSHTests(unittest.TestCase):
             config = ssh.parse_hosts(lines, known_hosts)
         self.assertEqual(config['hosts'], [{**HOST, 'alias': alias} for alias in aliases])
 
+    def test_alias_length_matches_linux_socket_path(self):
+        alias = 'a' * ssh.MAX_ALIAS_LENGTH
+        host = {**HOST, 'alias': alias}
+        self.assertEqual(ssh.validate({'hosts': [host]})['hosts'], [host])
+        self.assertEqual(len(f'/run/ssh-access/{alias}.sock'), 107)
+        with self.assertRaisesRegex(ValueError, 'relay socket path'):
+            ssh.validate({'hosts': [{**host, 'alias': alias + 'a'}]})
+
     def test_rejects_shell_control_in_all_target_fields(self):
         for field,value in [('alias','a/../x'),('user','root;true'),('port',True),('host_keys',['@cert-authority * ssh-ed25519 AAAA'])]:
             with self.assertRaises(ValueError):ssh.validate({'hosts':[{**HOST,field:value}]})

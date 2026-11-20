@@ -1,3 +1,4 @@
+import errno
 import gzip
 import hashlib
 import io
@@ -56,15 +57,27 @@ class ExtensionTests(unittest.TestCase):
         def fetch(source, cache):
             calls.append(source)
             return bundle()
-        with extensions.build_contexts(self.root, names=['pi-second'], fetch=fetch) as args:
+        cache_root = self.root / 'cache'
+        with patch.object(extensions, 'cache_root', return_value=cache_root), \
+                extensions.build_contexts(self.root, names=['pi-second'], fetch=fetch) as args:
             self.assertEqual(len(calls), 1)
             self.assertEqual(args[0], '--build-context')
             self.assertTrue(args[1].startswith('pi-second='))
             context = Path(args[1].split('=', 1)[1])
+            self.assertTrue(context.is_relative_to(cache_root))
             self.assertEqual((context / 'source-commit').read_text().strip(), self.source['commit'])
             self.assertEqual((context / 'package.json').read_text(), '{}')
             self.assertFalse((context / '.git').exists())
         self.assertFalse(context.exists())
+
+    def test_full_build_cache_reports_where_to_free_space_and_cleans_partial_context(self):
+        self.lock({'pi-extension': self.source})
+        cache_root = self.root / 'cache'
+        with patch.object(extensions, 'unpack', side_effect=OSError(errno.ENOSPC, 'No space left on device')):
+            with self.assertRaisesRegex(ValueError, 'Not enough storage.*Free disk space'):
+                with extensions.build_contexts(self.root, cache=cache_root, fetch=lambda *_: bundle()):
+                    self.fail('An incomplete build context was returned')
+        self.assertEqual(list(cache_root.iterdir()), [])
 
     def test_missing_dependency_fails_before_build(self):
         self.lock({})

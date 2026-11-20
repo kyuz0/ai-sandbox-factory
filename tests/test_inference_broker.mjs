@@ -44,6 +44,12 @@ test('credential storage replaces atomically, reports names only, and removes co
   updateCredentials(file,{id:'sample',origin:'https://provider.example',auth:'sigv4',credentials:{accessKeyId:'fixture-id',secretAccessKey:'fixture-secret'}});
   assert.equal(readCredentials(file).sample.key,undefined);
   updateCredentials(file,{id:'sample',remove:true});assert.deepEqual(readCredentials(file),{});
+  const id = 'a'.repeat(255);
+  const label = 'Long saved key name '.repeat(5).trim();
+  const assignment = {ref:'a'.repeat(32), label};
+  updateCredentials(file,{id,origin:'https://provider.example',credentials:{key:secret},assignment});
+  assert.deepEqual(readCredentials(file)[id].assignment, assignment);
+  assert.throws(() => updateCredentials(file,{id:id+'a',credentials:{key:secret}}), /Invalid connection name/);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -73,6 +79,7 @@ test('candidate verification uses its fixed route without following a redirect',
 
 test('installed connection check returns only status and stays bound to the saved route', async t => {
   const id = 'a'.repeat(64);
+  const provider = 'p'.repeat(255);
   const seen = [];
   let upstreamStatus = 200;
   const upstream = http.createServer((req, res) => {
@@ -83,13 +90,13 @@ test('installed connection check returns only status and stays bound to the save
   const origin = 'http://127.0.0.1:' + upstream.address().port;
   const route = {origin, basePath: '/v1', auth: {type: 'bearer'}, operations: [operation],
     credentialCheck: {path:'/v1/key'}, credentialCheckId:id};
-  const routes = compileRoutes({sample:route, unsupported:{origin,auth:{type:'bearer'},operations:[operation]}}, {allowHttpFixture:true});
+  const routes = compileRoutes({[provider]:route, unsupported:{origin,auth:{type:'bearer'},operations:[operation]}}, {allowHttpFixture:true});
   let stored = {key:secret, origin, scope:{basePath:'/v1',auth:'bearer',header:null}};
   const broker = createBroker(routes, () => stored);
   await listen(broker);
   t.after(async () => { await close(broker); await close(upstream); });
   const base = 'http://127.0.0.1:' + broker.address().port;
-  const url = base + '/check/sample/' + id;
+  const url = base + '/check/' + provider + '/' + id;
   for (const [code, status] of [[200,'accepted'], [401,'rejected'], [403,'rejected'], [302,'unavailable'], [500,'unavailable']]) {
     upstreamStatus = code;
     const response = await fetch(url, {headers:{authorization:'Bearer caller', cookie:'caller-cookie'}});
@@ -98,7 +105,7 @@ test('installed connection check returns only status and stays bound to the save
     assert.deepEqual(await response.json(), {status});
   }
   assert.deepEqual(seen, Array.from({length:5}, () => ['GET','/v1/key','Bearer '+secret,undefined]));
-  for (const [target, options] of [[url + '?host=other', {}], [base+'/check/sample/'+'b'.repeat(64), {}],
+  for (const [target, options] of [[url + '?host=other', {}], [base+'/check/'+provider+'/'+'b'.repeat(64), {}],
     [base+'/check/unsupported/'+id, {}], [url, {method:'POST', body:'{}'}]]) {
     const response = await fetch(target, options);
     assert(response.status >= 400);

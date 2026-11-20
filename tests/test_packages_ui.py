@@ -114,7 +114,7 @@ class PackageUITests(unittest.TestCase):
                 form.query_one('#package-add', Button).active_effect_duration = 0
                 await pilot.click('#package-add'); await pilot.pause()
                 self.assertIs(app.screen, form)
-                self.assertIn('local name', str(form.query_one('#package-error', Static).render()))
+                self.assertIn('package name', str(form.query_one('#package-error', Static).render()))
                 self.assertEqual(service.calls, [])
                 form.query_one('#package-name', Input).value = 'reporting'
                 form.query_one('#package-source', Input).value = str(self.root)

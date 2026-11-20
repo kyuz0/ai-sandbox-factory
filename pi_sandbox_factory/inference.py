@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 from urllib.parse import urlsplit
+from .sandbox_options import RESOURCE_PREFIX
 
 PORT = 19431
 SENTINEL = 'factory-inference'
@@ -25,7 +26,7 @@ def local_route(port):
 
 
 def names(config):
-    name = 'pi-sandbox-factory-' + config['name'] + '-inference'
+    name = RESOURCE_PREFIX + config['name'] + '-inference'
     return name, name + '-socket', name + '-keys'
 
 

@@ -11,9 +11,9 @@ def identity(value):
     name, email = value['name'], value['email']
     if isinstance(name, str) and not name.strip(' ,;:\"\'\\@\t'):
         raise ValueError('Enter a Git commit author name')
-    if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(ord(c) < 32 or c in '<>\x7f' for c in name):
+    if not isinstance(name, str) or not name.strip() or any(ord(c) < 32 or c in '<>\x7f' for c in name):
         raise ValueError('Enter a Git commit name without line breaks or angle brackets')
-    if (not isinstance(email, str) or len(email) > 254 or not re.fullmatch(r'[^\s<>@]+@[^\s<>@]+', email)
+    if (not isinstance(email, str) or not re.fullmatch(r'[^\s<>@]+@[^\s<>@]+', email)
             or any(ord(c) < 32 or ord(c) == 127 for c in email)):
         raise ValueError('Enter a Git commit email such as developer@example.com')
     return {'name': name.strip(), 'email': email}

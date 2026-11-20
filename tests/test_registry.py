@@ -327,6 +327,19 @@ class RegistryTests(unittest.TestCase):
         rows = model_providers.prepare({"local": {}}, self.root / "state")
         self.assertNotEqual(first, sandbox.image_names(dict(config, model_providers=rows))[0])
 
+    def test_long_package_names_fit_image_tags_with_distinct_build_stages(self):
+        name = 'profile-' + 'a' * 247
+        (self.source / 'profile.json').write_text(json.dumps({'name': name}))
+        registry.add('profile', name, str(self.source))
+        profile = sandbox.load_profile(name)
+        config = {'profile': profile, 'uid': 1000, 'gid': 1000}
+        dev, _ = sandbox.image_names(config)
+        images = {dev, sandbox.stage_image(dev, '-tools'), sandbox.stage_image(dev, '-local-knowledge')}
+        self.assertEqual(profile['name'], name)
+        self.assertEqual(len(images), 3)
+        for image in images:
+            self.assertLessEqual(len(image.rsplit(':', 1)[1]), 128)
+
     def test_provider_update_is_explicit_and_removal_keeps_saved_settings_editable(self):
         self.provider()
         values = {"sample": {"endpoint": "https://models.example.com/v1"}}

@@ -7,9 +7,15 @@ import re
 import subprocess
 import sys
 import time
+from .sandbox_options import RESOURCE_PREFIX
 
 
 DEFAULT_UNLOCK_DURATION = '8h'
+# The Linux companion's sun_path has 108 bytes, including the terminating NUL.
+MAX_ALIAS_LENGTH = 107 - len('/run/ssh-access/.sock')
+ALIAS = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_.-]*')
+# OpenSSH's sshbuf_load_fd rejects files beyond SSHBUF_SIZE_MAX.
+MAX_KEY_BYTES = 128 * 1024 * 1024
 
 
 def unlock_seconds(duration):
@@ -51,8 +57,10 @@ def validate(value):
         if not isinstance(host, dict) or set(host) != {'alias','hostname','port','user','host_keys'}:
             raise ValueError('Each SSH destination needs alias, hostname, port, user and trusted host_keys')
         alias = host['alias']
-        if not isinstance(alias, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}', alias) or alias in seen:
-            raise ValueError('SSH aliases must be unique, 1–64 letters, digits, dots, hyphens or underscores')
+        if not isinstance(alias, str) or not ALIAS.fullmatch(alias) or alias in seen:
+            raise ValueError('SSH aliases must be unique and use letters, digits, dots, hyphens or underscores')
+        if len(alias) > MAX_ALIAS_LENGTH:
+            raise ValueError(f'SSH aliases must fit the relay socket path ({MAX_ALIAS_LENGTH} characters)')
         seen.add(alias)
         name = host['hostname']
         if not isinstance(name, str) or not name or len(name) > 253: raise ValueError('Invalid SSH hostname')
@@ -60,7 +68,7 @@ def validate(value):
         except ValueError:
             if any(not re.fullmatch(r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?', part) for part in name.split('.')):
                 raise ValueError('Use an exact IP address or hostname for SSH')
-        if not isinstance(host['user'], str) or not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}', host['user']):
+        if not isinstance(host['user'], str) or not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]*', host['user']):
             raise ValueError('Invalid SSH username')
         if type(host['port']) is not int or not 1 <= host['port'] <= 65535: raise ValueError('Invalid SSH port')
         keys = host['host_keys']
@@ -106,7 +114,7 @@ def parse_hosts(text, known_hosts):
 def import_aliases(aliases, ssh_config=None):
     hosts = []
     for alias in aliases.split():
-        if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}', alias): raise ValueError('Invalid SSH alias')
+        if not ALIAS.fullmatch(alias) or len(alias) > MAX_ALIAS_LENGTH: raise ValueError('Invalid SSH alias')
         args = ['ssh'] + (['-F',str(Path(ssh_config).expanduser())] if ssh_config else []) + ['-G',alias]
         result = subprocess.run(args, capture_output=True, text=True, check=True)
         config = {}
@@ -128,7 +136,7 @@ def enabled(config): return bool(config.get('ssh',{}).get('hosts'))
 
 
 def names(config):
-    prefix = 'pi-sandbox-factory-' + config['name'] + '-ssh'
+    prefix = RESOURCE_PREFIX + config['name'] + '-ssh'
     return prefix, prefix+'-socket', prefix+'-keys'
 
 
@@ -230,7 +238,8 @@ def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
     unlock_seconds(duration)
     if not enabled(config):raise ValueError('Configure SSH destinations first')
     source=Path(path).expanduser().resolve(strict=True)
-    if not source.is_file() or not 0 < source.stat().st_size <= 65536:raise ValueError('Select an SSH private key file under 64 KiB')
+    if not source.is_file() or not 0 < source.stat().st_size <= MAX_KEY_BYTES:
+        raise ValueError('Select a nonempty SSH private key file up to 128 MiB.')
     shared = [config.get(field) for field in ('workspace', 'pi_config')]
     shared += [row['source'] for row in config.get('extra_folders', [])]
     for path in shared:
@@ -241,9 +250,29 @@ def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
     from . import sandbox as core
     up(config,state)
     # No key bytes in argv, environment, logs, project state, or the development container.
-    script="import os,sys;from pathlib import Path;os.umask(0o077);p=Path('/private/id_key.new');p.unlink(missing_ok=True);f=p.open('xb');f.write(sys.stdin.buffer.read(65537));f.close();p.replace('/private/id_key')"
+    script = """import os
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
+
+os.umask(0o077)
+limit = int(sys.argv[1])
+with TemporaryDirectory(prefix='.import-', dir='/private') as temp:
+    key = Path(temp) / 'id_key'
+    size = 0
+    with key.open('xb') as target:
+        while chunk := sys.stdin.buffer.read(65536):
+            size += len(chunk)
+            if size > limit:
+                sys.exit('The SSH key file exceeds the OpenSSH file size limit.')
+            target.write(chunk)
+    if not size:
+        sys.exit('The SSH key file is empty.')
+    key.replace('/private/id_key')
+"""
     with source.open('rb') as stream:
-        core.run([config['engine'],'exec','-i',names(config)[0],'python3','-c',script],stdin=stream)
+        core.run([config['engine'], 'exec', '-i', names(config)[0], 'python3', '-c', script,
+                  str(MAX_KEY_BYTES)], stdin=stream)
     print('Key imported into the private SSH companion. Unlocking for the declared destinations.',flush=True)
     unlock(config, state, duration)
 

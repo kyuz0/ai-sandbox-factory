@@ -35,8 +35,9 @@ class SavedProviderKeys(unittest.TestCase):
         self.binding = hosted_models.credential_scope({'provider': 'openrouter'})
 
     def test_scope_matches_only_selected_provider_and_full_endpoint(self):
-        ref = keys.save(self.binding, 'Work', 'synthetic-api-key')
-        self.assertEqual(keys.entries(self.binding)[ref]['label'], 'Work')
+        label = 'Work key for infrastructure, documentation, and development sandboxes'
+        ref = keys.save(self.binding, label, 'synthetic-api-key')
+        self.assertEqual(keys.entries(self.binding)[ref]['label'], label)
         self.assertNotIn('synthetic-api-key', self.index.read_text())
         self.assertEqual(self.index.stat().st_mode & 0o777, 0o600)
         for field, value in (('provider', 'another'), ('endpoint', 'https://openrouter.ai/different'),

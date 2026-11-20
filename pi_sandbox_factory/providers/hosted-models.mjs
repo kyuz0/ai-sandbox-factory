@@ -35,7 +35,7 @@ function safeModel(model) {
 async function main(r) {
   if (r.action === 'status') return {providers: ids.map(status)};
   const plugin = r.plugin === true && ['catalogue', 'select'].includes(r.action) &&
-    typeof r.provider === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(r.provider);
+    typeof r.provider === 'string' && /^[a-z][a-z0-9-]{0,254}$/.test(r.provider);
   if (!plugin && !ids.includes(r.provider)) throw Error('Unsupported provider.');
   const id = r.provider;
   if (r.action === 'configure') {

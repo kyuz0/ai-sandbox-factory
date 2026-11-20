@@ -159,6 +159,15 @@ class SkillLibraryTests(unittest.TestCase):
             self.skill(f'skill-{index}')
         self.assertEqual(len(self.discover()), 201)
 
+    def test_large_skill_body_does_not_block_import(self):
+        folder = self.source / 'large'
+        folder.mkdir()
+        (folder / 'SKILL.md').write_text('---\nname: large\ndescription: Use this skill.\n---\n' + 'instructions\n' * 24000)
+        rows = self.discover()
+        self.assertEqual(rows[0]['name'], 'large')
+        skill_library.install(rows)
+        self.assertEqual(len(skill_library.entries()), 1)
+
     def test_github_folder_file_and_slash_branch_links(self):
         import subprocess
         refs = 'a\trefs/heads/main\nb\trefs/heads/release/audit\n'

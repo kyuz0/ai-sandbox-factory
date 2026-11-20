@@ -38,7 +38,8 @@ class GitIdentityTests(unittest.TestCase):
         self.assertIsNone(saved[1]['options']['git_identity'])
 
     def test_rendered_git_config_quotes_name_and_email_as_data(self):
-        value = {'name': 'Déveloper "Example"; # \\ team', 'email': 'dev@example.test'}
+        value = {'name': 'Déveloper "Example"; # \\ team ' + 'a' * 240,
+                 'email': 'dev-' + 'a' * 255 + '@example.test'}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'identity.gitconfig'
             path.write_text(git_settings.config(value))

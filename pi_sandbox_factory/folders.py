@@ -5,6 +5,9 @@ from pathlib import Path
 import re
 from . import host_platform
 
+# A mount name is one pathname component under /mnt in the Linux container.
+MAX_MOUNT_NAME_BYTES = 255
+
 
 def overlaps(first, second):
     first, second = map(host_platform.comparison_path, (first, second))
@@ -30,11 +33,12 @@ def container_cwd(config):
 
 
 def suggested_name(source, rows):
-    base = re.sub(r'[^a-z0-9._-]+', '-', Path(source).name.lower()).strip('.-')[:28] or 'folder'
+    base = re.sub(r'[^a-z0-9._-]+', '-', Path(source).name.lower()).strip('._-') or 'folder'
     used = {r['name'] for r in rows}
-    name, index = base, 2
+    name, index = base[:MAX_MOUNT_NAME_BYTES], 2
     while name in used:
-        name = f'{base}-{index}'
+        suffix = f'-{index}'
+        name = base[:MAX_MOUNT_NAME_BYTES - len(suffix)] + suffix
         index += 1
     return name
 
@@ -76,8 +80,10 @@ def validate(rows, workspace, state_root, *, saved=False, private_paths=()):
         if overlaps(source, Path(workspace).resolve()) or any(overlaps(source, Path(r['source'])) for r in result):
             raise ValueError('Extra folders must not overlap the workspace or another extra folder.')
         name = row.get('name') or suggested_name(source, result)
-        if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,31}', name):
-            raise ValueError('Folder name must use 1–32 lowercase letters, digits, dots, underscores or hyphens.')
+        if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9][a-z0-9._-]*', name):
+            raise ValueError('Folder name must begin with a lowercase letter or digit and may include dots, underscores or hyphens.')
+        if len(name) > MAX_MOUNT_NAME_BYTES:
+            raise ValueError(f'Folder name exceeds the Linux filename limit of {MAX_MOUNT_NAME_BYTES} characters.')
         if name in {r['name'] for r in result}:
             raise ValueError(f'Folder name already used: {name}')
         read_only = row.get('read_only', True)

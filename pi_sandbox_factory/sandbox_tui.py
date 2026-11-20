@@ -45,7 +45,8 @@ from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from . import settings_effects
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
-                              endpoint_rule, memory_limit, write_json)
+                              endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
+                              SANDBOX_NAME_ERROR, SANDBOX_NAME_LIMIT)
 
 try:
     from textual import events, on, work
@@ -2066,7 +2067,7 @@ class InstallPackage(Screen):
         invalid_field = 'package-name'
         try:
             if not registry.NAME.fullmatch(name) or name in ('base','local'):
-                raise ValueError('Use a local name of 1–40 lowercase letters, digits or hyphens, starting with a letter. The names base and local are reserved.')
+                raise ValueError(registry.NAME_ERROR + ' The names base and local are reserved.')
             if name in registry.choices(self.kind):
                 raise ValueError('That name is already installed. Choose another name or update the existing '+self.kind+'.')
             invalid_field = 'package-source'
@@ -2490,7 +2491,7 @@ class NewSandbox(Screen):
     def suggest_name(self, event):
         current = self.query_one('#name', Input)
         if not current.value or current.value == getattr(self, 'suggested', ''):
-            self.suggested = re.sub('[^a-z0-9-]+', '-', Path(event.value).name.lower()).strip('-')[:40]
+            self.suggested = re.sub('[^a-z0-9-]+', '-', Path(event.value).name.lower()).strip('-')[:SANDBOX_NAME_LIMIT]
             current.value = self.suggested
 
     @on(Button.Pressed)
@@ -2509,8 +2510,8 @@ class NewSandbox(Screen):
                 metadata = (self.copied_draft['reused_profile'] if self.copied_draft and profile == self.copied_draft['reused_profile']['path']
                             else sandbox.load_profile(profile))
                 name = self.query_one('#name', Input).value.strip()
-                if not re.fullmatch('[a-z0-9][a-z0-9-]{0,39}', name):
-                    raise ValueError('Use 1–40 lowercase letters, digits or hyphens for the sandbox name.')
+                if not SANDBOX_NAME.fullmatch(name):
+                    raise ValueError(SANDBOX_NAME_ERROR)
                 if (self.app.state_root / name).exists():
                     raise ValueError('That name already exists. Choose another name.')
                 workspace_text = self.query_one('#workspace', Input).value.strip()

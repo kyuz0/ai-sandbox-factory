@@ -25,7 +25,8 @@ import tempfile
 import time
 from urllib.parse import urlsplit, quote
 from types import SimpleNamespace
-from .sandbox_options import options, memory_limit, permissions, write_json, guidance
+from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
+                              options, memory_limit, permissions, write_json, guidance)
 
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
@@ -54,7 +55,7 @@ def load_profile(value):
     candidate = registry.resolve('profile', value)
     path = directory(candidate)
     metadata = json.loads((path / 'profile.json').read_text())
-    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', metadata.get('name', '')):
+    if not registry.NAME.fullmatch(metadata.get('name', '')):
         raise ValueError('profile.json requires a lowercase name (letters, digits, hyphens)')
     for filename in ('Dockerfile', 'profile.md'):
         if not (path / filename).is_file():
@@ -148,6 +149,7 @@ def directory(value):
 
 def parse_rules(text):
     rules = []
+    seen = set()
     for number, line in enumerate(text.splitlines(), 1):
         words = line.split('#', 1)[0].split()
         if not words:
@@ -171,7 +173,8 @@ def parse_rules(text):
         else:
             raise ValueError('Use DNS names, not literal IP addresses, in the allowlist')
         rule = (host, port)
-        if rule not in rules:
+        if rule not in seen:
+            seen.add(rule)
             rules.append(rule)
     return rules
 
@@ -269,8 +272,18 @@ def choose_engine(requested, quiet=False):
 
 
 def names(config):
-    prefix = 'pi-sandbox-factory-' + config['name']
+    prefix = RESOURCE_PREFIX + config['name']
     return prefix, prefix + '-proxy', prefix + '-socket', prefix + '-home'
+
+
+def stage_image(image, suffix=''):
+    # Docker and Podman accept image tags with up to 128 characters.
+    repository, tag = image.rsplit(':', 1)
+    tag += suffix
+    if len(tag) > 128:
+        digest = hashlib.sha256(tag.encode()).hexdigest()[:16]
+        tag = tag[:128 - len(digest) - 1] + '-' + digest
+    return f'{repository}:{tag}'
 
 
 def image_names(config):
@@ -287,7 +300,7 @@ def image_names(config):
         suffix += '-knowledge-endpoint' if knowledge_mode == 'endpoint' else '-knowledge'
     if 'model_providers' in config:
         suffix += '-models-' + model_providers.digest(config)
-    return (f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}',
+    return (stage_image(f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}'),
             'localhost/pi-sandbox-factory-proxy:1')
 
 
@@ -355,25 +368,25 @@ def build(config):
     has_providers = 'model_providers' in config
     web = options(config.get('options'))['web_access']['enabled']
     channels = options(config.get('options'))['communications']['slack']
-    tools = dev + '-tools' if config.get('extra_skills') or browser or web or channels or knowledge or has_providers else dev
+    tools = stage_image(dev, '-tools') if config.get('extra_skills') or browser or web or channels or knowledge or has_providers else dev
     run([engine, 'build', '-t', tools, '--build-arg', f'BASE_IMAGE={base}', profile['path']])
     if browser:
-        target = dev + '-browser' if config.get('extra_skills') or web or channels or knowledge or has_providers else dev
+        target = stage_image(dev, '-browser') if config.get('extra_skills') or web or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'browser'])
         tools = target
     if web:
-        target = dev + '-web' if config.get('extra_skills') or channels or knowledge or has_providers else dev
+        target = stage_image(dev, '-web') if config.get('extra_skills') or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'web-access'])
         tools = target
     if channels:
-        target = dev + '-communications' if config.get('extra_skills') or knowledge or has_providers else dev
+        target = stage_image(dev, '-communications') if config.get('extra_skills') or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'communications'])
         tools = target
     if knowledge:
-        target = dev + '-local-knowledge' if config.get('extra_skills') or has_providers else dev
+        target = stage_image(dev, '-local-knowledge') if config.get('extra_skills') or has_providers else dev
         if knowledge_mode == 'endpoint':
             run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
                  '-f', knowledge_dir / 'Dockerfile.endpoint', knowledge_dir])
@@ -383,7 +396,7 @@ def build(config):
                              'in Settings → Document search, then update sources to configure an embedding server.')
         tools = target
     if has_providers:
-        target = dev + '-models' if config.get('extra_skills') else dev
+        target = stage_image(dev, '-models') if config.get('extra_skills') else dev
         model_providers.build(config, tools, target)
         tools = target
     sandbox_ssh.build(config)
@@ -431,7 +444,7 @@ def list_sandboxes(state_root, structured=False):
             config = json.loads(path.read_text())
             profile = config.get('profile') or {'name': 'base'}
             if (config.get('name') != path.parent.name
-                    or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', config['name'])
+                    or not SANDBOX_NAME.fullmatch(config['name'])
                     or config.get('engine') not in ('podman', 'docker')
                     or not isinstance(config.get('workspace'), str)
                     or not isinstance(profile.get('name'), str)):
@@ -782,11 +795,7 @@ def local_model_ports(value):
             if end < start:
                 raise ValueError('Enter the lower port first in each range.')
             raise ValueError('Enter ports from 1 to 65535.')
-        if end-start >= 256:
-            raise ValueError('Enter at most 256 local model ports.')
-        ports.update(range(start,end+1))
-    if len(ports)>256:
-        raise ValueError('At most 256 local model ports')
+        ports.update(range(start, end + 1))
     return sorted(ports)
 
 
@@ -797,15 +806,16 @@ def configure_local_gateway(config, value, rules):
         return
     if config['engine'] != 'podman' or network_mode(config) != 'allowlist':
         raise ValueError('Host-local models require rootless Podman with restricted networking')
+    allowed = set(rules)
     for port in local_model_ports(value):
-        if ('local-model.internal',port) not in rules:
+        if ('local-model.internal', port) not in allowed:
             raise ValueError(f'Add local-model.internal:{port} to the allowlist')
 
 
 def create(args, state):
     reuse = {}
     if getattr(args, 'reuse_from', None):
-        if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', args.reuse_from):
+        if not SANDBOX_NAME.fullmatch(args.reuse_from):
             raise ValueError('Invalid source sandbox name')
         reuse = json.loads((state.parent / args.reuse_from / 'config.json').read_text())
     prompt_file = getattr(args, 'system_prompt_file', None)
@@ -1371,8 +1381,8 @@ def main():
     if args.command == 'profiles':
         for name,description in registry.choices('profile').items(): print(f'{name}: {description}')
         return
-    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', args.name):
-        parser.error('Name must be 1-40 lowercase letters, digits, or hyphens')
+    if not SANDBOX_NAME.fullmatch(args.name):
+        parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
     if args.command == 'create':
         if args.open and not args.start:

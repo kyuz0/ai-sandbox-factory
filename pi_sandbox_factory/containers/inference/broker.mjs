@@ -8,7 +8,11 @@ import {checkCredential, localGatewayOptions, readCredentials} from './credentia
 
 const requestHeaders = ['content-type', 'accept', 'anthropic-version', 'anthropic-beta'];
 const responseHeaders = ['content-type', 'content-encoding', 'retry-after'];
-const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
+// Provider IDs also serve as directory names in the Linux container.
+const idSyntax = '[a-z][a-z0-9-]{0,254}';
+const idPattern = new RegExp(`^${idSyntax}$`);
+const checkPath = new RegExp(`^/check/(${idSyntax})/([a-f0-9]{64})$`);
+const routePath = new RegExp(`^/r/(${idSyntax})(/[^?]*)(?:\\?(.*))?$`);
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export function compileRoutes(values, {allowHttpFixture=false}={}) {
@@ -102,7 +106,7 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         return fail(res,503,'Inference service is busy. Retry shortly.');
       }
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\\\x00-\x20#]/.test(req.url) || req.headers.upgrade) return fail(res,400);
-      const check = /^\/check\/([a-z][a-z0-9-]{0,63})\/([a-f0-9]{64})$/.exec(req.url);
+      const check = checkPath.exec(req.url);
       if (check) {
         if (req.method !== 'GET' || req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) !== 0)
           return fail(res,400);
@@ -120,7 +124,7 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         res.writeHead(200, {'content-type':'application/json', 'cache-control':'no-store'});
         return res.end(JSON.stringify({status}));
       }
-      const match = /^\/r\/([a-z][a-z0-9-]{0,63})(\/[^?]*)(?:\?(.*))?$/.exec(req.url);
+      const match = routePath.exec(req.url);
       if (!match) return fail(res,404);
       const route = routes.get(match[1]);
       if (!route) return fail(res,404);

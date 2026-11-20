@@ -96,8 +96,8 @@ def read(ref, binding):
 
 def save(binding, label, key, *, replace=None):
     label = label.strip()
-    if not binding or not label or len(label) > 64 or any(not character.isprintable() for character in label):
-        raise ValueError('Enter a name for the saved key (up to 64 characters).')
+    if not binding or not label or any(not character.isprintable() for character in label):
+        raise ValueError('Enter a single-line name for the saved key.')
     validate_key(key)
     with locked_index() as path:
         records = entries()

@@ -12,16 +12,13 @@ import yaml
 
 from . import registry
 
-MAX_MANIFEST_BYTES = 256 * 1024
-
-
 def metadata(path):
     from .sandbox_options import SKILLS
     path = Path(path)
     registry.safe_tree(path)
     file = path / 'SKILL.md'
-    if not file.is_file() or file.stat().st_size > MAX_MANIFEST_BYTES:
-        raise ValueError('SKILL.md is missing or exceeds 256 KiB')
+    if not file.is_file():
+        raise ValueError('SKILL.md is missing')
     text = file.read_text(encoding='utf-8')
     match = re.match(r'\A---\s*\r?\n(.*?)\r?\n---(?:\r?\n|$)', text, re.S)
     if not match:
@@ -32,12 +29,13 @@ def metadata(path):
         raise ValueError('SKILL.md has invalid YAML frontmatter') from error
     name = data.get('name') if isinstance(data, dict) else None
     description = data.get('description') if isinstance(data, dict) else None
+    # Agent Skills names have a 64-character limit.
     if not isinstance(name, str) or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name) or len(name) > 64:
         raise ValueError('Skill name must use lowercase letters, digits and single hyphens (1–64 characters)')
     if name in SKILLS or name in ('goal', 'advisor'):
         raise ValueError('This skill name is reserved by a built-in feature')
-    if not isinstance(description, str) or not description.strip() or len(description) > 4096:
-        raise ValueError('Skill description must contain 1–4096 characters')
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError('SKILL.md needs a description')
     return {'name': name, 'description': ' '.join(description.split())}
 
 

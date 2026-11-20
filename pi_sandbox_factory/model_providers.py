@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 import shutil
-import tempfile
 from . import registry
 from .settings_catalog import LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH
 
@@ -80,10 +79,9 @@ def digest(config):
 
 
 def build(config, base, target):
-    from . import sandbox
+    from . import sandbox, sandbox_extensions
 
-    with tempfile.TemporaryDirectory(prefix="pi-model-providers-") as temp:
-        path = Path(temp)
+    with sandbox_extensions.temporary_build_context("pi-model-providers-") as path:
         descriptors = []
         resources = {"extensions": [], "skills": []}
         for row in selections(config):

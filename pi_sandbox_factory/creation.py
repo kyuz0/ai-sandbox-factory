@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import queue
-import re
 import secrets
 import shutil
 import subprocess
@@ -10,6 +9,7 @@ import sys
 import threading
 
 from . import host_platform
+from .sandbox_options import SANDBOX_NAME, SANDBOX_NAME_ERROR
 
 MARKER = '.creation-token'
 READY = '.creation-resources'
@@ -71,8 +71,8 @@ class Creation:
 
     def run(self, service, draft, key, log):
         name = draft['name']
-        if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', name):
-            raise ValueError('Invalid sandbox name')
+        if not SANDBOX_NAME.fullmatch(name):
+            raise ValueError(SANDBOX_NAME_ERROR)
         state = service.state / name
         token = secrets.token_hex(24)
         if self.requested.is_set():

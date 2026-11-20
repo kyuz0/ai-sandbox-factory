@@ -12,7 +12,9 @@ import tempfile
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
-NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+# Installed provider IDs are directory names inside the Linux container.
+NAME = re.compile(r"[a-z][a-z0-9-]{0,254}")
+NAME_ERROR = 'Use a package name that starts with a lowercase letter and contains up to 255 lowercase letters, digits or hyphens.'
 KINDS = {"profile": "profile.json", "provider": "provider.json"}
 PROFILE_PROMPT_FILE = "system-prompt.md"
 
@@ -302,7 +304,7 @@ def add(kind, name, source, ref=None, *, subdir=".", replace=False):
     from .sandbox import tree_digest
 
     if kind not in KINDS or not NAME.fullmatch(name) or name in ("base", "local"):
-        raise ValueError("Choose a valid package name; base and local are built in")
+        raise ValueError(NAME_ERROR + ' The names base and local are reserved.')
     source = source_url(source)
     relative = Path(subdir or ".")
     if relative.is_absolute() or ".." in relative.parts:

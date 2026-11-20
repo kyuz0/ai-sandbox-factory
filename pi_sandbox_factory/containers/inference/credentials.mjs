@@ -57,7 +57,7 @@ function configuredRoute(request) {
 }
 
 export function updateCredentials(file, request) {
-  if (!/^[a-z][a-z0-9-]{0,63}$/.test(request.id)) throw Error('Invalid connection name.');
+  if (!/^[a-z][a-z0-9-]{0,254}$/.test(request.id)) throw Error('Invalid connection name.');
   const values = readCredentials(file);
   if (request.remove) delete values[request.id];
   else {
@@ -86,7 +86,7 @@ export function updateCredentials(file, request) {
       entry.scope = {basePath: request.basePath, auth: request.auth, header: request.authHeader};
       if (request.assignment) {
         const { ref, label } = request.assignment;
-        if (!/^[0-9a-f]{32}$/.test(ref) || typeof label !== 'string' || !label || label.length > 64)
+        if (!/^[0-9a-f]{32}$/.test(ref) || typeof label !== 'string' || !label)
           throw Error('Invalid saved credential assignment.');
         entry.assignment = { ref, label };
       } else {

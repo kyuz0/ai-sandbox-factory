@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import time
+from .sandbox_options import RESOURCE_PREFIX
 
 HOSTS = {
     'claude': ['api.anthropic.com:443', 'claude.ai:443', 'platform.claude.com:443', 'console.anthropic.com:443'],
@@ -35,7 +36,7 @@ def validate(value):
         model = value.get('agy_model', '')
         if not isinstance(model, str):
             raise ValueError('Antigravity model ID must be text')
-        if model and not re.fullmatch(r'gemini[a-zA-Z0-9._-]{1,120}', model, re.I):
+        if model and not re.fullmatch(r'gemini[a-zA-Z0-9._-]+', model, re.I):
             raise ValueError('Enter the exact Gemini model ID from agy models')
         if model and (not isinstance(value.get('agy_quota_group'), str) or not value['agy_quota_group'].strip()):
             raise ValueError('Enter the Antigravity quota group shown by /usage')
@@ -56,7 +57,7 @@ def enabled(config):
 
 
 def names(config):
-    prefix = 'pi-sandbox-factory-' + config['name'] + '-advisor'
+    prefix = RESOURCE_PREFIX + config['name'] + '-advisor'
     return prefix, prefix + '-proxy', prefix + '-socket', prefix + '-home', prefix + '-egress'
 
 

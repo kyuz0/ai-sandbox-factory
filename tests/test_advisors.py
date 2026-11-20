@@ -20,8 +20,9 @@ class AdvisorTests(unittest.TestCase):
         self.assertEqual(provider['models'], {})
 
     def test_explicit_gemini_model_and_quota_group(self):
-        settings=advisors.validate({'providers':['agy'], 'agy_model':'gemini-test-high', 'agy_quota_group':'Gemini', 'agy_effort':'high'})
-        self.assertEqual(advisors.provider_config(settings)['providers']['agy']['models']['default']['id'], 'gemini-test-high')
+        model = 'gemini-test-high-' + 'a' * 120
+        settings=advisors.validate({'providers':['agy'], 'agy_model':model, 'agy_quota_group':'Gemini', 'agy_effort':'high'})
+        self.assertEqual(advisors.provider_config(settings)['providers']['agy']['models']['default']['id'], model)
         with self.assertRaises(ValueError):advisors.validate({'providers':['agy'],'agy_model':'gemini-test'})
 
     def test_only_selected_providers_and_subscription_auth(self):
