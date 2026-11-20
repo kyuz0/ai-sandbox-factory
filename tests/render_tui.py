@@ -628,6 +628,10 @@ async def capture(size):
                         app.show_update('2099.11.20.153000')
                         await shot('home-update-available', focus='#search')
                         await shot('home-update-focused', focus='#application-update-run')
+                        app.confirm_update()
+                        await shot('home-update-confirm')
+                        await pilot.pause()
+                        await pilot.press('escape')
                         with patch.object(app, 'suspend', return_value=nullcontext()), \
                                 patch('pi_sandbox_factory.sandbox_tui.subprocess.run',
                                       side_effect=subprocess.CalledProcessError(1, ['pipx', 'upgrade', 'pi-sandbox-factory'],

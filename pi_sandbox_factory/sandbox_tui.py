@@ -941,11 +941,13 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action, *, cancel_label='Cancel', title=None):
+    def __init__(self, message, action, *, cancel_label='Cancel', title=None, confirm_by_default=False):
         super().__init__(classes='titled-confirm' if title else None)
         self.message, self.action = message, action
         self.cancel_label = cancel_label
         self.title_text = title
+        self.confirm_by_default = confirm_by_default
+        self.AUTO_FOCUS = '#yes' if confirm_by_default else '#cancel'
 
     def compose(self):
         with Vertical(id='confirm-box'):
@@ -953,8 +955,8 @@ class Confirm(ModalScreen[bool]):
                 yield Label(self.title_text, markup=False)
             yield Static(self.message, markup=False)
             with Horizontal(classes='buttons dialog-actions'):
-                yield Button(self.cancel_label, id='cancel', variant='primary')
-                yield Button(self.action, id='yes', variant='error')
+                yield Button(self.cancel_label, id='cancel', variant='default' if self.confirm_by_default else 'primary')
+                yield Button(self.action, id='yes', variant='primary' if self.confirm_by_default else 'error')
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -3350,6 +3352,7 @@ class Cockpit(App):
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
     .titled-confirm #yes { background: $error; color: white; }
     .titled-confirm Button:focus { text-style: bold underline; }
+    Confirm #cancel.-default:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
     Screen:nocolor .titled-confirm #yes { background: #454a51; color: white; }
     .compact-terminal PromptChoice TextArea, .compact-terminal #prompt-text { height: 5; }
     EditPrompt Feedback, #sandbox-prompt-error { color: #ef9a91; }
@@ -3737,7 +3740,7 @@ class Cockpit(App):
         self.push_screen(Confirm(
             f'Upgrade Pi Sandbox Factory to {self.available_version}?\n'
             'Runs pipx upgrade pi-sandbox-factory, then restarts this manager.\n'
-            'Running sandboxes keep their installed software.', 'Upgrade'), self.upgrade)
+            'Running sandboxes keep their installed software.', 'Upgrade', confirm_by_default=True), self.upgrade)
 
     def upgrade(self, confirmed):
         if not confirmed:
