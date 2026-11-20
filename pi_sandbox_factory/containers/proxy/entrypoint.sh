@@ -38,6 +38,11 @@ if [[ "${SANDBOX_MODEL_HOST:-}" == host.containers.internal ]]; then
     fi
     printf '%s local-model.internal\n' "$model_address" >> /etc/hosts
 fi
+pids=()
+if [[ -d /run/aws-access ]]; then
+    relay TCP-LISTEN:19432,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/aws-access/request.sock &
+    pids+=("$!")
+fi
 # Only this container can change the socket directory. Clients mount it read-only.
 chmod 755 /run/egress
 rm -f /run/egress/proxy.sock
@@ -45,8 +50,9 @@ squid -N -f /etc/squid/sandbox.conf &
 squid_pid=$!
 relay UNIX-LISTEN:/run/egress/proxy.sock,fork,unlink-early,mode=0666 TCP:127.0.0.1:3128 &
 relay_pid=$!
-trap 'kill "$squid_pid" "$relay_pid" 2>/dev/null || true; wait || true' EXIT
+pids+=("$squid_pid" "$relay_pid")
+trap 'kill "${pids[@]}" 2>/dev/null || true; wait || true' EXIT
 trap 'exit 0' TERM INT
 # Squid failure stops the gateway; relay failures retry the same fixed route.
-wait -n "$squid_pid" "$relay_pid"
+wait -n "${pids[@]}"
 exit 1

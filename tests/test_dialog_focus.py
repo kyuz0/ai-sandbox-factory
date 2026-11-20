@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from textual.widgets import Input, Select
 
+from pi_sandbox_factory.aws_ui import AWSAccessDialog
 from pi_sandbox_factory.chat_history_ui import ChatTransfer
 from pi_sandbox_factory.communications_ui import SlackCredentials
 from pi_sandbox_factory.credentials_ui import CredentialDialog
@@ -30,6 +31,7 @@ class DialogFocusTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause()
                 for dialog, field in [
+                    (AWSAccessDialog({}), 'aws-name'),
                     (ModelDialog('demo', 'company', plugin_label='Example provider'), 'model-search'),
                     (ModelDialog('demo', 'openrouter'), 'model-search'),
                     (FolderEditor(None, [], root, root), 'folder-source'),

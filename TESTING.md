@@ -1092,3 +1092,15 @@ exact loopback addresses and socket cleanup. `reviewer-scheduler.test.ts` and
 providers and independent grants. `test_local_development.py` checks generated
 network grants and private runtime placement. No fixture uses real credentials
 or restarts an existing sandbox.
+
+## AWS access
+
+The Python suite checks the compiled STS policy, host profile selection, independent profile copies, selective updates, session renewal and the shell network grant. Run the signing tests in the service image with synthetic credentials and networking disabled.
+
+```sh
+podman build -t localhost/factory-aws-signer-test pi_sandbox_factory/containers/aws-access
+podman run --rm -i --network=none --read-only --cap-drop=ALL \
+  --entrypoint python3 localhost/factory-aws-signer-test - < tests/check_aws_signer.py
+```
+
+For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.

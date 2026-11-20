@@ -56,6 +56,7 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
   the sandbox running, though active connections may drop. [Network settings](docs/web-access.md#network-access)
 - **Web search:** Enabling a search provider lets Pi query that service.
   For Pi to open a result in **Restricted** mode, allow the site separately. [Web search setup](docs/web-access.md#web-search)
+- **AWS:** Share a saved AWS access profile across sandboxes and choose which sandboxes receive permission changes. [AWS CLI setup](docs/aws-access.md)
 
 ## Use and update sandboxes
 

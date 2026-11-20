@@ -23,6 +23,7 @@ CATEGORIES = {
     'models': Category('Model Providers', 'hosted-section'),
     'editor-settings': Category('Editor', 'editor-section'),
     'folders': Category('Folders', 'folders-section'),
+    'aws-access': Category('AWS access', 'aws-access-section'),
     'document-search': Category('Document search', 'document-search-section', 'configure-document-search'),
     'network-settings': Category(f'{NETWORK_LABEL} and {WEB_SEARCH_LABEL}', 'network-search-section', 'network-section'),
     'approval-settings': Category('Approvals & sandbox', 'agent-section', 'inner-sandbox'),

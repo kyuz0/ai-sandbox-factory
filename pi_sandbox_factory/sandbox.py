@@ -6,7 +6,7 @@ from . import sandbox_skills
 from . import sandbox_extensions
 from . import sandbox_advisors
 from . import sandbox_ssh
-from . import inference
+from . import inference, aws_access
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
 from contextlib import closing
 import errno
@@ -219,7 +219,7 @@ def squid_config(rules, groups=None):
 def network_policy(config, rules):
     from . import hosted_models
     selected = options(config.get('options'))
-    combined = list(dict.fromkeys(rules + web_access.destinations(selected['web_access']) + communications.destinations(selected['communications']) + hosted_models.destinations(config.get('hosted_connections', {}))))
+    combined = list(dict.fromkeys(rules + ([('aws-access.internal', 19432)] if config.get('aws_access') else []) + web_access.destinations(selected['web_access']) + communications.destinations(selected['communications']) + hosted_models.destinations(config.get('hosted_connections', {}))))
     return squid_config(combined, config.get('website_groups', {}))
 
 
@@ -298,6 +298,8 @@ def image_names(config):
     knowledge_mode = options(config.get('options'))['knowledge_embedding']
     if knowledge_mode != 'off':
         suffix += '-knowledge-endpoint' if knowledge_mode == 'endpoint' else '-knowledge'
+    if config.get('aws_access'):
+        suffix += '-aws-' + tree_digest(ROOT / 'containers/aws-access/client')
     if 'model_providers' in config:
         suffix += '-models-' + model_providers.digest(config)
     return (stage_image(f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}'),
@@ -344,6 +346,11 @@ def build(config):
     if tree_digest(Path(profile['path'])) != profile['digest']:
         raise ValueError('Saved profile was modified; select its source again with recreate --profile')
     common = config['common']
+    if config.get('aws_access'):
+        entrypoint = Path(common['path']) / 'entrypoint.sh'
+        if not entrypoint.is_file() or '/run/aws-access/request.sock' not in entrypoint.read_text():
+            raise ValueError('Choose Actions → Update sources and recreate… before connecting AWS. '
+                             'The saved sandbox runtime lacks the AWS CLI connection.')
     if tree_digest(Path(common['path'])) != common['digest']:
         raise ValueError('Saved common image inputs were modified; use recreate --profile to refresh them')
     knowledge_mode = options(config.get('options'))['knowledge_embedding']
@@ -364,6 +371,11 @@ def build(config):
     run([engine, 'build', '-t', proxy, ROOT / 'containers/proxy'])
     with sandbox_extensions.build_contexts(common['path']) as contexts:
         run([engine, 'build', '-t', base, *contexts, *build_args, common['path']])
+    if config.get('aws_access'):
+        cli_base = stage_image(dev, '-aws-cli-base')
+        run([engine, 'build', '-t', cli_base, '--build-arg', f'BASE_IMAGE={base}',
+             ROOT / 'containers/aws-access/client'])
+        base = cli_base
     browser = options(config.get('options'))['browser']
     has_providers = 'model_providers' in config
     web = options(config.get('options'))['web_access']['enabled']
@@ -424,6 +436,7 @@ def describe_containers(config, states):
         dev: ('Development', 'Runs Pi, the editor backend and development tools.'),
         gateway: ('Network gateway', 'Lets the development container reach only allowed destinations.'),
         inference.names(config)[0]: ('Model connections', 'Connects Pi to model providers and keeps their API keys separate.'),
+        aws_access.worker_name(config): ('AWS access', 'Sends requests using the AWS permissions granted to this sandbox.'),
         sandbox_ssh.names(config)[0]: ('SSH access', 'Authenticates to configured SSH hosts and keeps private keys separate.'),
         advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
         advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
@@ -619,6 +632,8 @@ def up(config, state):
     sandbox_advisors.up(config, state)
     sandbox_ssh.up(config, state)
     inference.up(config, state)
+    if config.get('aws_access'):
+        aws_access.up(config, state)
     started_dev = current[dev] is None
     for name in active:
         if current[name]:
@@ -642,6 +657,8 @@ def up(config, state):
                 args += host_platform.model_gateway_args()
             if any(host == 'host.docker.internal' for host, _ in rules):
                 args += ['--add-host=host.docker.internal:host-gateway']
+            if config.get('aws_access'):
+                args += aws_access.client_mount(state)
             run(base + args + [proxy_image])
             ensure_gateway(config)
         else:
@@ -660,6 +677,10 @@ def up(config, state):
             args += sandbox_advisors.mounts(config)
             args += sandbox_ssh.mounts(config, state)
             args += inference.mounts(config)
+            if config.get('aws_access'):
+                args += aws_access.client_mount(state)
+                for key, value in aws_access.CLIENT_ENV.items():
+                    args += ['--env', f'{key}={value}']
             if config.get('memory'):
                 args += ['--memory=' + memory_limit(config['memory'])]
             if 'options' in config:
@@ -735,6 +756,8 @@ def down(config, remove=False):
     sandbox_advisors.check_ownership(config)
     sandbox_ssh.check_ownership(config)
     inference.check_ownership(config)
+    if config.get('aws_access'):
+        aws_access.down(config)
     sandbox_advisors.down(config, remove=remove)
     sandbox_ssh.down(config, remove=remove)
     inference.down(config, remove=remove)
@@ -893,6 +916,8 @@ def create(args, state):
     config['options'] = selected_options
     if getattr(args, 'browser', False):
         config['options'] = options({**config.get('options', {}), 'browser': True})
+    if getattr(args, 'aws_access_file', None):
+        config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
     config['website_groups'] = network_groups.snapshots(options(config.get('options'))['website_groups'])
     config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
     if not creation_token:
@@ -955,6 +980,12 @@ def shell_network_policy(config, state):
     policy_file = state / 'allowlist.txt'
     rules = parse_rules(policy_file.read_text()) if policy_file.is_file() else []
     allowed = {f'{host}:{port}' for host, port in rules}
+    if config.get('aws_access'):
+        allowed.add('aws-access.internal:19432')
+        if network_mode(config) == 'unrestricted':
+            # Pi's DNS guard requires a separate, port-specific address grant
+            # for the fixed signer relay on the development container's loopback.
+            allowed.add('127.0.0.1:19432')
     for domain in network_groups.collapse(config.get('website_groups', {})):
         names = [domain] if not domain.startswith('.') else [domain[1:], '*' + domain]
         allowed.update(f'{name}:{port}' for name in names for port in (80, 443))
@@ -1013,9 +1044,32 @@ def prepare_options(config, state):
 
 
 def apply_settings(config, state, changes, *, apply_gate=None):
-    allowed = {'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
+    if isinstance(changes, dict) and 'expected_aws_access' in changes:
+        if set(changes) != {'expected_aws_access', 'aws_access'}:
+            raise ValueError('An AWS profile update can only change AWS access.')
+        if config.get('aws_access', {}) == changes['aws_access']:
+            return
+        if config.get('aws_access', {}) != changes['expected_aws_access']:
+            raise ValueError('AWS access changed since this sandbox was selected. Reopen the profile to review it.')
+        changes = {'aws_access': changes['aws_access']}
+    allowed = {'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
+    if 'aws_access' in changes:
+        changes = {**changes, 'aws_access': aws_access.settings(changes['aws_access'])}
+        if set(changes) == {'aws_access'} and config.get('aws_access'):
+            if not updating.begin_apply(apply_gate):
+                return
+            updated = {**config, **changes}
+            running = inspect(config, names(config)[0])
+            if not updated['aws_access']:
+                aws_access.down(config)
+            elif running and running['State'].get('Running'):
+                aws_access.up(updated, state)
+            refresh_shell_network(updated, state)
+            activity.save_config(state, updated)
+            print('AWS permissions updated.' if updated['aws_access'] else 'AWS disconnected.')
+            return
     if 'ssh' in changes and changes.keys() <= {'ssh', 'options'}:
         saved_options = options(config.get('options'))
         ssh = sandbox_ssh.validate(changes['ssh'])
@@ -1064,6 +1118,9 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     build(updated)  # Leave the old running container intact if the build fails.
     if not updating.begin_apply(apply_gate):
         return
+    # Verify the first AWS session while the previous workspace is still running.
+    if updated.get('aws_access') and not config.get('aws_access'):
+        aws_access.up(updated, state)
     print('Applying settings: recreating containers; saved workspace and home are preserved.')
     down(config, remove=True)
     activity.save_config(state, updated)
@@ -1290,6 +1347,7 @@ def main():
     new.add_argument('--skill-path', default='.', help='Skill folder in the additional repository')
     new.add_argument('--advisor', action='append', choices=['codex', 'claude', 'agy'], default=[],
                      help='Add an advisor companion during creation; repeat for multiple advisors, sign in afterwards')
+    new.add_argument('--aws-access-file', help='JSON host AWS profile, role, region and sandbox permissions')
     new.add_argument('--options-file', help='JSON agent, skill and MCP settings')
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
@@ -1431,8 +1489,11 @@ def main():
     elif args.command == 'delete':
         delete(config, state)
     elif args.command == 'update':
-        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()),
-                       apply_gate=args.apply_gate)
+        import fcntl
+        with (state / 'update.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            config = json.loads((state / 'config.json').read_text())
+            apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
     elif args.command == 'recreate':
         if args.subagents is not None:
             config['subagents'] = args.subagents

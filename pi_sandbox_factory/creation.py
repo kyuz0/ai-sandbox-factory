@@ -36,7 +36,7 @@ def reserved(state, token):
 
 def prepare_resources(state, token):
     """Refuse orphaned resources before this attempt can start any containers."""
-    from . import sandbox, sandbox_advisors, sandbox_ssh, inference
+    from . import sandbox, sandbox_advisors, sandbox_ssh, inference, aws_access
     if not owns(state, token):
         raise ValueError('Creation reservation changed.')
     config = json.loads((state / 'config.json').read_text())
@@ -45,7 +45,7 @@ def prepare_resources(state, token):
     advisor, advisor_proxy, *advisor_volumes = sandbox_advisors.names(config)
     ssh, *ssh_volumes = sandbox_ssh.names(config)
     broker, *broker_volumes = inference.names(config)
-    wanted = {'container': {dev, proxy, advisor, advisor_proxy, ssh, broker},
+    wanted = {'container': {dev, proxy, advisor, advisor_proxy, ssh, broker, aws_access.worker_name(config)},
               'volume': set(volumes + advisor_volumes + ssh_volumes + broker_volumes)}
     for kind, names in wanted.items():
         command = [config['engine'], 'ps', '-a', '--format', '{{.Names}}'] if kind == 'container' else [config['engine'], 'volume', 'ls', '--format', '{{.Name}}']

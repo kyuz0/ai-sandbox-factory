@@ -40,8 +40,13 @@ else
     relay TCP-LISTEN:3128,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/egress/proxy.sock &
 fi
 network_pid=$!
-trap 'kill "$inference_pid" "$network_pid" 2>/dev/null || true; wait || true' EXIT
+pids=("$inference_pid" "$network_pid")
+if [[ -d /run/aws-access ]]; then
+    relay TCP-LISTEN:19432,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/aws-access/request.sock &
+    pids+=("$!")
+fi
+trap 'kill "${pids[@]}" 2>/dev/null || true; wait || true' EXIT
 trap 'exit 0' TERM INT
 touch /var/tmp/pi/pi-sandbox-factory-ready
-wait -n "$inference_pid" "$network_pid"
+wait -n "${pids[@]}"
 exit 1

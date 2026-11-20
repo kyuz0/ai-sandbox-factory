@@ -37,6 +37,7 @@ from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL
 from .repository_ui import git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import EntryDialog, Checkbox, Feedback
+from .aws_ui import AWSProfileChoices, AWSProfilePicker, profile_label
 from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
 from . import embedding_models
 from . import sandbox_skills
@@ -241,6 +242,10 @@ class Service:
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
                     '--engine', draft['engine'], '--options-file', str(selected)]
+            if draft.get('aws_access'):
+                grant_file = Path(temp) / 'aws-access.json'
+                write_json(grant_file, draft['aws_access'])
+                args += ['--aws-access-file', str(grant_file)]
             if 'system_prompt' in draft:
                 prompt_file = Path(temp) / 'system-prompt.json'
                 write_json(prompt_file, draft['system_prompt'])
@@ -417,8 +422,8 @@ class Service:
             self.run_update(['update', name, '--settings-file', str(path)], log, update)
         self.setup(name, draft, key, log)
 
-    def folders(self, name, settings, log, update=None):
-        with tempfile.TemporaryDirectory(prefix='sandbox-folders-') as temp:
+    def update_settings(self, name, settings, log, update=None):
+        with tempfile.TemporaryDirectory(prefix='sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, settings)
             self.run_update(['update', name, '--settings-file', str(path)], log, update)
@@ -1157,6 +1162,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
             self.summaries.update({
                 'network-settings': network_search_summary(network, selected['web_access']['enabled']),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
+                'aws-access': profile_label(config.get('aws_access', {})),
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
                 'document-search': search_summary(selected, embedding_models.sources(config)),
                 'ssh-settings': git_identity_summary(selected['git_identity']),
@@ -1245,7 +1251,7 @@ class FoldersScreen(Screen):
                 service = self.app.service
                 def apply():
                     self.app.pop_screen()
-                    self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.folders(self.record['name'], selected, log, update),
+                    self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.update_settings(self.record['name'], selected, log, update),
                         done_on_success=True,
                         success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
@@ -1925,6 +1931,9 @@ class PackagesScreen(Screen):
                 with TabPane('Skills', id='skills'):
                     with VerticalScroll(classes='package-pane'):
                         yield SkillLibrary()
+                with TabPane('AWS access', id='aws-profiles'):
+                    with VerticalScroll(classes='package-pane'):
+                        yield AWSProfileChoices()
                 with TabPane(SYSTEM_PROMPT_LIBRARY_LABEL, id='system-prompts'):
                     with VerticalScroll(classes='package-pane'):
                         yield PromptLibrary()
@@ -1954,6 +1963,9 @@ class PackagesScreen(Screen):
         if not kind:
             return
         install = self.query_one('#package-install', Button)
+        install.display = kind != 'aws-profiles'
+        if kind == 'aws-profiles':
+            return
         if kind == 'skills':
             install.label = 'Add skills…'
             await self.query_one(SkillLibrary).refresh_library()
@@ -2591,7 +2603,7 @@ class SettingsForm(Screen):
                     if self.guide:
                         yield Button('Getting started…', id='review-profile-guide')
             for action, category in CATEGORIES.items():
-                if action == 'document-search' and self.setting != action:
+                if action == 'aws-access' or (action == 'document-search' and self.setting != action):
                     continue
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
@@ -2735,6 +2747,14 @@ class SettingsForm(Screen):
     def compose_communications(self, category, value, selected):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
 
+    @on(Button.Pressed, '#configure-aws')
+    def configure_aws(self):
+        def saved(value):
+            if value is not None:
+                self.draft['aws_access'] = value
+                self.query_one('#aws-summary', Static).update('AWS access · ' + profile_label(value))
+        self.app.push_screen(AWSProfilePicker(self.draft.get('aws_access')), saved)
+
     def compose_document_search(self, category, value, selected):
         with Horizontal(id=category.section):
             yield Static(self.document_search_summary(), id='document-search-summary')
@@ -2768,6 +2788,11 @@ class SettingsForm(Screen):
 
     def compose_agent_tools(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+            if not self.defaults_mode and not self.editing:
+                with Horizontal(classes='aws-access-row'):
+                    current = self.draft.get('aws_access', {})
+                    yield Static('AWS access · ' + profile_label(current), id='aws-summary', markup=False)
+                    yield Button('Configure…', id='configure-aws')
             if self.setting != 'document-search':
                 yield from self.compose_document_search(CATEGORIES['document-search'], value, selected)
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
@@ -3520,6 +3545,9 @@ class Cockpit(App):
     #document-search-section { height: auto; min-height: 1; padding: 0; margin: 0 0 1 0; }
     #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
     #document-search-section.focused-setting { padding: 0; background: transparent; }
+    .aws-access-row { height: auto; margin: 0 0 1 0; }
+    #aws-summary { width: auto; }
+    #configure-aws { width: auto; margin: 0 0 0 2; }
     #document-search-summary { width: auto; height: auto; }
     #configure-document-search { width: auto; margin: 0 0 0 2; padding: 0 2; }
     #document-search-fields { height: auto; max-height: 68vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
@@ -3598,9 +3626,19 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
+    .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
+    .aws-profile-actions { height: auto; margin: 1 0 0 0; }
+    .aws-target { margin: 0 0 1 0; }
+    #aws-fields { height: auto; max-height: 68vh; padding: 0; scrollbar-size-vertical: 1; }
+    .compact-terminal AWSAccessDialog #confirm-box { height: 90%; }
+    .compact-terminal #aws-fields { height: 1fr; max-height: 100%; }
+    #aws-fields .setting > Input { margin: 1 0 0 0; }
+    #aws-grants { height: 4; margin: 1 0; padding: 0 1; border: none; background: #414850; }
+    #aws-grants:focus { border: none; border-left: thick $primary; }
     ApprovalHelp #confirm-box { width: 84; }
     .tall-terminal ApprovalHelp #confirm-box { max-height: 95%; }
     #confirm-box Static { height: auto; }
@@ -4027,6 +4065,15 @@ class Cockpit(App):
                 saved = {}
             self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode'], prompt_library.selection(state)),
                              lambda choice: self.perform(choice, record=record) if choice else None)
+        elif action == 'aws-access':
+            saved_access = config.get('aws_access') or {}
+            def change(value):
+                if value is None or value == self.service.config(name).get('aws_access', {}):
+                    return
+                self.push_screen(Operation('Updating AWS access', lambda log:
+                    self.service.update_settings(name, {'aws_access': value}, log),
+                    success_message='AWS access updated.', done_on_success=True))
+            self.push_screen(AWSProfilePicker(saved_access, first_connection=not saved_access, sandbox_name=name), change)
         elif action == 'folders':
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':

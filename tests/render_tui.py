@@ -22,6 +22,8 @@ from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout, check_table_layout
 from test_hosted_models_ui import ModelService
 from pi_sandbox_factory import sandbox, registry, host_platform
+from pi_sandbox_factory import aws_profiles
+from pi_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
 from pi_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts
@@ -105,6 +107,9 @@ async def capture(size):
                         await pilot.pause()
                     p = out / f'{name}-{size[0]}x{size[1]}.svg'
                     p.write_text(app.export_screenshot())
+                    if isinstance(app.screen, AWSAccessDialog):
+                        box = app.screen.query_one('#confirm-box').content_region
+                        assert all(box.contains_region(button.region) for button in app.screen.query(Button)), name
                     check_checkbox_alignment(app.screen)
                     check_dropdown_layout(app.screen)
                     check_table_layout(app.screen)
@@ -113,6 +118,28 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if not args.only or any(name.startswith('aws-access-') for name in args.only):
+                    grant = dict(profile='research', role='arn:aws:iam::123456789012:role/Research',
+                                 region='eu-west-1', grants=[{'Action': 'ec2:DescribeRegions', 'Resource': '*'}])
+                    await shot('aws-access-setup', AWSAccessDialog({}))
+                    with patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(root / 'aws-library')):
+                        await shot('aws-access-empty', AWSProfilePicker(first_connection=True))
+                        profile = aws_profiles.save('Research', grant)
+                        await shot('aws-access-library', PackagesScreen('aws-profiles'))
+                        await shot('aws-access-picker', AWSProfilePicker(profile))
+                        await shot('aws-access-connected', AWSAccessDialog(profile))
+                        await shot('aws-access-duplicate', AWSAccessDialog(profile, duplicate=True))
+                        await shot('aws-access-targets', AWSProfileTargets(profile, {'workbench': grant, 'research': grant}))
+                    await app.push_screen(AWSAccessDialog())
+                    app.screen.query_one('#aws-save', Button).press()
+                    await shot('aws-access-error')
+                    await app.pop_screen()
+                    draft = preset('base', DEFAULT_SETTINGS)
+                    draft.update(name='research', workspace=str(workspace), aws_access=grant)
+                    await shot('aws-access-tools', SettingsForm(draft), '#skills-section', '#configure-aws')
+                    await shot('aws-access-settings', SettingsMenu('demo', {**c, 'aws_access': grant}, 'browser'), focus='#settings-actions')
+                    if args.only and all(name.startswith('aws-access-') for name in args.only):
+                        return
                 if args.only and all(name.startswith('folder-layout-') for name in args.only):
                     folder_config = dict(c, workspace='/home/sam/projects/research', working_directory='notes',
                                          extra_folders=[dict(source='/home/sam/documents/reference',
