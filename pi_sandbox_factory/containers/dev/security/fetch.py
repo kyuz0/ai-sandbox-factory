@@ -19,11 +19,10 @@ with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
             continue
         relative = PurePosixPath(*parts)
         # Personal profiles and development repository state are not image inputs.
-        if not (parts[0] == "packages" or str(relative) in (
+        build_patch = len(parts) == 2 and parts[0] == "scripts" and relative.suffix == ".patch"
+        if not (parts[0] == "packages" or build_patch or str(relative) in (
             "package.json", "package-lock.json", "LICENSE",
             "scripts/prepare-container.py", "scripts/container-sources.json",
-            "scripts/permission-system-review.patch",
-            "scripts/permission-system-copy.patch",
         )):
             continue
         if entry.isdir():

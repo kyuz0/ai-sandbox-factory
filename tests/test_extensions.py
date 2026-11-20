@@ -1,6 +1,9 @@
+import gzip
+import hashlib
 import io
 import json
 from pathlib import Path
+import runpy
 import subprocess
 import tarfile
 import tempfile
@@ -77,6 +80,20 @@ class ExtensionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extensions.unpack(bundle('linked', kind=tarfile.SYMTYPE), self.root / 'link')
 
+    def test_security_archive_includes_container_build_patches(self):
+        path = 'scripts/pi-subagents-approval-origin.patch'
+        blob = gzip.compress(bundle('pi-packages-fixture/' + path, b'fixture patch'))
+        (self.root / 'sources.json').write_text(json.dumps({'pi-packages': {
+            'url': 'https://example.test/pi-packages.tar.gz', 'commit': self.source['commit'],
+            'sha256': hashlib.sha256(blob).hexdigest(),
+        }}))
+        source = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev/security/fetch.py'
+        script = self.root / 'fetch.py'
+        script.write_bytes(source.read_bytes())
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(blob)):
+            runpy.run_path(str(script))
+        self.assertEqual((self.root / path).read_bytes(), b'fixture patch')
+
     def test_interrupted_cache_setup_can_be_retried(self):
         cache = self.root / 'cache'
         with patch.object(extensions.subprocess, 'run', side_effect=[None, KeyboardInterrupt]):
@@ -85,7 +102,6 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(list(cache.iterdir()), [])
 
     def test_existing_git_revision_exports_committed_files_without_fetch(self):
-        import hashlib
         cache = self.root / 'cache'
         repo = cache / hashlib.sha256(self.source['repository'].encode()).hexdigest()[:16]
         repo.mkdir(parents=True)
