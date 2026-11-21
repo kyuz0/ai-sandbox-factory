@@ -13,6 +13,7 @@ def open_client(mode):
 def reconnect(mode='browser', *, opened=False):
     action = {
         'browser': open_client('browser'),
+        'frostpi': open_client('frostpi'),
         'desktop': 'Reload the VS Code window.',
         'pi': 'Restart Pi CLI.',
         None: 'Choose Open to start the coding agent again.',
@@ -34,7 +35,7 @@ def editor_migration(config):
 
 # Keep every options key explicit so new settings require an effect assessment.
 OPTION_GROUPS = {
-    'approval': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
+    'approval': APPROVALS_LABEL, 'approval_model': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
     'protect_credentials': APPROVALS_LABEL,
     'protect_browser_credentials': 'Browser and saved vault protection',
     'browser': 'Browser and saved vault protection',

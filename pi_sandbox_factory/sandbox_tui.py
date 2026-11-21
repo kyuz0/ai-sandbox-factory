@@ -49,6 +49,7 @@ from . import sandbox_skills
 from .primary_workspace import AGENTS as PRIMARY_AGENTS, agent as coding_agent
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
+from .reviewer_ui import ReviewerFields
 from . import settings_effects
 from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
@@ -188,6 +189,7 @@ def copy_draft(record, state_root):
                  profile=config['profile']['path'], options=options(config.get('options')),
                  name='', workspace='', workspace_parent='', env_file='', pi_config='', working_directory='.',
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
+    value['options']['approval_model'] = 'current'  # Copies start without provider credentials.
     value['editor'] = editor_settings.copy_choice(editor_settings.load(Path(state_root) / record['name']))
     value['allowlist'] = (Path(state_root) / record['name'] / 'allowlist.txt').read_text()
     value['system_prompt'] = prompt_library.selection(Path(state_root) / record['name'])
@@ -354,6 +356,21 @@ class Service:
         if draft.get('advisors', {}).get('providers'):
             log(f'Advisors added. Open {ADVISORS_PATH} to sign in or check the copied sign-ins.')
 
+    def approval_models(self, name):
+        config = self.config(name)
+        models = hosted_models.request(config, 'approval-catalogue')['models']
+        routes = inference.routes(config)
+        managed = {name for name, route in routes.items() if not route.get('local')}
+        if managed:
+            connected = inference.credentials(config, self.state / name, {'status': True})['configured']
+            models = [m for m in models if m['provider'] not in managed or m['provider'] in connected]
+        return sorted(models, key=lambda m: (m['provider'], m['id']))
+
+    def save_approval_model(self, name, model, log):
+        if model != 'current' and not any(m['provider'] + '/' + m['id'] == model for m in self.approval_models(name)):
+            raise ValueError('This model is no longer available. Choose another model for approvals.')
+        self.update_settings(name, {'approval_model': model}, log)
+
     def hosted_request(self, name, action, **values):
         config = self.config(name)
         if action == 'status':
@@ -461,7 +478,10 @@ class Service:
 
     def disconnect_provider_key(self, name, provider):
         from . import inference
-        return inference.credentials(self.config(name), self.state / name, {'id': provider, 'remove': True})
+        from .sandbox_options import check_reviewer_provider
+        config = self.config(name)
+        check_reviewer_provider(config, provider)
+        return inference.credentials(config, self.state / name, {'id': provider, 'remove': True})
 
     def update(self, name, draft, key, log, update=None):
         changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
@@ -1250,7 +1270,7 @@ class ApprovalHelp(ModalScreen):
                              classes='setting-help approval-help-note')
                 yield Static('In either Auto mode, use /auto-review-settings in Pi or FrostPi to change the reviewer '
                              'model or thinking effort for the current chat.', classes='setting-help approval-help-note')
-                yield Static('Select Apply and recreate to use these settings in Pi and FrostPi.' if self.editing else
+                yield Static('Changing the approval mode or sandbox protection recreates the sandbox. Reopen Pi to use a new approval model.' if self.editing else
                              f'Change these settings later in Settings → {CATEGORIES["approval-settings"].label}.',
                              classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
@@ -1717,6 +1737,12 @@ class SSHScreen(Screen):
 
 
 class AdvisorsScreen(Screen):
+    DEFAULT_CSS = """
+    AdvisorsScreen > .form, AdvisorsScreen > .wizard-actions { max-width: 100; }
+    AdvisorsScreen Input, AdvisorsScreen Select { max-width: 54; }
+    AdvisorsScreen #advisor-calls { max-width: 14; }
+    AdvisorsScreen .model-error { color: $error; height: auto; }
+    """
     BINDINGS = [('escape', 'back', 'Back')]
 
     def __init__(self, record):
@@ -1732,7 +1758,7 @@ class AdvisorsScreen(Screen):
             yield Static('Choose the advisors Pi can consult. Sign-ins stay in a separate container.')
             yield Static(settings_effects.bullets(['Apply restarts sandbox processes.', 'Sign in and Check advisors take effect immediately.']), classes='section-intro')
             yield AdvisorChoices(providers, 'advisor-')
-            yield Static('Copying credentials replaces the selected advisor’s saved sign-in when you apply.')
+            yield Static('Copying credentials replaces the selected advisor’s saved sign-in when you apply.', id='advisor-copy-help')
             yield Static('If a copied sign-in stops working, use its Sign in button below, then Check advisors.'
                          if providers else f'Apply to add the advisor, then reopen {ADVISORS_PATH} to sign in.',
                          id='advisor-login-help')
@@ -1742,32 +1768,33 @@ class AdvisorsScreen(Screen):
             with Horizontal(classes='buttons'):
                 yield Button('Sign in to Antigravity', id='advisor-login-agy', disabled='agy' not in providers)
                 yield Button('Check advisors', id='advisor-check', disabled=not providers)
-            with Collapsible(title='Claude model', collapsed=True):
+            with Collapsible(title='Claude model', collapsed=True, id='advisor-claude-options'):
                 with Vertical(classes='setting'):
-                    yield Label('Model alias or exact ID · default sonnet')
-                    yield Input(settings.get('claude_model', 'sonnet'), id='advisor-claude-model')
+                    yield Label('Preferred model · leave blank to use Claude’s default')
+                    yield Input(settings.get('claude_model', ''), id='advisor-claude-model')
+                    yield Static('Run /advisor status in Pi to see model IDs and remaining quota.', classes='setting-help')
+                    yield Static(id='advisor-claude-error', classes='model-error')
                 with Vertical(classes='setting'):
-                    yield Label('Thinking effort')
+                    yield Label('Thinking effort for the preferred model')
                     yield Select([(x.title(), x) for x in ('low', 'medium', 'high', 'xhigh', 'max')], value=settings.get('claude_effort', 'medium'), allow_blank=False, id='advisor-claude-effort')
-                    yield Static('Use /advisor status in Pi to refresh Claude subscription quota and reset times without a model call.', classes='setting-help')
-            with Collapsible(title='Antigravity model', collapsed=True):
+            with Collapsible(title='Antigravity model', collapsed=True, id='advisor-agy-options'):
                 with Vertical(classes='setting'):
-                    yield Label('Exact Gemini model ID · leave blank to sign in first')
+                    yield Label('Limit Antigravity to one model · leave blank to allow all')
                     yield Input(settings.get('agy_model', ''), id='advisor-model')
+                    yield Static('Run /advisor status in Pi to see model IDs and their effort levels.', classes='setting-help')
+                    yield Static(id='advisor-agy-error', classes='model-error')
                 with Vertical(classes='setting'):
-                    yield Label('Quota group · from /usage')
+                    yield Label('Quota group · optional')
                     yield Input(settings.get('agy_quota_group', ''), id='advisor-quota')
+                    yield Static('If /advisor status shows no quota for this model, enter its group name from /usage in Antigravity.', classes='setting-help')
+            with Collapsible(title='Usage and network', collapsed=True, id='advisor-usage-options'):
                 with Vertical(classes='setting'):
-                    yield Label('Effort matching that model')
-                    yield Select([(x.title(), x) for x in ('low', 'medium', 'high')], value=settings.get('agy_effort', 'medium'), allow_blank=False, id='advisor-effort')
-            with Collapsible(title='Usage and network', collapsed=True):
-                with Vertical(classes='setting'):
-                    yield Label('Maximum calls per Pi session · blank for no limit')
+                    yield Label('Total advisor calls per Pi chat · blank for no limit')
                     yield Input(str(settings.get('max_calls') or ''), id='advisor-calls', type='integer')
                 with Vertical(classes='setting'):
                     yield Label('Additional allowed destinations · hostname:port')
                     yield TextArea(settings.get('extra_hosts', ''), id='advisor-hosts')
-                    yield Static('These destinations apply to the advisor’s separate gateway.', classes='setting-help')
+                    yield Static('All enabled advisors can connect to these destinations.', classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='advisor-back')
             yield Button('Apply', id='advisor-apply', variant='primary')
@@ -1777,14 +1804,29 @@ class AdvisorsScreen(Screen):
         self.sync_fields()
 
     @on(Checkbox.Changed)
+    @on(Input.Changed, '#advisor-claude-model')
+    @on(Input.Changed, '#advisor-model')
     def sync_fields(self):
+        from .sandbox_advisors import MODEL_ID_HELP, valid_model_id
         selected = self.query_one(AdvisorChoices).selected()
+        self.query_one('#advisor-copy-help').display = bool(self.query_one(AdvisorChoices).imports())
+        self.query_one('#advisor-login-help').display = bool(selected) and (not self.record['config'].get('advisors', {}).get('providers') or bool(self.query_one(AdvisorChoices).imports()))
+        self.query_one('#advisor-usage-options').display = bool(selected)
         for provider, fields in {
             'claude': ('claude-model', 'claude-effort'),
-            'agy': ('model', 'quota', 'effort'),
+            'agy': ('model', 'quota'),
         }.items():
+            section = self.query_one('#advisor-' + provider + '-options', Collapsible)
+            section.display = provider in selected
+            model = self.query_one('#advisor-' + fields[0], Input).value.strip()
+            error = self.query_one('#advisor-' + provider + '-error', Static)
+            error.display = not valid_model_id(model)
+            error.update(MODEL_ID_HELP if error.display else '')
+            label = 'Claude model' if provider == 'claude' else 'Antigravity model'
+            default = 'Claude’s default' if provider == 'claude' else 'All models'
+            section.title = label + ' · ' + ('Check model ID' if error.display else model or default)
             for field in fields:
-                self.query_one('#advisor-' + field).disabled = provider not in selected
+                self.query_one('#advisor-' + field).disabled = provider not in selected or (field != fields[0] and not model)
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -1806,11 +1848,10 @@ class AdvisorsScreen(Screen):
                 calls = self.query_one('#advisor-calls', Input).value.strip()
                 settings = sandbox_advisors.validate({
                     'providers': self.query_one(AdvisorChoices).selected(),
-                    'claude_model': self.query_one('#advisor-claude-model', Input).value.strip() or 'sonnet',
+                    'claude_model': self.query_one('#advisor-claude-model', Input).value.strip(),
                     'claude_effort': self.query_one('#advisor-claude-effort', Select).value,
                     'agy_model': self.query_one('#advisor-model', Input).value.strip(),
                     'agy_quota_group': self.query_one('#advisor-quota', Input).value.strip(),
-                    'agy_effort': self.query_one('#advisor-effort', Select).value,
                     'max_calls': int(calls) if calls else None,
                     'extra_hosts': self.query_one('#advisor-hosts', TextArea).text,
                 })
@@ -1898,9 +1939,17 @@ class ModelsScreen(Screen):
             with Vertical(classes='setting'):
                 yield Button(EDIT_FORMS['model-sources'].label + '…', id='model-sources')
                 yield Static('Changing local access or enabled plugins recreates the sandbox.', classes='setting-help')
+            selected = options(self.record['config'].get('options'))
+            if self.finished and selected['approval'] in ('automatic', 'assisted'):
+                yield ReviewerFields(self.record['name'], selected['approval_model'], save_on_choice=True)
         with Horizontal(classes='wizard-actions'):
             yield Button('Continue' if self.finished else 'Back',id='models-back',variant='primary' if self.finished else 'default')
         yield Footer()
+
+    @on(HostedProviders.Changed)
+    def refresh_approval_models(self):
+        if fields := next(iter(self.query(ReviewerFields)), None):
+            fields.load()
 
     def on_mount(self):
         local = self.query('#live-local-provider CollapsibleTitle')
@@ -1948,6 +1997,7 @@ class ModelsScreen(Screen):
 
         def saved():
             self.load_key_status()
+            self.refresh_approval_models()
             if choose_model:
                 self.app.pop_screen()
                 self.open_plugin_model(provider, optional=True)
@@ -2924,13 +2974,13 @@ class SettingsForm(Screen):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
                 apply_label = 'Save defaults' if self.defaults_mode else 'Create and start sandbox'
                 if self.editing:
-                    apply_label = 'Apply' if self.setting == 'network-settings' else 'Apply and recreate'
+                    apply_label = 'Apply' if self.setting in ('approval-settings', 'network-settings') else 'Apply and recreate'
                 yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
 
     def open_client_label(self, mode):
         client = PRIMARY_AGENTS[self.primary] if self.native else {
-            'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
+            'frostpi': 'FrostPi in your browser', 'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
         }[mode]
         return 'Open ' + client + (' after applying' if self.editing else ' when ready')
 
@@ -3046,6 +3096,14 @@ class SettingsForm(Screen):
                 yield Select([(label, mode) for mode, (label, _, _) in APPROVAL_MODES.items()],
                              value=selected['approval'], allow_blank=False, id='approval')
                 yield Static('', id='selected-approval-help', classes='setting-help', markup=False)
+
+            if not self.defaults_mode:
+                yield ReviewerFields(value['name'] if self.editing else None, selected['approval_model'])
+
+    @on(Collapsible.Expanded, '#agent-section')
+    def load_approval_models(self):
+        if self.query(ReviewerFields) and self.query_one(ReviewerFields).display:
+            self.query_one(ReviewerFields).load()
 
     def compose_models(self, category, value, selected):
         configured=value.get('model_providers',{'local':{}})
@@ -3398,8 +3456,24 @@ class SettingsForm(Screen):
             for message in event.input.parent.query(Feedback):
                 message.update('')
 
+    def approval_policy_changed(self):
+        original = options(self.draft.get('options'))
+        return (original['approval'] != self.query_one('#approval', Select).value
+                or original['inner_sandbox'] != self.query_one('#inner-sandbox', Checkbox).value
+                or original['protect_credentials'] != self.query_one('#protect-credentials', Checkbox).value)
+
     def approval_summary(self):
         mode = self.query_one('#approval', Select).value
+        if fields := next(iter(self.query(ReviewerFields)), None):
+            automatic = mode in ('automatic', 'assisted')
+            was_visible = fields.display
+            fields.display = automatic
+            if automatic and not was_visible and not self.query_one('#agent-section', Collapsible).collapsed:
+                fields.load()
+        if self.setting == 'approval-settings':
+            policy_changed = self.approval_policy_changed()
+            self.query_one('#apply', Button).label = 'Apply and recreate' if policy_changed else 'Apply'
+            self.query_one('#open-editor').display = policy_changed
         _, inline_help, _ = APPROVAL_MODES[mode]
         inner = self.query_one('#inner-sandbox', Checkbox).value
         category = CATEGORIES['approval-settings'].label
@@ -3409,6 +3483,7 @@ class SettingsForm(Screen):
 
     @on(Select.Changed, '#approval')
     @on(Checkbox.Changed, '#inner-sandbox')
+    @on(Checkbox.Changed, '#protect-credentials')
     def approval_changed(self):
         self.approval_summary()
         self.browser_changed()
@@ -3575,6 +3650,8 @@ class SettingsForm(Screen):
         websites = self.query_one(WebsiteGroups)
         selected['website_groups'] = websites.selected()
         draft['_curlie_list'] = websites.curlie_revision()
+        if fields := next(iter(self.query(ReviewerFields)), None):
+            selected['approval_model'] = fields.selected
         selected.update(approval=self.query_one('#approval', Select).value, inner_sandbox=check('inner-sandbox'),
                         protect_credentials=check('protect-credentials'),
                         protect_browser_credentials=check('protect-browser-credentials'),
@@ -3586,7 +3663,7 @@ class SettingsForm(Screen):
             or (s not in PROFILE_SKILLS.get(self.profile_name, []) and s in selected['disabled_skills'])]
         if not self.editing:
             draft['editor'] = self.query_one(EditorFields).collect()
-            if draft['editor']['mode'] == 'browser' and editor_settings.default_mode(self.query_one('#engine', Select).value) != 'browser':
+            if draft['editor']['mode'] in ('browser', 'frostpi') and editor_settings.default_mode(self.query_one('#engine', Select).value) != 'browser':
                 raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose Pi CLI or VS Code on host.')
         draft.update(network=self.query_one('#network', Select).value, memory=memory_limit(inp('memory')),
                      subagents=check('subagents'), options=options(selected), engine=self.query_one('#engine', Select).value,
@@ -3662,6 +3739,22 @@ class SettingsForm(Screen):
             elif action == 'apply':
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
+                if self.setting == 'approval-settings':
+                    previous = options(self.draft.get('options'))
+                    fields = self.query_one(ReviewerFields)
+                    if (previous['approval'] in ('manual', 'off') and fields.display and fields.selected != 'current'
+                            and not any(m['provider'] + '/' + m['id'] == fields.selected for m in fields.models)):
+                        raise ValueError('Choose an available model for approvals or use the current model.')
+                    if not self.approval_policy_changed():
+                        model = self.query_one(ReviewerFields).selected
+                        if model == previous['approval_model']:
+                            self.notify('No changes to apply.')
+                            return
+                        name = self.draft['name']
+                        await asyncio.to_thread(self.app.service.save_approval_model, name, model, lambda _: None)
+                        self.app.pop_screen()
+                        self.notify('Approval model saved. Reopen Pi to use it.')
+                        return
                 if self.setting == 'network-settings':
                     mode = self.query_one('#network', Select).value
                     search = options(self.draft.get('options'))['web_access']
@@ -3763,7 +3856,9 @@ class SettingsForm(Screen):
             if len(plugin_choices) == 1 and not hosted_choices:
                 provider = plugin_choices[0]
                 label = self.provider_forms.get(provider, {}).get('description') or provider
-                self.app.push_screen(ModelDialog(draft['name'], provider, plugin_label=label, optional=True),
+                self.app.push_screen(ModelDialog(draft['name'], provider, plugin_label=label, optional=True,
+                    approval_model=draft['options'].get('approval_model', 'current')
+                    if not editing and draft['options']['approval'] in ('automatic', 'assisted') else None),
                                      lambda _: open_after_models())
             else:
                 self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))

@@ -32,7 +32,13 @@ python3 -m venv /tmp/pi-sandbox-package-check
 (cd /tmp && /tmp/pi-sandbox-package-check/bin/pi-sandbox-factory profile list)
 ```
 
+## Approval model selection
+
+In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Reopen Pi with the first provider as the chat model. Ask it to use `bash_escalate` to run `printf approval-routing-ok`. Check that the approval details name the second provider and that the chat reply still uses the first. Recheck **Use current model for approvals** and repeat to verify the default.
+
 ## FrostPi editor and shared Pi goals
+
+Use `--standalone` in place of `--code-server` and its directory to exercise **FrostPi in browser**. It opens a new chat, sends a prompt to the local test model, reloads the page and resumes the saved conversation. The test also checks workspace browsing on desktop and phone, Markdown links and images, keyboard navigation, draft preservation, and the workspace and browser access rules. It checks that transfers start disabled, uploads and downloads a binary file, checks both copies byte for byte and verifies that duplicate names and interrupted uploads preserve existing files.
 
 Build the Factory image from the current checkout in a disposable sandbox.
 Use the code-server archive pinned in `pi_sandbox_factory/browser_editor.py`.
@@ -456,7 +462,9 @@ For advisor or SSH changes, run their unit suites and:
 ```
 
 The advisor check also sends a synthetic image through `advisor_ask` in both Pi
-and the actual Pendant worker, using a fixture companion without account access.
+and standalone FrostPi, using a fixture companion without account access. Pass
+`--code-server /path/to/code-server` to check the VS Code extension as well.
+Use the Playwright setup documented under FrostPi editor.
 
 Use a development image with the local model provider enabled. These check
 isolated launchers, synthetic credential imports, permissions and keyring

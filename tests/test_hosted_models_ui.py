@@ -31,6 +31,32 @@ class HostedUITests(unittest.TestCase):
     def tearDownClass(cls): cls.runner.close()
     def _callTestMethod(self,method): self.runner.run(method())
 
+    async def test_post_creation_reviewer_choice_survives_skipping_chat_default(self):
+        from pi_sandbox_factory.reviewer_ui import ReviewerFields
+        service = ModelService([])
+        service.plugin_model = Mock(side_effect=service.hosted_request)
+        service.approval_models = lambda name: [
+            {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
+            {'provider': 'openrouter', 'id': 'other/model', 'name': 'Other'},
+        ]
+        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(temp), service)
+            async with app.run_test(size=(80, 24)) as pilot:
+                dialog = ModelDialog('test', 'chaucer', plugin_label='Chaucer', optional=True, approval_model='current')
+                await app.push_screen(dialog)
+                await app.workers.wait_for_complete()
+                dialog.query_one('#review-current').focus()
+                await pilot.press('space')
+                app.screen.query_one(Select).value = 'openrouter'
+                await pilot.pause()
+                app.screen.query_one(Input).focus()
+                await pilot.press('enter')
+                await pilot.pause()
+                self.assertEqual(dialog.query_one(ReviewerFields).selected, 'openrouter/other/model')
+                await pilot.click('#model-cancel')
+                self.assertEqual(service.calls, [['approval-model', 'test', 'openrouter/other/model']])
+                self.assertTrue(all(call.args[1] == 'catalogue' for call in service.plugin_model.call_args_list))
+
     async def test_managed_plugin_key_opens_default_model_picker(self):
         source = {'name': 'company', 'manifest': {
             'description': 'Company models',

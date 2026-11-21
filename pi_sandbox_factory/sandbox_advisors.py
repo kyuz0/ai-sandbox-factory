@@ -20,6 +20,13 @@ HOSTS = {
 }
 
 
+def valid_model_id(value):
+    return isinstance(value, str) and (not value or re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._+:/-]*', value) is not None)
+
+
+MODEL_ID_HELP = 'Use a model ID from /advisor status in Pi. Paste the ID without spaces.'
+
+
 def validate(value):
     if not isinstance(value, dict) or set(value) - {'providers', 'agy_model', 'agy_quota_group', 'agy_effort', 'extra_hosts', 'max_calls', 'claude_model', 'claude_effort'}:
         raise ValueError('Invalid advisor settings')
@@ -28,18 +35,18 @@ def validate(value):
         raise ValueError('Choose Codex, Claude and/or Antigravity')
     result = dict(value, providers=providers)
     if 'claude' in providers:
-        model = value.get('claude_model', 'sonnet')
-        if not isinstance(model, str) or not re.fullmatch(r'(sonnet|opus|haiku|claude-[a-zA-Z0-9._-]+)', model):
-            raise ValueError('Enter sonnet, opus, haiku or an exact Claude model ID')
+        model = value.get('claude_model', '')
+        if not valid_model_id(model):
+            raise ValueError(MODEL_ID_HELP)
         if value.get('claude_effort', 'medium') not in ('low', 'medium', 'high', 'xhigh', 'max'):
             raise ValueError('Invalid Claude thinking effort')
     if 'agy' in providers:
         model = value.get('agy_model', '')
         if not isinstance(model, str):
             raise ValueError('Antigravity model ID must be text')
-        if model and not re.fullmatch(r'gemini[a-zA-Z0-9._-]+', model, re.I):
-            raise ValueError('Enter the exact Gemini model ID from agy models')
-        if model and (not isinstance(value.get('agy_quota_group'), str) or not value['agy_quota_group'].strip()):
+        if not valid_model_id(model):
+            raise ValueError(MODEL_ID_HELP)
+        if not isinstance(value.get('agy_quota_group', ''), str):
             raise ValueError('Enter the Antigravity quota group shown by /usage')
         if value.get('agy_effort', 'medium') not in ('low', 'medium', 'high'):
             raise ValueError('Antigravity effort must be low, medium or high')
@@ -90,15 +97,15 @@ def provider_config(settings):
         if provider == 'codex':
             providers[provider] = {'executable': '/usr/local/bin/advisor-codex', 'codexHome': '/home/node/.codex', 'sharedHome': True}
         elif provider == 'claude':
-            providers[provider] = {'executable': '/usr/local/bin/advisor-claude', 'claudeHome': '/home/node/.claude', 'sharedHome': True,
-                'models': {'default': {'id': settings.get('claude_model', 'sonnet'), 'effort': settings.get('claude_effort', 'medium')},
-                           'maximum': {'id': 'opus', 'effort': 'high', 'requiresReason': True},
-                           'economy': {'id': 'haiku', 'effort': 'medium'}}}
+            providers[provider] = {'executable': '/usr/local/bin/advisor-claude', 'claudeHome': '/home/node/.claude', 'sharedHome': True}
+            if settings.get('claude_model'):
+                providers[provider].update(defaultModel=settings['claude_model'], defaultEffort=settings.get('claude_effort','medium'))
         else:
-            providers[provider] = {'executable': '/usr/local/bin/agy', 'models': {'default': {
-                'id': settings.get('agy_model', ''), 'quotaGroup': settings.get('agy_quota_group', ''), 'effort': settings.get('agy_effort', 'medium')}}}
-            if not settings.get('agy_model'):
-                providers[provider].update(models={}, setupOnly=True)
+            providers[provider] = {'executable': '/usr/local/bin/agy'}
+            if settings.get('agy_model'):
+                providers[provider]['models'] = {'default': {
+                    'id': settings['agy_model'], 'quotaGroup': settings.get('agy_quota_group', ''),
+                    **({'effort': settings['agy_effort']} if 'agy_effort' in settings else {})}}
     return {'provider': settings['providers'][0], 'providers': providers,
             'billingMode': 'subscription', 'containerRuntime': True, 'maxCallsPerSession': settings.get('max_calls')}
 

@@ -141,6 +141,10 @@ lowest setting the model supports. Thinking uses part of the same output budget.
 
 ## Reviewer settings
 
+By default, the current chat model reviews approval requests. To use a separate model for this sandbox, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, choose a provider and model, then select **Use for approvals** and **Apply**. The picker lists models available to Pi in that sandbox. A different provider can review requests even when the chat stays on its original model.
+
+Reopen Pi to load the saved choice. Changing only the approval model keeps the container and its chats in place. The chosen provider receives the instructions and chat context needed for each review. If that model becomes unavailable, automatic review cannot approve the request.
+
 Pi and FrostPi show the approval mode when you open a chat. In either automatic
 mode, use `/auto-review-settings` to change the reviewer model or thinking effort
 for that chat. Choose **Current chat model** to follow the model selected in Pi or
@@ -153,11 +157,10 @@ not apply to Factory’s approval modes. Change the approval mode, the inner san
 protection in Factory and apply them by recreating the sandbox. `/reload` reloads
 Pi resources and restores the default per-chat reviewer settings.
 
-In both automatic modes, `/opt/pi-security/config/auto-review.json` selects the
-current chat model and enables `retainedContext` and `reviewerConversation`. Inspection tools cannot be
+In both automatic modes, `/opt/pi-security/config/auto-review.json` stores the
+sandbox’s approval model and enables `retainedContext` and `reviewerConversation`. Inspection tools cannot be
 enabled. Project files cannot disable this context handling or choose another
-reviewer. Configure trusted settings through the image, not through agent-edited
-workspace files.
+reviewer. Factory manages this file outside the workspace.
 
 For extension updates, see [Extensions](extensions.md). The outer container,
 network and credential boundaries are described in [Architecture](architecture.md).

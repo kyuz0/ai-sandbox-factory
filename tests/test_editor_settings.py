@@ -35,6 +35,22 @@ class Preferences(unittest.TestCase):
             self.assertEqual((state / 'config.json').read_text(), 'unchanged')
             self.assertEqual(settings.copy_choice(value), settings.DEFAULTS)
 
+    def test_uploads_default_off_for_existing_sandboxes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            (state / 'editor.json').write_text('{"mode":"browser"}')
+            self.assertFalse(settings.load(state)['allow_uploads'])
+            settings.save(state, {'allow_uploads': True})
+            self.assertTrue(settings.copy_choice(settings.load(state))['allow_uploads'])
+            self.assertFalse(settings.load(state)['frostpi_uploads'])
+            selected = settings.save(state, {'mode': 'frostpi', 'frostpi_uploads': True, 'frostpi_downloads': True})
+            self.assertEqual(settings.copy_choice(selected), selected)
+            self.assertFalse(selected['allow_uploads'])
+            settings.save(state, {'allow_uploads': False})
+            self.assertFalse(settings.load(state)['allow_uploads'])
+        with self.assertRaisesRegex(ValueError, 'file uploads'):
+            settings.validate({'allow_uploads': 'false'})
+
     def test_address_port_and_remote_authentication(self):
         for value in ({'address': '0.0.0.0'}, {'address': '::'}, {'address': 'example.com'},
                       {'port': -1}, {'port': 65536}, {'port': True}, {'mode': 'other'},

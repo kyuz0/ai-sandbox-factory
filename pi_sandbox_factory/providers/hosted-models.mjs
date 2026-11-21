@@ -34,6 +34,11 @@ function safeModel(model) {
 }
 async function main(r) {
   if (r.action === 'status') return {providers: ids.map(status)};
+  if (r.action === 'approval-catalogue') {
+    const rt = await runtime();
+    const available = await rt.getAvailable();
+    return {models: available.map(({provider, id, name}) => ({provider, id, name}))};
+  }
   const plugin = r.plugin === true && ['catalogue', 'select'].includes(r.action) &&
     typeof r.provider === 'string' && /^[a-z][a-z0-9-]{0,254}$/.test(r.provider);
   if (!plugin && !ids.includes(r.provider)) throw Error('Unsupported provider.');

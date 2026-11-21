@@ -9,6 +9,38 @@ from pi_sandbox_factory import hosted_models as h, sandbox, inference
 
 
 class HostedModelsTests(unittest.TestCase):
+    def test_reviewer_only_update_preserves_runtime_and_chat_settings(self):
+        from pi_sandbox_factory.sandbox_options import options, write_json
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            runtime = state / 'runtime-config' / 'auto-review.json'
+            config = {'name': 'test', 'options': options(), 'hosted_connections': {'openrouter': {}}}
+            other = {'interactionMode': 'automatic', 'retainedContext': True}
+            write_json(runtime, {**other, 'model': 'current'})
+            write_json(state / 'config.json', config)
+            with patch.object(sandbox, 'build') as build, patch.object(sandbox, 'down') as down:
+                ref = 'openrouter/openai/gpt-4o-mini'
+                sandbox.apply_settings(config, state, {'approval_model': ref})
+                self.assertEqual(json.loads(runtime.read_text()), {**other, 'model': ref})
+                saved = json.loads((state / 'config.json').read_text())
+                self.assertEqual(saved['options'], {**options(), 'approval_model': ref})
+                with patch.object(h.activity, 'save_config', side_effect=OSError('disk full')):
+                    with self.assertRaisesRegex(OSError, 'disk full'):
+                        sandbox.apply_settings(saved, state, {'approval_model': 'current'})
+                self.assertEqual(json.loads(runtime.read_text())['model'], ref)
+                sandbox.apply_settings(saved, state, {'options': options()})
+                self.assertEqual(json.loads(runtime.read_text()), {**other, 'model': 'current'})
+                build.assert_not_called()
+                down.assert_not_called()
+
+    def test_removing_active_reviewer_provider_preserves_connection(self):
+        config = {'options': {'approval_model': 'openrouter/openai/gpt-4o-mini'}}
+        with patch.object(inference, 'up') as up, patch.object(inference, 'credentials') as credentials:
+            with self.assertRaisesRegex(ValueError, 'Approvals use this provider'):
+                h.remove(config, '.', 'openrouter')
+            up.assert_not_called()
+            credentials.assert_not_called()
+
     def test_removing_active_embedding_provider_preserves_connection_and_key(self):
         config = {'hosted_connections': {'openrouter': {}}, 'options': {
             'knowledge_embedding': 'endpoint', 'knowledge_embedding_url': 'https://openrouter.ai/api/v1'}}

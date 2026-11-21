@@ -17,6 +17,11 @@ from tui_geometry import check_table_layout
 
 class FakeService:
     def __init__(self,records): self.records=records;self.calls=[]
+    def approval_models(self, name):
+        return []
+
+    def save_approval_model(self, name, model, log):
+        self.calls.append(['approval-model', name, model])
     def inventory(self):return copy.deepcopy(self.records)
     def config(self, name):
         return copy.deepcopy(next(record['config'] for record in self.records if record['name'] == name))
@@ -75,6 +80,64 @@ class TUITests(unittest.TestCase):
         menu=app.screen.query_one('#more-actions',OptionList)
         menu.highlighted=next(i for i, (_, key) in enumerate(app.screen.actions) if key == action);menu.focus()
         await pilot.press('enter');await pilot.pause()
+
+    async def test_select_approval_model_across_providers(self):
+        from textual.widgets import Select
+        from pi_sandbox_factory.reviewer_ui import ReviewerPicker
+        service = FakeService(self.records)
+        service.approval_models = lambda name: [
+            {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
+            {'provider': 'openrouter', 'id': 'openai/gpt-4o-mini', 'name': 'GPT-4o mini'},
+        ]
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self.ready(app, pilot)
+            await self.settings_page(app, pilot)
+            await self.ready(app, pilot)
+            form = app.screen
+            current = form.query_one('#review-current', Checkbox)
+            self.assertTrue(current.value)
+            self.assertFalse(current.disabled)
+            self.assertFalse(form.query_one('#review-selection').display)
+            current.focus()
+            await pilot.press('space', 'escape')
+            self.assertIs(app.screen, form)
+            self.assertTrue(current.value)
+            await pilot.press('space')
+            self.assertIsInstance(app.screen, ReviewerPicker)
+            app.screen.query_one(Select).value = 'openrouter'
+            await pilot.pause()
+            app.screen.query_one(Input).value = 'does not exist'
+            await pilot.pause()
+            self.assertTrue(app.screen.query_one('#review-use').disabled)
+            app.screen.query_one(Input).value = 'mini'
+            await pilot.pause()
+            await pilot.click('#review-use')
+            await pilot.pause()
+            self.assertFalse(current.value)
+            self.assertIn('OpenRouter · openai/gpt-4o-mini', str(form.query_one('#review-selected').render()))
+            await pilot.click('#review-choose')
+            await pilot.press('escape')
+            self.assertFalse(current.value)
+            self.assertEqual(str(form.query_one('#apply', Button).label), 'Apply')
+            await pilot.click('#apply')
+            await self.ready(app, pilot)
+            self.assertEqual(service.calls, [['approval-model', 'alpha', 'openrouter/openai/gpt-4o-mini']])
+
+    async def test_reviewer_controls_without_alternative_and_in_manual_mode(self):
+        from textual.widgets import Select
+        service = FakeService(self.records)
+        service.approval_models = lambda name: [{'provider': 'chaucer', 'id': 'only', 'name': 'Only'}]
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await self.settings_page(app, pilot)
+            await self.ready(app, pilot)
+            self.assertTrue(app.screen.query_one('#review-current').disabled)
+            self.assertTrue(app.screen.query_one('#review-current').value)
+            app.screen.query_one('#approval', Select).value = 'manual'
+            await pilot.pause()
+            self.assertFalse(app.screen.query_one('ReviewerFields').display)
 
     async def test_banner_and_update_notice_fit_small_and_large_terminals(self):
         for size in ((80,24),(120,40),(220,50)):
@@ -1515,7 +1578,7 @@ class TUITests(unittest.TestCase):
             await pilot.press('end')
             await pilot.pause(0.35)
             self.assertLessEqual(list(help_box.query(Static))[-1].region.bottom, help_box.content_region.bottom)
-            self.assertIn('Apply and recreate to use these settings in Pi and FrostPi.',
+            self.assertIn('Reopen Pi to use a new approval model.',
                           str(list(help_box.query(Static))[-1].render()))
             close = app.screen.query_one('#close-approval-help', Button)
             self.assertLess(close.region.bottom, app.size.height)

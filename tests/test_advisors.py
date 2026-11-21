@@ -16,14 +16,15 @@ class AdvisorTests(unittest.TestCase):
     def test_enable_before_antigravity_login(self):
         settings=advisors.validate({'providers':['agy']})
         provider=advisors.provider_config(settings)['providers']['agy']
-        self.assertTrue(provider['setupOnly'])
-        self.assertEqual(provider['models'], {})
+        self.assertNotIn('setupOnly', provider)
+        self.assertNotIn('models', provider)
 
     def test_explicit_gemini_model_and_quota_group(self):
         model = 'gemini-test-high-' + 'a' * 120
         settings=advisors.validate({'providers':['agy'], 'agy_model':model, 'agy_quota_group':'Gemini', 'agy_effort':'high'})
         self.assertEqual(advisors.provider_config(settings)['providers']['agy']['models']['default']['id'], model)
-        with self.assertRaises(ValueError):advisors.validate({'providers':['agy'],'agy_model':'gemini-test'})
+        native_variant = advisors.provider_config(advisors.validate({'providers': ['agy'], 'agy_model': 'other-model'}))
+        self.assertEqual(native_variant['providers']['agy']['models']['default'], {'id': 'other-model', 'quotaGroup': ''})
 
     def test_only_selected_providers_and_subscription_auth(self):
         config=advisors.provider_config(advisors.validate({'providers':['codex']}))
@@ -38,10 +39,10 @@ class AdvisorTests(unittest.TestCase):
         provider=advisors.provider_config(settings)['providers']['claude']
         self.assertTrue(provider['sharedHome'])
         self.assertEqual(provider['claudeHome'], '/home/node/.claude')
-        self.assertEqual(provider['models']['default'], {'id':'sonnet','effort':'medium'})
+        self.assertNotIn('defaultModel', provider)
         self.assertIn(('api.anthropic.com',443), advisors.rules(settings))
         self.assertNotIn(('api.openai.com',443), advisors.rules(settings))
-        for model in ['--bad','other','sonnet; command','']:
+        for model in ['--bad','sonnet; command']:
             with self.assertRaises(ValueError): advisors.validate({'providers':['claude'],'claude_model':model})
 
     def test_rpc_mount_contains_no_credentials_or_container_engine(self):

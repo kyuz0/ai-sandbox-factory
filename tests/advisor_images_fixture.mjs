@@ -1,7 +1,7 @@
 // A real socket round-trip and tool call, with synthetic provider/model replies.
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {writeFile,mkdtemp,rm} from 'node:fs/promises';
+import {writeFile,readFile,mkdtemp,rm} from 'node:fs/promises';
 const png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
 if(process.argv[2]==='service') {
   const {serveAdvisor}=await import('/opt/advisor/lib/advisor/remote.mjs');
@@ -26,6 +26,9 @@ if(process.argv[2]==='service') {
 } else {
   await writeFile('/workspace/advisor-image.png' ,Buffer.from(png,'base64'));
   await writeFile('/home/node/.pi/agent/models.json',JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:18711/v1',api:'openai-completions',apiKey:'fixture-key',models:[{id:'fixture-model',contextWindow:32000,maxTokens:4096}]}}}));
+  const settings='/home/node/.pi/agent/settings.json';
+  const saved=JSON.parse(await readFile(settings,'utf8'));
+  await writeFile(settings,JSON.stringify({...saved,defaultProvider:'fixture',defaultModel:'fixture-model'}));
   createServer(async(req,res)=>{
     if(req.method==='GET'){res.end('ready');return;}
     try {
@@ -37,6 +40,8 @@ if(process.argv[2]==='service') {
       else {
         const tool=request.tools.find(t=>t.function.name==='advisor_ask');
         assert.equal(tool.function.parameters.properties.images.type,'array');
+        assert.equal(tool.function.parameters.properties.aboveQuotaPercent.type,'number');
+        assert.ok(request.tools.some(t=>t.function.name==='advisor_status'));
         const replies=messages.filter(m=>m.role==='tool');
         if(replies.length)assert.match(JSON.stringify(replies),/ADVISOR_IMAGES_OK/);
         else {

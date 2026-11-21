@@ -26,6 +26,28 @@ sandbox to return to it. **Actions… → Stop browser editor** stops the editor
 active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
 Stopping the sandbox stops both clients.
 
+## Open FrostPi on its own
+
+Choose **Open with… → FrostPi in browser** for chat on this computer. Choose **Settings → Editor → FrostPi in browser** to use it whenever you open the sandbox. This client is included in new Pi sandbox images.
+
+Choose **New session** to start a conversation or **Resume session** to open a saved Pi chat. Refreshing the page keeps the current conversation. Closing the tab leaves Pi running. The browser address contains a private link to this sandbox.
+
+Choose **Files** to browse the workspace, or click a file path in a reply to open it directly. You can read text and Markdown and view images. Select a folder name above the preview to go back. Press **Escape** to return to your chat and draft.
+
+Markdown can display images stored in the workspace. Images hosted on other websites show the site name and stay blocked. Opening a website link asks for confirmation and shows its address.
+
+To transfer files, open **Settings → Editor → FrostPi in browser**. Turn on **Allow file uploads** or **Allow file downloads**, save your settings and reopen the editor. Both options are off by default.
+
+In **Files**, open the destination folder and choose **Upload file…**. If a file with the same name already exists, the original stays in place. To save a file to your computer, open it and choose **Download**. You can download files even when a preview is unavailable. Turning off downloads still lets you read previews in your browser.
+
+![Workspace files in standalone FrostPi after uploading a file](frostpi-browser.png)
+
+## Upload files in VS Code
+
+Under **Editor**, select **Browser editor** and check **Allow file uploads**. For an existing sandbox, open **Settings → Editor**, save the change and reopen the editor. Uploads are off by default.
+
+Drag files from your computer onto a writable folder in Explorer, or right-click the folder and choose **Upload…**. Files placed in `/workspace` also appear in the project folder on your host.
+
 ## Connection settings
 
 During creation, expand **Editor → Browser connection**. For a saved sandbox,
@@ -38,7 +60,7 @@ use **Settings → Editor → Browser connection**.
   **Show password** lets you copy it. Only its hash is saved.
 
 Changing settings stops a running editor. Use **Open** to launch it again.
-Creating from another sandbox copies the editor choice; connection addresses and
+Creating from another sandbox copies the editor choice and file transfer settings. Connection addresses and
 passwords start fresh.
 
 To connect from another computer, enter the host's interface IP, enable a password
@@ -55,7 +77,7 @@ for one launch. Use Pi CLI alongside either editor.
 For **VS Code on host**, put `code` on your PATH. Factory installs the Dev
 Containers extension if needed.
 
-A sandbox used in the browser cannot subsequently attach to host VS Code: that
+A sandbox used with the VS Code browser editor cannot subsequently attach to host VS Code: that
 would give its installed extensions a bridge back to the host client. Create a
 separate sandbox for host VS Code. A running desktop VS Code server also prevents
 browser-editor startup.
@@ -65,6 +87,7 @@ browser-editor startup.
 ```sh
 pi-sandbox-factory open NAME
 pi-sandbox-factory open NAME --editor pi
+pi-sandbox-factory open NAME --editor frostpi
 pi-sandbox-factory open NAME --editor desktop
 pi-sandbox-factory browser-editor NAME --background
 pi-sandbox-factory browser-editor NAME --stop

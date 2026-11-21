@@ -1048,6 +1048,37 @@ async def capture(size):
                     await shot('settings-ux-ssh', SSHScreen(record))
                     await shot('settings-ux-advisors', AdvisorsScreen(record))
                     settings = {**draft, 'allowlist': 'local-model.internal:8000'}
+                    if any(name.startswith('settings-ux-reviewer-') for name in args.only):
+                        from pi_sandbox_factory.reviewer_ui import ReviewerPicker
+                        catalogue = [
+                            dict(provider='chaucer', id='global-deepseek-v4-1-flash', name='DeepSeek'),
+                            dict(provider='openrouter', id='openai/gpt-4o-mini', name='GPT-4o mini'),
+                        ]
+                        app.service.approval_models = lambda name: catalogue
+                        for state, ref in [('current', 'current'), ('selected', 'openrouter/openai/gpt-4o-mini'),
+                                           ('unavailable', 'openrouter/old-model')]:
+                            form = SettingsForm({**settings, 'options': options({'approval_model': ref})},
+                                                editing=True, setting='approval-settings')
+                            await shot('settings-ux-reviewer-' + state, form, focus='#review-current')
+                        await app.push_screen(ReviewerPicker(catalogue, 'openrouter/openai/gpt-4o-mini'))
+                        await shot('settings-ux-reviewer-picker')
+                        app.screen.query_one(Input).value = 'no matches'
+                        await shot('settings-ux-reviewer-search-empty')
+                        await app.pop_screen()
+                        app.service.plugin_model = lambda name, action, **values: {'models': [
+                            dict(id='global-deepseek-v4-1-flash', name='DeepSeek', contextWindow=1000000)]}
+                        await shot('settings-ux-reviewer-first-plugin', ModelDialog(
+                            'demo', 'chaucer', plugin_label='Chaucer', optional=True, approval_model='current'),
+                            focus='#review-current')
+                        await shot('settings-ux-reviewer-first-providers', ModelsScreen(record, finished=lambda: None),
+                                   focus='#review-current')
+                        await shot('settings-ux-reviewer-before-start', SettingsForm(copy.deepcopy(draft)),
+                                   '#agent-section', focus='#approval')
+                        app.service.approval_models = lambda name: catalogue[:1]
+                        await shot('settings-ux-reviewer-one-model', SettingsForm(
+                            copy.deepcopy(settings), editing=True, setting='approval-settings'), focus='#approval')
+                        if all(name.startswith('settings-ux-reviewer-') for name in args.only):
+                            return
                     for action in EDIT_FORMS:
                         await shot('settings-ux-' + action, SettingsForm(copy.deepcopy(settings), editing=True, setting=action))
                     await shot('settings-ux-approval-choice', SettingsForm(
@@ -1261,6 +1292,14 @@ async def capture(size):
                 await shot('install-provider', InstallPackage('provider'))
                 await shot('editor', EditorScreen('demo'))
                 await shot('editor-connection', EditorScreen('demo'), '#editor-connection')
+                if not args.only or any(name.startswith('frostpi-transfer') for name in args.only):
+                    await app.push_screen(EditorScreen('demo'))
+                    app.screen.query_one('#editor-mode', Select).value = 'frostpi'
+                    await shot('frostpi-transfers', focus='#frostpi-uploads')
+                    for key in ('uploads', 'downloads'):
+                        app.screen.query_one('#frostpi-' + key, Checkbox).value = True
+                    await shot('frostpi-transfers-enabled', focus='#frostpi-downloads')
+                    await app.pop_screen()
                 await shot('open-with', OpenWith())
                 await shot('provider-openrouter', ProviderDialog())
                 await shot('provider-together', ProviderDialog({'provider': 'together'}))
@@ -1336,6 +1375,31 @@ async def capture(size):
                     if args.only and all(name.startswith(('creation-', 'home')) for name in args.only):
                         return
 
+                if not args.only or any(name.startswith('advisor-choice-') for name in args.only):
+                    from pi_sandbox_factory.advisors_ui import AdvisorModelHelp
+                    for entry, form in [('setup', SettingsForm(copy.deepcopy(draft))), ('settings', AdvisorsScreen(record))]:
+                        await app.push_screen(form)
+                        if entry == 'setup':
+                            form.query_one('#new-advisors-section', Collapsible).collapsed = False
+                        button = form.query_one('.advisor-model-help', Button)
+                        button.focus()
+                        await pilot.pause()
+                        await shot('advisor-choice-' + entry)
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        assert isinstance(app.screen, AdvisorModelHelp)
+                        await shot('advisor-choice-help', focus='#advisor-help-close')
+                        close = app.screen.query_one('#advisor-help-close').region
+                        body = app.screen.query_one('VerticalScroll')
+                        assert app.screen.region.contains_region(close)
+                        assert app.screen.query_one('#confirm-box').content_region.contains_region(close)
+                        assert body.max_scroll_y == 0, (size, body.region, body.virtual_size)
+                        await pilot.press('escape' if entry == 'setup' else 'enter')
+                        await pilot.pause()
+                        assert app.screen is form
+                        await app.pop_screen()
+                    if args.only and all(name.startswith('advisor-choice-') for name in args.only):
+                        return
                 for label, sel in [('editor', '#editor-section'), ('providers', '#hosted-section'), ('folders', '#folders-section'), ('advisors', '#new-advisors-section'), ('agent', '#agent-section'), ('communications', '#communications-section')]:
                     await shot('review-' + label, SettingsForm(copy.deepcopy(draft)), sel)
                 if args.only and 'review-error' in args.only:
@@ -1361,13 +1425,28 @@ async def capture(size):
                 section.scroll_visible(top=True, animate=False)
                 await shot('advanced')
                 await app.pop_screen()
-                await app.push_screen(AdvisorsScreen(record))
+                advisor_record = copy.deepcopy(record)
+                advisor_record['config']['advisors'] = dict(providers=['codex','claude','agy'], claude_model='sonnet', agy_model='example-high', agy_quota_group='Example', agy_effort='high')
+                await app.push_screen(AdvisorsScreen(advisor_record))
                 for i, section in enumerate(app.screen.query(Collapsible)):
                     section.collapsed = False
                     await pilot.pause()
                     section.scroll_visible(top=True, animate=False)
                     await shot('advisor-section-' + str(i))
                 await app.pop_screen()
+                if args.only and any(name.startswith('advisor-model-') for name in args.only):
+                    only_claude = copy.deepcopy(record)
+                    only_claude['config']['advisors'] = {'providers': ['claude']}
+                    await app.push_screen(AdvisorsScreen(only_claude))
+                    await shot('advisor-model-default', section='#advisor-claude-options', focus='#advisor-claude-model')
+                    app.screen.query_one('#advisor-claude-model', Input).value = 'bad model id'
+                    app.screen.query_one('#advisor-apply', Button).press()
+                    await pilot.pause()
+                    await shot('advisor-model-error', focus='#advisor-claude-model')
+                    await app.pop_screen()
+                    only_agy = copy.deepcopy(record)
+                    only_agy['config']['advisors'] = {'providers': ['agy']}
+                    await shot('advisor-model-unrestricted', AdvisorsScreen(only_agy), section='#advisor-agy-options', focus='#advisor-model')
                 await app.push_screen(EditorScreen('demo'))
                 app.screen.query_one('#editor-connection', Collapsible).collapsed = False
                 app.screen.query_one('#editor-auth', Checkbox).value = True

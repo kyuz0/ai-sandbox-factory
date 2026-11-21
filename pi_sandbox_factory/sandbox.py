@@ -1144,6 +1144,7 @@ def prepare_options(config, state):
     for path in source.glob('*.json'):
         value = json.loads(path.read_text())
         if path.name == 'auto-review.json':
+            value['model'] = selected['approval_model']
             value['interactionMode'] = 'interactive' if selected['approval'] == 'assisted' else 'automatic'
         if path.name == 'permissions.json':
             value = folders.permissions(permissions(value, selected), config)
@@ -1310,6 +1311,30 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     if isinstance(changes, dict) and 'connector_ids' in changes:
         connector_settings.apply(config, state, changes, apply_gate)
         return
+    if not native and isinstance(changes, dict) and set(changes) == {'options'}:
+        previous = options(config.get('options'))
+        selected = options(changes['options'])
+        if {key for key in selected if selected[key] != previous[key]} == {'approval_model'}:
+            changes = {'approval_model': selected['approval_model']}
+    if isinstance(changes, dict) and set(changes) == {'approval_model'} and not native:
+        previous = options(config.get('options'))
+        selected = options({**previous, 'approval_model': changes['approval_model']})
+        if not updating.begin_apply(apply_gate):
+            return
+        target = state / 'runtime-config' / 'auto-review.json'
+        # Pi loads this trusted file when its extension starts. Its parent is mounted
+        # as a directory, so an atomic replacement is visible without replacing the container.
+        original = json.loads(target.read_text()) if target.is_file() else None
+        if original is not None:
+            write_json(target, {**original, 'model': selected['approval_model']})
+        try:
+            activity.save_config(state, {**config, 'options': selected})
+        except Exception:
+            if original is not None:
+                write_json(target, original)
+            raise
+        print('Approval model saved.')
+        return
     aws_install_approval = None
     if isinstance(changes, dict) and 'expected_aws_installation' in changes:
         if set(changes) != {'expected_aws_installation', 'expected_aws_access', 'aws_access'}:
@@ -1385,6 +1410,10 @@ def apply_settings(config, state, changes, *, apply_gate=None):
         updated['extra_skills'] = [s for s in updated['extra_skills'] if s['name'] != added['name']] + [added]
     if 'model_providers' in changes and not native:
         updated['model_providers'] = model_providers.prepare(changes['model_providers'], state, saved=config.get('model_providers', []))
+    if 'model_providers' in changes or 'local_model_ports' in changes:
+        from .sandbox_options import check_reviewer_provider
+        for removed in inference.routes(config).keys() - inference.routes(updated).keys():
+            check_reviewer_provider(updated, removed)
     model_providers.validate_network(updated, rules)
     # Refresh common inputs so old sandboxes acquire configurable bootstrap.
     updated['common'] = snapshot_profile(common_profile(), state)
@@ -1486,7 +1515,9 @@ def open_selected(config, state, mode=None):
         return primary_agents.open_terminal(config, state)
     from . import editor_settings, browser_editor
     mode = mode or editor_settings.load(state)['mode']
-    if mode == 'browser':
+    if mode == 'frostpi':
+        browser_editor.open_browser_editor(config, state, background=True, mode=mode)
+    elif mode == 'browser':
         browser_editor.open_browser_editor(config, state, background=True)
     elif mode == 'pi':
         up(config, state)
@@ -1644,7 +1675,7 @@ def main():
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
-    new.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Client to open (default: browser on supported hosts)')
+    new.add_argument('--editor', choices=['browser', 'pi', 'desktop', 'frostpi'], help='Client to open (default: browser on supported hosts)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
         'browser-editor': 'Open the browser editor (rootless Podman)',
@@ -1667,7 +1698,7 @@ def main():
             cmd.add_argument('--no-open', action='store_true', help='Print the address without opening a browser tab')
             cmd.add_argument('--stop', action='store_true', help='Stop only the browser editor')
         if command == 'open':
-            cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Open with a different client this time')
+            cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop', 'frostpi'], help='Open with a different client this time')
         if command == 'ssh-import-key':
             cmd.add_argument('--key-file', required=True)
         if command in ('ssh-import-key', 'ssh-unlock'):

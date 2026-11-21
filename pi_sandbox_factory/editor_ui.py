@@ -15,6 +15,7 @@ from .tui_widgets import Checkbox, Feedback
 
 class EditorFields(Vertical):
     DEFAULT_CSS = '''
+    EditorFields { max-width: 80; }
     EditorFields, #editor-connection, #editor-password-fields, #editor-tls-fields { height: auto; }
     #editor-password-fields { margin: 1 0 0 2; }
     #editor-show-password { margin-top: 1; }
@@ -35,6 +36,15 @@ class EditorFields(Vertical):
             yield Static('', id='editor-description', classes='setting-help')
             if not self.desktop_allowed:
                 yield Static('VS Code on host requires a separate sandbox after browser-editor use.', classes='setting-help')
+        with Vertical(classes='setting', id='editor-upload-fields'):
+            yield Checkbox('Allow file uploads', value=self.value['allow_uploads'], id='editor-uploads')
+            yield Static('Copy files from your computer into a writable folder in Explorer.', classes='setting-help')
+        with Vertical(classes='setting', id='frostpi-upload-fields'):
+            yield Checkbox('Allow file uploads', value=self.value['frostpi_uploads'], id='frostpi-uploads')
+            yield Static('Copy a file from your computer into the workspace.', classes='setting-help')
+        with Vertical(classes='setting', id='frostpi-download-fields'):
+            yield Checkbox('Allow file downloads', value=self.value['frostpi_downloads'], id='frostpi-downloads')
+            yield Static('Save a workspace file to your computer.', classes='setting-help')
         if not self.connection_settings:
             return
         with Collapsible(title='Browser connection', collapsed=True, id='editor-connection'):
@@ -74,12 +84,16 @@ class EditorFields(Vertical):
         import ipaddress
         mode = self.query_one('#editor-mode', Select).value
         self.query_one('#editor-description', Static).update({
-            'browser': 'The editor and its extensions run inside the sandbox.',
+            'browser': 'Open VS Code and FrostPi in your browser.',
+            'frostpi': 'Open FrostPi chat in a browser on this computer.',
             'pi': 'Run Pi in this terminal. Exit Pi to return to the manager.',
             'desktop': 'Opens VS Code on this computer. Host-side extensions have host access.',
         }[mode])
         for section in self.screen.query('#editor-section'):
             section.title = CATEGORIES['editor-settings'].label + ' · ' + editor_settings.MODES[mode]
+        self.query_one('#editor-upload-fields').display = mode == 'browser'
+        self.query_one('#frostpi-upload-fields').display = mode == 'frostpi'
+        self.query_one('#frostpi-download-fields').display = mode == 'frostpi'
         if not self.connection_settings:
             return
         self.query_one('#editor-connection').display = mode == 'browser'
@@ -106,10 +120,13 @@ class EditorFields(Vertical):
 
     def collect(self):
         mode = self.query_one('#editor-mode', Select).value
+        choices = dict(mode=mode, allow_uploads=self.query_one('#editor-uploads', Checkbox).value,
+                       frostpi_uploads=self.query_one('#frostpi-uploads', Checkbox).value,
+                       frostpi_downloads=self.query_one('#frostpi-downloads', Checkbox).value)
         if not self.connection_settings:
-            return editor_settings.validate({'mode': mode})
+            return editor_settings.validate(choices)
         if mode != 'browser':
-            return editor_settings.validate({**self.value, 'mode': mode})
+            return editor_settings.validate({**self.value, **choices})
         def text(name): return self.query_one('#editor-' + name, Input).value.strip()
         try:
             port = int(text('port') or '0')
@@ -121,13 +138,14 @@ class EditorFields(Vertical):
             digest = editor_settings.password_hash(password) if password else self.value['password_hash']
             if not digest:
                 raise ValueError('Enter or generate an editor password')
-        value = editor_settings.validate(dict(mode=mode, address=text('address'), port=port, password_hash=digest,
+        value = editor_settings.validate(dict(**choices, address=text('address'), port=port, password_hash=digest,
             certificate=text('certificate'), private_key=text('private-key')))
         editor_settings.tls_context(value)
         return value
 
 
 class EditorScreen(Screen):
+    DEFAULT_CSS = 'EditorScreen > .form, EditorScreen > .wizard-actions { max-width: 80; }'
     BINDINGS = [('escape', 'back', 'Back')]
 
     def __init__(self, name):
@@ -140,7 +158,9 @@ class EditorScreen(Screen):
             yield Label(CATEGORIES['editor-settings'].label + ' · ' + self.sandbox_name, classes='title')
             state = self.app.state_root / self.sandbox_name
             yield EditorFields(editor_settings.load(state), desktop_allowed=not (state / 'browser-editor.enabled').exists())
-            yield Static('• Saving stops a running browser editor.\n• Use Open with… on the sandbox list to reopen it.', classes='setting-help')
+            from . import browser_editor
+            if browser_editor.active(state):
+                yield Static('Saving changes closes the browser editor and interrupts any reply in progress. Reopen it to resume your saved chat.', classes='setting-help')
             yield Feedback('', id='editor-error', classes='error', markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='editor-back')
@@ -164,13 +184,14 @@ class EditorScreen(Screen):
                     self.action_back()
                     return
                 from .sandbox_tui import Operation
+                was_running = browser_editor.active(state)
                 def apply(log):
                     browser_editor.stop(state)
                     editor_settings.save(state, value)
-                    log('Editor settings saved. Use Open with… to launch with these settings.')
+                    log('Editor settings saved.')
                 self.app.pop_screen()
                 self.app.push_screen(Operation('Saving editor settings', apply, done_on_success=True,
-                    success_message='• Use Open with… to reconnect.\n• Resume your saved conversation.'))
+                    success_message='Choose Open to resume your saved chat.' if was_running else 'Editor settings saved.'))
             except (ValueError, OSError) as error:
                 feedback = self.query_one('#editor-error', Feedback)
                 feedback.update(str(error))

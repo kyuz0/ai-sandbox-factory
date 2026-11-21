@@ -37,7 +37,7 @@ APPROVAL_MODES = {
             'skips approval prompts and reviewer checks. To run Bash directly in the development container, '
             'turn off the inner sandbox too. If you leave it on, Bash stays inside it.'),
 }
-DEFAULTS = {'approval': 'automatic', 'inner_sandbox': True, 'goals': True,
+DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
             'knowledge_embedding': 'off', 'knowledge_embedding_provider': '', 'knowledge_embedding_url': '', 'knowledge_embedding_model': '',
@@ -82,6 +82,10 @@ def options(value=None):
     result = {**DEFAULTS, **value}
     if result['approval'] not in APPROVAL_MODES:
         raise ValueError('Approval must be automatic, assisted, manual or off')
+    ref = result['approval_model']
+    if ref != 'current' and (not isinstance(ref, str) or not re.fullmatch(r'[^/\s]+(?:/[^/\s]+)+', ref)
+                             or not ref.isprintable()):
+        raise ValueError('Select a provider and model for approvals.')
     for key in ('inner_sandbox', 'goals', 'scheduling', 'question_forms', 'browser', 'protect_credentials', 'protect_browser_credentials'):
         if type(result[key]) is not bool:
             raise ValueError(key + ' must be a boolean')
@@ -157,6 +161,14 @@ def permissions(template, selected):
     return policy
 
 
+def check_reviewer_provider(config, provider):
+    selected = config.get('options') or {}
+    model = selected.get('approval_model', 'current')
+    if selected.get('approval', 'automatic') in ('automatic', 'assisted') and model.startswith(provider + '/'):
+        raise ValueError('Approvals use this provider. In Settings → Approvals & sandbox, choose another model '
+                         'or use the current model first.')
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -178,7 +190,7 @@ def guidance(selected, subagents=False):
         lines.append('Ordinary bash runs inside the inner OS sandbox without command-level model review. '
                      'Workspace edits are allowed; private home and security configuration are protected.')
         lines.append({'assisted': 'The reviewer checks boundary requests. Pi asks the user if the reviewer rejects the action or leaves the decision open. If the reviewer fails, the action stays blocked. Use bash_escalate with an exact command and justification.',
-                      'automatic': 'Boundary requests use the current-model reviewer without human approval dialogs. Review failures return a reason; retry the review or choose an allowed alternative without bypassing a rejection. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
+                      'automatic': 'Boundary requests use the approval reviewer without human approval dialogs. Review failures return a reason; retry the review or choose an allowed alternative without bypassing a rejection. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'manual': 'Boundary requests require human approval. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'off': 'Approval prompts are disabled. Requests beyond the inner sandbox are refused; bash_escalate is unavailable.'}[mode])
     else:

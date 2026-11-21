@@ -143,6 +143,7 @@ def check_cli_goal(name, session, usage, output):
 
 
 def check_chat_workflows(page, frame, composer, send, inside, output):
+    expect(frame.get_by_role('button', name='Files', exact=True)).to_have_count(0)
     def reply(text):
         frame.get_by_text('CHAT REPLY ' + text, exact=True).wait_for(timeout=25000)
         frame.get_by_role('button', name='Send to Pi', exact=True).wait_for(timeout=15000)
@@ -781,7 +782,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
-          reviewed_file_access=None, provider_connection_check=None):
+          reviewed_file_access=None, provider_connection_check=None, standalone=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -901,10 +902,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             (root / 'code-server-data', '/home/node/.local/share/code-server', 'rw'),
             (root / 'options.json', '/opt/sandbox/options.json', 'ro'),
             (root / 'runtime-config', '/opt/pi-security/config', 'ro'),
-            (code_server, '/opt/test-code-server', 'ro'),
             (Path(__file__).with_name(model_script).resolve(), '/tmp/frostpi_model.mjs', 'ro'),
             (Path(__file__).with_name('frostpi_subagent_model.mjs').resolve(), '/tmp/frostpi_subagent_model.mjs', 'ro'),
         ]
+        if code_server:
+            mounts.append((code_server, '/opt/test-code-server', 'ro'))
         if provider_connection_check:
             mounts.append((provider_socket, '/run/inference', 'ro'))
         if folder_access:
@@ -989,6 +991,10 @@ if len(sys.argv) > 1:
 p.write_text(json.dumps(v))
 """, *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
+                if standalone:
+                    from frostpi_standalone import check as check_standalone
+                    check_standalone(podman('inspect', '--format', '{{.Id}}', name), cwd, root, chromium, output)
+                    return
                 if subagent_compaction and subagent_client == 'pi':
                     compact_fixture.check_pi(inside, output, subagent_compaction)
                     return
@@ -1302,11 +1308,12 @@ p.write_text(json.dumps(v))
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
-    parser.add_argument('--code-server', type=Path, required=True)
+    parser.add_argument('--code-server', type=Path, help='Extracted code-server directory for VS Code browser checks.')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
+    scope.add_argument('--standalone', action='store_true', help='Check browser chat, history and access to the private link.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
@@ -1337,9 +1344,11 @@ if __name__ == '__main__':
         parser.error('--subagent-case requires --subagents')
     if args.subagent_client and not (args.subagents or args.subagent_compaction):
         parser.error('--subagent-client requires --subagents or --subagent-compaction')
-    check(args.image, args.code_server.resolve(), args.output.resolve(), args.chromium,
+    if not args.standalone and not args.code_server:
+        parser.error('--code-server is required for VS Code browser checks')
+    check(args.image, args.code_server.resolve() if args.code_server else None, args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
-          provider_connection_check=args.provider_connection_check)
+          provider_connection_check=args.provider_connection_check, standalone=args.standalone)

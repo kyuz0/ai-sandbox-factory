@@ -40,6 +40,10 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
                 screen = self.app.screen
                 fields = screen.query_one(EditorFields)
                 self.assertEqual(fields.collect(), editor_settings.DEFAULTS)
+                uploads = screen.query_one('#editor-uploads', Checkbox)
+                self.assertFalse(uploads.value)
+                uploads.value = True
+                self.assertTrue(fields.collect()['allow_uploads'])
                 screen.query_one('#editor-connection', Collapsible).collapsed = False
                 screen.query_one('#editor-auth', Checkbox).value = True
                 await pilot.pause()
@@ -114,6 +118,26 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             screen = self.app.screen
             self.assertFalse(screen.query('#editor-address, #editor-password, #editor-connection'))
+            fields = screen.query_one(EditorFields)
+            uploads = screen.query_one('#editor-uploads', Checkbox)
+            uploads.value = True
+            self.assertTrue(fields.collect()['allow_uploads'])
+            screen.query_one('#editor-mode', Select).value = 'frostpi'
+            await pilot.pause()
+            self.assertFalse(screen.query_one('#editor-upload-fields').display)
+            self.assertEqual(fields.collect()['mode'], 'frostpi')
+            for key in ('uploads', 'downloads'):
+                check = screen.query_one('#frostpi-' + key, Checkbox)
+                self.assertTrue(screen.query_one('#frostpi-' + key[:-1] + '-fields').display)
+                self.assertFalse(check.value)
+                check.value = True
+                self.assertTrue(fields.collect()['frostpi_' + key])
+                check.value = False
+            screen.query_one('#editor-mode', Select).value = 'browser'
+            await pilot.pause()
+            self.assertTrue(screen.query_one('#editor-upload-fields').display)
+            self.assertTrue(uploads.value)
+            uploads.value = False
             screen.query_one('#editor-mode', Select).value = 'pi'
             await pilot.pause()
             self.assertEqual(screen.query_one('#editor-section', Collapsible).title, 'Editor · Pi CLI')
@@ -134,6 +158,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             screen.query_one('#editor-mode', Select).value = 'pi'
             await pilot.pause()
             self.assertFalse(screen.query_one('#editor-connection').display)
+            self.assertFalse(screen.query_one('#editor-upload-fields').display)
             self.assertEqual(screen.query_one(EditorFields).collect()['mode'], 'pi')
             await pilot.press('escape')
             (self.state / 'browser-editor.enabled').touch()

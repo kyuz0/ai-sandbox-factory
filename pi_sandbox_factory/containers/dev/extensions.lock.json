@@ -7,7 +7,7 @@
     },
     "pi-advisor": {
       "repository": "https://github.com/kyuz0/pi-advisor.git",
-      "commit": "cd2cebfe5029c7a25010a1902515f58cd6832cf6"
+      "commit": "129ac32a2cfc58e92f19c86be0f4f166ff809d91"
     },
     "rpiv-ask-user-question": {
       "repository": "https://github.com/kyuz0/rpiv-mono.git",

@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 from rich.text import Text
+from .reviewer_ui import ReviewerFields
 from . import hosted_models, settings_effects, editor_settings
 from .credentials_ui import CredentialFields, choice_key_caption, key_caption
 from .settings_catalog import HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL
@@ -297,10 +298,11 @@ class ModelDialog(EntryDialog):
     ModelDialog Static { height: auto; }
     '''
 
-    def __init__(self, name, provider, *, plugin_label=None, optional=False):
+    def __init__(self, name, provider, *, plugin_label=None, optional=False, approval_model=None):
         super().__init__()
         self.sandbox_name, self.provider = name,provider
         self.plugin_label, self.optional = plugin_label, optional
+        self.approval_model = approval_model
         self.models = []; self.filtered = []; self.busy = False
 
     def compose(self):
@@ -330,7 +332,11 @@ class ModelDialog(EntryDialog):
                         yield Button('Refresh catalogue',id='model-refresh')
                     with Vertical(classes='setting'):
                         yield Button('Test selected model · sends a short request', id='model-test', disabled=True)
-            yield Static('Default for new conversations only.',classes='section-intro')
+                if self.approval_model is not None:
+                    yield Static('The default chat model applies to new conversations.', classes='section-intro')
+                    yield ReviewerFields(self.sandbox_name, self.approval_model, save_on_choice=True)
+            if self.approval_model is None:
+                yield Static('Default for new conversations only.',classes='section-intro')
             yield Static('Loading catalogue…',id='model-error',markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 if self.plugin_label:
@@ -339,7 +345,10 @@ class ModelDialog(EntryDialog):
                 yield Button('Skip' if self.optional else 'Cancel',id='model-cancel')
                 yield Button('Use as default',id='model-save',variant='primary',disabled=True)
 
-    def on_mount(self): self.load(not self.plugin_label)
+    def on_mount(self):
+        self.load(not self.plugin_label)
+        if self.approval_model is not None:
+            self.query_one(ReviewerFields).load()
     def action_cancel(self):
         if not self.busy: self.dismiss(None)
 

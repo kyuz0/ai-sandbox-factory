@@ -9,8 +9,9 @@ from pathlib import Path
 from .sandbox_options import write_json
 from . import host_platform, activity
 
-MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host'}
-DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': ''}
+MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host', 'frostpi': 'FrostPi in browser'}
+DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': '', 'allow_uploads': False,
+            'frostpi_uploads': False, 'frostpi_downloads': False}
 
 
 def validate(value=None):
@@ -18,8 +19,11 @@ def validate(value=None):
     if not isinstance(value, dict) or set(value) - DEFAULTS.keys():
         raise ValueError('Unknown editor settings')
     result = {**DEFAULTS, **value}
+    for key, label in (('allow_uploads', 'uploads'), ('frostpi_uploads', 'uploads'), ('frostpi_downloads', 'downloads')):
+        if not isinstance(result[key], bool):
+            raise ValueError(f'Allow file {label} must be true or false')
     if result['mode'] not in MODES:
-        raise ValueError('Choose Browser editor, Pi CLI or VS Code on host')
+        raise ValueError('Choose a client from the Editor menu')
     try:
         address = ipaddress.ip_address(result['address'] or '127.0.0.1')
     except ValueError:
@@ -82,7 +86,9 @@ def save(state, value, *, record_edit=True):
 
 
 def copy_choice(value):
-    return {**DEFAULTS, 'mode': validate(value)['mode']}
+    value = validate(value)
+    return {**DEFAULTS, 'mode': value['mode'], 'allow_uploads': value['allow_uploads'],
+            'frostpi_uploads': value['frostpi_uploads'], 'frostpi_downloads': value['frostpi_downloads']}
 
 
 def password_hash(password):

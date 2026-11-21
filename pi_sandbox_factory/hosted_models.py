@@ -144,6 +144,8 @@ def save(config, state, value):
 
 def remove(config, state, provider):
     from . import inference, sandbox
+    from .sandbox_options import check_reviewer_provider
+    check_reviewer_provider(config, provider)
     if inference.embedding_provider(config) == provider:
         raise ValueError('Document search uses this provider. In Settings → Document search, '
                          'choose a different provider or switch to keyword search before removing it.')

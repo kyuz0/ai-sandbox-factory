@@ -11,8 +11,6 @@ Pi can ask Codex (OpenAI), Claude (Anthropic) or Antigravity (Google) for a seco
    settings afterward and choose **Sign in**. Login becomes available
    once the advisor is installed. Follow the CLI's browser or device-code instructions.
 3. Use **Check advisors** to check login status and available models or quota.
-   Antigravity also needs an exact Gemini model ID, quota group and matching effort;
-   enter these after login and **Apply**.
 4. Reopen Pi or FrostPi and run `/advisor status` to see which advisors are ready.
    Then ask Pi to consult one, for example “Ask Claude to review this plan.”
    For a follow-up, ask Pi to continue the same consultation. Pi can return to the
@@ -106,8 +104,20 @@ Provider tools are disabled; Pi carries out suggested work through its own tools
 
 Login state survives stopping and rebuilding. Deleting the sandbox removes it. The host account that owns the containers retains access to their storage.
 
-## Claude models and usage
+## Models and quota
 
-Open **Claude model** in advisor settings and choose `sonnet`, `opus`, `haiku` or an exact model ID and thinking effort. The default is Sonnet at medium effort. Pi can request Opus with an escalation reason or Haiku for simpler questions. `/advisor status` refreshes subscription limits and reset times through Claude's native `/usage`, without inference. Calls stop at the configured quota reserve; unavailable limits are reported as unknown. See the [advisor configuration](https://github.com/kyuz0/pi-advisor/blob/main/docs/configuration.md) for the complete model and quota policy.
+Open **How Pi chooses an advisor model** during sandbox setup or in **Settings → Advisors (Codex/Claude/Antigravity)**. In Pi or FrostPi, enter `/advisor status` to see available models, provider descriptions, remaining quota and reset times.
 
-To update the installed advisor, use **Actions → Update sources and recreate…**, then reopen Pi/FrostPi.
+Pi follows your chat preference first, then the model preference in your sandbox settings. For Codex and Claude, Pi compares the default with the other models the provider describes. When two versions of the same family suit the task equally well, Pi prefers the newer one. If there’s no clear match, Pi uses the default. Antigravity uses its default unless you choose another model.
+
+To save a preference for the current chat, enter a command like this:
+
+```text
+/advisor preference Use Sol for routine Codex questions. Use Astra for hard questions when more than 50% of quota remains.
+```
+
+Enter `/advisor preference` to see your preference or `/advisor preference clear` to remove it. You can also ask Pi to show you the choices before it consults an advisor. A percentage rule requires a known quota. The sandbox’s spending limits still apply. The clients report subscription usage in quota windows and do not give a price per consultation.
+
+Under **Claude model** you can set a preferred model and effort. Under **Antigravity model** you can restrict that advisor to one model and specify its quota group if needed.
+
+To update the installed advisor, use **Actions → Update sources and recreate…**, then reopen Pi or FrostPi.

@@ -56,6 +56,18 @@ Opus reviewed the proposed design. Its main objection was that a common agent se
 
 The original offline runs used Codex 0.171.0, Claude Code 2.1.319 and Antigravity 1.5.0. All three produced their native interactive screens in a pseudo-terminal. A second run from a fresh container with Antigravity 1.5.13 passed all three browser, context and search checks. The synthetic Codex provider produced a fallback model-metadata notice and completed its turns. Factory’s viewer and credential-import unit suites passed 19 tests. The separate broker test passed before and after restart. The initial experiment included a short live Antigravity host request with version 1.5.13. The linked follow-up tested all three account sessions. The experiment did not exercise live subscription refresh in a primary sandbox, interactive keyboard takeover through noVNC, a complete vendor billing cycle, macOS or WSL. No account credentials were copied into the research containers.
 
+### VS Code extensions in the browser editor
+
+I opened the three vendor extensions in Chromium with code-server 4.145.2, using a disposable Factory workspace for each agent. The workspaces had no network connection or access to the controller’s sign-in files.
+
+| Extension | What opened in the browser |
+| --- | --- |
+| Codex 26.1111.21308 | The Codex panel offered ChatGPT sign-in, an API key and device login. |
+| Claude Code 2.1.199 | The Claude tab offered subscription sign-in, Anthropic Console and cloud provider authentication. |
+| Google Antigravity 1.13.0 | The panel tried to download its backend. Supplying the existing CLI executable separately let it attempt startup offline, but the backend exited before showing a chat. |
+
+The protected subscription login belongs to the agent controller. The editor extensions start their own backends in the workspace. These checks did not establish an authenticated extension chat. The three agents therefore still open in the terminal.
+
 ### Repeat the offline experiment
 
 From the checkout root, set `DEV_IMAGE` to a locally built browser-enabled Factory dev image. Set `CODEX_BIN`, `CLAUDE_BIN` and `AGY_BIN` to absolute paths to the native Linux executables. Run `sh research/primary-agents/run.sh` on a host with Podman. It uses a disposable workspace and private home, binds the executables and fixtures read-only, and runs with the external network disabled. The final checks inspect the client requests for the expected controls and tool results. The launcher removes its container on exit.

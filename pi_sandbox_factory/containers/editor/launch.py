@@ -159,7 +159,8 @@ env['NODE_OPTIONS'] = (env.get('NODE_OPTIONS', '') + ' --require=' + str(watch_f
 command = [settings['binary'], '--config', str(config), '--socket', str(sock),
            '--socket-mode', '600', '--auth', 'password' if settings['password_hash'] else 'none', '--user-data-dir', str(root / 'data'),
            '--extensions-dir', str(extensions), '--disable-telemetry', '--disable-update-check',
-           '--disable-proxy', '--disable-file-downloads', '--disable-file-uploads',
+           '--disable-proxy', '--disable-file-downloads',
+           *([] if settings.get('allow_uploads') is True else ['--disable-file-uploads']),
            '--disable-file-cache', '--enable-remote-storage', settings['cwd']]
 
 # Adopt editor descendants, including terminal shells that create separate sessions.
