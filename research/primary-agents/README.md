@@ -58,15 +58,17 @@ The original offline runs used Codex 0.171.0, Claude Code 2.1.319 and Antigravit
 
 ### VS Code extensions in the browser editor
 
-I opened the three vendor extensions in Chromium with code-server 4.145.2, using a disposable Factory workspace for each agent. The workspaces had no network connection or access to the controller’s sign-in files.
+All three official extensions answered a live prompt in Chromium with code-server 4.145.2. Each reused its existing CLI subscription login in a disposable private home. The test supplied no API key. It verified an authenticated reply. It did not measure the change in the account's quota.
 
-| Extension | What opened in the browser |
+| Extension | Result when the editor and account were in separate containers |
 | --- | --- |
-| Codex 26.1111.21308 | The Codex panel offered ChatGPT sign-in, an API key and device login. |
-| Claude Code 2.1.199 | The Claude tab offered subscription sign-in, Anthropic Console and cloud provider authentication. |
-| Google Antigravity 1.13.0 | The panel tried to download its backend. Supplying the existing CLI executable separately let it attempt startup offline, but the backend exited before showing a chat. |
+| Codex 26.1111.21308 | The panel read a random value from a file in the offline workspace, created a copy there and returned the value. The test used the extension's development-only executable setting. It withheld the token requested by the panel and sent file operations to the workspace executor. |
+| Claude Code 2.1.199 | The panel completed the same file task through the workspace MCP tool. The extension used its user-level `claudeProcessWrapper` setting. The controller chose the CLI arguments and tools. |
+| Google Antigravity 1.13.0 | Login reuse worked with the editor and Google keyring together. The panel needed its own authenticated loopback address for the hub's scripts and WebSocket. This run did not establish an isolated native editing session. |
 
-The protected subscription login belongs to the agent controller. The editor extensions start their own backends in the workspace. These checks did not establish an authenticated extension chat. The three agents therefore still open in the terminal.
+Factory opens these three agents in the terminal. The Codex and Claude experiments accept one predetermined request in an empty project. A general editor connection would also need to handle user prompts, permissions, cancellation, reconnects and existing chats while keeping credentials and controller operations private. Giving the extension the same home as the CLI grants other code running as the editor user access to that login.
+
+[Run the native extension checks](native-editor/README.md).
 
 ### Repeat the offline experiment
 

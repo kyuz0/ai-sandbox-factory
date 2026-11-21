@@ -257,6 +257,14 @@ clear the other margins. Verify the rendered gap, not just the stylesheet.
 
 ## Changes and docs
 
+Keep a checklist of outstanding implementation, verification and Git work for
+each affected repository. Recheck it before reporting completion. Commit the
+required source, tests, assets and dependency pins on the authorized branch.
+Verify them from the commit in a fresh checkout. Check for untracked files in
+each repository, and record any test that still needs a result. For sign-in
+features, test an authenticated action with the promised credential isolation.
+A sign-in screen alone verifies only that the client opened.
+
 ### Definition of finished
 
 A request to make a change includes committing and pushing the verified change

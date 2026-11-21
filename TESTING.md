@@ -34,7 +34,16 @@ python3 -m venv /tmp/pi-sandbox-package-check
 
 ## Approval model selection
 
-In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Reopen Pi with the first provider as the chat model. Ask it to use `bash_escalate` to run `printf approval-routing-ok`. Check that the approval details name the second provider and that the chat reply still uses the first. Recheck **Use current model for approvals** and repeat to verify the default.
+In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Open Pi with the first provider as the chat model.
+
+For a live approval test, put a harmless receipt outside the inner shell's readable folders. Run these commands on the host, replacing `CONTAINER` with the disposable workspace container's name.
+
+```sh
+podman exec --user 0 CONTAINER mkdir /var/lib/factory-review-test
+printf 'approval-routing-ok\n' | podman exec --user 0 -i CONTAINER tee /var/lib/factory-review-test/receipt.txt
+```
+
+Ask Pi to read that receipt. Authorize the reviewed outer shell to read that specific file if the normal shell cannot. Check the reviewer's provider and model, its decision, and whether the tool ran. For an approval, check that Pi returns `approval-routing-ok`. For a denial, check that the outer command did not run. Select **Use current model for approvals** and repeat to check the chat model handles the review. Remove the disposable sandbox after the test.
 
 ## FrostPi editor and shared Pi goals
 
@@ -1145,5 +1154,7 @@ podman run --rm -i --network=none --read-only --cap-drop=ALL \
 For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.
 
 The `--system-prompt` case in `tests/frostpi_editor.py` checks the actual model requests in the same Pi CLI and FrostPi chats. It enables a connector, adds a custom prompt, changes the SSH destination, then removes both.
+
+For live subscription checks in the official native VS Code extensions, follow the [native editor test](research/primary-agents/native-editor/README.md). It also exercises a workspace-only file edit with Codex and Claude.
 
 With the current native controller and worker images built locally, run `PYTHONPATH=. .venv/bin/python tests/connector_native_clients.py`. It launches the installed Codex, Claude Code and Antigravity binaries offline, checks their launch instructions, exercises granted and denied operations from each workspace and revokes access. It uses synthetic credentials and never submits a model prompt.
