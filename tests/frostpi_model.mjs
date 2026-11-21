@@ -140,7 +140,8 @@ http.createServer((request, response) => {
       const system = messages[0].role === 'system' ? JSON.stringify(messages[0].content) : '';
       const markers = [...system.matchAll(/FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g)].map(match => match[1]);
       const inHistory = /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/.test(JSON.stringify(messages.slice(1)));
-      delta = { content: !inHistory && markers.join() === (label === 'NONE' ? '' : label) && system.includes('You are')
+      const expected = label === 'DEFAULT' || label === 'NONE' ? '' : label;
+      delta = { content: !inHistory && markers.join() === expected && system.includes('You are')
         ? 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
         : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') };
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {

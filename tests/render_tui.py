@@ -212,9 +212,10 @@ async def capture(size):
                         return
                 if prompts_only:
                     await shot('prompt-sandbox-no-library', SandboxPromptScreen('demo', state, True))
+                    await shot('prompt-settings-menu', SettingsMenu('demo', c, 'pi'))
                     await app.push_screen(PackagesScreen(initial='system-prompts'))
                     await shot('prompt-library-empty')
-                    await app.push_screen(EditPrompt('New system prompt', None, lambda value: None))
+                    await app.push_screen(EditPrompt('New add-on', None, lambda value: None))
                     await shot('prompt-new')
                     save = app.screen.query_one('#save-prompt', Button)
                     save.active_effect_duration = 0
@@ -227,10 +228,10 @@ async def capture(size):
                     await app.pop_screen()
                     await app.push_screen(PackagesScreen(initial='system-prompts'))
                     await shot('prompt-library-populated')
-                    await shot('prompt-edit', EditPrompt('Edit system prompt', value, lambda value: None))
+                    await shot('prompt-edit', EditPrompt('Edit add-on', value, lambda value: None))
                     await shot('prompt-remove', Confirm(
                         'Remove “Research briefing” from the library? Existing sandboxes keep their saved copies.',
-                        'Remove', confirm_by_default=False, title='Remove system prompt'))
+                        'Remove', confirm_by_default=False, title='Remove add-on'))
                     await app.pop_screen()
                     creation = preset('base', DEFAULT_SETTINGS)
                     creation.update(name='demo', workspace=str(workspace))
@@ -241,6 +242,9 @@ async def capture(size):
                     group.query_one('CollapsibleTitle').focus(scroll_visible=False)
                     await shot('prompt-create-collapsed')
                     group.collapsed = False
+                    await pilot.pause()
+                    group.scroll_visible(top=True, animate=False)
+                    await shot('prompt-create-empty')
                     app.screen.query_one('#system-prompt-choice', Select).value = key
                     await pilot.pause()
                     await shot('prompt-create-selected', focus='#system-prompt-choice')
@@ -737,7 +741,7 @@ async def capture(size):
                     return SettingsForm(value, editing=True, setting='network-settings')
 
                 if args.only and all(name.startswith('curlie-') for name in args.only):
-                    from pi_sandbox_factory.sandbox_tui import Confirm, WebsiteGroups
+                    from pi_sandbox_factory.sandbox_tui import WebsiteGroups
                     before = {'revision': 'a' * 32, 'downloaded_at': 1795077720}
                     newer = {'revision': 'b' * 32, 'downloaded_at': 1795209420}
                     research = copy.deepcopy(c)

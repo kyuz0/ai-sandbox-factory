@@ -21,14 +21,14 @@ def prompt(value):
     if value is None:
         return None
     if not isinstance(value, dict) or value.keys() != {'name', 'text'}:
-        raise ValueError('A system prompt needs a name and instructions.')
+        raise ValueError('An add-on needs a name and instructions.')
     name, text = value['name'], value['text']
     if not isinstance(name, str) or not name.strip():
         raise InvalidPrompt('name', 'Enter a name.')
     if any(not character.isprintable() for character in name):
         raise InvalidPrompt('name', 'Use a single line for the name.')
     if not isinstance(text, str) or not text.strip() or '\x00' in text:
-        raise InvalidPrompt('text', 'Enter instructions for Pi.')
+        raise InvalidPrompt('text', 'Enter the instructions to add.')
     return {'name': name.strip(), 'text': text.strip()}
 
 
@@ -39,7 +39,7 @@ def entries(base=None):
     except FileNotFoundError:
         return {}
     if not isinstance(values, dict) or any(not isinstance(value, dict) for value in values.values()):
-        raise ValueError('The system prompt library has an invalid format.')
+        raise ValueError('The system prompt add-on library has an invalid format.')
     return {key: prompt(value) for key, value in values.items()}
 
 
@@ -48,9 +48,9 @@ def save(name, text, key=None):
     with registry.locked() as base:
         values = entries(base)
         if key is not None and key not in values:
-            raise ValueError('This system prompt was removed. Close the editor and add it again.')
+            raise ValueError('This add-on was removed. Close the editor and add it again.')
         if any(saved['name'].casefold() == value['name'].casefold() for other, saved in values.items() if other != key):
-            raise InvalidPrompt('name', 'A system prompt with that name already exists.')
+            raise InvalidPrompt('name', 'An add-on with that name already exists.')
         values[key or uuid.uuid4().hex] = value
         write_json(base / LIBRARY_FILE, values)
 

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from textual.widgets import Button, Collapsible, Input, Select, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from pi_sandbox_factory import prompt_library, sandbox
 from pi_sandbox_factory.prompt_ui import EditPrompt, PromptChoice, SandboxPromptScreen
@@ -79,15 +79,24 @@ class SystemPromptTests(unittest.TestCase):
             await pilot.pause()
             section = app.screen.query_one('#system-prompt-section', Collapsible)
             self.assertTrue(section.collapsed)
+            self.assertEqual(section.title, 'Custom system prompt add-on · No add-on')
             section.collapsed = False
+            await pilot.pause()
+            choice = app.screen.query_one(PromptChoice)
+            self.assertIsNone(choice.selected())
+            self.assertEqual(choice.choices()[0], ('No add-on', ''))
+            self.assertIn('Pi uses its usual system prompt',
+                          app.screen.query_one('#system-prompt-help', Static).render().plain)
             app.screen.query_one('#system-prompt-choice', Select).value = key
             await pilot.pause()
-            self.assertEqual(section.title, 'System prompt · Research')
+            self.assertEqual(section.title, 'Custom system prompt add-on · Research')
             self.assertEqual(app.screen.query_one(PromptChoice).selected(), prompt_library.entries()[key])
             await app.pop_screen()
 
             await app.push_screen(SandboxPromptScreen('sandbox', state, True))
             await pilot.pause()
+            self.assertEqual(app.screen.query_one('#system-prompt-timing', Static).render().plain,
+                             'Pi reads the add-on when a new turn starts. You can keep the chat open.')
             app.screen.query_one('#system-prompt-choice', Select).value = key
             await pilot.pause()
             await pilot.click('#edit-prompt-copy')
@@ -106,6 +115,14 @@ class SystemPromptTests(unittest.TestCase):
             await pilot.press('escape')
             await pilot.pause()
             self.assertIsNotNone(prompt_library.selection(state))
+
+            await app.push_screen(SandboxPromptScreen('sandbox', state, True))
+            await pilot.pause()
+            app.screen.query_one('#system-prompt-choice', Select).value = ''
+            await pilot.click('#sandbox-prompt-save')
+            await pilot.pause()
+            self.assertIsNone(prompt_library.selection(state))
+            self.assertFalse(app.service.calls)
 
     def test_cli_creation_persists_prompt_and_prepare_options_keeps_it(self):
         workspace = self.root / 'workspace'

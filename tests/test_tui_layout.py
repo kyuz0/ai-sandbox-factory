@@ -266,7 +266,7 @@ class TUILayoutTests(unittest.TestCase):
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
         expected_order = ['Model Providers', 'Editor', 'Folders', 'AWS access', 'Document search', 'Network and Web Search', 'Approvals & sandbox',
-                          'Agent tools', 'System prompt', 'SSH & Git', 'Advisors', 'Communications',
+                          'Agent tools', 'Custom system prompt add-on', 'SSH & Git', 'Advisors', 'Communications',
                           'Skills', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:

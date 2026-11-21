@@ -83,9 +83,9 @@ Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes)
 Use **Library…** to install a profile or provider from a Git repository or a
 local folder. Packages can run code, so install only from sources you trust.
 
-Save reusable instructions in **Library → System prompts** and assign a copy in
-**Settings → System prompt**. Pi uses changes on its next reply, including in an
-open chat. [System prompt settings](docs/usage.md#system-prompts)
+Save reusable extra instructions in **Library → System prompt add-ons** and assign
+a copy in **Settings → Custom system prompt add-on**. Pi reads the add-on at the
+start of each new turn, including in open chats. [System prompt add-ons](docs/usage.md#system-prompts)
 
 ### Optional research profiles
 

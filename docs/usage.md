@@ -167,11 +167,15 @@ sandbox while preserving project files and private home state.
 
 ### System prompts
 
-Save reusable instructions in **Library → System prompts**, then select a prompt
-during creation or in **Settings → System prompt**. Each sandbox keeps an
-editable copy. Changes apply the next time Pi starts a reply, including in open
-chats. If this setting shows an update notice, run **Actions… → Update sources and
-recreate…** once.
+Save reusable extra instructions in **Library → System prompt add-ons**, then select
+an add-on during creation or in **Settings → Custom system prompt add-on**. Pi adds
+the instructions to its usual system prompt. **No add-on** keeps the usual prompt,
+including any profile and project instructions that apply.
+
+Each sandbox keeps an editable copy. Pi reads it at the start of each new turn,
+including in open chats. If a turn is already running, send another message after
+it finishes. If this setting shows an update notice, run **Actions… → Update
+sources and recreate…** once.
 
 ## Workspace and additional folders
 

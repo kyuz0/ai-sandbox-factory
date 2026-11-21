@@ -27,7 +27,7 @@ from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
     CATEGORIES, EDIT_FORMS, Category, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
-    PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
+    NO_SYSTEM_PROMPT_ADD_ON, PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
 from .file_browser import FolderPicker, PathField
@@ -1352,7 +1352,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
         self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
         if agent != 'pi':
             self.summaries['primary-sign-in'] = PRIMARY_AGENTS[agent]
-        self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else 'None'
+        self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else NO_SYSTEM_PROMPT_ADD_ON
         if isinstance(config, dict) and config.get('engine'):
             local = bool(config.get('local_model_ports'))
             count = (int(local) + sum(row['name'] != 'local' for row in model_providers.selections(config))
@@ -2131,7 +2131,7 @@ class PackagesScreen(Screen):
             await self.query_one(SkillLibrary).refresh_library()
             return
         if kind == 'system-prompts':
-            install.label = 'New system prompt…'
+            install.label = 'New add-on…'
             await self.query_one(PromptLibrary).refresh_library()
             return
         install.label = 'Install ' + kind + '…'
@@ -3180,16 +3180,17 @@ class SettingsForm(Screen):
     def compose_system_prompt(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
             current = value.get('system_prompt')
-            title = category.label + ' · ' + (current['name'] if current else 'None')
+            title = category.label + ' · ' + (current['name'] if current else NO_SYSTEM_PROMPT_ADD_ON)
             with Collapsible(title=title, collapsed=True, id=category.section):
-                yield PromptChoice(current, help_text='The instructions apply when you open the agent.' if self.native else
-                                   'Pi uses this prompt in every chat in the new sandbox.', agent=PRIMARY_AGENTS[self.primary])
+                agent = PRIMARY_AGENTS[self.primary]
+                yield PromptChoice(current, agent=agent,
+                                   help_text=f'The add-on applies when you open {agent}.' if self.native else '')
 
     @on(Select.Changed, '#system-prompt-choice')
     def system_prompt_changed(self):
         value = self.query_one(PromptChoice).selected()
         self.query_one('#system-prompt-section', Collapsible).title = (
-            SYSTEM_PROMPT_LABEL + ' · ' + (value['name'] if value else 'None'))
+            SYSTEM_PROMPT_LABEL + ' · ' + (value['name'] if value else NO_SYSTEM_PROMPT_ADD_ON))
 
     def on_mount(self):
         if self.native:

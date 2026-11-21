@@ -13,8 +13,9 @@ WEB_SEARCH_LABEL = 'Web Search'
 LOCAL_MODELS_LABEL = 'Local models'
 HOSTED_PROVIDERS_LABEL = 'Built-in hosted providers'
 PROVIDER_PLUGINS_LABEL = 'Provider plugins'
-SYSTEM_PROMPT_LABEL = 'System prompt'
-SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompts'
+SYSTEM_PROMPT_LABEL = 'Custom system prompt add-on'
+SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompt add-ons'
+NO_SYSTEM_PROMPT_ADD_ON = 'No add-on'
 
 
 # In display order. A focus target opens the shared settings form for a saved

@@ -6,7 +6,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea
 
 from . import activity, prompt_library
-from .settings_catalog import SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL
+from .settings_catalog import NO_SYSTEM_PROMPT_ADD_ON, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL
 from .tui_widgets import Feedback
 
 
@@ -77,7 +77,7 @@ class PromptLibrary(Vertical):
         self.prompts = {}
 
     def compose(self):
-        yield Static('Save instructions you want to reuse. Choose a prompt when you create a sandbox or in its Settings.',
+        yield Static('Save extra instructions to reuse in your sandboxes. Choose an add-on during creation or in Settings.',
                      classes='section-intro')
         yield Vertical(id='system-prompt-list', classes='package-list')
 
@@ -91,7 +91,7 @@ class PromptLibrary(Vertical):
             await listing.mount(Static(str(error), markup=False))
             return
         if not self.prompts:
-            await listing.mount(Static('No system prompts saved.', classes='setting-help'))
+            await listing.mount(Static('No add-ons saved.', classes='setting-help'))
             return
         for key, value in sorted(self.prompts.items(), key=lambda item: item[1]['name'].casefold()):
             await listing.mount(Vertical(
@@ -103,7 +103,7 @@ class PromptLibrary(Vertical):
 
     def edit(self, key=None):
         initial = self.prompts.get(key)
-        self.app.push_screen(EditPrompt('Edit system prompt' if initial else 'New system prompt', initial,
+        self.app.push_screen(EditPrompt('Edit add-on' if initial else 'New add-on', initial,
                                         lambda value: prompt_library.save(**value, key=key)), self.refresh_after)
 
     def refresh_after(self, changed):
@@ -133,11 +133,11 @@ class PromptLibrary(Vertical):
                     self.refresh_after(True)
 
         self.app.push_screen(Confirm(f'Remove “{name}” from the library? Existing sandboxes keep their saved copies.',
-                                     'Remove', confirm_by_default=False, title='Remove system prompt'), remove)
+                                     'Remove', confirm_by_default=False, title='Remove add-on'), remove)
 
 
 class PromptChoice(Vertical):
-    def __init__(self, current, *, help_text, editable=False, agent='Pi'):
+    def __init__(self, current, *, help_text='', editable=False, agent='Pi'):
         super().__init__(classes='setting')
         self.current = current
         self.help_text = help_text
@@ -152,21 +152,26 @@ class PromptChoice(Vertical):
 
     def choices(self):
         available = sorted(self.prompts.items(), key=lambda item: item[1]['name'].casefold())
-        result = [('None', '')]
+        result = [(NO_SYSTEM_PROMPT_ADD_ON, '')]
         if self.current:
             result.append((self.current['name'] + ' · sandbox copy', 'saved'))
         return result + [(value['name'], key) for key, value in available if value != self.current]
 
     def compose(self):
-        yield Label(SYSTEM_PROMPT_LABEL)
+        yield Label('Add-on')
         yield Select(self.choices(), value='saved' if self.current else '', allow_blank=False, id='system-prompt-choice')
-        yield Static(self.help_text, classes='setting-help')
+        description = ('Pi uses its usual system prompt in every chat and adds any instructions you choose here.'
+                       if self.agent == 'Pi' else
+                       f'{self.agent} keeps its usual instructions and includes any add-on you choose.')
+        yield Static(description, id='system-prompt-help', classes='setting-help')
+        if self.help_text:
+            yield Static(self.help_text, id='system-prompt-timing', classes='setting-help')
         if self.error:
             yield Feedback(self.error, markup=False)
         elif not self.prompts:
-            yield Static(f'Add reusable prompts in Library → {SYSTEM_PROMPT_LIBRARY_LABEL}.', classes='setting-help')
+            yield Static(f'Save reusable add-ons in Library → {SYSTEM_PROMPT_LIBRARY_LABEL}.', classes='setting-help')
         with Vertical(id='system-prompt-preview'):
-            yield Label(f'Instructions for {self.agent} (preview)')
+            yield Label('Add-on preview')
             yield TextArea('', read_only=True, show_cursor=False, highlight_cursor_line=False)
             if self.editable:
                 yield Button('Edit sandbox copy…', id='edit-prompt-copy')
@@ -215,8 +220,8 @@ class SandboxPromptScreen(Screen):
             if not self.supported:
                 yield Static('This sandbox needs a newer image. Choose Actions → Update sources and recreate…',
                              id='prompt-update-notice', markup=False)
-            help_text = ('Changes apply the next time Pi starts a reply, including in open chats.' if self.supported
-                         else 'Save stores a copy of the prompt for after the update.')
+            help_text = ('Pi reads the add-on when a new turn starts. You can keep the chat open.' if self.supported
+                         else 'You can save an add-on now and use it after the update.')
             if self.agent != 'Pi':
                 help_text = f'The instructions apply when you next open {self.agent}.'
             yield PromptChoice(self.current, help_text=help_text, editable=True, agent=self.agent)
@@ -235,17 +240,19 @@ class SandboxPromptScreen(Screen):
 
     @on(Button.Pressed, '#sandbox-prompt-save')
     def save(self):
+        selected = self.query_one(PromptChoice).selected()
         try:
-            changed = prompt_library.assign(self.state, self.query_one(PromptChoice).selected())
+            changed = prompt_library.assign(self.state, selected)
             if changed:
                 activity.record(self.state, 'edited')
         except (OSError, ValueError) as error:
             self.query_one('#sandbox-prompt-error', Feedback).update(str(error))
             return
         if changed:
-            message = ('System prompt saved. It applies when Pi starts its next reply.' if self.supported else
-                       'System prompt saved. Update sources to use it.')
+            result = 'Add-on saved.' if selected else 'Add-on removed.'
+            message = ('The change applies when Pi starts its next turn.' if self.supported else
+                       'Update sources to apply the change.')
             if self.agent != 'Pi':
-                message = f'System prompt saved. Reopen {self.agent} to use it.'
-            self.app.notify(message)
+                message = f'Reopen {self.agent} to apply the change.'
+            self.app.notify(f'{result} {message}')
         self.dismiss()
