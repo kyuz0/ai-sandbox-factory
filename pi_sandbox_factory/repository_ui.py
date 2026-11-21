@@ -11,10 +11,6 @@ from .file_browser import PathField
 from .tui_widgets import EntryDialog, Feedback, Checkbox
 
 
-def git_identity_summary(enabled):
-    return 'Commit identity ' + ('set' if enabled else 'not set')
-
-
 class GitIdentityFields(Vertical):
     DEFAULT_CSS = '''
     GitIdentityFields { height: auto; }

@@ -125,6 +125,26 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   next required action. Derive change notices from the actual diff and selected
   client. Never show unrelated feature exceptions, credentials guidance or advice
   for clients the user is not using.
+- HARD GATE — coherent treatment across the UI. Use the same labels, grouping,
+  defaults, initial keyboard focus, shortcut hints and feedback for equivalent
+  choices. Compare shared settings across coding agents and keep their labels
+  and relative order consistent where they serve the same purpose. Group a
+  setting differently when the available choices change what the user can do.
+  Keep keyboard focus distinct from the primary action as the layout adapts
+  to different terminal sizes. Highlight, move or add a separate notice for
+  a setting only when it affects the current decision or requires a separate
+  action. Apply the same rule to every setting in that situation. If a disabled
+  option requires action, explain how to enable it and what happens if the user
+  continues without it. Show a setting’s value beside its control, including
+  when it is off. Section headings can simply name the settings they open.
+  Explain what a copy includes when the user chooses what to copy, and show
+  individual values in the review step. A separate “Web Search is off” line
+  on the first screen of the copy wizard fails this rule. Show the value beside
+  Enable Web Search in Review sandbox.
+  When reviewing a change, compare the affected screens and states side by
+  side. For every difference in wording, visibility, emphasis or behavior,
+  check that it helps the user make a different decision or take a different
+  action. Remove differences that serve no purpose.
 - Keep short explanations beside their controls. Put longer explanations behind
   a labeled help control near the setting. Use natural, connected language in
   the help.
@@ -177,10 +197,14 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   focus it in the confirmation. For deletion, disconnection or cancelling an
   update in progress, focus the choice that preserves the current state. Keep
   Cancel visually secondary. Test Enter immediately after opening and Escape.
-- Give inputs persistent labels; placeholders are examples, not labels. Use the
-  same title style and left edge across screens. Full-page forms and action bars
-  use the available terminal width with consistent side padding; constrain modal
-  dialogs separately.
+- Give inputs persistent labels. Use placeholders for examples and keep titles
+  and fields aligned at the left edge. Size setup forms to their contents and
+  give them a maximum width. Let the form shrink in a narrow terminal, and
+  keep its actions aligned to the form edges. Size short fields for the
+  values they hold. Give paths and longer text room where it helps. Use extra
+  width where it improves readability, such as a table with many columns.
+  Stack dependent choices in order, with Profile below Coding agent. Check
+  that widening the terminal leaves compact controls and actions together.
 - Align page Back/Cancel left and the primary action right, at the form edges.
   Group dialog actions on the right, Cancel before Save. Keep contextual actions
   beside their object. Every button uses one terminal row at every screen size. Keep vertical padding

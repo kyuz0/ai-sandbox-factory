@@ -61,6 +61,7 @@ class TUILayoutTests(unittest.TestCase):
         await pilot.pause()
 
     async def test_workspace_controls_align_and_remain_reachable(self):
+        wide_form_width = None
         for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
@@ -77,8 +78,23 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertEqual(checkbox.region.y, field.region.bottom + 1)
                 self.assertEqual(checkbox.region.x, field.region.x)
                 self.assertEqual(checkbox.region.x, app.screen.query_one('#name').region.x)
+                agent = app.screen.query_one('#primary-agent', Select)
+                profile = app.screen.query_one('#profile', Select)
+                form = app.screen.query_one('.form')
+                self.assertGreaterEqual(profile.region.y, agent.region.bottom)
+                self.assertEqual(agent.region.x, profile.region.x)
+                self.assertEqual(profile.region.x, field.region.x)
+                self.assertLess(agent.region.width, field.region.width)
+                self.assertLess(profile.region.width, field.region.width)
+                self.assertLessEqual(app.screen.query_one('#name').region.bottom, form.content_region.bottom)
+                if size[0] > 80:
+                    self.assertLess(form.region.width, size[0])
+                    if wide_form_width is not None:
+                        self.assertEqual(form.region.width, wide_form_width)
+                    wide_form_width = form.region.width
                 primary = app.screen.query_one('#continue', Button)
                 actions = app.screen.query_one('.wizard-actions')
+                self.assertEqual(actions.region.right, form.region.right)
                 self.assertEqual(primary.region.right, actions.content_region.right)
                 self.assertEqual(primary.region.height, 1)
                 self.assertLess(primary.region.bottom, app.screen.query_one('Footer').region.y)

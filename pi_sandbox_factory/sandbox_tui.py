@@ -35,7 +35,7 @@ from .communications_ui import CommunicationsForm, communications_summary
 from .models_ui import HostedProviders, ModelDialog, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
                              assigned_key_label, choice_key_caption, key_caption)
-from .repository_ui import CreateSSHFields, SSHDestinationFields, git_identity_summary
+from .repository_ui import CreateSSHFields, SSHDestinationFields
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import EntryDialog, Checkbox, Feedback
 from .aws_ui import AWSProfileChoices, AWSProfilePicker, profile_label
@@ -1347,7 +1347,6 @@ class SettingsMenu(ModalScreen[Optional[str]]):
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
                 'primary-browser': on_off(selected['browser']).capitalize(),
                 'document-search': search_summary(selected, embedding_models.sources(config)),
-                'ssh-settings': git_identity_summary(selected['git_identity']),
                 'communications': communications_summary(selected['communications']['slack']),
             })
 
@@ -2508,6 +2507,7 @@ class CreateFromSandbox(EntryDialog):
     #copy-sandbox-dialog { width: 72; max-width: 95%; height: 24; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #copy-sandbox-dialog Static { height: auto; }
     #copy-sandbox-fields { height: 1fr; }
+    #copy-keys-help { margin: 0 0 1 0; }
     """
 
     def __init__(self, records, selected=None):
@@ -2522,7 +2522,8 @@ class CreateFromSandbox(EntryDialog):
                 yield Label('Copy settings from')
                 yield Select([(name, name) for name in self.records], value=self.selected,
                              allow_blank=False, id='copy-source')
-                yield Static('Copy its configuration, then choose a new name and workspace. Review the settings before creating.', classes='section-intro')
+                yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
+                             'Choose a new name and workspace, then review.', classes='section-intro')
                 yield Checkbox('Include search API keys', value=False, id='copy-keys')
                 yield Static('', id='copy-keys-help', markup=False)
                 yield Static('', id='copy-sign-in-help', classes='setting-help')
@@ -2544,7 +2545,7 @@ class CreateFromSandbox(EntryDialog):
         checkbox.disabled = native or record['dev'] != 'running'
         help_text = self.query_one('#copy-keys-help', Static)
         help_text.display = checkbox.disabled and not native
-        help_text.update('Start the source sandbox to copy search API keys.')
+        help_text.update('You can continue without search API keys. Start the source sandbox if you want to copy them.')
         self.query_one('#copy-sign-in-help', Static).update(
             'Choose a sign-in for the new sandbox. SSH keys and saved chats stay with the original.'
             if native else 'Sign in to models and advisors again; SSH keys, browser sessions and chat history are not copied.')
@@ -2590,35 +2591,36 @@ class NewSandbox(Screen):
         self.summaries = registry.profile_summaries()
         self.profile_paths = {name: row['path'] for name, row in registry.installed('profile').items()}
         if self.copied_draft:
-            profiles[settings['profile']] = profiles.get(settings['reused_profile'].get('registry_name'), settings['reused_profile']['name']) + ' (from ' + settings['reuse_from'] + ')'
-            self.profile_paths[settings['profile']] = settings['reused_profile']['path']
+            source = settings['reused_profile']
+            profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (copied)'
+            self.profile_paths[settings['profile']] = source['path']
         yield Header()
         yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
                     classes='title focused-settings-title', id='new-title')
         with VerticalScroll(classes='form'):
-            with Horizontal(classes='new-agent-choices'):
-                with Vertical(id='coding-agent-setting', classes='setting'):
-                    yield Label('Coding agent', id='primary-agent-label')
-                    yield Select([(label, agent) for agent, label in PRIMARY_AGENTS.items()],
-                                 value=coding_agent(settings), allow_blank=False, id='primary-agent',
-                                 disabled=bool(self.copied_draft))
-                with Vertical(id='profile-setting', classes='setting'):
-                    with Horizontal(classes='profile-guide-row'):
-                        yield Label('Profile', id='profile-label')
-                        yield Static('', classes='action-spacer')
-                        yield Button('Getting started…', id='new-profile-guide')
-                    yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
-                                 value=settings['profile'] if settings['profile'] in profiles else 'custom',
-                                 allow_blank=False, id='profile')
-            yield Static('', id='profile-summary', classes='setting-help section-intro', markup=False)
+            with Vertical(id='coding-agent-setting', classes='setting'):
+                yield Label('Coding agent', id='primary-agent-label')
+                yield Select([(label, agent) for agent, label in PRIMARY_AGENTS.items()],
+                             value=coding_agent(settings), allow_blank=False, id='primary-agent',
+                             disabled=bool(self.copied_draft))
+            with Vertical(id='profile-setting', classes='setting'):
+                with Horizontal(classes='profile-guide-row'):
+                    yield Label('Profile', id='profile-label')
+                    yield Static('', classes='action-spacer')
+                    yield Button('Getting started…', id='new-profile-guide')
+                yield Select([(v, k) for k, v in profiles.items()] + [('Custom profile…', 'custom')],
+                             value=settings['profile'] if settings['profile'] in profiles else 'custom',
+                             allow_blank=False, id='profile')
+                yield Static('', id='profile-summary', classes='setting-help', markup=False)
             with Vertical(id='custom-profile-fields', classes='setting'):
                 yield Label('Custom profile folder')
                 yield PathField('custom-profile', title='Choose custom profile folder', placeholder='~/profiles/my-profile')
                 yield Static('Folder containing profile.json, Dockerfile and profile.md.', classes='setting-help')
-            yield Label('Workspace')
-            yield PathField('workspace', settings['workspace_parent'], title='Choose workspace folder', browse_id='browse')
-            yield Checkbox('Create this workspace folder if it does not exist', id='mkdir')
             with Vertical(classes='setting'):
+                yield Label('Workspace')
+                yield PathField('workspace', settings['workspace_parent'], title='Choose workspace folder', browse_id='browse')
+                yield Checkbox('Create this workspace folder if it does not exist', id='mkdir')
+            with Vertical(id='sandbox-name-setting', classes='setting'):
                 yield Label('Sandbox name')
                 yield Input(id='name')
             yield Feedback('', id='new-error', classes='error', markup=False)
@@ -2642,13 +2644,9 @@ class NewSandbox(Screen):
         self.query_one('#profile-setting').display = pi
         self.query_one('#custom-profile-fields').display = pi and profile == 'custom'
         if not pi:
-            self.query_one('#profile-summary', Static).display = False
             self.guide = ''
             return
-        summary = self.summaries.get(profile, '')
-        if self.copied_draft:
-            web = options(self.copied_draft.get('options'))['web_access']['enabled']
-            summary = f'Saved settings carry over. {WEB_SEARCH_LABEL} is {on_off(web)}.'
+        summary = '' if self.copied_draft else self.summaries.get(profile, '')
         helper = self.query_one('#profile-summary', Static)
         helper.update(shorten(safe_text(summary), width=130, placeholder='…'))
         helper.display = bool(summary)
@@ -2721,8 +2719,10 @@ class NewSandbox(Screen):
                                                 'website_groups': draft['options']['website_groups']})
                 self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys))
             except (OSError, ValueError) as error:
-                self.query_one('#new-error', Static).update(str(error))
+                feedback = self.query_one('#new-error', Feedback)
+                feedback.update(str(error))
                 self.query_one(focus).focus()
+                self.call_after_refresh(feedback.scroll_visible, animate=False)
 
     def action_back(self):
         self.app.pop_screen()
@@ -3820,11 +3820,12 @@ class Cockpit(App):
     .provider-details > *:last-child { margin-bottom: 0; }
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
-    #model-ports-error, #network-error, #curlie-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports-error, #network-error, #curlie-error, #new-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
     #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
     .compact-terminal .native-primary-form #allowlist { height: 6; }
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error,
-    Screen:nocolor #curlie-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
+    Screen:nocolor #curlie-error, Screen:nocolor #new-error,
+    Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     .setting > Checkbox, .setting > TextArea { margin-bottom: 0; }
@@ -3883,9 +3884,13 @@ class Cockpit(App):
     .dialog-actions Button { min-width: 12; padding: 0 2; }
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
-    NewSandbox .new-agent-choices { height: auto; }
-    NewSandbox .new-agent-choices > .setting { width: 1fr; }
-    NewSandbox #profile-setting { margin: 0 0 1 2; }
+    NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
+    .compact-terminal NewSandbox > #new-title { padding: 0 3; }
+    NewSandbox #primary-agent { max-width: 32; }
+    NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }
+    NewSandbox #profile { margin: 1 0 0 0; }
+    NewSandbox #sandbox-name-setting { margin: 0; }
+    NewSandbox #new-error { margin: 1 0; }
     .profile-guide-row Button { padding: 0 2; margin: 0 1; }
     .review-profile-row { margin: 0 0 1 0; }
     .review-profile-row Static { width: 1fr; height: auto; }
@@ -3928,7 +3933,7 @@ class Cockpit(App):
     #home > .buttons Label { width: 1fr; }
     #home > .buttons Button:last-child { margin-right: 0; }
     .path-row { height: 1; margin: 1 0; }
-    NewSandbox .form > .path-row { padding: 0 1 0 0; }
+    NewSandbox .form .path-row { padding: 0 1 0 0; }
     .path-row Input { width: 1fr; margin: 0; }
     .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
     .chat-success { color: #91caa6; }
