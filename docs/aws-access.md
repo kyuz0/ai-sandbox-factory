@@ -4,7 +4,7 @@ On the computer running Factory, install AWS CLI v2 and sign in with the profile
 
 Use a dedicated IAM role for sandbox work. Its trust policy must allow your host identity to call `sts:AssumeRole`. Your identity must have permission to assume it. Give the role the actions and resources the sandbox may need. Factory applies a second, per-sandbox policy each time it obtains a session. AWS enforces both policies. [AWS role sessions](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)
 
-1. During creation, open **Agent tools → AWS access → Configure…**. For an existing sandbox, open **Settings → AWS access**.
+1. During creation, open **Review sandbox → AWS access → Configure…**. For an existing sandbox, open **Settings → AWS access**.
 2. Select a saved AWS access profile, or choose **New…** and give it a name. Enter the host AWS CLI profile name, the dedicated role ARN and the AWS region.
 3. Enter one action and resource per line. For example, `ec2:DescribeRegions *` lets Pi list regions. For a resource-scoped action, enter the resource ARN or ARN pattern. Repeat an action on another line to add another resource.
 4. Save the profile and choose **Use profile**. Try `aws ec2 describe-regions` if you granted that action. In Python, `boto3.client("ec2").describe_regions()` uses the same permissions.

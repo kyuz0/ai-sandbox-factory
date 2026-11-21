@@ -103,4 +103,4 @@ class AdvisorCreationTests(unittest.TestCase):
                 service.create(draft, '', output.append)
             self.assertEqual(calls[0][-4:], ['--advisor', 'codex', '--advisor', 'agy'])
             self.assertEqual([c[0] for c in calls], ['create', 'build', 'up'])
-            self.assertTrue(any('Settings → Advisors to sign in' in s for s in output))
+            self.assertTrue(any('Settings → Advisors (Codex/Claude/Antigravity) to sign in' in s for s in output))

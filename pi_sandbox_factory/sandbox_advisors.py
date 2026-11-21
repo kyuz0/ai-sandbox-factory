@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from .sandbox_options import RESOURCE_PREFIX
+from .settings_catalog import ADVISORS_PATH
 
 HOSTS = {
     'claude': ['api.anthropic.com:443', 'claude.ai:443', 'platform.claude.com:443', 'console.anthropic.com:443'],
@@ -190,7 +191,7 @@ def delete_volumes(config):
 
 def login(config, state, provider):
     if provider not in config.get('advisors', {}).get('providers', []):
-        raise ValueError('Enable this provider in Settings → Advisors first')
+        raise ValueError(f'Enable this provider in {ADVISORS_PATH} first')
     if not sys.stdin.isatty():
         raise ValueError('Advisor login requires an interactive terminal')
     from . import sandbox as core
@@ -200,7 +201,7 @@ def login(config, state, provider):
 
 def check(config, state):
     if not enabled(config):
-        raise ValueError('Enable a provider in Settings → Advisors first')
+        raise ValueError(f'Enable a provider in {ADVISORS_PATH} first')
     from . import sandbox as core
     up(config, state)
     worker = names(config)[0]

@@ -73,7 +73,8 @@ async def capture(size):
         record = dict(name='demo', profile='base', engine='podman', dev='running', proxy='running', workspace=str(workspace), config=c)
         research_only = args.only and all(name.startswith('research-') for name in args.only)
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
-        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only else {}
+        aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
+        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only else {}
         with patch.dict(os.environ, variables), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('pi_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(root, ReviewService([record]))
             async with app.run_test(size=size) as pilot:
@@ -138,10 +139,29 @@ async def capture(size):
                     await shot('aws-access-error')
                     await app.pop_screen()
                     draft = preset('base', DEFAULT_SETTINGS)
-                    draft.update(name='research', workspace=str(workspace), aws_access=grant)
-                    await shot('aws-access-tools', SettingsForm(draft), '#skills-section', '#configure-aws')
+                    draft.update(name='research', workspace=str(workspace))
+                    await app.push_screen(SettingsForm(draft))
+                    await pilot.pause()
+                    app.screen.query_one('#hosted-section', Collapsible).collapsed = True
+                    aws_section = app.screen.query_one('#aws-access-section', Collapsible)
+                    aws_section.query_one('CollapsibleTitle').focus(scroll_visible=False)
+                    await pilot.pause()
+                    app.screen.query_one('.form', VerticalScroll).scroll_home(animate=False)
+                    await shot('aws-access-review-off')
+                    await shot('aws-access-review-configure', section='#aws-access-section', focus='#configure-aws')
+                    aws_section.collapsed = True
+                    advisor_section = app.screen.query_one('#new-advisors-section', Collapsible)
+                    advisor_section.query_one('CollapsibleTitle').focus()
+                    await shot('aws-access-review-advisors')
+                    await shot('aws-access-review-advisors-expanded', section='#new-advisors-section')
+                    await app.pop_screen()
+                    await shot('aws-access-review-assigned', SettingsForm({**draft, 'aws_access': grant}),
+                               '#aws-access-section', '#configure-aws')
+                    await shot('aws-access-review-native', SettingsForm({**draft, 'primary_agent': 'codex', 'aws_access': grant}),
+                               '#aws-access-section', '#configure-aws')
                     await shot('aws-access-settings', SettingsMenu('demo', {**c, 'aws_access': grant}, 'browser'), focus='#settings-actions')
-                    if args.only and all(name.startswith('aws-access-') for name in args.only):
+                    await shot('aws-access-advisor-settings', AdvisorsScreen(record))
+                    if aws_only:
                         return
                 if args.only and all(name.startswith('folder-layout-') for name in args.only):
                     folder_config = dict(c, workspace='/home/sam/projects/research', working_directory='notes',

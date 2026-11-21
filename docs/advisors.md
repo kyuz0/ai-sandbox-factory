@@ -4,11 +4,11 @@ Pi can ask Codex (OpenAI), Claude (Anthropic) or Antigravity (Google) for a seco
 
 ## Setup
 
-1. Select advisors under **New sandbox → Advisors** or **Settings → Advisors**.
+1. Open **Advisors (Codex/Claude/Antigravity)** in **Review sandbox** or in **Settings**.
    **Apply** builds the companion and restarts the development container, preserving
    its workspace and private home.
-2. Select **Copy credentials from host** before applying, or return to
-   **Settings → Advisors** afterward and choose **Sign in**. Login becomes available
+2. Select **Copy credentials from host** before applying, or return to the advisor
+   settings afterward and choose **Sign in**. Login becomes available
    once the advisor is installed. Follow the CLI's browser or device-code instructions.
 3. Use **Check advisors** to check login status and available models or quota.
    Antigravity also needs an exact Gemini model ID, quota group and matching effort;
@@ -53,12 +53,12 @@ if that command is missing.
 On macOS, file-based Codex and Claude logins can be copied through the same paths.
 Claude normally stores its login in Keychain; importing that entry is not supported.
 Antigravity's macOS Keychain entry and keyring-only Codex logins also require a
-separate login through **Settings → Advisors → Sign in**. Use **Check advisors**
+separate login through the **Sign in** button in advisor settings. Use **Check advisors**
 after signing in.
 
 Only credentials are copied; CLI settings, hooks and conversations are excluded.
 The copy stays in the advisor’s private volume and is not synchronized with the host.
-If it expires or is invalidated, use **Settings → Advisors → Sign in** for that
+If it expires or is invalidated, use **Sign in** in advisor settings for that
 provider, then **Check advisors** and ask Pi to retry.
 
 ## Choosing an advisor
@@ -108,6 +108,6 @@ Login state survives stopping and rebuilding. Deleting the sandbox removes it. T
 
 ## Claude models and usage
 
-Under **Settings → Advisors → Claude model**, choose `sonnet`, `opus`, `haiku` or an exact model ID and thinking effort. The default is Sonnet at medium effort. Pi can request Opus with an escalation reason or Haiku for simpler questions. `/advisor status` refreshes subscription limits and reset times through Claude's native `/usage`, without inference. Calls stop at the configured quota reserve; unavailable limits are reported as unknown. See the [advisor configuration](https://github.com/kyuz0/pi-advisor/blob/main/docs/configuration.md) for the complete model and quota policy.
+Open **Claude model** in advisor settings and choose `sonnet`, `opus`, `haiku` or an exact model ID and thinking effort. The default is Sonnet at medium effort. Pi can request Opus with an escalation reason or Haiku for simpler questions. `/advisor status` refreshes subscription limits and reset times through Claude's native `/usage`, without inference. Calls stop at the configured quota reserve; unavailable limits are reported as unknown. See the [advisor configuration](https://github.com/kyuz0/pi-advisor/blob/main/docs/configuration.md) for the complete model and quota policy.
 
 To update the installed advisor, use **Actions → Update sources and recreate…**, then reopen Pi/FrostPi.

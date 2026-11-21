@@ -13,6 +13,7 @@ WEB_SEARCH_LABEL = 'Web Search'
 LOCAL_MODELS_LABEL = 'Local models'
 HOSTED_PROVIDERS_LABEL = 'Built-in hosted providers'
 PROVIDER_PLUGINS_LABEL = 'Provider plugins'
+ADVISORS_LABEL = 'Advisors (Codex/Claude/Antigravity)'
 SYSTEM_PROMPT_LABEL = 'Custom system prompt add-on'
 SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompt add-ons'
 NO_SYSTEM_PROMPT_ADD_ON = 'No add-on'
@@ -31,7 +32,7 @@ CATEGORIES = {
     'agent-tools': Category('Agent tools', 'skills-section', 'subagents'),
     'system-prompt': Category(SYSTEM_PROMPT_LABEL, 'system-prompt-section'),
     'ssh-settings': Category('SSH & Git', 'git-identity-section'),
-    'advisors': Category('Advisors', 'new-advisors-section'),
+    'advisors': Category(ADVISORS_LABEL, 'new-advisors-section'),
     'communications': Category('Communications', 'communications-section', 'slack-enabled'),
     'skills': Category('Skills', 'skill-library-section', 'manage-skills'),
     'resources': Category('Resources & environment', 'resources-section', 'memory'),
@@ -43,6 +44,7 @@ EDIT_FORMS.update({
 })
 
 NETWORK_PATH = f'Settings → {CATEGORIES["network-settings"].label} → {NETWORK_LABEL}'
+ADVISORS_PATH = 'Settings → ' + ADVISORS_LABEL
 MODEL_PROVIDERS_PATH = 'Settings → ' + CATEGORIES['models'].label
 LOCAL_MODELS_PATH = MODEL_PROVIDERS_PATH + ' → ' + EDIT_FORMS['model-sources'].label
 OPEN_LABELS = {'browser': 'Open in browser', 'pi': 'Open Pi CLI', 'desktop': 'Open VS Code'}

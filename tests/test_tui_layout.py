@@ -163,7 +163,12 @@ class TUILayoutTests(unittest.TestCase):
                 await self.ready(app, pilot)
                 await app.push_screen(SettingsForm(self.draft()) if creation else AdvisorsScreen(self.record))
                 if creation:
-                    app.screen.query_one('#new-advisors-section', Collapsible).collapsed = False
+                    section = app.screen.query_one('#new-advisors-section', Collapsible)
+                    self.assertEqual(section.title, 'Advisors (Codex/Claude/Antigravity)')
+                    section.collapsed = False
+                else:
+                    self.assertEqual(app.screen.query_one('.title', Label).render().plain,
+                                     'Advisors (Codex/Claude/Antigravity) · demo')
                 await pilot.pause()
                 choices = app.screen.query_one(AdvisorChoices)
                 prefix = 'new-advisor-' if creation else 'advisor-'
@@ -266,7 +271,7 @@ class TUILayoutTests(unittest.TestCase):
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
         expected_order = ['Model Providers', 'Editor', 'Folders', 'AWS access', 'Document search', 'Network and Web Search', 'Approvals & sandbox',
-                          'Agent tools', 'Custom system prompt add-on', 'SSH & Git', 'Advisors', 'Communications',
+                          'Agent tools', 'Custom system prompt add-on', 'SSH & Git', 'Advisors (Codex/Claude/Antigravity)', 'Communications',
                           'Skills', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -280,7 +285,7 @@ class TUILayoutTests(unittest.TestCase):
             titles = {section.id: (section.title if isinstance(section, Collapsible) else
                                    str(section.query_one('#document-search-summary').render())) for section in category_widgets}
             creation = [title.split(' · ', 1)[0] for title in titles.values()]
-            self.assertIn(app.screen.query_one('#skills-section'), app.screen.query_one('#configure-aws').ancestors)
+            self.assertIn(app.screen.query_one('#aws-access-section'), app.screen.query_one('#configure-aws').ancestors)
             models = app.screen.query_one('#hosted-section', Collapsible)
             self.assertFalse(models.collapsed)
             for before, after in zip(category_widgets, category_widgets[1:]):
@@ -299,10 +304,10 @@ class TUILayoutTests(unittest.TestCase):
             menu = app.screen.query_one('#settings-actions', OptionList)
             prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
             editing = [prompt.split(' · ', 1)[0] for prompt in prompts]
-            self.assertEqual(creation, [label for label in expected_order if label not in ('AWS access', 'Document search')])
+            self.assertEqual(creation, [label for label in expected_order if label != 'Document search'])
             self.assertEqual(editing, expected_order)
-            for action in ('models', 'editor-settings', 'network-settings',
-                           'approval-settings', 'agent-tools', 'ssh-settings', 'communications'):
+            for action in ('models', 'editor-settings', 'aws-access', 'network-settings', 'approval-settings',
+                           'agent-tools', 'ssh-settings', 'advisors', 'communications'):
                 index = list(CATEGORIES).index(action)
                 self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
             self.assertIn('Model Providers · Local models on · 1 enabled', prompts)

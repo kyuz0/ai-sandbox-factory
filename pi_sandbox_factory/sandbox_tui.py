@@ -25,7 +25,8 @@ from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
-    CATEGORIES, EDIT_FORMS, Category, HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
+    ADVISORS_LABEL, ADVISORS_PATH, CATEGORIES, EDIT_FORMS, Category,
+    HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
     NO_SYSTEM_PROMPT_ADD_ON, PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
@@ -80,9 +81,9 @@ SIGN_IN_HELP = {
 PRIMARY_CATEGORIES = {
     'primary-sign-in': Category(SIGN_IN_LABEL, 'primary-sign-in-section'),
     'folders': CATEGORIES['folders'],
+    'aws-access': CATEGORIES['aws-access'],
     'network-settings': Category(NETWORK_LABEL, 'network-section', 'network'),
     'ssh-settings': CATEGORIES['ssh-settings'],
-    'aws-access': CATEGORIES['aws-access'],
     'skills': CATEGORIES['skills'],
     'primary-browser': Category('Browser', 'primary-browser-section', 'primary-browser'),
     'system-prompt': CATEGORIES['system-prompt'],
@@ -341,7 +342,7 @@ class Service:
         for provider in draft.get('_advisor_imports', []):
             self.run(['advisor-import', name, provider], log)
         if draft.get('advisors', {}).get('providers'):
-            log('Advisors added. Open Settings → Advisors to sign in or check the copied sign-ins.')
+            log(f'Advisors added. Open {ADVISORS_PATH} to sign in or check the copied sign-ins.')
 
     def hosted_request(self, name, action, **values):
         config = self.config(name)
@@ -1701,7 +1702,9 @@ class AdvisorsScreen(Screen):
             yield Static(settings_effects.bullets(['Apply restarts sandbox processes.', 'Sign in and Check advisors take effect immediately.']), classes='section-intro')
             yield AdvisorChoices(providers, 'advisor-')
             yield Static('Copying credentials replaces the selected advisor’s saved sign-in when you apply.')
-            yield Static('If a copied sign-in stops working, use its Sign in button below, then Check advisors.' if providers else 'Sign-in is available only after the advisor has been added. Select Apply, then reopen Settings → Advisors.', id='advisor-login-help')
+            yield Static('If a copied sign-in stops working, use its Sign in button below, then Check advisors.'
+                         if providers else f'Apply to add the advisor, then reopen {ADVISORS_PATH} to sign in.',
+                         id='advisor-login-help')
             with Horizontal(classes='buttons'):
                 yield Button('Sign in to Codex', id='advisor-login-codex', disabled='codex' not in providers)
                 yield Button('Sign in to Claude', id='advisor-login-claude', disabled='claude' not in providers)
@@ -1793,7 +1796,7 @@ class AdvisorsScreen(Screen):
                     service.advisors(name, settings, log, update)
                     for provider in imports:
                         service.run(['advisor-import', name, provider], log)
-                self.app.push_screen(UpdateOperation('Advisors · ' + name, setup, done_on_success=True,
+                self.app.push_screen(UpdateOperation(ADVISORS_LABEL + ' · ' + name, setup, done_on_success=True,
                     success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']))))
             notes = ['Active sandbox processes restart.', 'Workspace and private home are preserved.',
                      *settings_effects.editor_migration(self.record['config'])]
@@ -2865,10 +2868,9 @@ class SettingsForm(Screen):
                     if self.guide:
                         yield Button('Getting started…', id='review-profile-guide')
             for action, category in self.categories.items():
-                if self.native:
-                    if self.editing and action != self.setting:
-                        continue
-                elif action == 'aws-access' or (action == 'document-search' and self.setting != action):
+                if self.native and self.editing and action != self.setting:
+                    continue
+                if action == 'document-search' and self.setting != action:
                     continue
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
@@ -2920,9 +2922,10 @@ class SettingsForm(Screen):
         self.query_one('#primary-browser-section', Collapsible).title = 'Browser · ' + on_off(enabled)
 
     def compose_aws_access(self, category, value, selected):
-        with Collapsible(title=category.label + ' · ' + profile_label(value.get('aws_access', {})),
-                         collapsed=True, id=category.section):
-            yield Button('Configure…', id='configure-aws')
+        if not self.defaults_mode and not self.editing:
+            with Collapsible(title=category.label + ' · ' + profile_label(value.get('aws_access', {})),
+                             collapsed=True, id=category.section):
+                yield Button('Configure…', id='configure-aws')
 
     def compose_approval_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -3056,14 +3059,15 @@ class SettingsForm(Screen):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
 
     @on(Button.Pressed, '#configure-aws')
-    def configure_aws(self):
+    def configure_aws(self, event):
+        event.stop()
+        category = CATEGORIES['aws-access']
+
         def saved(value):
             if value is not None:
                 self.draft['aws_access'] = value
-                if self.native:
-                    self.query_one('#aws-access-section', Collapsible).title = 'AWS access · ' + profile_label(value)
-                else:
-                    self.query_one('#aws-summary', Static).update('AWS access · ' + profile_label(value))
+                self.query_one('#' + category.section, Collapsible).title = category.label + ' · ' + profile_label(value)
+
         self.app.push_screen(AWSProfilePicker(self.draft.get('aws_access')), saved)
 
     def compose_document_search(self, category, value, selected):
@@ -3099,11 +3103,6 @@ class SettingsForm(Screen):
 
     def compose_agent_tools(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
-            if not self.defaults_mode and not self.editing:
-                with Horizontal(classes='aws-access-row'):
-                    current = self.draft.get('aws_access', {})
-                    yield Static('AWS access · ' + profile_label(current), id='aws-summary', markup=False)
-                    yield Button('Configure…', id='configure-aws')
             if self.setting != 'document-search':
                 yield from self.compose_document_search(CATEGORIES['document-search'], value, selected)
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
@@ -3155,7 +3154,8 @@ class SettingsForm(Screen):
             with Collapsible(title=category.label, collapsed=True, id=category.section):
                 providers = value.get('advisors', {}).get('providers', [])
                 yield AdvisorChoices(providers, 'new-advisor-')
-                yield Static('Copy an existing host sign-in, or sign in after creation through Settings → Advisors. Credentials stay in the separate advisor container.', id='new-advisor-help')
+                yield Static(f'Copy a sign-in from this computer, or sign in after creation in {ADVISORS_PATH}. '
+                             'Sign-ins stay in a separate container.', id='new-advisor-help')
 
     def compose_resources(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -3987,9 +3987,7 @@ class Cockpit(App):
     #document-search-section { height: auto; min-height: 1; padding: 0; margin: 0 0 1 0; }
     #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
     #document-search-section.focused-setting { padding: 0; background: transparent; }
-    .aws-access-row { height: auto; margin: 0 0 1 0; }
-    #aws-summary { width: auto; }
-    #configure-aws { width: auto; margin: 0 0 0 2; }
+    #configure-aws { width: auto; padding: 0 2; }
     #document-search-summary { width: auto; height: auto; }
     #configure-document-search { width: auto; margin: 0 0 0 2; padding: 0 2; }
     #document-search-fields { height: auto; max-height: 68vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; }

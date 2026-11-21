@@ -4,13 +4,13 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from textual.widgets import Button, Input, Label, Select
+from textual.widgets import Button, Collapsible, Input, Label, Select
 from test_tui import FakeService
 
 from pi_sandbox_factory import aws_profiles, sandbox
 from pi_sandbox_factory.aws_ui import AWSProfilePicker, AWSProfileTargets
 from pi_sandbox_factory.sandbox_options import write_json
-from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, UpdateOperation
+from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, DEFAULT_SETTINGS, SettingsForm, UpdateOperation, preset
 from pi_sandbox_factory.tui_widgets import Checkbox
 
 
@@ -57,6 +57,43 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'changed'):
             sandbox.apply_settings({'aws_access': {}}, self.root / 'alpha',
                                    {'aws_access': edit, 'expected_aws_access': self.original})
+
+    async def test_review_assigns_and_clears_aws_access_for_pi_and_native_agents(self):
+        app = Cockpit(self.root, FakeService([]))
+        with patch('pi_sandbox_factory.updates.available_update', return_value=None):
+            async with app.run_test(size=(80, 24)) as pilot:
+                await app.workers.wait_for_complete()
+                for agent in ('pi', 'codex'):
+                    with self.subTest(agent=agent):
+                        draft = preset('base', DEFAULT_SETTINGS)
+                        draft.update(name='review', workspace=str(self.root), primary_agent=agent,
+                                     local_model_ports=None, model_providers={})
+                        review = SettingsForm(draft)
+                        await app.push_screen(review)
+                        section = review.query_one('#aws-access-section', Collapsible)
+                        self.assertTrue(section.collapsed)
+                        self.assertEqual(section.title, 'AWS access · Off')
+                        section.collapsed = False
+                        configure = section.query_one('#configure-aws', Button)
+                        configure.focus()
+                        await pilot.pause()
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, AWSProfilePicker)
+                        app.screen.query_one('#aws-choice', Select).value = self.original['profile_id']
+                        await pilot.pause()
+                        app.screen.query_one('#aws-assign', Button).press()
+                        await pilot.pause()
+                        self.assertEqual(section.title, 'AWS access · Research')
+                        self.assertEqual(review.collect()[0]['aws_access'], self.original)
+                        configure.press()
+                        await pilot.pause()
+                        app.screen.query_one('#aws-disconnect', Button).press()
+                        await pilot.pause()
+                        self.assertEqual(section.title, 'AWS access · Off')
+                        self.assertEqual(review.collect()[0]['aws_access'], {})
+                        await app.pop_screen()
+                self.assertFalse(app.service.calls)
 
     async def test_edit_then_choose_only_one_sandbox(self):
         service = FakeService([])
