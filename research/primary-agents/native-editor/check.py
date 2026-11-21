@@ -4,7 +4,6 @@ from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 import subprocess
 import tempfile
@@ -89,8 +88,7 @@ def verify_reply(page, prompt, expected, timeout):
                     if text.lower() in visible.lower():
                         observations.add(text)
                 if submitted:
-                    response = re.sub(r'(?<=\d)[,\u202f](?=\d{3}\b)', '', visible) if expected.isdecimal() else visible
-                    if expected in response:
+                    if expected in visible:
                         return
                     continue
                 inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
@@ -165,8 +163,11 @@ def run(args, root, stack):
     settings = {'claudeCode.disableLoginPrompt': True} if agent == 'claude' else {}
     ticket = secrets.token_urlsafe(32)
     hub = None
-    prompt = 'Answer with only the decimal result of 197 times 313. Do not use tools or access any files.'
-    expected = str(197 * 313)
+    first = secrets.choice(('cedar', 'maple', 'aspen'))
+    last = secrets.choice(('violet', 'amber', 'coral'))
+    prompt = (f'Your first word is {first}. Your second word is {last}. '
+              'Reply with these two words joined by a hyphen. Do not use tools.')
+    expected = first + '-' + last
     if args.separate:
         start(editor, *isolated, *editor_mounts, '-v', f'{private}:/session:ro', '-v', wire + ':/run/primary-workspace:z',
               '--tmpfs', '/run/primary-runtime:rw,mode=1777', '--entrypoint', '/usr/bin/tini',

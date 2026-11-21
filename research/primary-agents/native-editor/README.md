@@ -11,7 +11,7 @@ PYTHONPATH=. python research/primary-agents/native-editor/check.py claude \
   --chromium /usr/bin/chromium-browser
 ```
 
-Choose `codex`, `claude` or `agy` and supply the matching extension directory containing `package.json`. The test copies the sign-in into a private home used only by the disposable editor. It opens the real panel, submits an arithmetic question and checks the reply. It starts with an empty workspace. Only the controller can reach the provider through the configured proxy.
+Choose `codex`, `claude` or `agy` and supply the matching extension directory containing `package.json`. The test copies the sign-in into a private home used only by the disposable editor. It opens the real panel, asks the agent to join two words, and checks for the joined pair in the reply. It starts with an empty workspace. Only the controller can reach the provider through the configured proxy.
 
 For Codex and Claude, add `--separate` to test a different arrangement. The extension runs in an offline workspace without the account files or provider proxy. The signed-in CLI runs in a second container. The test gives the workspace a random value, asks the panel to copy a file, checks the reply and verifies the output file in the workspace. It also verifies the output file is absent from the controller. The bridge accepts this fixed task only. It is a test fixture.
 
