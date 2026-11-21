@@ -70,11 +70,12 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
                                      local_model_ports=None, model_providers={})
                         review = SettingsForm(draft)
                         await app.push_screen(review)
-                        section = review.query_one('#aws-access-section', Collapsible)
+                        section = review.query_one('#connectors-section', Collapsible)
                         self.assertTrue(section.collapsed)
-                        self.assertEqual(section.title, 'AWS access · Off')
+                        self.assertEqual(section.title, 'Connectors · Off')
+                        self.assertEqual(str(section.query_one('#connector-status-aws').render()), 'Off')
                         section.collapsed = False
-                        configure = section.query_one('#configure-aws', Button)
+                        configure = section.query_one('#connector-aws', Button)
                         configure.focus()
                         await pilot.pause()
                         await pilot.press('enter')
@@ -84,16 +85,36 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
                         await pilot.pause()
                         app.screen.query_one('#aws-assign', Button).press()
                         await pilot.pause()
-                        self.assertEqual(section.title, 'AWS access · Research')
+                        self.assertEqual(str(section.query_one('#connector-status-aws').render()), 'Profile · Research')
                         self.assertEqual(review.collect()[0]['aws_access'], self.original)
+                        self.assertEqual(section.title, 'Connectors · AWS')
                         configure.press()
                         await pilot.pause()
                         app.screen.query_one('#aws-disconnect', Button).press()
                         await pilot.pause()
-                        self.assertEqual(section.title, 'AWS access · Off')
+                        self.assertEqual(str(section.query_one('#connector-status-aws').render()), 'Off')
                         self.assertEqual(review.collect()[0]['aws_access'], {})
                         await app.pop_screen()
                 self.assertFalse(app.service.calls)
+
+    async def test_saved_aws_disconnection_requires_confirmation(self):
+        record = {'name': 'alpha', 'config': {'aws_access': self.original}}
+        app = Cockpit(self.root, FakeService([]))
+        chosen = []
+        with patch.object(app.service, 'config', return_value=record['config']):
+            async with app.run_test(size=(80, 24)) as pilot:
+                await app.push_screen(AWSProfilePicker(self.original, sandbox_name='alpha'), chosen.append)
+                app.screen.query_one('#aws-disconnect', Button).press()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, Confirm)
+                self.assertEqual(app.focused.id, 'cancel')
+                await pilot.press('enter')
+                self.assertFalse(chosen)
+                app.screen.query_one('#aws-disconnect', Button).press()
+                await pilot.pause()
+                app.screen.query_one('#yes', Button).press()
+                await pilot.pause()
+                self.assertEqual(chosen, [{}])
 
     async def test_edit_then_choose_only_one_sandbox(self):
         service = FakeService([])

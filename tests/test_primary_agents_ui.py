@@ -1,16 +1,19 @@
 import asyncio
 import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Select, TextArea
 
 from pi_sandbox_factory import sandbox, settings_effects
 from pi_sandbox_factory.sandbox_tui import (
     Cockpit, DEFAULT_SETTINGS, PrimarySignIn, SettingsForm, SettingsMenu, copy_draft, preset,
 )
+from pi_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
 
@@ -62,6 +65,7 @@ class PrimaryAgentsUI(unittest.TestCase):
                     auth = review.query_one('#primary-auth', Select)
                     self.assertIs(review.focused, auth)
                     self.assertEqual(auth.value, 'login')
+                    self.assertLessEqual(auth.region.width, 40)
                     self.assertFalse(review.query_one('#primary-sign-in-section', Collapsible).collapsed)
                     self.assertFalse(review.query('#hosted-section, #editor-section, #agent-section, #web-enabled'))
                     auth.value = 'copy'
@@ -92,7 +96,7 @@ class PrimaryAgentsUI(unittest.TestCase):
             await pilot.pause()
             actions = dict((action, label) for label, action in app.screen.actions)
             self.assertEqual(set(actions), {'primary-sign-in', 'folders', 'network-settings',
-                                            'ssh-settings', 'aws-access', 'skills', 'primary-browser',
+                                            'connectors', 'skills', 'primary-browser',
                                             'system-prompt', 'resources'})
             await app.pop_screen()
             await app.push_screen(PrimarySignIn(record))
@@ -152,28 +156,114 @@ class PrimaryAgentsUI(unittest.TestCase):
                     review = SettingsForm(draft)
                     await app.push_screen(review)
                     await pilot.pause()
-                    ssh = review.query_one('#git-identity-section', Collapsible)
-                    self.assertEqual(ssh.title, 'SSH & Git')
+                    group = review.query_one('#connectors-section', Collapsible)
+                    self.assertEqual(str(review.query_one('#apply', Button).label), 'Create and start sandbox')
+                    launch = review.query_one('#open-editor', Checkbox)
+                    if agent == 'pi':
+                        self.assertEqual(str(launch.label), 'Open the browser editor when ready')
+                        review.query_one('#editor-mode', Select).value = 'pi'
+                        await pilot.pause()
+                        self.assertEqual(str(launch.label), 'Open Pi CLI when ready')
+                        review.query_one('#editor-mode', Select).value = 'desktop'
+                        await pilot.pause()
+                        self.assertEqual(str(launch.label), 'Open VS Code on this computer when ready')
+                    else:
+                        self.assertEqual(str(launch.label), 'Open Codex when ready')
+                    self.assertTrue(group.collapsed)
+                    group.collapsed = False
+                    choose_ssh = group.query_one('#connector-ssh', Button)
+                    choose_ssh.press()
+                    await pilot.pause()
+                    ssh = app.screen
+                    self.assertIs(ssh.focused, ssh.query_one('#ssh-hosts', TextArea))
                     self.assertIsNotNone(ssh.query_one('#git-author-name', Input))
                     ssh.query_one('#create-ssh-key', Select).value = 'import'
                     await pilot.pause()
-                    with self.assertRaisesRegex(ValueError, 'Add an SSH destination'):
-                        review.collect()
-                    self.assertFalse(ssh.collapsed)
+                    save = ssh.query_one('#create-ssh-save', Button)
+                    save.press()
+                    await pilot.pause()
+                    self.assertIn('Add an SSH destination', str(ssh.query_one('#ssh-destinations-error').render()))
+                    self.assertIs(ssh.focused, ssh.query_one('#ssh-hosts', TextArea))
                     ssh.query_one('#ssh-hosts', TextArea).load_text('project git git.example.test 22')
                     ssh.query_one('#ssh-known-hosts', Input).value = str(known_hosts)
                     key_file = ssh.query_one('#create-ssh-key-file', Input)
-                    review.query_one('#apply', Button).press()
+                    save.press()
                     await pilot.pause()
                     feedback = ssh.query_one('#create-ssh-key-file-error')
                     self.assertIn('Choose a private key file.', str(feedback.render()))
-                    self.assertIs(review.focused, key_file)
-                    viewport = review.query_one('.form').content_region
+                    self.assertIs(ssh.focused, key_file)
+                    viewport = ssh.query_one(VerticalScroll).content_region
                     self.assertLessEqual(viewport.y, key_file.region.y)
                     self.assertLessEqual(feedback.region.bottom, viewport.bottom)
                     key_file.value = str(private_key)
                     ssh.query_one('#create-ssh-duration', Input).value = '2d'
+                    save.press()
+                    await pilot.pause()
+                    self.assertIs(app.screen, review)
+                    self.assertIn('1 destination', str(group.query_one('#connector-status-ssh').render()))
                     saved, _ = review.collect()
                     self.assertEqual(saved['ssh']['hosts'][0]['host_keys'], ['ssh-ed25519 AAAA'])
                     self.assertEqual(saved['_ssh_key_file'], str(private_key))
                     self.assertEqual(saved['_ssh_key_duration'], '2d')
+                    choose_ssh.press()
+                    await pilot.pause()
+                    self.assertEqual(app.screen.query_one('#create-ssh-key-file', Input).value, str(private_key))
+                    app.screen.query_one('#create-ssh-key', Select).value = 'later'
+                    await pilot.press('escape')
+                    await pilot.pause()
+                    self.assertEqual(review.collect()[0]['_ssh_key_file'], str(private_key))
+                    self.assertFalse(app.service.calls)
+
+    async def test_back_keeps_connector_choices_in_this_wizard_only(self):
+        package = self.state / 'packages' / 'build-status'
+        package.mkdir(parents=True)
+        routes = {'latest': 'https://ci.example.test/status', 'history': 'https://ci.example.test/history'}
+        (package / 'connector.json').write_text(json.dumps(dict(
+            version=1, id='build-status', title='Build status', description='Read the latest build.',
+            documentation='Connect a read-only service account.', operations=routes,
+            agent_instructions='Use the latest request to check the current build.')))
+        self.enterContext(patch('pi_sandbox_factory.connectors.has_token', return_value=True))
+        app = Cockpit(self.state, FakeService([]))
+        with patch('pi_sandbox_factory.connectors.directory', return_value=package.parent):
+            async with app.run_test(size=(80, 24)) as pilot:
+                await app.workers.wait_for_complete()
+                app.action_new()
+                await pilot.pause()
+                first = app.screen
+                first.query_one('#workspace', Input).value = str(self.state)
+                first.query_one('#name', Input).value = 'example'
+                first.query_one('#continue', Button).press()
+                await pilot.pause()
+                review = app.screen
+                review.query_one('#connector-build-status', Button).press()
+                await pilot.pause()
+                await pilot.press('escape')
+                await pilot.pause()
+                self.assertEqual(review.collect()[0].get('connector_ids', []), [])
+                review.query_one('#connector-build-status', Button).press()
+                await pilot.pause()
+                permission = next(box for box in app.screen.query(Checkbox) if box.name == 'latest')
+                permission.value = True
+                await pilot.pause()
+                app.screen.query_one('#connector-confirm', Button).press()
+                await pilot.pause()
+                self.assertEqual(review.collect()[0]['_connector_routes'], {'build-status': routes})
+                self.assertEqual(review.collect()[0]['connector_operations'], {'build-status': ['latest']})
+                self.assertIn('1 of 2 requests', str(review.query_one('#connector-status-build-status').render()))
+                review.query_one('#back', Button).press()
+                await pilot.pause()
+                self.assertIs(app.screen, first)
+                first.query_one('#continue', Button).press()
+                await pilot.pause()
+                resumed = app.screen
+                self.assertEqual(resumed.collect()[0]['_connector_routes'], {'build-status': routes})
+                self.assertEqual(resumed.collect()[0]['_connector_instructions'],
+                                 {'build-status': {'service': 'Use the latest request to check the current build.', 'operations': {}}})
+                self.assertEqual(resumed.collect()[0]['connector_ids'], ['build-status'])
+                self.assertEqual(resumed.collect()[0]['connector_operations'], {'build-status': ['latest']})
+                await pilot.press('escape', 'escape')
+                await pilot.pause()
+                self.assertFalse(app.service.calls)
+                app.action_new()
+                await pilot.pause()
+                self.assertFalse(app.screen.connector_draft)

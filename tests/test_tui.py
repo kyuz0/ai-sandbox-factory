@@ -248,7 +248,8 @@ class TUITests(unittest.TestCase):
             self.assertIsInstance(app.screen,AdvisorsScreen)
             self.assertTrue(app.screen.query_one('#advisor-login-codex',Button).disabled)
             self.assertLess(app.screen.query_one('#advisor-login-codex',Button).region.bottom, 34)
-            self.assertIn('only after the advisor has been added', str(app.screen.query_one('#advisor-login-help').render()))
+            self.assertEqual(str(app.screen.query_one('#advisor-login-help').render()),
+                             'Apply to add the advisor, then reopen Settings → Advisors (Codex/Claude/Antigravity) to sign in.')
             app.screen.query_one('#advisor-codex',Checkbox).value=True
             await pilot.pause()
             self.assertTrue(app.screen.query_one('#advisor-login-codex',Button).disabled)
@@ -405,13 +406,156 @@ class TUITests(unittest.TestCase):
         from pi_sandbox_factory.sandbox_tui import SSHScreen
         service=FakeService(self.records);app=Cockpit(self.root,service)
         async with app.run_test(size=(100,36)) as pilot:
-            await self.ready(app,pilot);await self.settings_page(app,pilot,action="ssh-settings")
+            await self.ready(app,pilot);await self.settings_page(app,pilot,action="connectors")
+            await pilot.click('#connector-ssh')
+            await pilot.pause()
             self.assertIsInstance(app.screen,SSHScreen)
             self.assertTrue(app.screen.query_one('#ssh-import-key',Button).disabled)
             self.assertEqual(app.screen.query_one('#ssh-key-file',Input).value,'')
             await pilot.press('escape');await pilot.pause()
+            self.assertEqual(app.focused.id, 'connector-ssh')
+            await pilot.press('escape')
+            self.assertIsInstance(app.screen, SettingsMenu)
+            await pilot.press('escape')
             self.assertFalse(service.calls)
             await pilot.press('q')
+
+    async def test_connector_settings_review_grants_and_can_revoke_an_uninstalled_connector(self):
+        from pi_sandbox_factory import connectors
+        from pi_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
+        from pi_sandbox_factory.aws_ui import AWSProfilePicker
+
+        record = self.records[0]
+        service = FakeService([record])
+        changes = []
+        token = self.enterContext(patch.object(connectors, "has_token", return_value=False))
+
+        def apply(name, update, log, _operation):
+            self.assertEqual(name, record['name'])
+            changes.append(update)
+            connectors.snapshot(update['connector_ids'], self.root / name)
+            record['config']['connector_ids'] = update['connector_ids']
+            record['config']['connector_operations'] = update['connector_operations']
+
+        service.update_settings = apply
+        route = 'https://api.example.test/releases/' + 'long-path-' * 8 + 'status'
+        with patch.dict('os.environ', XDG_CONFIG_HOME=str(self.root / 'config'),
+                        SANDBOX_REGISTRY_DIR=str(self.root / 'library')):
+            path = connectors.directory() / 'release' / 'connector.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({'version': 1, 'id': 'release', 'title': 'Release status',
+                                        'description': 'Read the release status.',
+                                        'documentation': 'Use status to read the current release.',
+                                        'agent_instructions': 'Read the build service response.',
+                                        'operations': {'details': 'https://api.example.test/details', 'status': {'url': route, 'instructions': 'Report the current release.'}}}))
+            app = Cockpit(self.root, service)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await self.ready(app, pilot)
+                await self.settings_page(app, pilot, action='connectors')
+                menu = app.screen
+                self.assertIsInstance(menu, ConnectorSettings)
+                self.assertEqual(app.focused.id, 'connector-ssh')
+                self.assertFalse(menu.query('#connector-azure, #connector-gcp'))
+                await pilot.click('#connector-aws')
+                await pilot.pause()
+                self.assertIsInstance(app.screen, AWSProfilePicker)
+                await pilot.press('escape')
+                self.assertEqual(app.focused.id, 'connector-aws')
+                plugin_button = menu.query_one('#connector-release', Button)
+                plugin_button.focus()
+                await pilot.press('enter')
+                self.assertIsInstance(app.screen, ExternalConnectorDialog)
+                endpoint = next(s for s in app.screen.query('Static') if str(s.render()) == 'GET ' + route)
+                self.assertGreater(endpoint.content_region.height, 1)
+                self.assertEqual(app.focused.name, 'details')
+                self.assertTrue(app.screen.query_one('#connector-confirm', Button).disabled)
+                self.assertIn('connector-login release', str(app.screen.query_one('#connector-token').render()))
+                self.assertNotIn('Report the current release.', str(app.screen.query_one('#connector-agent-text').render()))
+                app.screen.query(Checkbox)[1].value = True
+                await pilot.pause()
+                self.assertTrue(app.screen.query_one('#connector-confirm', Button).disabled)
+                self.assertIn('Report the current release.', str(app.screen.query_one('#connector-agent-text').render()))
+                token.return_value = True
+                app.screen.query_one('#connector-retry', Button).press()
+                await pilot.pause()
+                self.assertFalse(app.screen.query_one('#connector-confirm', Button).disabled)
+                app.screen.query_one('#connector-setup', Button).press()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, ConnectorSetup)
+                self.assertIn('connector-login release', str(app.screen.query_one('.connector-command').render()))
+                await pilot.press('escape')
+                await pilot.press('escape')
+                self.assertEqual(changes, [])
+                await pilot.press('enter')
+                app.screen.query(Checkbox)[1].value = True
+                await pilot.pause()
+                app.screen.query_one('#connector-confirm', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(changes, [{'connector_ids': ['release'], 'expected_connector_ids': [],
+                                             'connector_operations': {'release': ['status']}, 'expected_connector_operations': {},
+                                             'expected_connector_instructions': {'release': {'service': 'Read the build service response.', 'operations': {'status': 'Report the current release.'}}},
+                                             'expected_connector_routes': {'release': {'details': 'https://api.example.test/details', 'status': route}}}])
+                path.unlink()
+                await pilot.press('escape')
+                await pilot.pause()
+                self.assertIs(app.screen, menu)
+                self.assertIn('1 of 2', str(menu.query_one('#connector-status-release').render()))
+                await pilot.press('escape')
+                self.assertEqual(app.screen.summaries['connectors'], 'Release status')
+                await pilot.press('enter')
+                menu = app.screen
+                menu.query_one('#connector-release', Button).focus()
+                await pilot.press('enter')
+                self.assertIsInstance(app.screen, ExternalConnectorDialog)
+                checks = app.screen.query(Checkbox)
+                self.assertEqual([(box.name, box.value) for box in checks], [('details', False), ('status', True)])
+                self.assertTrue(app.screen.query_one('#connector-confirm', Button).disabled)
+                checks[0].value = True
+                await pilot.pause()
+                app.screen.query_one('#connector-confirm', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(changes[-1]['connector_operations'], {'release': ['details', 'status']})
+                self.assertEqual(changes[-1]['expected_connector_operations'], {'release': ['status']})
+                await pilot.press('escape')
+                await pilot.pause()
+                await pilot.press('enter')
+                app.screen.query_one('#connector-disconnect', Button).press()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, Confirm)
+                self.assertEqual(app.focused.id, 'cancel')
+                await pilot.press('enter')
+                self.assertIsInstance(app.screen, ExternalConnectorDialog)
+                app.screen.query_one('#connector-disconnect', Button).press()
+                await pilot.pause()
+                app.screen.query_one('#yes', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(changes[-1], {'connector_ids': [], 'expected_connector_ids': ['release'],
+                                               'connector_operations': {}, 'expected_connector_operations': {'release': ['details', 'status']}})
+                await pilot.press('escape')
+                await pilot.pause()
+                self.assertFalse(menu.query('#connector-release'))
+                await pilot.press('escape')
+                self.assertIsInstance(app.screen, SettingsMenu)
+                # A lost local manifest must still leave the user a way to revoke access.
+                record['config']['connector_ids'] = ['release']
+                record['config']['connector_operations'] = {'release': ['status']}
+                (self.root / record['name'] / 'connector-manifests/release.json').write_text('{')
+                await pilot.press('enter')
+                app.screen.query_one('#connector-release', Button).press()
+                await pilot.pause()
+                self.assertIsInstance(app.screen, ExternalConnectorDialog)
+                self.assertFalse(app.screen.query('#connector-setup'))
+                self.assertEqual(app.focused.id, 'connector-cancel')
+                app.screen.query_one('#connector-disconnect', Button).press()
+                await pilot.pause()
+                self.assertEqual(app.focused.id, 'cancel')
+                app.screen.query_one('#yes', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(changes[-1]['connector_ids'], [])
 
     async def test_ssh_unlock_and_unchanged_apply_leave_the_sandbox_running(self):
         from pi_sandbox_factory.sandbox_tui import SSHScreen
@@ -491,11 +635,16 @@ class TUITests(unittest.TestCase):
                 draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                 draft.update(name='demo', workspace=str(self.root), options={**draft['options'], 'git_identity': {'name': 'Fixture Author', 'email': 'fixture@example.test'}})
                 await app.push_screen(SettingsForm(draft))
-                self.assertEqual(app.screen.query_one(GitIdentityFields).collect()['name'], 'Fixture Author')
-                self.assertEqual(app.screen.collect()[0]['options']['git_identity']['email'], 'fixture@example.test')
-                app.screen.query_one('#git-identity-enabled', Checkbox).value = False
+                review = app.screen
+                self.assertEqual(review.collect()[0]['options']['git_identity']['email'], 'fixture@example.test')
+                review.query_one('#connector-ssh', Button).press()
                 await pilot.pause()
-                self.assertIsNone(app.screen.collect()[0]['options']['git_identity'])
+                self.assertEqual(app.screen.query_one(GitIdentityFields).collect()['name'], 'Fixture Author')
+                app.screen.query_one('#git-identity-enabled', Checkbox).value = False
+                app.screen.query_one('#create-ssh-save', Button).press()
+                await pilot.pause()
+                self.assertIs(app.screen, review)
+                self.assertIsNone(review.collect()[0]['options']['git_identity'])
 
     async def test_browser_vault_option_follows_browser_selection_and_is_saved(self):
         from pi_sandbox_factory.sandbox_tui import preset

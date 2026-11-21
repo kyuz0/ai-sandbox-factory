@@ -1118,6 +1118,12 @@ providers and independent grants. `test_local_development.py` checks generated
 network grants and private runtime placement. No fixture uses real credentials
 or restarts an existing sandbox.
 
+## Service connectors
+
+Run `PYTHONPATH=tests .venv/bin/python -m unittest test_connectors test_connector_context test_connector_settings test_primary_agents_ui test_aws_profiles` for plugin discovery, saved permissions and the creation form. `test_tui` also checks editing a saved sandbox. The connector fixtures in `tests/render_tui.py` cover creation, saved settings, SSH, AWS and installed HTTPS connectors.
+
+With local rootless Podman, run `PYTHONPATH=. .venv/bin/python tests/connector_live_settings.py`. The fixture uses a temporary workspace, a synthetic keyring token and the shipped connector container. It checks that permissions change while the workspace and connector keep running, disconnect revokes access and a stopped sandbox stays stopped.
+
 ## AWS access
 
 The Python suite checks the compiled STS policy, host profile selection, independent profile copies, selective updates, session renewal and the shell network grant. Run the signing tests in the service image with synthetic credentials and networking disabled.
@@ -1129,3 +1135,7 @@ podman run --rm -i --network=none --read-only --cap-drop=ALL \
 ```
 
 For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.
+
+The `--system-prompt` case in `tests/frostpi_editor.py` checks the actual model requests in the same Pi CLI and FrostPi chats. It enables a connector, adds a custom prompt, changes the SSH destination, then removes both.
+
+With the current native controller and worker images built locally, run `PYTHONPATH=. .venv/bin/python tests/connector_native_clients.py`. It launches the installed Codex, Claude Code and Antigravity binaries offline, checks their launch instructions, exercises granted and denied operations from each workspace and revokes access. It uses synthetic credentials and never submits a model prompt.

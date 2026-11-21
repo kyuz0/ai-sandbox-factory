@@ -1,6 +1,6 @@
 # Agent guide
 
-Pi Sandbox Factory manages Pi/FrostPi containers with a Python CLI and Textual UI.
+Pi Sandbox Factory manages Pi, Codex, Claude Code and Antigravity sandboxes with a Python CLI and Textual UI. FrostPi provides the Pi browser editor.
 Read `README.md` and `TESTING.md`. For package work, use `docs/profiles.md`,
 `docs/providers.md` and the runnable `examples/`.
 
@@ -22,7 +22,9 @@ Implementation and shipped assets live in `pi_sandbox_factory/`:
 - `model_providers.py` and `providers/`: provider image layer and container runner.
 - `hosted_models.py`, `models_ui.py`, `providers/hosted-models.mjs`: native Pi hosted-provider setup and model selection.
 - `inference.py`, `containers/inference/`: credential companion, fixed routes and streaming proxy.
-- `sandbox_advisors.py`, `sandbox_ssh.py`: credential companions.
+- `connectors/builtin/` holds one folder per built-in service. SSH & Git and AWS provide settings and agent instructions. Azure and Google Cloud contain only metadata for the planned services.
+- `connector_fields.py` provides the shared list for creation and Settings. `connector_dialogs.py` edits installed service grants. `connector_settings.py` applies changes. See [the connector author guide](docs/connectors.md).
+- `sandbox_advisors.py`, `sandbox_ssh.py` and `aws_access.py` manage their credential companions.
 - `repository_ui.py`: SSH repository setup and public-key controls; repository permissions are enforced by the Git server.
 - `advisor_credentials.py`, `advisors_ui.py`: explicit host sign-in copies and advisor selection.
 - `containers/`: images, bootstrap and extension pins; `profiles/base/`: generic profile.
@@ -36,6 +38,8 @@ Profiles provide tools, skills and instructions. Providers configure models.
 Neither requires a new launcher branch for a particular company or use case.
 Keep private providers and specialist profiles outside this application. A plugin
 repository can contain several packages, each installed with `--subdir`.
+
+Keep service-specific options together under Connectors during creation and in Settings. For example, the Git commit author belongs with SSH & Git even when no SSH destinations are configured. Derive agent instructions from the saved grants. Never include tokens, private keys or host sign-in paths. Test the enforced permissions separately from the prompt.
 
 Git authentication happens on the host. Managed inference credentials stay in a
 separate companion volume; never send them to provider adapters, Pi configuration,

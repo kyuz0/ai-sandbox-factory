@@ -37,7 +37,7 @@ from pi_sandbox_factory.models_ui import ProviderDialog, ModelDialog
 from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
 from pi_sandbox_factory import hosted_models, inference, provider_credentials
 from pi_sandbox_factory.communications_ui import SlackCredentials
-from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields
+from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields, CreateSSHDialog
 from pi_sandbox_factory import prompt_library
 from pi_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
 from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox, backup_message
@@ -108,6 +108,20 @@ async def capture(size):
                         await pilot.pause()
                     p = out / f'{name}-{size[0]}x{size[1]}.svg'
                     p.write_text(app.export_screenshot())
+                    if isinstance(app.screen, CreateSSHDialog):
+                        panel = app.screen.query_one('Vertical').content_region
+                        assert all(panel.contains_region(button.region)
+                                   for button in app.screen.query('.dialog-actions Button')), name
+                        destinations = app.screen.query_one('#ssh-hosts')
+                        assert destinations.region.x == destinations.parent.query_one('Label').region.x, name
+                        if name == 'connector-review-identity-populated':
+                            name_field = app.screen.query_one('#git-author-name')
+                            email_label = app.screen.query_one('#git-author-email').parent.query_one('Label')
+                            help_text = app.screen.query_one('GitIdentityFields .checkbox-help')
+                            assert name_field.region.x == help_text.content_region.x, name
+                            assert email_label.region.y == name_field.region.bottom + 1, name
+                    if isinstance(app.screen, SettingsForm) and name.startswith('connector-review-') and app.screen.focused.id == 'connector-ssh':
+                        assert app.screen.focused.styles.background != app.screen.query_one('#apply').styles.background, name
                     if isinstance(app.screen, AWSAccessDialog):
                         box = app.screen.query_one('#confirm-box').content_region
                         assert all(box.contains_region(button.region) for button in app.screen.query(Button)), name
@@ -119,6 +133,142 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if not args.only or any(name.startswith('connector-settings-') for name in args.only):
+                    from pi_sandbox_factory import connectors
+                    from pi_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
+                    with patch.dict(os.environ, XDG_CONFIG_HOME=str(root / 'connector-home')), \
+                            patch.object(connectors, 'has_token', return_value=True) as saved_token:
+                        await shot('connector-settings-menu', SettingsMenu('demo', c, 'browser'))
+                        await shot('connector-settings-empty', ConnectorSettings('demo', c))
+                        path = connectors.directory() / 'release-status' / 'connector.json'
+                        path.parent.mkdir(parents=True)
+                        path.write_text(json.dumps({
+                            'version': 1, 'id': 'release-status', 'title': 'Release status',
+                            'description': 'Read the current release status.',
+                            'documentation': 'Use the status request to check the latest release.',
+                            'operations': {'status': 'https://releases.example.org/api/status'},
+                        }))
+                        plugin = next(item for item in connectors.catalog() if item.external)
+                        await shot('connector-settings-installed', ConnectorSettings('demo', c))
+                        await shot('connector-settings-connect', ExternalConnectorDialog(plugin, enabled=False))
+                        await shot('connector-settings-disconnect', ExternalConnectorDialog(plugin, enabled=True))
+                        saved_token.return_value = False
+                        await shot('connector-settings-token', ExternalConnectorDialog(plugin, enabled=False))
+                        saved_token.return_value = True
+                        manifest = json.loads(path.read_text())
+                        manifest['description'] = 'Read current and past release information.'
+                        manifest['agent_instructions'] = 'Include the release date in your answer.'
+                        manifest['operations']['history'] = {'url': 'https://releases.example.org/api/history',
+                                                             'instructions': 'Use history for past releases.'}
+                        path.write_text(json.dumps(manifest))
+                        plugin = next(item for item in connectors.catalog() if item.external)
+                        await shot('connector-settings-select', ExternalConnectorDialog(plugin, enabled=False))
+                        await shot('connector-settings-edit', ExternalConnectorDialog(
+                            plugin, enabled=True, enabled_operations=['status']))
+                        for example in ('draft', 'guide'):
+                            detail = ExternalConnectorDialog(plugin, enabled=True, draft=example == 'draft',
+                                                             enabled_operations=['status'])
+                            await app.push_screen(detail)
+                            for box in detail.query(Checkbox):
+                                box.value = box.name == 'history'
+                            await pilot.pause()
+                            assert not detail.query_one('#connector-confirm', Button).disabled
+                            await shot('connector-settings-' + example,
+                                       section='#connector-agent-guide' if example == 'guide' else None)
+                            await app.pop_screen()
+                        await shot('connector-settings-help', ConnectorSetup(plugin))
+                        config = {**c, 'connector_ids': [plugin.id], 'connector_operations': {plugin.id: ['status']},
+                                  'aws_access': {'profile_name': 'Research'},
+                                  'ssh': {'hosts': [dict(alias='release')]}}
+                        await shot('connector-settings-menu-assigned', SettingsMenu('demo', config, 'browser'))
+                        with patch.object(app.service, 'config', return_value=config):
+                            await app.push_screen(AWSProfilePicker(config['aws_access'], sandbox_name='demo'))
+                            await pilot.pause()
+                            app.screen.query_one('#aws-disconnect', Button).press()
+                            await pilot.pause()
+                            await shot('connector-settings-aws-disconnect')
+                            await pilot.press('escape')
+                            await app.pop_screen()
+                        connectors.snapshot(config['connector_ids'], state)
+                        with patch.object(app.service, 'config', return_value=config):
+                            await shot('connector-settings-assigned', ConnectorSettings('demo', config))
+                        path.write_text('invalid json')
+                        await shot('connector-settings-error', ConnectorSettings('demo', c))
+                        saved_manifest = state / 'connector-manifests' / (plugin.id + '.json')
+                        saved_manifest.write_text('{')
+                        recovery = next(item for item in connectors.for_sandbox(config, state) if item.external)
+                        with patch.object(app.service, 'config', return_value=config):
+                            await shot('connector-settings-damaged', ConnectorSettings('demo', config))
+                            if args.only and 'connector-settings-saved-error' in args.only:
+                                await app.push_screen(ConnectorSettings('demo', config))
+                                await pilot.pause()
+                                app.screen.query_one('.connector-settings-body', VerticalScroll).scroll_end(animate=False)
+                                await shot('connector-settings-saved-error')
+                                await app.pop_screen()
+                        await shot('connector-settings-revoke-damaged', ExternalConnectorDialog(recovery, enabled=True))
+                        await app.push_screen(ExternalConnectorDialog(plugin, enabled=True, enabled_operations=['status']))
+                        app.screen.query_one('#connector-disconnect', Button).press()
+                        await pilot.pause()
+                        await shot('connector-settings-confirm-disconnect')
+                        await pilot.press('escape')
+                        await app.pop_screen()
+                    if args.only and all(name.startswith('connector-settings-') for name in args.only):
+                        return
+                if not args.only or any(name.startswith('connector-review-') for name in args.only):
+                    package = root / 'packages' / 'build-status'
+                    package.mkdir(parents=True)
+                    example = Path(__file__).resolve().parents[1] / 'examples/connectors/build-status/connector.json'
+                    (package / 'connector.json').write_bytes(example.read_bytes())
+                    with patch('pi_sandbox_factory.connectors.directory', return_value=package.parent):
+                        draft = preset('base', DEFAULT_SETTINGS)
+                        draft.update(name='demo', workspace='/home/sam/projects/research')
+                        await app.push_screen(SettingsForm(draft))
+                        section = app.screen.query_one('#connectors-section', Collapsible)
+                        app.screen.query_one('#hosted-section', Collapsible).collapsed = True
+                        section.query_one('CollapsibleTitle').focus()
+                        await pilot.pause()
+                        await shot('connector-review-collapsed')
+                        await shot('connector-review-empty', section='#connectors-section', focus='#connector-ssh')
+                        section.collapsed = False
+                        await pilot.pause()
+                        section.query_one('#planned-connectors').scroll_visible(animate=False)
+                        await shot('connector-review-planned')
+                        await app.pop_screen()
+                        hosts = {'hosts': [dict(alias='repository', user='git', hostname='git.example.test', port=22,
+                                                host_keys=['ssh-ed25519 AAAA'])]}
+                        draft.update(ssh=hosts, aws_access={'profile_name': 'Research'}, connector_ids=['build-status'],
+                                     connector_operations={'build-status': ['latest']})
+                        await shot('connector-review-assigned', SettingsForm(draft), '#connectors-section', '#connector-ssh')
+                        await shot('connector-review-native', SettingsForm({**draft, 'primary_agent': 'codex'}),
+                                   '#connectors-section', '#connector-ssh')
+                        await shot('connector-review-native-sign-in', SettingsForm({**draft, 'primary_agent': 'codex'}),
+                                   '#primary-sign-in-section', '#primary-auth')
+                        for mode in ('pi', 'desktop'):
+                            await shot('connector-review-open-' + mode, SettingsForm({**draft, 'editor': {'mode': mode}}),
+                                       '#connectors-section', '#connector-ssh')
+                        await shot('connector-review-ssh', CreateSSHDialog(draft, 'SSH & Git'))
+                        await app.push_screen(CreateSSHDialog({**draft, 'ssh': {}, '_ssh_key': 'later'}, 'SSH & Git'))
+                        app.screen.query_one('#create-ssh-key', Select).value = 'generate'
+                        await pilot.pause()
+                        save = app.screen.query_one('#create-ssh-save', Button)
+                        save.press()
+                        await pilot.pause(save.active_effect_duration)
+                        await shot('connector-review-ssh-error')
+                        await app.pop_screen()
+                        identity = {'name': 'Sam Developer', 'email': 'sam@example.test'}
+                        for name, selected_hosts in (('populated', hosts), ('no-destinations', {'hosts': []})):
+                            config = {**draft, 'ssh': selected_hosts,
+                                      'options': {**draft['options'], 'git_identity': identity}}
+                            if selected_hosts['hosts']:
+                                await shot('connector-review-identity-' + name, CreateSSHDialog(config, 'SSH & Git'),
+                                           section='#git-identity-section', focus='#git-author-email')
+                            else:
+                                await shot('connector-review-identity-' + name, CreateSSHDialog(config, 'SSH & Git'))
+                            if not selected_hosts['hosts']:
+                                await shot('connector-review-identity-only', SettingsForm(config),
+                                           '#connectors-section', '#connector-ssh')
+                    if args.only and all(name.startswith('connector-review-') for name in args.only):
+                        return
                 if not args.only or any(name.startswith('aws-access-') for name in args.only):
                     grant = dict(profile='research', role='arn:aws:iam::123456789012:role/Research',
                                  region='eu-west-1', grants=[{'Action': 'ec2:DescribeRegions', 'Resource': '*'}])
@@ -143,12 +293,12 @@ async def capture(size):
                     await app.push_screen(SettingsForm(draft))
                     await pilot.pause()
                     app.screen.query_one('#hosted-section', Collapsible).collapsed = True
-                    aws_section = app.screen.query_one('#aws-access-section', Collapsible)
+                    aws_section = app.screen.query_one('#connectors-section', Collapsible)
                     aws_section.query_one('CollapsibleTitle').focus(scroll_visible=False)
                     await pilot.pause()
                     app.screen.query_one('.form', VerticalScroll).scroll_home(animate=False)
                     await shot('aws-access-review-off')
-                    await shot('aws-access-review-configure', section='#aws-access-section', focus='#configure-aws')
+                    await shot('aws-access-review-configure', section='#connectors-section', focus='#connector-aws')
                     aws_section.collapsed = True
                     advisor_section = app.screen.query_one('#new-advisors-section', Collapsible)
                     advisor_section.query_one('CollapsibleTitle').focus()
@@ -156,9 +306,9 @@ async def capture(size):
                     await shot('aws-access-review-advisors-expanded', section='#new-advisors-section')
                     await app.pop_screen()
                     await shot('aws-access-review-assigned', SettingsForm({**draft, 'aws_access': grant}),
-                               '#aws-access-section', '#configure-aws')
+                               '#connectors-section', '#connector-aws')
                     await shot('aws-access-review-native', SettingsForm({**draft, 'primary_agent': 'codex', 'aws_access': grant}),
-                               '#aws-access-section', '#configure-aws')
+                               '#connectors-section', '#connector-aws')
                     await shot('aws-access-settings', SettingsMenu('demo', {**c, 'aws_access': grant}, 'browser'), focus='#settings-actions')
                     await shot('aws-access-advisor-settings', AdvisorsScreen(record))
                     if aws_only:
@@ -466,7 +616,9 @@ async def capture(size):
                     await shot('research-pi-knowledge-offline', focus='#knowledge-embedding')
                     await pilot.press('escape')
                     await app.pop_screen()
-                    local_config = {**c, 'profile': metadata}
+                    local_config = {**c, 'profile': metadata, 'workspace': '/home/example/projects/research',
+                                    'working_directory': '.', 'extra_folders': [
+                                        dict(name='reference', source='/home/example/documents', read_only=True)]}
                     await shot('research-local-folders', FoldersScreen({**record, 'config': local_config}))
                     return
                 if args.only and all(name.startswith('sandbox-alerts-') for name in args.only):
@@ -977,7 +1129,12 @@ async def capture(size):
                     return
                 if not args.only or any(name.startswith('git-') for name in args.only):
                     for context in ('create', 'defaults', 'ssh'):
-                        screen = SSHScreen(record) if context == 'ssh' else SettingsForm(copy.deepcopy(draft), defaults=context == 'defaults')
+                        if context == 'ssh':
+                            screen = SSHScreen(record)
+                        elif context == 'create':
+                            screen = CreateSSHDialog(copy.deepcopy(draft), 'SSH & Git')
+                        else:
+                            screen = SettingsForm(copy.deepcopy(draft), defaults=True)
                         await app.push_screen(screen)
                         screen.query_one('#git-identity-section', Collapsible).scroll_visible(top=True, animate=False)
                         await shot('git-' + context + '-collapsed')

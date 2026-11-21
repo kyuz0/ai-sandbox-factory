@@ -25,16 +25,15 @@ CATEGORIES = {
     'models': Category('Model Providers', 'hosted-section'),
     'editor-settings': Category('Editor', 'editor-section'),
     'folders': Category('Folders', 'folders-section'),
-    'aws-access': Category('AWS access', 'aws-access-section'),
     'document-search': Category('Document search', 'document-search-section', 'configure-document-search'),
     'network-settings': Category(f'{NETWORK_LABEL} and {WEB_SEARCH_LABEL}', 'network-search-section', 'network-section'),
     'approval-settings': Category('Approvals & sandbox', 'agent-section', 'inner-sandbox'),
     'agent-tools': Category('Agent tools', 'skills-section', 'subagents'),
     'system-prompt': Category(SYSTEM_PROMPT_LABEL, 'system-prompt-section'),
-    'ssh-settings': Category('SSH & Git', 'git-identity-section'),
     'advisors': Category(ADVISORS_LABEL, 'new-advisors-section'),
     'communications': Category('Communications', 'communications-section', 'slack-enabled'),
     'skills': Category('Skills', 'skill-library-section', 'manage-skills'),
+    'connectors': Category('Connectors', 'connectors-section'),
     'resources': Category('Resources & environment', 'resources-section', 'memory'),
 }
 

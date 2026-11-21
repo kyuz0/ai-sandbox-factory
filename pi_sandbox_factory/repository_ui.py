@@ -14,7 +14,7 @@ from .tui_widgets import EntryDialog, Feedback, Checkbox
 class GitIdentityFields(Vertical):
     DEFAULT_CSS = '''
     GitIdentityFields { height: auto; }
-    GitIdentityFields #git-identity-fields { height: auto; margin: 0 0 0 2; }
+    GitIdentityFields #git-identity-fields { height: auto; margin: 0 0 0 4; }
     GitIdentityFields #git-identity-fields.-identity-disabled { opacity: 50%; }
     '''
 
@@ -26,8 +26,9 @@ class GitIdentityFields(Vertical):
     def compose(self):
         with Vertical(classes='setting'):
             yield Checkbox('Set Git commit identity', value=self.value is not None, id='git-identity-enabled')
-            yield Static(('Author for commits in new sandboxes.' if self.defaults else 'Author for commits in this sandbox.')
-                         + ' Applied over global Git values at startup; repository-local settings take precedence. SSH keys authenticate separately.', classes='setting-help checkbox-help')
+            scope = 'new sandboxes' if self.defaults else 'this sandbox'
+            yield Static(f'Sets the global Git author for {scope} at startup. Each repository can override it. '
+                         'SSH access uses its own key.', classes='setting-help checkbox-help')
         with Vertical(id='git-identity-fields'):
             with Vertical(classes='setting'):
                 yield Label('Commit author name')
@@ -92,6 +93,7 @@ class SSHDestinationFields(Vertical):
         with Vertical(classes='setting'):
             yield Label('Destinations · alias username hostname-or-IP port')
             yield TextArea(self.original, id='ssh-hosts')
+            yield Feedback('', id='ssh-destinations-error', markup=False)
             if not self.creating:
                 yield Static('Apply destinations before generating or importing a key.', classes='setting-help')
         with Vertical(classes='setting'):
@@ -102,13 +104,12 @@ class SSHDestinationFields(Vertical):
                 with Horizontal(classes='path-row'):
                     yield Input(id='ssh-aliases')
                     yield Button('Import', id='ssh-import-aliases')
-        with Collapsible(title='Host identity', collapsed=True):
+        with Collapsible(title='Trusted SSH host keys', collapsed=True):
             with Vertical(classes='setting'):
                 yield Label('Trusted known_hosts file')
                 yield PathField('ssh-known-hosts', str(Path.home() / '.ssh/known_hosts'),
                                 title='Choose trusted known_hosts file', mode='file')
                 yield Static('Verify unknown hosts in your host terminal before saving destinations.', classes='setting-help')
-        yield Feedback('', id='ssh-destinations-error', markup=False)
 
     @on(Button.Pressed, '#ssh-repository')
     def repository(self, event):
@@ -162,23 +163,26 @@ class SSHDestinationFields(Vertical):
 class CreateSSHFields(Vertical):
     DEFAULT_CSS = 'CreateSSHFields { height: auto; }'
 
+    def __init__(self, draft):
+        super().__init__()
+        self.draft = draft
+
     def compose(self):
-        yield SSHDestinationFields(creating=True)
+        yield SSHDestinationFields(self.draft.get('ssh'), creating=True)
         with Vertical(classes='setting'):
             yield Label('SSH key')
             yield Select([('Set up later', 'later'), ('Generate repository key', 'generate'),
-                          ('Import and unlock', 'import')], value='later', allow_blank=False, id='create-ssh-key')
-            yield Static('Factory keeps the private key outside the workspace.', classes='setting-help')
-            yield Feedback('', id='create-ssh-key-error', markup=False)
+                          ('Import and unlock', 'import')], value=self.draft.get('_ssh_key', 'later'), allow_blank=False, id='create-ssh-key')
+            yield Static('The private key stays in a separate SSH container.', classes='setting-help')
         with Vertical(id='create-ssh-import', classes='setting'):
             yield Label('Private key file')
-            yield PathField('create-ssh-key-file', title='Choose SSH private key', mode='file',
+            yield PathField('create-ssh-key-file', self.draft.get('_ssh_key_file', ''), title='Choose SSH private key', mode='file',
                             initial=Path.home() / '.ssh', placeholder='~/.ssh/id_ed25519')
             yield Static('Encrypted keys prompt for their passphrase when the sandbox is ready.', classes='setting-help')
             yield Feedback('', id='create-ssh-key-file-error', markup=False)
         with Vertical(id='create-ssh-duration-setting', classes='setting'):
             yield Label('Keep SSH key unlocked for')
-            yield Input(sandbox_ssh.DEFAULT_UNLOCK_DURATION, id='create-ssh-duration')
+            yield Input(self.draft.get('_ssh_key_duration', sandbox_ssh.DEFAULT_UNLOCK_DURATION), id='create-ssh-duration')
             yield Static('Enter 8h for eight hours or 2d for two days.', classes='setting-help')
             yield Feedback('', id='create-ssh-duration-error', markup=False)
 
@@ -197,8 +201,7 @@ class CreateSSHFields(Vertical):
         field = self.query_one('#ssh-hosts', TextArea)
         try:
             settings = self.query_one(SSHDestinationFields).collect()
-            field = self.query_one('#create-ssh-key', Select)
-            action = field.value
+            action = self.query_one('#create-ssh-key', Select).value
             if action != 'later' and not settings['hosts']:
                 raise ValueError('Add an SSH destination before setting up a key.')
             result = {'ssh': settings, '_ssh_key': action}
@@ -214,14 +217,59 @@ class CreateSSHFields(Vertical):
                 result['_ssh_key_duration'] = duration
             return result
         except (ValueError, OSError) as error:
-            next(node for node in self.ancestors if isinstance(node, Collapsible)).collapsed = False
-            message = self.query_one('#ssh-destinations-error', Feedback)
-            if not message.display:
-                message = self.query_one(f'#{field.id}-error', Feedback)
-                message.update(str(error))
-            field.focus()
-            self.call_after_refresh(message.scroll_visible, animate=False)
+            feedback_id = 'ssh-destinations-error' if field.id == 'ssh-hosts' else f'{field.id}-error'
+            message = self.query_one('#' + feedback_id, Feedback)
+            message.update(str(error))
+            field.focus(scroll_visible=False)
+            group = next(node for node in field.ancestors if node.has_class('setting'))
+            target = group if group in message.ancestors else message
+            self.call_after_refresh(target.scroll_visible, top=True, animate=False, immediate=True)
             raise
+
+
+class CreateSSHDialog(EntryDialog):
+    BINDINGS = [('escape', 'cancel', 'Cancel')]
+    DEFAULT_CSS = """
+    CreateSSHDialog { align: center middle; background: #000000 70%; }
+    CreateSSHDialog > Vertical { width: 82; max-width: 95%; height: 32; max-height: 95%;
+                                 padding: 1 2; background: $panel; border: solid $primary; }
+    CreateSSHDialog VerticalScroll { height: 1fr; scrollbar-size-vertical: 1; }
+    CreateSSHDialog .dialog-actions { margin: 1 0 0 0; }
+    """
+
+    def __init__(self, draft, title):
+        super().__init__()
+        self.draft = draft
+        self.title_text = title
+
+    def compose(self):
+        identity = self.draft.get('options', {}).get('git_identity')
+        with Vertical():
+            yield Label(self.title_text, classes='title')
+            with VerticalScroll(classes='spaced-form-fields'):
+                yield CreateSSHFields(self.draft)
+                with Collapsible(title='Git commit identity', collapsed=True, id='git-identity-section'):
+                    yield GitIdentityFields(identity)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Cancel', id='create-ssh-cancel')
+                yield Button('Save', id='create-ssh-save', variant='primary')
+
+    def on_mount(self):
+        self.set_focus(self.query_one('#ssh-hosts', TextArea), scroll_visible=False)
+        self.call_after_refresh(self.query_one(VerticalScroll).scroll_home, animate=False)
+
+    @on(Button.Pressed, '#create-ssh-cancel')
+    def action_cancel(self):
+        self.dismiss(None)
+
+    @on(Button.Pressed, '#create-ssh-save')
+    def save(self):
+        try:
+            values = self.query_one(CreateSSHFields).collect(self.draft)
+            identity = self.query_one(GitIdentityFields).collect()
+        except (OSError, ValueError):
+            return  # The field that failed validation displays the error.
+        self.dismiss((values, identity))
 
 
 class RepositorySetup(EntryDialog):

@@ -6,14 +6,14 @@ You can start with a folder. Keyword search needs no index or embedding model.
 
 ## Search a document folder
 
-1. Choose **New sandbox → Local Knowledge**. Pick a writable **Workspace** for
+1. Choose **New sandbox**, keep **Pi** as the coding agent, and select the **Local Knowledge** profile. Pick a writable **Workspace** for
    reports and notes, then choose **Continue**.
 2. Under **Folders → Add folder…**, select your documents. Name the mount
    `reference` and leave **Read-only** checked. Pi will see it at `/mnt/reference`.
 3. Under **Network and Web Search**, leave **Web Search** off. Choose **Restricted**
    networking and leave website categories and additional destinations empty.
    [Network rules](web-access.md#network-access)
-4. Choose **Create and start**.
+4. Choose **Create and start sandbox**.
 
 Try asking “Which files in `/mnt/reference` explain how to onboard a new team
 member? Cite the file and section.” Type `/profile-guide` for the profile’s
@@ -37,7 +37,7 @@ provider. Factory downloads no embedding model. [pi-knowledge package](https://p
    - **Custom server.** Enter the **Embedding server URL** and **Embedding model ID**.
      Use the API base URL, such as `https://models.example.org/v1`. Factory adds
      `/embeddings`. [Custom server screenshot](research-custom-server.png)
-3. Choose **Save**, then **Create and start** for a new sandbox or **Apply and
+3. Choose **Save**, then **Create and start sandbox** for a new sandbox or **Apply and
    recreate** for an existing one. Applying restarts the sandbox.
 
 ![The Document search row and its Configure button in sandbox setup](research-document-search.png)

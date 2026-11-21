@@ -41,6 +41,12 @@ Changing the network mode or host model ports recreates the sandbox and stops it
 processes. **Unrestricted** mode gives the development container ordinary bridge
 networking. [Network settings](web-access.md#network-access)
 
+## Service connectors
+
+Each sandbox has its own grants. SSH connections use fixed destinations and a separate signing agent. AWS requests use a dedicated role session in a signing container. An installed HTTPS connector accepts named requests over a Unix socket and sends its bearer token only to the URL configured for that request. The workspace can use the granted service, read its response and change anything the grant permits.
+
+The built-in SSH and AWS adapters own their settings and agent instructions. Their credential handling stays in the SSH and AWS services. Third-party HTTPS connectors use a JSON manifest and the shared HTTPS service. The agent receives a summary of enabled access and a path to the full list. The services enforce permissions for every workspace process. [Connector configuration and development](connectors.md)
+
 ## Inference credentials
 
 ```mermaid

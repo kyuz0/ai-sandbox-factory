@@ -62,12 +62,40 @@ def remove(key):
             write_json(base / LIBRARY_FILE, values)
 
 
-def selection(state):
+def _stored(state):
     try:
-        value = json.loads((Path(state) / SANDBOX_FILE).read_text(encoding='utf-8'))
+        return json.loads((Path(state) / SANDBOX_FILE).read_text(encoding='utf-8'))
     except FileNotFoundError:
         return None
-    return prompt(value)
+
+
+def _custom(value):
+    return prompt(value['custom'] if isinstance(value, dict) and 'custom' in value else value)
+
+
+def selection(state):
+    return _custom(_stored(state))
+
+
+def _with_connectors(state, custom):
+    try:
+        summary = (state / 'runtime-config/connectors-prompt.md').read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return custom
+    text = custom['text'] + '\n\n' + summary if custom else summary
+    # Existing Pi extensions read "text". The picker and sandbox copies use the original selection.
+    return {'name': custom['name'] if custom else 'Sandbox connectors', 'text': text, 'custom': custom}
+
+
+def refresh_connectors(state):
+    state = Path(state)
+    if not (state / SANDBOX_FILE).exists() and not (state / 'runtime-config/connectors-prompt.md').exists():
+        return
+    with registry.locked():
+        stored = _stored(state)
+        combined = _with_connectors(state, _custom(stored))
+        if stored != combined:
+            write_json(state / SANDBOX_FILE, combined)
 
 
 def assign(state, value):
@@ -75,6 +103,6 @@ def assign(state, value):
     value = prompt(value)
     with registry.locked():
         if selection(state) != value:
-            write_json(state / SANDBOX_FILE, value)
+            write_json(state / SANDBOX_FILE, _with_connectors(state, value))
             return True
     return False

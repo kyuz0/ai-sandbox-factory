@@ -33,13 +33,16 @@ from .settings_catalog import (
 from .folders_ui import FolderFields
 from .file_browser import FolderPicker, PathField
 from .communications_ui import CommunicationsForm, communications_summary
+from .connector_dialogs import ConnectorSettings, ExternalConnectorDialog
+from .connectors import ADAPTERS, SSH_GIT_LABEL
 from .models_ui import HostedProviders, ModelDialog, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
                              assigned_key_label, choice_key_caption, key_caption)
-from .repository_ui import CreateSSHFields, SSHDestinationFields
+from .repository_ui import SSHDestinationFields
+from .connector_fields import ConnectorFields, connector_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import EntryDialog, Checkbox, Feedback
-from .aws_ui import AWSProfileChoices, AWSProfilePicker, profile_label
+from .aws_ui import AWSProfileChoices, AWSProfilePicker
 from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
 from . import embedding_models
 from . import sandbox_skills
@@ -81,12 +84,11 @@ SIGN_IN_HELP = {
 PRIMARY_CATEGORIES = {
     'primary-sign-in': Category(SIGN_IN_LABEL, 'primary-sign-in-section'),
     'folders': CATEGORIES['folders'],
-    'aws-access': CATEGORIES['aws-access'],
     'network-settings': Category(NETWORK_LABEL, 'network-section', 'network'),
-    'ssh-settings': CATEGORIES['ssh-settings'],
     'skills': CATEGORIES['skills'],
     'primary-browser': Category('Browser', 'primary-browser-section', 'primary-browser'),
     'system-prompt': CATEGORIES['system-prompt'],
+    'connectors': CATEGORIES['connectors'],
     'resources': CATEGORIES['resources'],
 }
 
@@ -284,6 +286,14 @@ class Service:
                 ssh_file = Path(temp) / 'ssh.json'
                 write_json(ssh_file, draft['ssh'])
                 args += ['--ssh-file', str(ssh_file)]
+            if draft.get('connector_ids'):
+                for identifier in draft['connector_ids']:
+                    args += ['--connector', identifier]
+                reviewed = Path(temp) / 'connector-review.json'
+                write_json(reviewed, {'routes': draft.get('_connector_routes', {}),
+                                      'agent_instructions': draft.get('_connector_instructions', {}),
+                                      'operations': draft.get('connector_operations', {})})
+                args += ['--connector-review-file', str(reviewed)]
             if draft.get('aws_access'):
                 grant_file = Path(temp) / 'aws-access.json'
                 write_json(grant_file, draft['aws_access'])
@@ -1343,14 +1353,14 @@ class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Close')]
     ACTIONS = [(category.label, action) for action, category in CATEGORIES.items()]
 
-    def __init__(self, name, config, editor_mode, system_prompt=None):
+    def __init__(self, name, config, editor_mode, system_prompt=None, *, state=None):
         super().__init__()
         self.sandbox_name = name
         agent = coding_agent(config)
         self.actions = ([(category.label, action) for action, category in PRIMARY_CATEGORIES.items()]
                         if agent != 'pi' else self.ACTIONS)
         self.set_class(agent != 'pi', 'native-settings-menu')
-        self.summaries = {'editor-settings': editor_settings.MODES[editor_mode]}
+        self.summaries = {'editor-settings': editor_settings.MODES[editor_mode], 'connectors': connector_summary(config, state)}
         if agent != 'pi':
             self.summaries['primary-sign-in'] = PRIMARY_AGENTS[agent]
         self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else NO_SYSTEM_PROMPT_ADD_ON
@@ -1369,7 +1379,6 @@ class SettingsMenu(ModalScreen[Optional[str]]):
                 'network-settings': (network_mode_label(network) if agent != 'pi' else
                                      network_search_summary(network, selected['web_access']['enabled'])),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
-                'aws-access': profile_label(config.get('aws_access', {})),
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
                 'primary-browser': on_off(selected['browser']).capitalize(),
                 'document-search': search_summary(selected, embedding_models.sources(config)),
@@ -1392,7 +1401,27 @@ class SettingsMenu(ModalScreen[Optional[str]]):
     @on(OptionList.OptionSelected)
     def selected(self, event):
         event.stop()
-        self.dismiss(self.actions[event.option_index][1])
+        action = self.actions[event.option_index][1]
+        if action == 'connectors':
+            try:
+                config = self.app.service.config(self.sandbox_name)
+            except (OSError, ValueError) as error:
+                self.notify(safe_text(error), severity='error')
+                return
+            def back(_):
+                try:
+                    summary = connector_summary(self.app.service.config(self.sandbox_name), self.app.state_root / self.sandbox_name)
+                except (OSError, ValueError) as error:
+                    self.notify(safe_text(error), severity='error')
+                    return
+                self.summaries[action] = summary
+                label = Text(CATEGORIES[action].label)
+                label.append(' · ' + summary, style='dim')
+                self.query_one(OptionList).replace_option_prompt_at_index(event.option_index, label)
+
+            self.app.push_screen(ConnectorSettings(self.sandbox_name, config), back)
+        else:
+            self.dismiss(action)
 
     @on(Button.Pressed)
     def back(self, event):
@@ -1590,7 +1619,7 @@ class SSHScreen(Screen):
         identity = options(self.record['config'].get('options'))['git_identity']
         yield Header()
         with VerticalScroll(classes='form spaced-form-fields'):
-            yield Label(CATEGORIES['ssh-settings'].label + ' · ' + self.record['name'], classes='title')
+            yield Label(SSH_GIT_LABEL + ' · ' + self.record['name'], classes='title')
             yield Static('Keys stay in a separate SSH container. The remote account or deploy key determines what the sandbox can do.', classes='section-intro')
             yield Static('Applying changes to destinations or commit identity restarts the sandbox.', classes='section-intro')
             yield SSHDestinationFields(self.record['config'].get('ssh'))
@@ -1668,11 +1697,13 @@ class SSHScreen(Screen):
                     self.notify('No SSH or Git settings changed.')
                     return
                 service = self.app.service
+                back_label = ('Back to connectors' if isinstance(self.app.screen_stack[-2], ConnectorSettings)
+                              else 'Back to sandboxes')
                 def apply(yes):
                     if not yes: return
                     self.app.pop_screen()
                     self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
-                        done_on_success=True,
+                        done_on_success=True, back_label=back_label,
                         success_message=settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], self.app.state_root / name)) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
                 notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
                          *settings_effects.editor_migration(self.record['config'])]
@@ -2608,6 +2639,7 @@ class NewSandbox(Screen):
     def __init__(self, draft=None, search_keys=None):
         super().__init__()
         self.copied_draft = draft
+        self.connector_draft = {}
         self.search_keys = search_keys
         self.AUTO_FOCUS = '#workspace' if draft else '#primary-agent'
 
@@ -2745,12 +2777,19 @@ class NewSandbox(Screen):
                                  allowlist='', env_file='', pi_config='', editor={'mode': 'pi'})
                     draft['options'] = options({'git_identity': draft['options']['git_identity'],
                                                 'website_groups': draft['options']['website_groups']})
-                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys))
+                draft.update({k: v for k, v in self.connector_draft.items() if k != 'git_identity'})
+                if 'git_identity' in self.connector_draft:
+                    draft['options']['git_identity'] = self.connector_draft['git_identity']
+                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys), self.remember_connectors)
             except (OSError, ValueError) as error:
                 feedback = self.query_one('#new-error', Feedback)
                 feedback.update(str(error))
                 self.query_one(focus).focus()
                 self.call_after_refresh(feedback.scroll_visible, animate=False)
+
+    def remember_connectors(self, values):
+        if values is not None:
+            self.connector_draft = values
 
     def action_back(self):
         self.app.pop_screen()
@@ -2877,17 +2916,27 @@ class SettingsForm(Screen):
             yield Feedback('', id='form-error', classes='error', markup=False)
         with Vertical(classes='wizard-actions settings-actions'):
             yield Static('', id='curlie-download-notice', classes='setting-help')
-            open_label = 'Open sandbox after applying' if self.editing else 'Open sandbox after creation'
-            if self.native:
-                open_label = 'Open ' + PRIMARY_AGENTS[self.primary] + (' after applying' if self.editing else ' when ready')
-            yield Checkbox(open_label, value=False if self.editing else value.get('open_editor', True), id='open-editor')
+            mode = (editor_settings.load(self.app.state_root / value['name'])['mode'] if self.editing and not self.native
+                    else value.get('editor', editor_settings.DEFAULTS)['mode'])
+            yield Checkbox(self.open_client_label(mode), value=False if self.editing else value.get('open_editor', True),
+                           id='open-editor')
             with Horizontal(classes='action-buttons'):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
-                apply_label = 'Save defaults' if self.defaults_mode else 'Create sandbox' if self.native else 'Create and start'
+                apply_label = 'Save defaults' if self.defaults_mode else 'Create and start sandbox'
                 if self.editing:
                     apply_label = 'Apply' if self.setting == 'network-settings' else 'Apply and recreate'
                 yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
+
+    def open_client_label(self, mode):
+        client = PRIMARY_AGENTS[self.primary] if self.native else {
+            'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
+        }[mode]
+        return 'Open ' + client + (' after applying' if self.editing else ' when ready')
+
+    @on(Select.Changed, '#editor-mode')
+    def update_open_client_label(self, event):
+        self.query_one('#open-editor', Checkbox).label = self.open_client_label(event.value)
 
     def compose_primary_sign_in(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=False, id=category.section,
@@ -2921,11 +2970,63 @@ class SettingsForm(Screen):
         enabled = self.query_one('#primary-browser', Checkbox).value
         self.query_one('#primary-browser-section', Collapsible).title = 'Browser · ' + on_off(enabled)
 
-    def compose_aws_access(self, category, value, selected):
-        if not self.defaults_mode and not self.editing:
-            with Collapsible(title=category.label + ' · ' + profile_label(value.get('aws_access', {})),
-                             collapsed=True, id=category.section):
-                yield Button('Configure…', id='configure-aws')
+    def compose_connectors(self, category, value, selected):
+        if self.defaults_mode:
+            from .repository_ui import GitIdentityFields
+            identity = selected['git_identity']
+            with Collapsible(title='Git commit identity', collapsed=True, id='git-identity-section',
+                             classes='spaced-form-fields'):
+                yield GitIdentityFields(identity, defaults=True)
+        elif not self.editing:
+            with Collapsible(title=category.label + ' · ' + connector_summary(value), collapsed=True, id=category.section):
+                yield ConnectorFields(value)
+
+    @on(ConnectorFields.Configure)
+    def configure_connector(self, event):
+        event.stop()
+        connector = event.connector
+        if not connector.external:
+            adapter = ADAPTERS[connector.id]
+
+            def selected(value):
+                if value is not None:
+                    adapter.apply_draft(self.draft, value)
+                    self.update_connector_fields()
+
+            self.app.push_screen(adapter.draft_editor(self.draft, connector), selected)
+        else:
+            enabled = connector.id in self.draft.get('connector_ids', [])
+            granted = self.draft.get('connector_operations', {}).get(connector.id)
+            self.app.push_screen(ExternalConnectorDialog(connector, enabled=enabled, enabled_operations=granted, draft=True),
+                                 lambda value: self.save_connector_selection(connector, value))
+
+    def update_connector_fields(self):
+        self.query_one(ConnectorFields).update_config(self.draft)
+        self.query_one('#connectors-section', Collapsible).title = 'Connectors · ' + connector_summary(self.draft)
+
+    def save_connector_selection(self, connector, operations):
+        if operations is not None:
+            selected = [item for item in self.draft.get('connector_ids', []) if item != connector.id]
+            routes = dict(self.draft.get('_connector_routes', {}))
+            instructions = dict(self.draft.get('_connector_instructions', {}))
+            permissions = dict(self.draft.get('connector_operations', {}))
+            if operations:
+                selected.append(connector.id)
+                permissions[connector.id] = list(operations)
+                routes[connector.id] = dict(connector.routes)
+                instructions[connector.id] = connector.reviewed_instructions
+            else:
+                permissions.pop(connector.id, None)
+                routes.pop(connector.id, None)
+                instructions.pop(connector.id, None)
+            self.draft.update(connector_ids=selected, connector_operations=permissions, _connector_routes=routes,
+                              _connector_instructions=instructions)
+            self.update_connector_fields()
+
+    def validate_ssh_key(self, draft):
+        # The user may have changed the workspace or shared folders after choosing the key.
+        if draft.get('_ssh_key') == 'import':
+            sandbox_ssh.key_source(draft, draft['_ssh_key_file'])
 
     def compose_approval_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -3058,18 +3159,6 @@ class SettingsForm(Screen):
     def compose_communications(self, category, value, selected):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
 
-    @on(Button.Pressed, '#configure-aws')
-    def configure_aws(self, event):
-        event.stop()
-        category = CATEGORIES['aws-access']
-
-        def saved(value):
-            if value is not None:
-                self.draft['aws_access'] = value
-                self.query_one('#' + category.section, Collapsible).title = category.label + ' · ' + profile_label(value)
-
-        self.app.push_screen(AWSProfilePicker(self.draft.get('aws_access')), saved)
-
     def compose_document_search(self, category, value, selected):
         with Horizontal(id=category.section):
             yield Static(self.document_search_summary(), id='document-search-summary')
@@ -3135,19 +3224,6 @@ class SettingsForm(Screen):
             for skill in (() if self.native else PROFILE_SKILLS.get(self.profile_name, [])):
                 yield Checkbox(SKILLS[skill][0], value=skill not in selected['disabled_skills'], id='skill-' + skill)
             yield skills
-
-    def compose_ssh_settings(self, category, value, selected):
-        from .repository_ui import GitIdentityFields
-        identity = selected['git_identity']
-        if not self.editing and not self.defaults_mode:
-            with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
-                yield CreateSSHFields()
-                with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True):
-                    yield GitIdentityFields(identity)
-        if self.defaults_mode:
-            with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True,
-                             id=category.section, classes='spaced-form-fields'):
-                yield GitIdentityFields(identity, defaults=True)
 
     def compose_advisors(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
@@ -3427,13 +3503,11 @@ class SettingsForm(Screen):
         if self.setting in (None, 'primary-browser'):
             selected['browser'] = self.query_one('#primary-browser', Checkbox).value
         if not self.editing:
-            from .repository_ui import GitIdentityFields
             draft['primary_auth'] = (self.query_one('#primary-auth', Select).value
                                      if can_copy_primary_sign_in(self.primary) else 'login')
             draft.update(self.query_one(FolderFields).collect(private_paths=[draft.get('env_file')]))
             draft['system_prompt'] = self.query_one(PromptChoice).selected()
-            selected['git_identity'] = self.query_one(GitIdentityFields).collect()
-            draft.update(self.query_one(CreateSSHFields).collect(draft))
+            self.validate_ssh_key(draft)
         draft['options'] = options(selected)
         return draft, {}
 
@@ -3483,7 +3557,7 @@ class SettingsForm(Screen):
             draft.update(self.query_one(FolderFields).collect(private_paths=[inp('pi-config')]))
             draft['system_prompt'] = self.query_one(PromptChoice).selected()
         selected = options(draft.get('options'))
-        if not self.editing:
+        if self.defaults_mode:
             from .repository_ui import GitIdentityFields
             selected['git_identity'] = self.query_one(GitIdentityFields).collect()
         key = {}
@@ -3542,7 +3616,7 @@ class SettingsForm(Screen):
             rules += [r for r in sandbox.parse_rules('\n'.join(provider_rules)) if r not in rules]
         draft['allowlist'] = '\n'.join(f'{host}:{port}' for host,port in rules)
         if not self.editing and not self.defaults_mode:
-            draft.update(self.query_one(CreateSSHFields).collect(draft))
+            self.validate_ssh_key(draft)
         sandbox.validate_env(draft['env_file'])
         return draft, key
 
@@ -3630,7 +3704,7 @@ class SettingsForm(Screen):
                     message.scroll_visible(animate=False)
             if not any(message.display for message in self.query(
                     '.provider-setting Feedback, #model-ports-error, SkillSelection Feedback, #network-error, '
-                    '#web-config-error, CreateSSHFields Feedback')):
+                    '#web-config-error')):
                 feedback = self.query_one('#form-error', Static)
                 feedback.update(str(error))
                 feedback.scroll_visible(animate=False)
@@ -3696,7 +3770,7 @@ class SettingsForm(Screen):
         def after_ssh(ready=True):
             if not ready:
                 operation.query_one('#operation-next', Static).update(
-                    'Finish setting up the SSH key in Settings → SSH & Git.')
+                    'Finish setting up the SSH key in Settings → Connectors → SSH & Git.')
                 operation.query_one('#operation-next', Static).display = True
             elif choose_default:
                 choose_models()
@@ -3748,7 +3822,14 @@ class SettingsForm(Screen):
         self.action_back()
 
     def action_back(self):
-        self.app.pop_screen()
+        if self.has_class('settings-review'):
+            selections = {key: self.draft[key] for key in ('ssh', '_ssh_key', '_ssh_key_file', '_ssh_key_duration',
+                                                           'aws_access', 'connector_ids', 'connector_operations',
+                                                           '_connector_routes', '_connector_instructions') if key in self.draft}
+            selections['git_identity'] = self.draft.get('options', {}).get('git_identity')
+            self.dismiss(selections)
+        else:
+            self.app.pop_screen()
 
 
 def banner(version, compact=False):
@@ -3804,10 +3885,13 @@ class Cockpit(App):
     #prompt-fields { height: auto; max-height: 56vh; }
     #prompt-fields > .setting:last-of-type { margin-bottom: 0; }
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
-    Confirm #yes.-error { background: $error; color: white; }
+    Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
-    Confirm #cancel:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
-    Confirm:nocolor #yes.-error { background: #454a51; color: white; }
+    Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus {
+        background: #d4e0e7; color: #171a1d; text-style: bold underline;
+    }
+    Confirm:nocolor #yes.-error, ExternalConnectorDialog:nocolor #connector-confirm.-error { background: #454a51; color: white; }
+    ConnectorSetup .connector-agent-heading { margin: 1 0 0 0; text-style: bold; }
     .compact-terminal PromptChoice TextArea, .compact-terminal #prompt-text { height: 5; }
     EditPrompt Feedback, #sandbox-prompt-error { color: #ef9a91; }
     EditPrompt TextArea.prompt-invalid:focus { border: tall $error; }
@@ -3840,6 +3924,7 @@ class Cockpit(App):
     .browser-vault-setting { margin: 0 0 1 2; }
     .browser-vault-setting.-browser-disabled { opacity: 50%; }
     GitIdentityFields #git-identity-fields > .setting:last-child { margin: 0 0 0 0; }
+    .spaced-form-fields GitIdentityFields .setting > Input:last-child { margin: 1 0 0 0; }
     #git-identity-error { color: #f1f3f5; text-style: bold; }
     .provider-setting { margin: 0 0 1 0; }
     .provider-details { height: auto; padding: 1 0 0 2; }
@@ -3913,6 +3998,7 @@ class Cockpit(App):
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
     .compact-terminal NewSandbox > #new-title { padding: 0 3; }
     NewSandbox #primary-agent { max-width: 32; }
+    SettingsForm #primary-auth { max-width: 40; }
     NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }
     NewSandbox #profile { margin: 1 0 0 0; }
     NewSandbox #sandbox-name-setting { margin: 0; }
@@ -3967,6 +4053,7 @@ class Cockpit(App):
     DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
     DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
     .error { color: #b75b52; height: auto; }
+    Screen:nocolor ConnectorFields .error { color: white; text-style: bold reverse; }
     .model-dialog > Feedback, FolderEditor Feedback { margin-top: 1; }
     .compact-terminal FolderEditor #folder-fields { max-height: 52vh; }
     #folder-fields > .setting { margin: 0; }
@@ -3987,7 +4074,6 @@ class Cockpit(App):
     #document-search-section { height: auto; min-height: 1; padding: 0; margin: 0 0 1 0; }
     #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
     #document-search-section.focused-setting { padding: 0; background: transparent; }
-    #configure-aws { width: auto; padding: 0 2; }
     #document-search-summary { width: auto; height: auto; }
     #configure-document-search { width: auto; margin: 0 0 0 2; padding: 0 2; }
     #document-search-fields { height: auto; max-height: 68vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
@@ -4037,6 +4123,9 @@ class Cockpit(App):
     }
     Select.toolbar-control:focus > SelectCurrent > #label,
     Select.toolbar-control:focus > SelectCurrent > .arrow { color: #17191b; }
+    ConnectorFields .connector-row Button:focus { color: #171a1d; background: #d4e0e7; text-style: bold underline; }
+    Screen:nocolor ConnectorFields .connector-row Button:focus,
+    CreateSSHDialog:nocolor .dialog-actions Button:focus { color: black; background: white; text-style: bold underline; }
     Screen:nocolor Button.toolbar-control:focus,
     Screen:nocolor Select.toolbar-control:focus > SelectCurrent { background: white; color: black; }
     #dashboard-filters { height: 3; margin: 0 0 1 0; }
@@ -4522,10 +4611,11 @@ class Cockpit(App):
                 saved = self.service.config(name) if config.get('engine') else config
             except (OSError, ValueError):
                 saved = {}
-            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode'], prompt_library.selection(state)),
+            self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode'], prompt_library.selection(state), state=state),
                              lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'aws-access':
             saved_access = self.service.config(name).get('aws_access') or {}
+            back_label = 'Back to connectors' if isinstance(self.screen, ConnectorSettings) else 'Back to sandboxes'
 
             def change(value):
                 if value is None or value == saved_access:
@@ -4548,7 +4638,7 @@ class Cockpit(App):
                                'AWS access updated.')
                     self.push_screen(UpdateOperation('Updating AWS access', lambda log, update:
                         self.service.update_settings(name, changes, log, update),
-                        success_message=success, done_on_success=True))
+                        success_message=success, done_on_success=True, back_label=back_label))
 
                 if effect in ('restart', 'replace', 'gateway'):
                     self.push_screen(confirm_aws_installation(name, effect,

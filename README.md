@@ -1,11 +1,8 @@
 # Pi Sandbox Factory
 
-Run Pi in a configurable sandbox with a project folder, its own tools and saved
-chats, and restricted networking by default. The browser editor uses an
-open-source [FrostPi fork](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory)
-built around the same mainline `pi` executable as Pi CLI. Earlier versions used
-[Pendant](https://github.com/cdervis/Pendant). Pi CLI and VS Code on host are
-also available.
+Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder, saved chats and restricted networking by default. Choose the coding agent when you create the sandbox.
+
+Pi opens in the browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory), in Pi CLI or in VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex, Claude Code and Antigravity open in the terminal.
 
 ![Pi Sandbox Factory dashboard](docs/sandboxes.png)
 
@@ -25,18 +22,16 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 
 ## Create a sandbox
 
-1. Choose **New sandbox**, select a **Profile** and **Workspace**, check the
-   **Sandbox name**, then choose **Continue**.
-2. In **Review sandbox → Model Providers**, choose how Pi connects to a model.
-   - **Local models:** off by default. Enable **Connect to models on this computer** and enter
-     your server port, usually `8000`. If no model appears, check that the server
-     is running on that port, then refresh the model list. [Local model setup](docs/usage.md#local-models)
-   - **Hosted models:** choose **Connect hosted provider…** for OpenRouter,
-     Together, Azure/Foundry or Bedrock. Factory keeps these credentials in a
-     separate container. [Hosted model setup](docs/hosted-models.md)
-3. Choose **Create and start**. For a hosted connection, choose a model, select
-   **Use as default**, then **Continue**. Leave **Open sandbox after creation**
-   checked to open the editor.
+1. Choose **New sandbox** and select a **Coding agent**. For Pi, also choose a **Profile**. Pick your **Workspace**, check the **Sandbox name**, then choose **Continue**.
+2. On **Review sandbox**, set up the agent you chose.
+   - **Pi** — Open **Model Providers**. For a local model, enable **Connect to models on this computer** and enter the server port, usually `8000`. If a model is missing, check that the server is running and refresh the model list. For OpenRouter, Together, Azure/Foundry or Bedrock, choose **Connect hosted provider…**. Hosted credentials stay in a separate container. [Local models](docs/usage.md#local-models) · [Hosted models](docs/hosted-models.md)
+   - **Codex, Claude Code or Antigravity** — Under **Sign-in**, choose **Sign in inside the sandbox** or **Copy sign-in from this computer**. [Agent sign-in](docs/usage.md#choose-a-coding-agent)
+3. Open **Connectors** if your agent needs SSH, Git, AWS or an installed HTTPS service. Choose what this sandbox may use. You can make this choice later in **Settings → Connectors**. [Connector setup](docs/connectors.md)
+4. Choose **Create and start sandbox**. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
+
+![Connector settings for SSH and Git, AWS and an example build service](docs/connectors.png)
+
+SSH & Git and AWS are built in. **Build status** appears here because the example connector was installed for this screenshot.
 
 If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 **Connect to models on this computer**. [Linux local model requirements](docs/platforms.md#linux-local-models)
@@ -56,7 +51,7 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
   the sandbox running, though active connections may drop. [Network settings](docs/web-access.md#network-access)
 - **Web search:** Enabling a search provider lets Pi query that service.
   For Pi to open a result in **Restricted** mode, allow the site separately. [Web search setup](docs/web-access.md#web-search)
-- **AWS:** Share a saved AWS access profile across sandboxes and choose which sandboxes receive permission changes. [AWS CLI setup](docs/aws-access.md)
+- **Connectors:** Give a sandbox access to SSH hosts, Git repositories, AWS or a service your team connects. Set this up under **Review sandbox → Connectors** or **Settings → Connectors**. [Choose or build a connector](docs/connectors.md)
 
 ## Use and update sandboxes
 

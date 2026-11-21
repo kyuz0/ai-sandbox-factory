@@ -19,11 +19,19 @@ Issues = "https://github.com/kyuz0/pi-sandbox-factory/issues"
 pi-sandbox-factory = "pi_sandbox_factory.sandbox:main"
 
 [tool.setuptools]
-packages = ["pi_sandbox_factory"]
+packages = [
+    "pi_sandbox_factory",
+    "pi_sandbox_factory.connectors",
+    "pi_sandbox_factory.connectors.builtin",
+    "pi_sandbox_factory.connectors.builtin.ssh",
+    "pi_sandbox_factory.connectors.builtin.aws",
+]
 include-package-data = true
 
 [tool.setuptools.package-data]
 pi_sandbox_factory = ["containers/**/*", "profiles/**/*", "providers/**/*", "checks/*", "network-catalog/*"]
+
+"pi_sandbox_factory.connectors" = ["builtin/*/*.json", "companion/*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo", "containers/inference/node_modules/*"]

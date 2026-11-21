@@ -11,8 +11,8 @@ Click an image to enlarge it. You can see it again when you reopen the saved cha
 
 ## Open a sandbox
 
-Leave **Open sandbox after creation** checked to open the editor when the sandbox
-starts. First launch downloads the pinned version of code-server for the
+Leave **Open the browser editor when ready** checked to open FrostPi when the sandbox
+starts. The first launch downloads the pinned version of code-server for the
 container’s architecture.
 [Create a sandbox](../README.md#create-a-sandbox)
 

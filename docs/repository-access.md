@@ -1,13 +1,13 @@
 # Repository access
 
-Use **Settings → SSH & Git**. Private keys stay in the SSH companion;
+Use **Settings → Connectors → SSH & Git**. Private keys stay in the SSH companion;
 GitHub or GitLab controls what the key can do. Factory holds one key per sandbox.
 
 ## Read-only repository
 
 1. Choose **Add repository…**, enter its HTTPS project URL and **Add destination**.
    This supports GitHub, GitLab.com and self-hosted GitLab.
-2. Under **Host identity**, select a `known_hosts` file containing that server’s
+2. Under **Trusted SSH host keys**, select a `known_hosts` file containing that server’s
    verified SSH host key. Choose **Apply**. This restarts the sandbox’s processes.
 3. Reopen **SSH & Git → SSH key** and choose **Generate repository key**.
    Choose **Copy public key**. Generation refuses to replace an existing key;

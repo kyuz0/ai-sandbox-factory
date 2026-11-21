@@ -17,7 +17,7 @@ binaries hosted elsewhere, add the relevant DNS name and port under
 
 Use `curl` against the service’s HTTP or HTTPS URL to test access. **Restricted**
 mode blocks external `ping` and direct DNS queries. Configure Git over SSH
-through **SSH & Git**. [Managed SSH](ssh.md)
+through **Connectors → SSH & Git**. [Managed SSH](ssh.md)
 
 Choose **Apply** to save. Changing only hosts or categories restarts the gateway
 and may disconnect active requests. The sandbox and its terminals keep running.

@@ -7,7 +7,7 @@ Search uses `pi-web-access` to find sources. Pi can also read local references.
 
 ## Set up web research
 
-1. Choose **New sandbox → Deep Web Research** and select a writable **Workspace**
+1. Choose **New sandbox**, keep **Pi** as the coding agent, and select the **Deep Web Research** profile and select a writable **Workspace**
    for the report. Choose **Continue** and connect a model under **Model Providers**.
 2. In **Review sandbox → Network and Web Search → Web Search**, choose your
    provider. **Automatic fallback** starts with keyless Exa. Use **Add provider**
@@ -21,7 +21,7 @@ Search uses `pi-web-access` to find sources. Pi can also read local references.
    host entries add to each other. Factory separately
    allows the search provider. It can return snippets from other sites, while
    direct page reads follow your network rules. [Website access](web-access.md#network-access)
-4. Choose **Create and start**. Open Pi or FrostPi. The startup hint tells you
+4. Choose **Create and start sandbox**. Open Pi or FrostPi. The startup hint tells you
    how to begin. Type `/profile-guide` for a sample question and setup instructions.
 
 ![Deep Web Research selected with its Getting started button](research-deep-profile.png)

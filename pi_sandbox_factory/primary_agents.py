@@ -92,6 +92,7 @@ def check_ownership(config):
 
 def guidance(config, state):
     from . import sandbox as core
+    from .connectors import context
     current = agent(config)
     browser = options(config.get('options'))['browser']
     lines = [
@@ -113,10 +114,9 @@ def guidance(config, state):
     if browser:
         lines.append('Use the Factory browser tool for Playwright and share its live viewer link with the user when needed. '
                      'The browser can reach development servers running inside the workspace.')
-    if config.get('ssh', {}).get('hosts'):
-        lines.append('Use SSH only for destinations configured in Factory.')
-    if config.get('aws_access'):
-        lines.append('Use the workspace AWS CLI with the permissions assigned in Factory.')
+    connector_prompt, _ = context.render(config, state)
+    if connector_prompt:
+        lines.extend(['', connector_prompt.rstrip()])
     skill_catalog = []
     for skill in config.get('extra_skills', []):
         source = Path(skill['path'])
@@ -131,6 +131,11 @@ def guidance(config, state):
     if selected_prompt:
         lines.extend(['', selected_prompt['text']])
     return '\n'.join(lines) + '\n'
+
+
+def write_context(config, state):
+    from .connectors.context import write_text
+    write_text(Path(state) / 'primary-agent/context.md', guidance(config, state))
 
 
 def prepare_workspace(config, state):
@@ -157,7 +162,7 @@ def up(config, state):
         'working_directory': folders.container_cwd(config),
     })
     prepare_workspace(config, state)
-    (directory / 'context.md').write_text(guidance(config, state), encoding='utf-8')
+    write_context(config, state)
     proxy_conf = directory / 'squid.conf'
     # This file stays on the same inode across startups because Squid bind-mounts it.
     proxy_conf.write_text(core.squid_config(core.parse_rules('\n'.join(PRIMARY_HOSTS[selected]))))

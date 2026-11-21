@@ -5,13 +5,21 @@ Use Factory to create, open, and manage your Pi sandboxes. Start with the
 For a different setup, pick **Custom profile…** or install a profile from
 **Library…**. [Create a sandbox](../README.md#create-a-sandbox)
 
+## Choose a coding agent
+
+Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or Antigravity. A sandbox you created with Pi continues to use Pi. To work with another agent, create a separate sandbox.
+
+For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, choose **Sign in inside the sandbox** for a fresh login, or **Copy sign-in from this computer** to use an existing account. The agent reads its sign-in from a private container. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the agent’s sign-in.
+
+Under **Review sandbox → Connectors**, choose a service to give the workspace access. Open **SSH & Git…** to set the Git commit author, add SSH destinations or configure repository access. Open **AWS…** to select an access profile. You can edit the same choices later in **Settings → Connectors**. [Connector setup](connectors.md)
+
 ## Open a sandbox
 
-Choose **Open** on the dashboard. On supported hosts, Factory opens the browser
+Choose **Open** on the dashboard. Codex, Claude Code and Antigravity open in the terminal. For Pi on supported hosts, Factory opens the browser
 editor on this computer without a password by default. Use **Open with…** to
 pick a different client for this launch. During creation, expand **Editor** to
-choose **Pi CLI** or **VS Code on host** as the default. Clear **Open sandbox after
-creation** if you want to open it yourself later. For an existing sandbox,
+choose **Pi CLI** or **VS Code on host** as the default. Clear the checkbox for
+opening your selected client if you want to open it yourself later. For an existing sandbox,
 **Settings → Editor** lets you change the default client, address, port, or password.
 
 Pi CLI opens in your current terminal. Exit Pi to return to Factory. Pi CLI and
@@ -96,7 +104,9 @@ when you’re ready to switch.
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
-| SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
+| Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
+| Connectors → AWS | Connecting AWS for the first time can require replacing the workspace container. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
+| Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
 | Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |

@@ -247,7 +247,7 @@ if profile.exists() or profile_prompt:
     if browser_enabled:
         guidance += '\n\n' + Path('/opt/betterwright/browser.md').read_text().rstrip()
     ssh_targets = Path('/etc/sandbox-ssh/targets.json')
-    if ssh_targets.is_file():
+    if ssh_targets.is_file() and not Path('/opt/pi-security/config/connectors-prompt.md').is_file():
         destinations = json.loads(ssh_targets.read_text())
         guidance += '\n\nManaged SSH destinations (alias, user, server, port):\n' + '\n'.join(
             f'- {host["alias"]}, {host["user"]}, {host["hostname"]}, {host["port"]}' for host in destinations)
@@ -265,7 +265,7 @@ if profile.exists() or profile_prompt:
             'pinned host keys and a separate signing agent. Keep these defaults; do not override GIT_SSH_COMMAND, '
             'ProxyCommand, IdentityAgent or host-key verification. Private keys are deliberately absent from ~/.ssh. '
             'If authentication fails, use sandbox-ssh-status in the permitted outer shell. No unlocked key means the user '
-            'must import or unlock a key in Factory Settings → SSH & Git → SSH key. '
+            'must import or unlock a key in Factory Settings → Connectors → SSH & Git → SSH key. '
             'Do not generate a replacement key in this container or ask for private key/passphrase contents. '
             'A loaded key does not guarantee server-side repository permissions. Preserve Git exit status when reporting failures.')
     contents = contents.rstrip() + '\n\n' + begin + '\n' + guidance + '\n' + end + '\n'

@@ -2,9 +2,9 @@
 
 ## Commit identity
 
-During creation, expand **SSH & Git → Git commit identity** and enable **Set Git commit identity**.
+During creation, open **Review sandbox → Connectors → SSH & Git → Git commit identity** and enable **Set Git commit identity**.
 Enter the name and email to record on commits. For an existing sandbox, use
-**Settings → SSH & Git → Git commit identity**, then apply the settings.
+**Settings → Connectors → SSH & Git → Git commit identity**, then apply the settings.
 You can also set this under **Defaults for new sandboxes**.
 
 Factory sets the default name and email for commits inside the sandbox. If a
@@ -25,14 +25,14 @@ For authenticated Git operations with an isolated private key, use SSH.
 
 ## SSH setup
 
-In **Review sandbox → SSH & Git**, enter destinations or import host SSH aliases.
+In **Review sandbox → Connectors → SSH & Git**, enter destinations or import host SSH aliases.
 Choose **Generate repository key** or **Import and unlock** to set up the key
 as soon as the sandbox starts. If you generate a key, Factory displays its
 public half for you to register with the Git server.
 
 For GitHub or GitLab, use **Add repository…** and follow [repository setup](repository-access.md).
 
-1. Open **Settings → SSH & Git**. Import aliases from your host's SSH configuration, or enter one destination per line: `alias username hostname port`.
+1. Open **Settings → Connectors → SSH & Git**. Import aliases from your host's SSH configuration, or enter one destination per line: `alias username hostname port`.
 2. Supply trusted host keys through your existing `known_hosts` file, then **Apply**. Applying destinations restarts the sandbox processes and preserves the workspace and private home.
 3. Return to **SSH & Git → SSH key**, select a key outside the workspace, and choose **Import and unlock**. Enter its passphrase directly in your terminal.
 4. Use the alias from the sandbox, for example `ssh build 'hostname && uptime'`. With the inner command sandbox enabled, Pi uses `bash_escalate`, subject to manual or automatic approval.

@@ -27,7 +27,7 @@ APPROVAL_LABELS = {
     'manual': 'Manual approval (ask me)', 'off': 'YOLO (no approvals)',
 }
 sys.path.insert(0, str(REPO))
-from pi_sandbox_factory import folders, inference, prompt_library, sandbox
+from pi_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -541,9 +541,17 @@ assert len(matches) == 1, matches
 print(matches[0].read_text(), end='')
 '''
     with fixture_rpc(container, output, 'system-prompt-cli', session='/tmp/system-prompt-cli.jsonl') as (send_cli, until):
-        for label in ('DEFAULT', 'FIRST', 'SECOND', 'NONE'):
-            value = None if label in ('DEFAULT', 'NONE') else {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + label}
-            assert prompt_library.assign(state, value) == (label != 'DEFAULT')
+        for label in ('DEFAULT', 'CONNECTOR_ONLY', 'FIRST', 'SECOND', 'NONE'):
+            custom = label in ('FIRST', 'SECOND')
+            value = {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + label} if custom else None
+            config = {}
+            if label in ('CONNECTOR_ONLY', 'FIRST', 'SECOND'):
+                alias = 'fixture-connector-' + ('second' if label == 'SECOND' else 'first')
+                config['ssh'] = {'hosts': [{'alias': alias, 'hostname': 'build.example.test', 'user': 'builder',
+                                            'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}
+            connector_settings.refresh_agent_context(config, state)
+            prompt_library.assign(state, value)
+            assert prompt_library.selection(state) == value
             prompt = 'Factory sandbox system prompt fixture ' + label
             reply = 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
             send(prompt)

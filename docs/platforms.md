@@ -59,7 +59,7 @@ mkdir -p ~/Projects
 ```
 
 Reopen Ubuntu, then run `pi-sandbox-factory`. Choose **New sandbox**, a folder
-under `~/Projects`, then **Create and start**. The editor opens in your Windows
+under `~/Projects`, then **Create and start sandbox**. The editor opens in your Windows
 browser. Pi CLI runs in the Ubuntu terminal. Update with
 `pipx upgrade pi-sandbox-factory`.
 
@@ -100,7 +100,7 @@ mkdir -p ~/Projects
 ```
 
 Open a new Terminal window and run `pi-sandbox-factory`. Choose **New sandbox**,
-a project folder under `~/Projects`, then **Create and start**. The browser editor
+a project folder under `~/Projects`, then **Create and start sandbox**. The browser editor
 opens automatically.
 
 If a Podman Machine already exists, skip `machine init`. Use its rootless

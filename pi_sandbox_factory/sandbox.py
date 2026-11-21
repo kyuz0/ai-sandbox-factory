@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Pi development containers managed with Podman or Docker."""
+"""Create and manage coding agent sandboxes with Podman or Docker."""
 import argparse
 from . import activity
 from . import sandbox_skills
 from . import sandbox_extensions
 from . import sandbox_advisors
 from . import sandbox_ssh
-from . import inference, aws_access, primary_workspace
+from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
 from contextlib import closing
 import errno
@@ -441,7 +441,7 @@ def inspect(config, name):
     return data
 
 
-def describe_containers(config, states):
+def describe_containers(config, states, state=None):
     dev, gateway, *_ = names(config)
     advisor, advisor_gateway, *_ = sandbox_advisors.names(config)
     roles = {
@@ -453,6 +453,16 @@ def describe_containers(config, states):
         advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
         advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
     }
+    for identifier in config.get('connector_ids', []):
+        title = identifier
+        if state:
+            try:
+                plugin, = connectors.saved({'connector_ids': [identifier]}, state)
+                title = plugin.title
+            except ValueError:
+                pass  # A damaged manifest must not hide an existing container.
+        roles[connectors.worker_name(config, identifier)] = ('Connector · ' + title,
+            'Sends requests for the operations granted to this sandbox.')
     selected = primary_workspace.agent(config)
     if selected != 'pi':
         from . import primary_agents
@@ -537,7 +547,7 @@ def list_sandboxes(state_root, structured=False):
                      activity=activity.load(state_root / sandbox_name),
                      primary_agent=config.get('primary_agent', 'pi'))
         if structured:
-            entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}))
+            entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}), state_root / sandbox_name)
                                    if engine in owned else None)
             if states[0] == 'running' and isinstance(config.get('ssh'), dict) and sandbox_ssh.enabled(config):
                 worker = sandbox_ssh.names(config)[0]
@@ -658,6 +668,12 @@ def up(config, state, *, prepare_sign_in=True):
         else:
             prepare_options(config, state)
         host_platform.check_mounts(config, state, image_names(config)[0])
+    prepared_connectors = {}
+    if config.get('connector_ids'):
+        connector_settings.check_mount(config, state, current[dev])
+        prepared_connectors = connectors.prepare(config, state)
+        prior_connector_start = {**connector_settings.helper_states(config), **{name: current[name] for name in active}}
+    connector_settings.refresh_agent_context(config, state)
     sandbox_advisors.up(config, state)
     sandbox_ssh.up(config, state)
     inference.up(config, state)
@@ -720,7 +736,9 @@ def up(config, state, *, prepare_sign_in=True):
                 args += ['--memory=' + memory_limit(config['memory'])]
             if not native and 'options' in config:
                 prepare_options(config, state)
-                args += ['-v', f'{state / "runtime-config"}:/opt/pi-security/config:{host_platform.bind_mode()}',
+                # The connector socket directories are also mounted in their credential containers.
+                mode = 'ro,z' if config.get('connector_ids') and not host_platform.is_mac() else host_platform.bind_mode()
+                args += ['-v', f'{state / "runtime-config"}:/opt/pi-security/config:{mode}',
                          '-v', f'{state / "options.json"}:/opt/sandbox/options.json:{host_platform.bind_mode()}',
                          '-v', f'{state / "git-identity.gitconfig"}:/opt/sandbox/git-identity.gitconfig:{host_platform.bind_mode()}']
             if restricted:
@@ -773,6 +791,16 @@ def up(config, state, *, prepare_sign_in=True):
                 browser_viewer.ensure_viewer(engine, inspect(config, dev)['Id'])
             if native and prepare_sign_in:
                 primary_workspace.initial_sign_in(config, state)
+            if config.get('connector_ids'):
+                connector_workers = []
+                try:
+                    workspace = inspect(config, dev)
+                    connector_settings.check_mount(config, state, workspace)
+                    connector_workers = connectors.up(config, state, prepared=prepared_connectors)
+                    connector_settings.check_sockets(config, workspace['Id'], config['connector_ids'])
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    connector_settings.restore_start(config, prior_connector_start, connector_workers)
+                    raise
             if started_dev:
                 activity.record(state, 'started')
             print(f'Ready: {dev}; workspace /workspace; engine {engine}; network {network_mode(config)}')
@@ -803,6 +831,8 @@ def down(config, remove=False):
         from . import primary_agents
         primary_agents.check_ownership(config)
         primary_agents.down(config, remove=remove)
+    if config.get('connector_ids'):
+        connectors.down(config)
     if config.get('aws_access'):
         aws_access.down(config)
     sandbox_advisors.down(config, remove=remove)
@@ -987,6 +1017,23 @@ def create(args, state):
     if not creation_token:
         state.mkdir(parents=True, mode=0o700)
     try:
+        ids, grants = connector_settings.parse_cli_grants(getattr(args, 'connector', None) or [])
+        reviewed_file = getattr(args, 'connector_review_file', None)
+        if ids or reviewed_file:
+            reviewed = json.loads(Path(reviewed_file).read_text()) if reviewed_file else None
+            if reviewed is None:
+                connector_settings.capture(ids, state)
+            else:
+                if grants:
+                    raise ValueError('Specify connector permissions once, either with --connector or in the review file.')
+                connector_settings.capture(ids, state, reviewed['routes'], reviewed['agent_instructions'])
+                grants = reviewed['operations']
+            config['connector_ids'] = ids
+            if grants:
+                config['connector_operations'] = grants
+            connector_settings.operations(config, state)
+        connectors.require_tokens(config, state)
+        connector_settings.refresh_agent_context(config, state)
         if getattr(args, 'providers_file', None):
             values = json.loads(Path(args.providers_file).read_text())
         else:
@@ -1157,6 +1204,7 @@ def replace_for_aws(config, updated, state, effect, containers):
             up(updated, state, prepare_sign_in=False)
             run([engine, 'exec', names(config)[0], 'sh', '-c',
                  'command -v aws >/dev/null && test -S /run/aws-access/request.sock'])
+        connector_settings.refresh_agent_context(updated, state)
         activity.save_config(state, updated)
     except Exception:
         try:
@@ -1168,6 +1216,7 @@ def replace_for_aws(config, updated, state, effect, containers):
                 if name in moved:
                     run([engine, 'rename', moved[name], name])
             policy.write_text(prior_policy)
+            connector_settings.refresh_agent_context(config, state)
             refresh_shell_network(config, state)
             if not config.get('aws_access'):
                 aws_access.down(updated)
@@ -1221,35 +1270,46 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
             previous = old_policy
     gateway = names(config)[1]
     restarting_gateway = False
+    signer_changed = False
     try:
         if not value:
+            workspace = inspect(config, names(config)[0])
+            running = workspace and workspace['State']['Running']
             aws_access.down(config)
+            signer_changed = True
         elif running:
             aws_access.up(updated, state)
+            signer_changed = True
         if effect == 'gateway':
             restarting_gateway = True
             restart_existing(config, gateway)
             ensure_gateway(config)
+        refresh_shell_network(updated, state)
+        connector_settings.refresh_agent_context(updated, state)
+        activity.save_config(state, updated)
     except Exception:
+        if signer_changed and running:
+            if current:
+                aws_access.up(config, state)
+            else:
+                aws_access.down(updated)
         if previous is not None:
             policy.write_text(previous)
         if restarting_gateway:
-            if running:
-                if current:
-                    aws_access.up(config, state)
-                else:
-                    aws_access.down(updated)
             restart_existing(config, gateway)
             ensure_gateway(config)
+        refresh_shell_network(config, state)
+        connector_settings.refresh_agent_context(config, state)
         raise
-    refresh_shell_network(updated, state)
-    activity.save_config(state, updated)
     print('AWS permissions updated.' if value else 'AWS disconnected.')
 
 
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
+    if isinstance(changes, dict) and 'connector_ids' in changes:
+        connector_settings.apply(config, state, changes, apply_gate)
+        return
     aws_install_approval = None
     if isinstance(changes, dict) and 'expected_aws_installation' in changes:
         if set(changes) != {'expected_aws_installation', 'expected_aws_access', 'aws_access'}:
@@ -1523,6 +1583,8 @@ def main():
     parser.set_defaults(command='tui')
     sub.add_parser('tui', help='Open the terminal manager')
     sub.add_parser('profiles', help='List available profiles')
+    connector_login = sub.add_parser('connector-login', help='Save a service token for an installed HTTPS connector')
+    connector_login.add_argument('connector_id')
     for kind in ('profile','provider'):
         package=sub.add_parser(kind,help='Manage installed '+kind+' packages')
         operations=package.add_subparsers(dest='package_action',required=True)
@@ -1572,6 +1634,10 @@ def main():
     new.add_argument('--advisor', action='append', choices=['codex', 'claude', 'agy'], default=[],
                      help='Add an advisor companion during creation; repeat for multiple advisors, sign in afterwards')
     new.add_argument('--aws-access-file', help='JSON host AWS profile, role, region and sandbox permissions')
+    new.add_argument('--connector', action='append', metavar='ID[:OPERATION,...]',
+                     help='Grant all requests from an installed HTTPS connector, or list the allowed requests, '
+                          'for example build-status:latest,test-results. Repeat for another connector.')
+    new.add_argument('--connector-review-file', help=argparse.SUPPRESS)
     new.add_argument('--ssh-file', help='JSON SSH destinations and trusted host public keys')
     new.add_argument('--options-file', help='JSON agent, skill and MCP settings')
     new.add_argument('--curlie-list', help=argparse.SUPPRESS)
@@ -1582,7 +1648,7 @@ def main():
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
         'browser-editor': 'Open the browser editor (rootless Podman)',
-        'update': 'Validate, build and apply saved settings by recreating containers',
+        'update': 'Apply settings to a saved sandbox',
         'up': 'Resume containers and recover stale runtime or gateway state',
         'delete': 'Remove both containers, private volumes, and saved state; keep the host workspace',
         'configure': 'Check or refresh enabled providers',
@@ -1644,6 +1710,9 @@ def main():
             cmd.add_argument('--subagents', action=argparse.BooleanOptionalAction, default=None,
                              help='Enable or disable optional subagent orchestration; omitted preserves the saved choice')
     args = parser.parse_args()
+    if args.command == 'connector-login':
+        connector_settings.login(args.connector_id)
+        return
     if args.command in ('profile','provider'):
         kind=args.command;action=args.package_action
         if action=='list':

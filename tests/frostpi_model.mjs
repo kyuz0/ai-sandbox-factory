@@ -140,10 +140,13 @@ http.createServer((request, response) => {
       const system = messages[0].role === 'system' ? JSON.stringify(messages[0].content) : '';
       const markers = [...system.matchAll(/FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g)].map(match => match[1]);
       const inHistory = /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/.test(JSON.stringify(messages.slice(1)));
-      const expected = label === 'DEFAULT' || label === 'NONE' ? '' : label;
-      delta = { content: !inHistory && markers.join() === expected && system.includes('You are')
+      const expected = ['FIRST', 'SECOND'].includes(label) ? label : '';
+      const expectedAlias = {CONNECTOR_ONLY: 'first', FIRST: 'first', SECOND: 'second'}[label] || '';
+      const aliases = [...system.matchAll(/fixture-connector-(first|second)/g)].map(match => match[1]);
+      const connectorMatches = aliases.join() === expectedAlias && !system.includes('FIXTURE_PRIVATE_MARKER');
+      delta = { content: !inHistory && connectorMatches && markers.join() === expected && system.includes('You are')
         ? 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
-        : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') };
+        : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') + ' aliases ' + aliases.join(',') };
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
       delta = tools.includes('web_search')
         ? choice('web_search', { query: 'Factory research source', numResults: 1 })

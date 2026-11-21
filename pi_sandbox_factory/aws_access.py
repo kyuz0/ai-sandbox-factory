@@ -17,7 +17,7 @@ class InvalidSetting(ValueError):
         self.field = field
 
 
-def _strings(value):
+def permission_values(value):
     values = [value] if isinstance(value, str) else value
     if not isinstance(values, list) or not values or not all(isinstance(v, str) and v for v in values):
         raise ValueError('Each permission needs at least one AWS action and resource.')
@@ -32,8 +32,8 @@ def session_policy(grants):
     for grant in grants:
         if not isinstance(grant, dict) or set(grant) != {'Action', 'Resource'}:
             raise ValueError('Each AWS permission needs Action and Resource.')
-        resources = _strings(grant['Resource'])
-        for action in _strings(grant['Action']):
+        resources = permission_values(grant['Resource'])
+        for action in permission_values(grant['Action']):
             if not re.fullmatch(r'[a-zA-Z0-9-]+:[a-zA-Z0-9]+', action):
                 raise ValueError('Choose individual AWS actions, such as ec2:DescribeInstances.')
             if action.lower().startswith('sts:'):

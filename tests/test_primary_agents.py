@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -64,6 +65,38 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertEqual(args[-2:], ['login', '--device-auth'])
             self.assertTrue((home / '.codex').is_dir())
 
+    def test_each_native_launcher_receives_only_current_connector_grants(self):
+        from pi_sandbox_factory import connector_settings
+        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
+        command = launcher['command']
+        with TemporaryDirectory() as temp:
+            state = Path(temp)
+            (state / 'primary-agent').mkdir()
+            prompt = state / 'primary-agent/context.md'
+            prompt.touch()
+            host = {'alias': 'build', 'hostname': 'build.example', 'user': 'tester', 'port': 22}
+            self.addCleanup(os.chdir, Path.cwd())
+            for provider in ('codex', 'claude', 'agy'):
+                with self.subTest(provider=provider):
+                    config = {**self.config, 'primary_agent': provider, 'ssh': {'hosts': [host]}}
+                    connector_settings.refresh_agent_context(config, state)
+                    settings = {'browser': False, 'working_directory': str(state)}
+                    with patch.dict(command.__globals__, {'HOME': state}), patch('subprocess.run'):
+                        args = command(provider, 'chat', settings, prompt.read_text())
+                    if provider == 'agy':
+                        instructions = (state / '.gemini/AGENTS.md').read_text()
+                    elif provider == 'claude':
+                        instructions = args[args.index('--append-system-prompt') + 1]
+                    else:
+                        instructions = json.loads(next(arg.split('=', 1)[1] for arg in args
+                                                       if arg.startswith('developer_instructions=')))
+                    self.assertIn('build.example', instructions)
+                    self.assertIn('/run/primary-runtime/connectors.md', instructions)
+                    self.assertIn('ssh-add -l', instructions)
+                    connector_settings.refresh_agent_context({**config, 'ssh': {'hosts': []}}, state)
+                    self.assertNotIn('build.example', prompt.read_text())
+                    self.assertFalse((state / 'primary-runtime/connectors.md').exists())
+
     def test_executable_guidance_matches_active_choices(self):
         with TemporaryDirectory() as temp:
             config = {**self.config, 'working_directory': 'src',
@@ -76,7 +109,8 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertNotIn('browser tool', text)
             self.assertNotIn('AWS CLI', text)
             self.assertNotIn('bash_escalate', text)
-            config.update(options={'browser': True}, aws_access={'role': 'sample'})
+            config.update(options={'browser': True}, aws_access={'role': 'sample', 'region': 'eu-west-1',
+                          'grants': [{'Action': 'ec2:DescribeRegions', 'Resource': '*'}]})
             enabled = primary_agents.guidance(config, Path(temp))
             self.assertIn('browser tool', enabled)
             self.assertIn('AWS CLI', enabled)

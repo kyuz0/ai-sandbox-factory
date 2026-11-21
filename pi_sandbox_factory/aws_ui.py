@@ -42,8 +42,8 @@ class AWSAccessDialog(EntryDialog):
                     yield Label('Allowed actions and resources')
                     lines = []
                     for rule in self.current.get('grants', []):
-                        for action in aws_access._strings(rule['Action']):
-                            lines.extend(action + ' ' + resource for resource in aws_access._strings(rule['Resource']))
+                        for action in aws_access.permission_values(rule['Action']):
+                            lines.extend(action + ' ' + resource for resource in aws_access.permission_values(rule['Resource']))
                     yield TextArea('\n'.join(lines), id='aws-grants')
                     yield Static('Enter one AWS action and resource per line, such as ec2:DescribeRegions *.',
                                  classes='setting-help')
@@ -166,9 +166,9 @@ class AWSProfileChoices(Vertical):
         if value:
             rules = []
             for rule in value['grants']:
-                actions = ', '.join(aws_access._strings(rule['Action']))
+                actions = ', '.join(aws_access.permission_values(rule['Action']))
                 resources = ', '.join('All resources' if resource == '*' else resource
-                                      for resource in aws_access._strings(rule['Resource']))
+                                      for resource in aws_access.permission_values(rule['Resource']))
                 rules.append(actions + ' · ' + resources)
             preview = '\n'.join([value['profile'] + ' · ' + value['region'], value['role'],
                                  '', 'Allowed actions and resources', *rules])
@@ -244,7 +244,7 @@ class AWSProfilePicker(EntryDialog):
                 yield AWSProfileChoices(self.current)
             with Horizontal(classes='dialog-actions'):
                 if self.current:
-                    yield Button('Disconnect', id='aws-disconnect')
+                    yield Button('Disconnect…' if self.sandbox_name else 'Remove', id='aws-disconnect')
                 yield Button('Cancel', id='aws-cancel')
                 yield Button('Use profile', id='aws-assign', variant='primary', disabled=True)
 
@@ -260,7 +260,18 @@ class AWSProfilePicker(EntryDialog):
 
     @on(Button.Pressed, '#aws-disconnect')
     def disconnect(self):
-        self.dismiss({})
+        if not self.sandbox_name:
+            self.dismiss({})
+            return
+        from .sandbox_tui import Confirm
+        def disconnect_if_confirmed(confirmed):
+            if confirmed:
+                self.dismiss({})
+
+        self.app.push_screen(Confirm(
+            'This sandbox will lose AWS access. You can use the saved profile again.',
+            'Disconnect', title='Disconnect AWS from ' + self.sandbox_name + '?', confirm_by_default=False),
+            disconnect_if_confirmed)
 
     def on_screen_resume(self):
         if self.sandbox_name and self.is_mounted and self.query('#aws-assigned'):
