@@ -4,7 +4,7 @@ V2Fly developer groups are derived from V2Fly domain-list-community, copyright
 2018–2019 V2Ray, under the MIT license in V2FLY-LICENSE.
 https://github.com/v2fly/domain-list-community
 
-The news, financial, banking and library groups are derived from UT1 Toulouse
+The UT1 news, financial, banking and library rules are derived from UT1 Toulouse
 category data, maintained by Fabrice Prigent, through the olbat mirror.
 They are distributed under Creative Commons Attribution-ShareAlike 4.0:
 https://creativecommons.org/licenses/by-sa/4.0/
@@ -14,6 +14,17 @@ https://github.com/olbat/ut1-blacklists
 The data is converted into hostname/suffix rules. IP addresses and invalid
 hostnames are omitted. The derived UT1 category data retains the same license.
 Source revisions are recorded in groups.json; automatic refresh follows upstream.
+
+With content from Curlie.org - the largest human-edited directory of the web.
+Contribute by submitting a website or becoming an editor.
+https://curlie.org/
+https://creativecommons.org/licenses/by/3.0/
+
+Factory downloads the Curlie archive on first use. The exact HTTP(S) hostname
+rules are derived from the directory TSVs. curlie.json defines the branches used
+for each topic. In **Website categories → Topics**, choose **Check for newer list**
+to check for an updated archive.
+https://curlie.org/docs/en/rdf.html
 
 The Microsoft authentication group is a curated list of hostnames from Microsoft's
 public-cloud authentication documentation and Microsoft 365 endpoint sets 56, 59

@@ -4,11 +4,12 @@ import ipaddress
 import json
 from pathlib import Path
 import re
-import os
 import time
 import tempfile
 from functools import lru_cache
 from urllib.request import urlopen
+
+from . import curlie_catalog
 
 CATALOG = Path(__file__).with_name('network-catalog') / 'groups.json'
 PRIVATE_RANGES = ('0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 '
@@ -20,7 +21,16 @@ PRIVATE_RANGES = ('0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 '
 
 @lru_cache(maxsize=1)
 def catalog():
-    return json.loads(CATALOG.read_text())['groups']
+    groups = json.loads(CATALOG.read_text())['groups']
+    for name, fields in curlie_catalog.manifest().items():
+        groups[name] = {
+            **groups.get(name, {'source': 'Curlie', 'refresh': 'bundled',
+                                'url': 'https://curlie.org/docs/en/rdf.html', 'license': 'CC-BY-3.0'}),
+            'title': fields['title'],
+            'description': fields['description'],
+            'curlie': True,
+        }
+    return groups
 
 
 def domain(value):
@@ -79,22 +89,45 @@ def expand_v2fly(name, read, stack=()):
     return out
 
 
-def snapshots(names, saved=None, cache=None, warn=print):
+def snapshots(names, saved=None, cache=None, warn=print, *, download_curlie=True, curlie_revision=None):
     """Use bundled rules or refresh trusted sources with offline fallback."""
     names = selected(names)
     if not names:
         return {}
     available, saved = catalog(), saved or {}
-    cache = Path(cache or Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'pi-sandbox-factory/categories')
+    cache = Path(cache or curlie_catalog.category_cache())
     now, result = time.time(), {}
+    curlie_names = [name for name in names if available[name].get('curlie')]
+    curlie_rules, curlie_download = {}, None
+    if curlie_names:
+        pinned = curlie_catalog.assigned(saved)
+        revision = curlie_revision or (pinned and pinned['revision'])
+        if not revision and download_curlie:
+            revision = curlie_catalog.refresh(cache, log=warn)['revision']
+        if revision:
+            try:
+                curlie_download, curlie_rules = curlie_catalog.read(cache, revision, curlie_names)
+            except ValueError:
+                if curlie_revision or not all(saved.get(name, {}).get('curlie_download') for name in curlie_names):
+                    raise
+                # Saved sandbox rules keep working after the workstation cache is cleared.
+                curlie_download = pinned
+                curlie_rules = {name: set(saved[name]['domains']) - set(saved[name].get('ut1_domains', ()))
+                                for name in curlie_names}
 
     @lru_cache(maxsize=None)
     def read_v2fly(name):
         return fetch('https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/' + name)
 
     for name in names:
+        if name in curlie_names and name not in curlie_rules and name in saved:
+            result[name] = copy.deepcopy(saved[name])
+            continue
         if available[name].get('refresh') == 'bundled':
             value = copy.deepcopy(available[name])
+            if name in curlie_rules:
+                value['domains'] = curlie_rules[name]
+                value['curlie_download'] = curlie_download
             if not isinstance(value.get('domains'), list) or not value['domains']:
                 raise ValueError('Empty website category: ' + name)
             value['domains'] = sorted({domain(v) for v in value['domains']})
@@ -141,7 +174,15 @@ def snapshots(names, saved=None, cache=None, warn=print):
                         temporary.unlink(missing_ok=True)
         if not isinstance(value.get('domains'), list) or not value['domains']:
             raise ValueError('Empty website category: ' + name)
-        value['domains'] = sorted({domain(v) for v in value['domains']})
+        if name in curlie_rules:
+            # Keep UT1 separate so its normal updates retain the sandbox's chosen Curlie list.
+            upstream = sorted({domain(v) for v in value.get('ut1_domains', value['domains'])})
+            value['ut1_domains'] = upstream
+            value['domains'] = sorted(set(upstream).union(domain(v) for v in curlie_rules[name]))
+            value['curlie_download'] = curlie_download
+            value['description'] = available[name]['description']
+        else:
+            value['domains'] = sorted({domain(v) for v in value['domains']})
         result[name] = value
     return result
 

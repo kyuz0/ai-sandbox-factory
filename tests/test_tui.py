@@ -1656,16 +1656,58 @@ class WebAccessUITests(unittest.TestCase):
 
     async def test_network_category_selection_reaches_cli(self):
         app = Cockpit(self.root, FakeService(self.records))
-        async with app.run_test(size=(80,24)) as pilot:
-            await self.ready(app, pilot)
-            app.perform_action('network-settings')
-            await pilot.pause()
-            app.screen.query_one('#category-ut1-press', Checkbox).value = True
-            app.screen.query_one('#apply', Button).press()
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            call = app.service.calls[-1]
-            self.assertEqual(call[-2:], ['--website-groups', 'ut1-press'])
+        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=None):
+            async with app.run_test(size=(80,24)) as pilot:
+                await self.ready(app, pilot)
+                app.perform_action('network-settings')
+                await pilot.pause()
+                app.screen.query_one('#category-ut1-press', Checkbox).value = True
+                app.screen.query_one('#category-curlie-health', Checkbox).value = True
+                await pilot.pause()
+                news = app.screen.query_one('#category-ut1-press').parent.query_one('.checkbox-help', Static)
+                self.assertIn('UT1 Toulouse and Curlie', news.render().plain)
+                self.assertIn('about 180 MB', app.screen.query_one('#curlie-download-notice').render().plain)
+                actions = app.screen.query_one('.settings-actions').content_region
+                self.assertTrue(actions.contains_region(app.screen.query_one('#apply').region))
+                app.screen.query_one('#apply', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(app.service.calls[-1][-3:], ['--website-groups', 'ut1-press', 'curlie-health'])
+
+    async def test_curlie_refresh_and_apply_are_separate_choices(self):
+        from pi_sandbox_factory.sandbox_tui import Confirm, WebsiteGroups
+        old = {'revision': 'a' * 32, 'downloaded_at': 1700000000}
+        latest = {'revision': 'b' * 32, 'downloaded_at': 1700000100}
+        self.records[0]['config']['options'] = {'website_groups': ['ut1-press']}
+        self.records[0]['config']['website_groups'] = {'ut1-press': {'curlie_download': old}}
+        app = Cockpit(self.root, FakeService(self.records))
+        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=old), \
+             patch('pi_sandbox_factory.curlie_catalog.check', return_value={'size': '179000000'}), \
+             patch('pi_sandbox_factory.curlie_catalog.refresh', return_value=latest) as refresh:
+            async with app.run_test(size=(80,24)) as pilot:
+                await self.ready(app, pilot)
+                app.perform_action('network-settings')
+                await pilot.pause()
+                form = app.screen.query_one(WebsiteGroups)
+                self.assertIsNone(form.curlie_revision())
+                form.query_one('#refresh-curlie', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertIsInstance(app.screen, Confirm)
+                self.assertIn('179 MB', app.screen.message)
+                refresh.assert_not_called()
+                app.screen.query_one('#yes', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                refresh.assert_called_once()
+                self.assertIsNone(form.curlie_revision())
+                self.assertTrue(form.query_one('#use-newer-curlie-setting').display)
+                form.query_one('#use-newer-curlie', Checkbox).value = True
+                await pilot.pause()
+                app.screen.query_one('#apply', Button).press()
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                self.assertEqual(app.service.calls[-1][-2:], ['--curlie-list', latest['revision']])
 
     async def test_allow_all_is_scoped_and_saves_explicit_categories(self):
         from pi_sandbox_factory.sandbox_tui import WebsiteGroups, network_groups
@@ -1717,9 +1759,9 @@ class WebAccessUITests(unittest.TestCase):
             await toggle(marketplace)
             self.assertTrue(developers.value)
 
-            for prefix in ('auth', 'ut1'):
+            for prefix, sources in [('auth', ('auth-',)), ('ut1', ('ut1-', 'curlie-'))]:
                 control = groups.query_one(f'#category-all-{prefix}', Checkbox)
-                names = [name for name in network_groups.catalog() if name.startswith(prefix + '-')]
+                names = [name for name in network_groups.catalog() if name.startswith(sources)]
                 await toggle(control)
                 self.assertEqual(set(groups.selected()), set(developer_names + names))
                 await toggle(control)

@@ -85,7 +85,7 @@ and the authentication entries in its
 It is updated with Factory releases. Add your application's host and any
 company-specific federation/ADFS host as individual allowed destinations.
 
-The other **Authentication** categories are also opt-in and ship with Factory.
+Factory installs these optional **Authentication** lists on your computer.
 
 - **Google sign-in** allows Google Account sign-in and Sign in with Google. [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid)
 - **Gmail** adds webmail and attachment hosts and includes the Google sign-in
@@ -100,13 +100,34 @@ Add the destination app and any organization-specific login hosts separately.
 The GitHub and Facebook sign-in grants also allow other pages on `github.com`
 and `www.facebook.com`, which share the login hostnames.
 
-Under **Topics**, news, financial information, banking and library categories
-come from [UT1 Toulouse](https://dsi.ut-capitole.fr/blacklists/) through its
-[public mirror](https://github.com/olbat/ut1-blacklists).
+Under **Topics**, **News and press** combines UT1 Toulouse and Curlie. Financial
+information, banking and library resources come from UT1 Toulouse through its
+public mirror. [UT1 Toulouse](https://dsi.ut-capitole.fr/blacklists/) ·
+[Public mirror](https://github.com/olbat/ut1-blacklists)
 
-Selected V2Fly and UT1 categories update automatically on sandbox start or network changes,
-at most once a day. If the source is unavailable, the manager uses its cached or
-bundled list.
+Curlie also supplies Health, Science and environment, Government and law,
+Business and economics, Technology, Education and reference, History and
+society, Arts and culture, Sports and leisure, and Consumer information.
+These categories use English-language directory branches, including regional
+listings for health, education, government and law. Select the topics you need
+and add any missing host under **Additional allowed destinations**.
+
+With content from [Curlie.org](https://curlie.org/) - the largest human-edited
+directory of the web. Contribute by submitting a website or becoming an editor.
+[Curlie license](https://curlie.org/docs/en/license.html)
+
+Factory checks for V2Fly and UT1 updates when you start a sandbox or apply
+network rules, at most once a day. If a source is unavailable, Factory uses the
+last copy it has. Factory downloads the Curlie website list the first time you
+create a sandbox or apply network rules that use it. The download is about
+180 MB. Future sandboxes use the saved copy.
+
+In **Website categories → Topics**, **Curlie website list** shows the download
+date. Choose **Check for newer list** to see if an update is available, then
+choose whether to download it. This changes the saved copy for future sandboxes.
+Each existing sandbox keeps its current list. To update one, open its Network
+settings, select **Use newer list**, and choose **Apply**. Opening a website
+never downloads a list.
 
 Categories grant HTTP and HTTPS access, including the listed domains’ subdomains
 unless the source specifies an exact hostname. Category grants exclude private

@@ -104,6 +104,17 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 - HARD GATE — clear, consistent labels: use plain, direct names for controls. The same concept must have the same label across screens and engines. Never expose an internal implementation term where an ordinary user-facing name exists. Keep a shared name for each repeated concept and regression-test rendered labels and errors. Review visible copy before release; inconsistent or opaque labels block release.
 
+- HARD GATE — plain, complete instructions: give the reader enough context to
+  know what the action affects. Reserve short verb phrases for controls and
+  headings. Never write “Create and start downloads about 180 MB.” It omits
+  the sandbox and makes a button label sound like the thing that downloads
+  the file. Write “The Curlie list (about 180 MB) will be downloaded when you
+  create this sandbox.” Use the screen’s context to keep copy short. Write
+  “This sandbox uses the list downloaded on 19 Nov 2026” and “A newer list
+  downloaded on 20 Nov 2026 is available.” Repeat the product name only when
+  it gives the reader information they need. Apply this rule to all UI copy,
+  documentation, progress messages and errors.
+
 - HARD GATE — stable checkbox copy: the label and help describe what checking
   the box does. Keep both unchanged when the box is toggled. Explain the
   unchecked behavior only when the checked behavior leaves a genuine ambiguity.

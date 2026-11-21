@@ -727,10 +727,65 @@ async def capture(size):
                     value = copy.deepcopy(draft)
                     if config is not None:
                         value['options'] = options(config.get('options'))
+                        value['website_groups'] = config.get('website_groups', {})
                         value['network'] = config.get('network', value['network'])
                         value['local_model_ports'] = config.get('local_model_ports', value['local_model_ports'])
                     value['allowlist'] = (state / 'allowlist.txt').read_text() if text is None else text
                     return SettingsForm(value, editing=True, setting='network-settings')
+
+                if args.only and all(name.startswith('curlie-') for name in args.only):
+                    from pi_sandbox_factory.sandbox_tui import Confirm, WebsiteGroups
+                    before = {'revision': 'a' * 32, 'downloaded_at': 1795077720}
+                    newer = {'revision': 'b' * 32, 'downloaded_at': 1795209420}
+                    research = copy.deepcopy(c)
+                    research['options']['website_groups'] = ['ut1-press', 'curlie-health', 'curlie-science',
+                                                              'curlie-government']
+
+                    async def topics():
+                        for selector in ('#network-search-section', '#network-section', 'WebsiteGroups Collapsible'):
+                            app.screen.query_one(selector, Collapsible).collapsed = False
+                        await pilot.pause()
+                        widget = app.screen.query_one('#curlie-status').parent
+                        widget.scroll_visible(top=True, animate=False)
+                        await pilot.pause()
+
+                    for name, info in [('curlie-first-use', None), ('curlie-saved', newer)]:
+                        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=info):
+                            await app.push_screen(SettingsForm({**draft, 'options': research['options']}))
+                            await topics()
+                            await shot(name)
+                            if info:
+                                for part, anchor in [('news', '#category-ut1-press'),
+                                                     ('end', '#category-curlie-consumer')]:
+                                    app.screen.query_one(anchor).focus()
+                                    await shot('curlie-create-' + part)
+                            await app.pop_screen()
+                    research['website_groups'] = {'ut1-press': {'curlie_download': before}}
+                    with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=newer):
+                        await app.push_screen(network_form(config=research))
+                        await topics()
+                        await shot('curlie-existing')
+                        update = app.screen.query_one('#use-newer-curlie', Checkbox)
+                        update.value = True
+                        await shot('curlie-selected', focus='#use-newer-curlie')
+                        websites = app.screen.query_one(WebsiteGroups)
+                        websites.available_list = before
+                        update.value = False
+                        websites.show_curlie_status()
+                        websites.confirm_curlie_download('about 180 MB')
+                        await shot('curlie-confirm')
+                        await app.pop_screen()
+                        with patch('pi_sandbox_factory.curlie_catalog.refresh', side_effect=ValueError(
+                                'The Curlie download failed. The connection closed.')):
+                            websites.download_curlie()
+                            await app.workers.wait_for_complete()
+                        await topics()
+                        await shot('curlie-download-error')
+                        app.screen.query_one('#allowlist', TextArea).load_text('invalid.example/path')
+                        app.screen.query_one('#apply', Button).press()
+                        await shot('curlie-network-error')
+                        await app.pop_screen()
+                    return
 
                 if args.only and all(name.startswith('network-group-') for name in args.only):
                     await shot('network-group-menu', SettingsMenu('demo', c, 'browser'))

@@ -633,9 +633,10 @@ def up(config, state, *, prepare_sign_in=True):
     if restricted:
         host_platform.check_model_gateway(config)
         upgrade_gateway_config(state)
-        groups = network_groups.snapshots(options(config.get('options'))['website_groups'], config.get('website_groups'))
+        groups = network_groups.snapshots(options(config.get('options'))['website_groups'],
+                                          config.get('website_groups'), download_curlie=False)
         if groups != config.get('website_groups', {}):
-            config.update(update_network(config, state, (state / 'allowlist.txt').read_text()))
+            config.update(update_network(config, state, (state / 'allowlist.txt').read_text(), download_curlie=False))
     active = (proxy, dev) if restricted else (dev,)
     if any(current[name] is None for name in active):
         dev_image, proxy_image = image_names(config)
@@ -978,7 +979,8 @@ def create(args, state):
         config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
     if getattr(args, 'ssh_file', None):
         config['ssh'] = sandbox_ssh.validate(json.loads(Path(args.ssh_file).read_text()))
-    config['website_groups'] = network_groups.snapshots(options(config.get('options'))['website_groups'])
+    config['website_groups'] = (network_groups.snapshots(options(config.get('options'))['website_groups'],
+        curlie_revision=getattr(args, 'curlie_list', None)) if mode == 'allowlist' else {})
     if not native:
         config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
     if not creation_token:
@@ -1119,7 +1121,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
         if config.get('aws_access', {}) != changes['expected_aws_access']:
             raise ValueError('AWS access changed since this sandbox was selected. Reopen the profile to review it.')
         changes = {'aws_access': changes['aws_access']}
-    allowed = {'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers'}
+    allowed = {'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
     if 'aws_access' in changes:
@@ -1144,7 +1146,8 @@ def apply_settings(config, state, changes, *, apply_gate=None):
             print('No SSH or Git settings changed.')
             return
     updated = dict(config)
-    updated.update({k: v for k, v in changes.items() if k not in ('allowlist', 'skill_source', 'skill_path', 'remove_skills', 'library_skills')})
+    updated.update({k: v for k, v in changes.items() if k not in
+                    ('allowlist', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'curlie_list')})
     updated['working_directory'] = folders.working_directory(updated['workspace'], updated.get('working_directory', '.'))
     updated['extra_folders'] = folders.validate_config(updated, state.parent)
     if native:
@@ -1166,8 +1169,9 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     if 'advisors' in updated:
         updated['advisors'] = sandbox_advisors.validate(updated['advisors'])
     updated['options'] = options(updated.get('options'))
-    updated['website_groups'] = network_groups.snapshots(updated['options']['website_groups'],
-        config.get('website_groups'))
+    updated['website_groups'] = (network_groups.snapshots(updated['options']['website_groups'],
+        config.get('website_groups'), curlie_revision=changes.get('curlie_list'))
+        if network_mode(updated) == 'allowlist' else {})
     updated['memory'] = memory_limit(updated.get('memory'))
     if type(updated.get('subagents', False)) is not bool:
         raise ValueError('subagents must be a boolean')
@@ -1205,7 +1209,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     up(updated, state)
 
 
-def update_network(config, state, text, groups=None):
+def update_network(config, state, text, groups=None, *, download_curlie=True, curlie_revision=None):
     if network_mode(config) != 'allowlist':
         raise ValueError('Use Settings to switch to restricted networking first.')
     rules = parse_rules(text)
@@ -1220,7 +1224,8 @@ def update_network(config, state, text, groups=None):
     if groups is not None:
         selected_options['website_groups'] = network_groups.selected(groups)
     updated['options'] = selected_options
-    updated['website_groups'] = network_groups.snapshots(selected_options['website_groups'], config.get('website_groups'))
+    updated['website_groups'] = network_groups.snapshots(selected_options['website_groups'],
+        config.get('website_groups'), download_curlie=download_curlie, curlie_revision=curlie_revision)
     policy = network_policy(updated, rules)
     changed = policy != old_policy
     try:
@@ -1433,6 +1438,7 @@ def main():
     new.add_argument('--aws-access-file', help='JSON host AWS profile, role, region and sandbox permissions')
     new.add_argument('--ssh-file', help='JSON SSH destinations and trusted host public keys')
     new.add_argument('--options-file', help='JSON agent, skill and MCP settings')
+    new.add_argument('--curlie-list', help=argparse.SUPPRESS)
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
@@ -1479,6 +1485,7 @@ def main():
         if command == 'network':
             cmd.add_argument('--allowlist', required=True)
             cmd.add_argument('--website-groups', nargs='*', choices=list(network_groups.catalog()), default=None)
+            cmd.add_argument('--curlie-list', help=argparse.SUPPRESS)
         if command == 'configure':
             cmd.add_argument('--preview', action='store_true', help='Read-only model discovery')
             cmd.add_argument('--provider', help='Configure one selected provider')
@@ -1713,7 +1720,8 @@ def main():
             activity.record(state, 'edited')
             print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':
-        update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups)
+        update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups,
+                       curlie_revision=args.curlie_list)
     elif args.command == 'policy':
         if args.network == 'unrestricted' and args.allowlist:
             parser.error('--network unrestricted cannot be combined with --allowlist')

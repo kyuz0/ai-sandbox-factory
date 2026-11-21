@@ -3,6 +3,7 @@ from . import activity
 import json
 import copy
 import asyncio
+from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -45,6 +46,7 @@ from .primary_workspace import AGENTS as PRIMARY_AGENTS, agent as coding_agent
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from . import settings_effects
+from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
                               endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
@@ -273,6 +275,8 @@ class Service:
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
                     '--engine', draft['engine'], '--options-file', str(selected)]
+            if draft.get('_curlie_list'):
+                args += ['--curlie-list', draft['_curlie_list']]
             if coding_agent(draft) != 'pi':
                 args += ['--primary-agent', draft['primary_agent'], '--primary-auth', draft['primary_auth']]
             if draft.get('ssh', {}).get('hosts'):
@@ -455,6 +459,8 @@ class Service:
         changes.update(skill_source=draft.get('skill_repo', ''), skill_path=draft.get('skill_path', ''),
                        remove_skills=draft.get('remove_skills', []), library_skills=draft.get('library_skills', []))
         changes['allowlist'] = draft['allowlist'] if draft['network'] == 'allowlist' else ''
+        if draft.get('_curlie_list'):
+            changes['curlie_list'] = draft['_curlie_list']
         with tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, changes)
@@ -506,41 +512,164 @@ class WebsiteGroups(Vertical):
     .website-category-heading { height: 1; margin: 0 0 1 0; }
     .website-category-heading > Label { width: 22; }
     .website-category-heading > Checkbox { width: auto; margin: 0; }
+    WebsiteGroups #refresh-curlie { margin: 1 0 0 0; }
     """
     GROUPS = (
-        ('dev', 'Developer services'),
-        ('auth', 'Authentication'),
-        ('ut1', 'Topics'),
+        ('dev', 'Developer services', ('dev-',)),
+        ('auth', 'Authentication', ('auth-',)),
+        ('ut1', 'Topics', ('ut1-', 'curlie-')),
     )
 
-    def __init__(self, names):
+    def __init__(self, names, *, assigned=None):
         super().__init__()
         self.names = names
+        self.assigned = assigned
+        self.available_list = None
 
     def compose(self):
         with Collapsible(title='Website categories · optional', collapsed=True):
-            yield Static('Allow all selects every category in its group for HTTP and HTTPS access.', classes='section-intro')
-            yield Static('Authentication and VS Code extension lists ship with Factory. Other developer lists refresh automatically from V2Fly, and topic lists from UT1 Toulouse.', classes='section-intro')
+            yield Static('Selected categories allow HTTP and HTTPS traffic.', classes='section-intro')
             catalog = network_groups.catalog()
-            for prefix, title in self.GROUPS:
-                entries = [(name, group) for name, group in catalog.items() if name.startswith(prefix + '-')]
+            for prefix, title, sources in self.GROUPS:
+                entries = [(name, group) for name, group in catalog.items() if name.startswith(sources)]
                 with Vertical(id='website-category-' + prefix, classes='website-category-group'):
                     with Horizontal(classes='website-category-heading'):
                         yield Label(title, classes='group-title')
                         yield Checkbox('Allow all', value=all(name in self.names for name, _ in entries),
                                        id='category-all-' + prefix)
+                    if prefix == 'ut1':
+                        yield Static('UT1 Toulouse updates are checked when you start a sandbox or apply '
+                                     'network rules, at most once a day.',
+                                     classes='section-intro')
+                        with Vertical(classes='setting'):
+                            yield Label('Curlie website list')
+                            yield Static('', id='curlie-status', classes='setting-help')
+                            yield Button('Download Curlie list', id='refresh-curlie')
+                            yield Feedback('', id='curlie-error', markup=False)
+                        with Vertical(classes='setting', id='use-newer-curlie-setting'):
+                            yield Checkbox('Use newer list', id='use-newer-curlie')
+                            yield Static('Choose Apply to use the newer list in this sandbox.',
+                                         classes='setting-help checkbox-help')
                     for name, group in entries:
+                        if name == 'curlie-health':
+                            yield Label('From Curlie', classes='group-title')
                         with Vertical(classes='setting'):
                             yield Checkbox(group['title'], value=name in self.names, id='category-' + name,
                                            classes='website-category-member')
                             yield Static(group['description'], classes='setting-help checkbox-help')
 
     def on_mount(self):
+        self.available_list = curlie_catalog.metadata()
         self.update_title()
+        self.show_curlie_status()
+
+    def show_curlie_status(self):
+        def date(info):
+            return datetime.fromtimestamp(info['downloaded_at']).strftime('%d %b %Y at %H:%M')
+
+        latest = self.available_list
+        used = self.assigned
+        selected = self.uses_curlie()
+        newer = bool(used and latest and latest['downloaded_at'] > used['downloaded_at'])
+        if used:
+            text = f'This sandbox uses the list downloaded on {date(used)}.'
+            if newer:
+                text += f'\nA newer list downloaded on {date(latest)} is available.'
+        elif latest:
+            text = (f'This sandbox will use the list downloaded on {date(latest)}.' if selected else
+                    f'The saved list was downloaded on {date(latest)}.')
+        else:
+            text = 'There’s no saved Curlie list.'
+        self.query_one('#use-newer-curlie-setting').display = newer and selected
+        button = self.query_one('#refresh-curlie', Button)
+        if not button.disabled:
+            if self.query_one('#curlie-error', Feedback).display:
+                button.label = 'Retry'
+            else:
+                button.label = 'Check for newer list' if latest else 'Download Curlie list'
+        self.query_one('#curlie-status', Static).update(text)
+        self.screen.update_curlie_download_notice()
+
+    @on(Button.Pressed, '#refresh-curlie')
+    def check_curlie(self, event):
+        event.stop()
+        self.query_one('#curlie-error', Feedback).update('')
+        if self.available_list:
+            self.find_curlie_update()
+        else:
+            self.confirm_curlie_download()
+
+    @work(exit_on_error=False)
+    async def find_curlie_update(self):
+        button = self.query_one('#refresh-curlie', Button)
+        button.disabled = True
+        button.label = 'Checking…'
+        try:
+            update = await asyncio.to_thread(curlie_catalog.check)
+            if update and self.is_mounted:
+                size = update.get('size') or ''
+                self.confirm_curlie_download(f'about {int(size) / 1_000_000:.0f} MB' if size.isdecimal()
+                                            else curlie_catalog.DOWNLOAD_SIZE)
+            elif self.is_mounted:
+                self.notify('You have the latest Curlie list.')
+        except ValueError as error:
+            self.query_one('#curlie-error', Feedback).update(str(error))
+        finally:
+            if self.is_mounted:
+                button.disabled = False
+                self.show_curlie_status()
+
+    def confirm_curlie_download(self, size=curlie_catalog.DOWNLOAD_SIZE):
+        latest = self.available_list
+        message = (f'Curlie has a newer list. Download it ({size})?' if latest else
+                   f'Download the Curlie website list ({size})?')
+        if self.assigned:
+            message += '\nThis sandbox keeps its list until you select Use newer list and choose Apply.'
+        else:
+            message += '\nNew sandboxes will use the saved list.'
+        self.app.push_screen(Confirm(message, 'Download newer list' if latest else 'Download list',
+            confirm_by_default=True, cancel_label='Keep saved list' if latest else 'Cancel'),
+            lambda yes: self.download_curlie() if yes else None)
+
+    @work(exit_on_error=False)
+    async def download_curlie(self):
+        button = self.query_one('#refresh-curlie', Button)
+        button.disabled = True
+        button.label = 'Downloading…'
+        try:
+            self.available_list = await asyncio.to_thread(curlie_catalog.refresh, force=True, log=lambda _: None)
+            if self.is_mounted:
+                self.query_one('#use-newer-curlie', Checkbox).value = False
+                self.notify('The saved Curlie list is ready for new sandboxes.')
+        except ValueError as error:
+            message = str(error)
+            if self.available_list:
+                message += ' You can still use the saved list.'
+            self.query_one('#curlie-error', Feedback).update(message)
+        finally:
+            if self.is_mounted:
+                button.disabled = False
+                self.show_curlie_status()
+
+    def curlie_revision(self):
+        if not self.available_list or not self.uses_curlie():
+            return None
+        control = self.query_one('#use-newer-curlie', Checkbox)
+        if not self.assigned or (control.parent.display and control.value):
+            return self.available_list['revision']
+        return None
+
+    def uses_curlie(self):
+        return any(network_groups.catalog()[name].get('curlie') for name in self.selected())
+
+    def needs_curlie_download(self):
+        return not self.available_list and not self.assigned and self.uses_curlie()
 
     @on(Checkbox.Changed)
     def selection_changed(self, event):
         control = event.checkbox
+        if control.id == 'use-newer-curlie':
+            return
         group = control.query_ancestor('.website-category-group')
         bulk = group.query_one('.website-category-heading Checkbox', Checkbox)
         members = group.query('Checkbox.website-category-member')
@@ -552,6 +681,7 @@ class WebsiteGroups(Vertical):
             with bulk.prevent(Checkbox.Changed):
                 bulk.value = all(member.value for member in members)
         self.update_title()
+        self.show_curlie_status()
 
     def update_title(self):
         count = len(self.selected())
@@ -923,12 +1053,13 @@ class WebAccessForm(Vertical):
 
 
 class NetworkRulesFields(Vertical):
-    def __init__(self, text, groups, *, profile=None):
+    def __init__(self, text, groups, *, profile=None, assigned=None):
         super().__init__(id='network-rules-fields')
         self.rules, self.groups, self.profile = text, groups, profile
+        self.assigned = assigned
 
     def compose(self):
-        yield WebsiteGroups(self.groups)
+        yield WebsiteGroups(self.groups, assigned=self.assigned)
         with Vertical(classes='setting'):
             yield Label('Additional allowed destinations · hostname:port')
             yield TextArea(self.rules, id='allowlist')
@@ -2718,6 +2849,7 @@ class SettingsForm(Screen):
                 yield from compose_category(category, value, selected)
             yield Feedback('', id='form-error', classes='error', markup=False)
         with Vertical(classes='wizard-actions settings-actions'):
+            yield Static('', id='curlie-download-notice', classes='setting-help')
             open_label = 'Open sandbox after applying' if self.editing else 'Open sandbox after creation'
             if self.native:
                 open_label = 'Open ' + PRIMARY_AGENTS[self.primary] + (' after applying' if self.editing else ' when ready')
@@ -2881,14 +3013,10 @@ class SettingsForm(Screen):
             if self.editing:
                 yield Static('Changing the network mode recreates the sandbox.', classes='setting-help')
         with Vertical(id='network-rules-setting'):
-            if self.editing and value['network'] == 'allowlist':
-                yield Static(settings_effects.bullets([
-                    'Changing only the rules updates the gateway.',
-                    'Development processes keep running.',
-                    'Active connections may disconnect.',
-                ]), classes='section-intro')
             profile = self.profile_name if not self.native and (not self.editing or value['network'] == 'unrestricted') else None
-            yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=profile)
+            assigned = curlie_catalog.assigned(value.get('website_groups', {})) if self.editing else None
+            yield NetworkRulesFields(value.get('allowlist', ''), selected['website_groups'], profile=profile,
+                                    assigned=assigned)
             if not self.native and self.editing and value['network'] == 'allowlist':
                 search = web_access.destinations(selected['web_access'])
                 if search:
@@ -3187,6 +3315,7 @@ class SettingsForm(Screen):
     @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
+        self.update_curlie_download_notice()
         if self.native:
             self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
             self.query_one('#network-rules-setting').display = mode == 'allowlist'
@@ -3197,6 +3326,16 @@ class SettingsForm(Screen):
             category.label + ' · ' + network_search_summary(mode, search))
         self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
         self.query_one('#network-rules-setting').display = mode == 'allowlist'
+
+    def update_curlie_download_notice(self):
+        notice = self.query_one('#curlie-download-notice', Static)
+        websites = next(iter(self.query(WebsiteGroups)), None)
+        notice.display = bool(websites and not self.defaults_mode and self.query_one('#network', Select).value == 'allowlist'
+                              and websites.needs_curlie_download())
+        notice.parent.set_class(notice.display, '-with-curlie-notice')
+        if notice.display:
+            action = 'apply these settings' if self.editing else 'create this sandbox'
+            notice.update(f'The Curlie list ({curlie_catalog.DOWNLOAD_SIZE}) will be downloaded when you {action}.')
 
     def network_rules(self, text):
         try:
@@ -3219,13 +3358,17 @@ class SettingsForm(Screen):
         name = self.draft['name']
         text = self.query_one('#allowlist', TextArea).text
         self.network_rules(text)
-        groups = self.query_one(WebsiteGroups).selected()
+        websites = self.query_one(WebsiteGroups)
+        groups, curlie_list = websites.selected(), websites.curlie_revision()
         service = self.app.service
         def apply(log):
             with tempfile.TemporaryDirectory(prefix='sandbox-network-') as tmp:
                 path = Path(tmp) / 'allowlist.txt'
                 path.write_text(text)
-                service.run(['network', name, '--allowlist', str(path), '--website-groups', *groups], log)
+                args = ['network', name, '--allowlist', str(path), '--website-groups', *groups]
+                if curlie_list:
+                    args += ['--curlie-list', curlie_list]
+                service.run(args, log)
         mode = None if self.native else editor_settings.load(self.app.state_root / name)['mode']
         reopen = self.query_one('#open-editor', Checkbox).value
         self.app.pop_screen()
@@ -3245,7 +3388,9 @@ class SettingsForm(Screen):
             draft['network'] = self.query_one('#network', Select).value
             draft['allowlist'] = self.query_one('#allowlist', TextArea).text if draft['network'] == 'allowlist' else ''
             self.network_rules(draft['allowlist'])
-            selected['website_groups'] = self.query_one(WebsiteGroups).selected()
+            websites = self.query_one(WebsiteGroups)
+            selected['website_groups'] = websites.selected()
+            draft['_curlie_list'] = websites.curlie_revision()
         if self.setting in (None, 'resources'):
             draft['memory'] = memory_limit(self.query_one('#memory', Input).value.strip())
             draft['engine'] = self.query_one('#engine', Select).value
@@ -3327,7 +3472,9 @@ class SettingsForm(Screen):
             if (provider not in draft['model_providers'] and provider not in draft.get('hosted_connections', {})
                     and provider not in draft.get('_hosted_changes', {})):
                 raise ValueError('The embedding provider is no longer configured. Choose a provider in Document search.')
-        selected['website_groups'] = self.query_one(WebsiteGroups).selected()
+        websites = self.query_one(WebsiteGroups)
+        selected['website_groups'] = websites.selected()
+        draft['_curlie_list'] = websites.curlie_revision()
         selected.update(approval=self.query_one('#approval', Select).value, inner_sandbox=check('inner-sandbox'),
                         protect_credentials=check('protect-credentials'),
                         protect_browser_credentials=check('protect-browser-credentials'),
@@ -3375,6 +3522,8 @@ class SettingsForm(Screen):
 
     def configuration_unchanged(self, draft):
         original = self.draft
+        if draft.get('_curlie_list'):
+            return False
         for field in ('network', 'memory', 'subagents', 'local_model_ports', 'env_file'):
             if (draft.get(field) or None) != (original.get(field) or None):
                 return False
@@ -3671,10 +3820,11 @@ class Cockpit(App):
     .provider-details > *:last-child { margin-bottom: 0; }
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
-    #model-ports-error, #network-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports-error, #network-error, #curlie-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
     #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
     .compact-terminal .native-primary-form #allowlist { height: 6; }
-    Screen:nocolor #model-ports-error, Screen:nocolor #network-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
+    Screen:nocolor #model-ports-error, Screen:nocolor #network-error,
+    Screen:nocolor #curlie-error, Screen:nocolor .key-dialog Feedback { color: white; text-style: bold reverse; }
     ModelsScreen #configuration { margin: 1 0 0 0; }
     ModelsScreen #legacy-provider-key { margin: 0 0 1 2; }
     .setting > Checkbox, .setting > TextArea { margin-bottom: 0; }
@@ -3724,6 +3874,8 @@ class Cockpit(App):
     .buttons { height: 1; min-height: 1; margin: 1 0; }
     .wizard-actions { dock: bottom; height: 3; padding: 1 3; margin-bottom: 1; width: 100%; }
     .settings-actions { height: 5; padding: 1 3; }
+    .settings-actions.-with-curlie-notice { height: auto; }
+    #curlie-download-notice { margin: 0 0 1 0; }
     .action-buttons { height: 1; }
     .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }

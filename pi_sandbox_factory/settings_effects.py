@@ -63,6 +63,8 @@ def configuration_changes(original, draft):
     from .sandbox import parse_rules
     if set(parse_rules(original.get('allowlist', ''))) != set(parse_rules(draft.get('allowlist', ''))):
         groups.add(NETWORK_LABEL)
+    if draft.get('_curlie_list'):
+        groups.add('Curlie website list')
     providers = original.get('model_providers', {'local': {}})
     if isinstance(providers, list):
         providers = {row['name']: row.get('settings', {}) for row in providers}

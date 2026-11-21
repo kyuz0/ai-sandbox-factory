@@ -674,6 +674,14 @@ changes. Documentation, tests and workflows alone must not trigger a release.
 
 ## Web Search
 
+Run `PYTHONPATH=tests .venv/bin/python -m unittest test_curlie_catalog test_web_access test_tui.WebAccessUITests`
+to check the first Curlie download, reuse of the saved copy, and updates to one
+sandbox at a time. The tests also check that an invalid download leaves the
+previous list available. Run `tests/render_tui.py` with the `curlie-*` fixture
+names `--only curlie-first-use curlie-saved curlie-confirm curlie-selected
+curlie-download-error` to review the download notice, saved date, confirmation
+and retry.
+
 For a live check, create the disposable sandbox described above with an options
 file containing `{"web_access":{"enabled":true},"website_groups":["dev-python"]}`.
 Run `tests/integration.py` with `--web-access` instead of

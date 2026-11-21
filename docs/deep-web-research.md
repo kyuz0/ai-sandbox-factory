@@ -13,10 +13,12 @@ Search uses `pi-web-access` to find sources. Pi can also read local references.
    provider. **Automatic fallback** starts with keyless Exa. Use **Add provider**
    for another service or choose an **Only…** mode to send every search to one
    provider. [Search providers](web-access.md#web-search)
-3. Keep **Network mode** on **Restricted**. Under **Network**, either select
-   **Python** in **Website categories** or leave categories off and enter
-   `docs.python.org:443` under **Additional allowed destinations** for just that
-   website. Categories and host entries add to each other. Factory separately
+3. Keep **Network mode** on **Restricted**. Under **Network → Website categories
+   → Topics**, select the sources you need, such as **News and press**,
+   **Health**, or **Government and law**. For the Python example below, select
+   **Python** under **Developer services** or enter `docs.python.org:443` under
+   **Additional allowed destinations** for just that website. Categories and
+   host entries add to each other. Factory separately
    allows the search provider. It can return snippets from other sites, while
    direct page reads follow your network rules. [Website access](web-access.md#network-access)
 4. Choose **Create and start**. Open Pi or FrostPi. The startup hint tells you
