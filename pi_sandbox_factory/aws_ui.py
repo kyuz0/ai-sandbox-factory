@@ -164,14 +164,19 @@ class AWSProfileChoices(Vertical):
             self.query_one(Feedback).update(f'Could not read sandbox assignments. {exc}')
             rollout.display = False
         if value:
-            rules = [' '.join((', '.join(aws_access._strings(rule['Action'])),
-                               ', '.join(aws_access._strings(rule['Resource'])))) for rule in value['grants']]
-            preview = '\n'.join([value['profile'] + ' · ' + value['region'], value['role'], *rules])
+            rules = []
+            for rule in value['grants']:
+                actions = ', '.join(aws_access._strings(rule['Action']))
+                resources = ', '.join('All resources' if resource == '*' else resource
+                                      for resource in aws_access._strings(rule['Resource']))
+                rules.append(actions + ' · ' + resources)
+            preview = '\n'.join([value['profile'] + ' · ' + value['region'], value['role'],
+                                 '', 'Allowed actions and resources', *rules])
         else:
             preview = '' if self.profiles else 'No saved AWS access profiles.'
         self.query_one('#aws-preview', Static).update(preview)
         if isinstance(self.screen, AWSProfilePicker):
-            self.screen.query_one('#aws-assign', Button).disabled = not value
+            self.screen.query_one('#aws-assign', Button).disabled = not value or value == self.screen.current
 
     @on(Button.Pressed, '.aws-profile-actions Button')
     def edit(self, event):
@@ -224,23 +229,19 @@ class AWSProfileChoices(Vertical):
 class AWSProfilePicker(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
 
-    def __init__(self, current=None, *, first_connection=False, sandbox_name=None):
-        super().__init__()
+    def __init__(self, current=None, *, sandbox_name=None):
+        super().__init__(classes='has-assignment' if current else None)
         self.current = current or {}
-        self.first_connection = first_connection
         self.sandbox_name = sandbox_name
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label('AWS access')
+            if self.current:
+                yield Static('Assigned to this sandbox · ' + profile_label(self.current),
+                             classes='section-intro', markup=False, id='aws-assigned')
             with VerticalScroll(classes='aws-profile-body'):
-                if self.current:
-                    yield Static('Assigned to this sandbox · ' + profile_label(self.current),
-                                 classes='section-intro', markup=False, id='aws-assigned')
                 yield AWSProfileChoices(self.current)
-                if self.first_connection:
-                    yield Static('Connecting AWS for the first time recreates the sandbox to install the AWS CLI.',
-                                 classes='setting-help')
             with Horizontal(classes='dialog-actions'):
                 if self.current:
                     yield Button('Disconnect', id='aws-disconnect')
@@ -249,7 +250,9 @@ class AWSProfilePicker(EntryDialog):
 
     def on_mount(self):
         choices = self.query_one(AWSProfileChoices)
-        self.set_focus(choices.query_one(Select) if choices.profiles else choices.query_one('#aws-new'))
+        self.set_focus(choices.query_one(Select) if choices.profiles else choices.query_one('#aws-new'),
+                       scroll_visible=False)
+        self.call_after_refresh(self.query_one('.aws-profile-body').scroll_home, animate=False)
 
     @on(Button.Pressed, '#aws-cancel')
     def action_cancel(self):
@@ -267,6 +270,7 @@ class AWSProfilePicker(EntryDialog):
                 self.query_one(Feedback).update(str(exc))
                 return
             self.query_one('#aws-assigned', Static).update('Assigned to this sandbox · ' + profile_label(self.current))
+            self.query_one(AWSProfileChoices).show_profile()
 
     @on(Button.Pressed, '#aws-assign')
     def assign(self):

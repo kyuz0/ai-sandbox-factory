@@ -26,7 +26,7 @@ from pi_sandbox_factory import aws_profiles
 from pi_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
 from pi_sandbox_factory.creation import Creation
 from pi_sandbox_factory.settings_catalog import EDIT_FORMS
-from pi_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts
+from pi_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
 from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
@@ -123,7 +123,10 @@ async def capture(size):
                                  region='eu-west-1', grants=[{'Action': 'ec2:DescribeRegions', 'Resource': '*'}])
                     await shot('aws-access-setup', AWSAccessDialog({}))
                     with patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(root / 'aws-library')):
-                        await shot('aws-access-empty', AWSProfilePicker(first_connection=True))
+                        await shot('aws-access-empty', AWSProfilePicker())
+                        await shot('aws-access-restart', confirm_aws_installation('research', 'restart', restricted=True))
+                        await shot('aws-access-stopped', confirm_aws_installation('research', 'replace'))
+                        await shot('aws-access-gateway', confirm_aws_installation('research', 'gateway'))
                         profile = aws_profiles.save('Research', grant)
                         await shot('aws-access-library', PackagesScreen('aws-profiles'))
                         await shot('aws-access-picker', AWSProfilePicker(profile))
@@ -755,6 +758,10 @@ async def capture(size):
                             await topics()
                             await shot(name)
                             if info:
+                                for part, anchor in [('website', '#website-category-sources'),
+                                                     ('topics', '#website-topic-sources')]:
+                                    app.screen.query_one(anchor).scroll_visible(top=True, animate=False)
+                                    await shot('curlie-sources-' + part)
                                 for part, anchor in [('news', '#category-ut1-press'),
                                                      ('end', '#category-curlie-consumer')]:
                                     app.screen.query_one(anchor).focus()

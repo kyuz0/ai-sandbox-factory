@@ -2,7 +2,7 @@
   "groups": {
     "ut1-press": {
       "title": "News and press",
-      "description": "Allow news sites listed by UT1 Toulouse and Curlie.",
+      "description": "Newspapers, broadcasters and other news sites.",
       "branches": ["News"]
     },
     "curlie-health": {

@@ -118,6 +118,12 @@ def client_mount(state):
             '-v', socket_mount(state, 'ro')]
 
 
+def has_client_mount(container):
+    return bool(container and any(mount.get('Type') == 'bind' and
+                                  mount.get('Destination') == '/run/aws-access' and not mount.get('RW', True)
+                                  for mount in container.get('Mounts', [])))
+
+
 def worker_name(config):
     from .sandbox_options import RESOURCE_PREFIX
     return RESOURCE_PREFIX + config['name'] + '-aws'

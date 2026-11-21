@@ -528,7 +528,9 @@ class WebsiteGroups(Vertical):
 
     def compose(self):
         with Collapsible(title='Website categories · optional', collapsed=True):
-            yield Static('Selected categories allow HTTP and HTTPS traffic.', classes='section-intro')
+            yield Static('Selected categories allow HTTP and HTTPS traffic. The catalog combines lists from '
+                         'V2Fly, UT1 Toulouse and Curlie with lists curated by Factory.',
+                         id='website-category-sources', classes='section-intro')
             catalog = network_groups.catalog()
             for prefix, title, sources in self.GROUPS:
                 entries = [(name, group) for name, group in catalog.items() if name.startswith(sources)]
@@ -538,6 +540,9 @@ class WebsiteGroups(Vertical):
                         yield Checkbox('Allow all', value=all(name in self.names for name, _ in entries),
                                        id='category-all-' + prefix)
                     if prefix == 'ut1':
+                        yield Static('News and press combines UT1 Toulouse and Curlie. Financial information, '
+                                     'Banking and Library resources use UT1 Toulouse. The other topics use Curlie.',
+                                     id='website-topic-sources', classes='section-intro')
                         yield Static('UT1 Toulouse updates are checked when you start a sandbox or apply '
                                      'network rules, at most once a day.',
                                      classes='section-intro')
@@ -551,8 +556,6 @@ class WebsiteGroups(Vertical):
                             yield Static('Choose Apply to use the newer list in this sandbox.',
                                          classes='setting-help checkbox-help')
                     for name, group in entries:
-                        if name == 'curlie-health':
-                            yield Label('From Curlie', classes='group-title')
                         with Vertical(classes='setting'):
                             yield Checkbox(group['title'], value=name in self.names, id='category-' + name,
                                            classes='website-category-member')
@@ -578,8 +581,11 @@ class WebsiteGroups(Vertical):
         elif latest:
             text = (f'This sandbox will use the list downloaded on {date(latest)}.' if selected else
                     f'The saved list was downloaded on {date(latest)}.')
+        elif selected and not self.screen.defaults_mode:
+            action = 'apply these settings' if self.screen.editing else 'create this sandbox'
+            text = f'The list downloads when you {action}. You can download it in advance.'
         else:
-            text = 'There’s no saved Curlie list.'
+            text = 'There’s no saved Curlie list. You can download it in advance.'
         self.query_one('#use-newer-curlie-setting').display = newer and selected
         button = self.query_one('#refresh-curlie', Button)
         if not button.disabled:
@@ -1140,6 +1146,25 @@ class Confirm(ModalScreen[bool]):
     def pressed(self, event):
         event.stop()
         self.dismiss(event.button.id == 'yes')
+
+
+def confirm_aws_installation(name, effect, *, restricted=False):
+    if effect == 'gateway':
+        return Confirm('The sandbox will keep running. Active network connections may need to reconnect.',
+                       'Restart gateway and connect', confirm_by_default=False,
+                       title=f'Restart the network gateway for {name}?')
+    running = effect == 'restart'
+    effects = [
+        'Running terminals and development servers will stop. In-progress agent work may be interrupted.' if running else
+        'The sandbox will stay stopped. AWS access will be available the next time you start it.',
+        'Files stored only in the old container, such as files in /tmp and manually installed system packages, will be removed.',
+        'Project files, your sandbox home folder and saved chats are kept.',
+    ]
+    if running and restricted:
+        effects.insert(1, 'Active network connections will close when the gateway restarts.')
+    return Confirm('AWS tools need to be installed once.\n\n' + settings_effects.bullets(effects),
+                   'Restart and connect' if running else 'Install AWS tools', confirm_by_default=False,
+                   title=f'Restart {name} to connect AWS?' if running else f'Install AWS tools in {name}?')
 
 
 class FactoryUpdateDetails(ModalScreen[None]):
@@ -4047,11 +4072,14 @@ class Cockpit(App):
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
     .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
-    .aws-profile-actions { height: auto; margin: 1 0 0 0; }
+    #confirm-box .aws-profile-actions { height: auto; margin: 1 0 0 0; }
     .aws-target { margin: 0 0 1 0; }
     #aws-fields { height: auto; max-height: 68vh; padding: 0; scrollbar-size-vertical: 1; }
     .compact-terminal AWSAccessDialog #confirm-box { height: 90%; }
     .compact-terminal #aws-fields { height: 1fr; max-height: 100%; }
+    .compact-terminal AWSProfilePicker.has-assignment #confirm-box { height: 90%; }
+    .compact-terminal AWSProfilePicker.has-assignment .aws-profile-body { height: 1fr; max-height: 100%; }
+    .compact-terminal AWSProfilePicker.has-assignment AWSProfileChoices { margin: 0; }
     #aws-fields .setting > Input { margin: 1 0 0 0; }
     #aws-grants { height: 4; margin: 1 0; padding: 0 1; border: none; background: #414850; }
     #aws-grants:focus { border: none; border-left: thick $primary; }
@@ -4498,14 +4526,38 @@ class Cockpit(App):
             self.push_screen(SettingsMenu(name, saved, editor_settings.load(state)['mode'], prompt_library.selection(state)),
                              lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'aws-access':
-            saved_access = config.get('aws_access') or {}
+            saved_access = self.service.config(name).get('aws_access') or {}
+
             def change(value):
-                if value is None or value == self.service.config(name).get('aws_access', {}):
+                if value is None or value == saved_access:
                     return
-                self.push_screen(Operation('Updating AWS access', lambda log:
-                    self.service.update_settings(name, {'aws_access': value}, log),
-                    success_message='AWS access updated.', done_on_success=True))
-            self.push_screen(AWSProfilePicker(saved_access, first_connection=not saved_access, sandbox_name=name), change)
+                try:
+                    current = self.service.config(name)
+                    effect = sandbox.aws_installation(current, self.state_root / name, value)[0] if value else 'ready'
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    self.notify(safe_text(error), severity='error')
+                    return
+
+                def apply(confirmed=True):
+                    if not confirmed:
+                        return
+                    changes = {'aws_access': value, 'expected_aws_access': saved_access,
+                               'expected_aws_installation': effect}
+                    success = ('AWS disconnected.' if not value else
+                               'AWS access is ready. Choose Open to resume work.' if effect == 'restart' else
+                               'AWS access saved for the next start.' if effect in ('replace', 'prepare') else
+                               'AWS access updated.')
+                    self.push_screen(UpdateOperation('Updating AWS access', lambda log, update:
+                        self.service.update_settings(name, changes, log, update),
+                        success_message=success, done_on_success=True))
+
+                if effect in ('restart', 'replace', 'gateway'):
+                    self.push_screen(confirm_aws_installation(name, effect,
+                                                               restricted=sandbox.network_mode(current) == 'allowlist'), apply)
+                else:
+                    apply()
+
+            self.push_screen(AWSProfilePicker(saved_access, sandbox_name=name), change)
         elif action == 'folders':
             self.push_screen(FoldersScreen(record))
         elif action == 'ssh-settings':

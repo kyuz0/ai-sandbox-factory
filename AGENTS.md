@@ -74,6 +74,20 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ## Capacity and recovery
 
+- HARD GATE — no elephant-in-a-crystal-shop workflows. Use the smallest change
+  that does what the user asked. Preserve workspace files, saved conversations,
+  sign-ins, and running work wherever the feature allows it. Replacing a
+  container or erasing state requires a concrete technical reason. Prepare and
+  validate the replacement before interrupting work. When replacing a running
+  sandbox, keep the previous runtime available until the new one works. Test
+  what happens when it fails. Preserve whether the sandbox was running or stopped.
+- Before applying an unavoidable restart or loss, name the sandbox, the work
+  that will stop, the data that will be removed, and the data that will survive.
+  Put those consequences and a clearly named action together. Offer a backup or
+  export before confirmation when saved data is at risk. For Pi chat history,
+  use **Actions… → Export chat history…**. Test that the confirmed action matches
+  the lifecycle path and that unrelated settings changes skip the warning.
+
 - HARD GATE — every validation rule needs a concrete reason. Reject input only
   when it would violate a supported format, dependency or platform constraint,
   security boundary, or a demonstrated resource limit. Name the constraint

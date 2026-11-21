@@ -5,7 +5,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from pi_sandbox_factory import aws_access, sandbox
 
@@ -86,3 +86,92 @@ class AWSAccessTests(unittest.TestCase):
                 self.assertEqual(set(sandbox.shell_network_policy({'network': mode, 'aws_access': self.value}, state)
                                      ['allowedDomains']), expected)
                 self.assertEqual(sandbox.shell_network_policy({'network': mode}, state)['allowedDomains'], [])
+
+    def test_reconnect_reuses_aws_client_and_changes_only_signer(self):
+        config = dict(name='test', engine='podman', network='unrestricted')
+        mounted = dict(Id='workspace', State={'Running': True}, Mounts=[
+            {'Type': 'bind', 'Destination': '/run/aws-access', 'RW': False}])
+        with TemporaryDirectory() as tmp, patch.object(sandbox, 'inspect', return_value=mounted), \
+                patch.object(sandbox, 'build') as build, patch.object(sandbox, 'run') as run, \
+                patch.object(aws_access, 'up') as signer, patch.object(aws_access, 'down') as disconnect:
+            state = Path(tmp)
+            sandbox.apply_aws_settings(config, state, self.value, approval='ready')
+            enabled = json.loads((state / 'config.json').read_text())
+            sandbox.apply_aws_settings(enabled, state, {}, approval='ready')
+            signer.assert_called_once_with(enabled, state)
+            disconnect.assert_called_once_with(enabled)
+            build.assert_not_called()
+            run.assert_not_called()
+
+    def test_reconnect_sign_in_failure_preserves_the_running_gateway(self):
+        config = dict(name='test', engine='podman', network='allowlist')
+        mounted = dict(Id='prepared', State={'Running': True}, Mounts=[
+            {'Type': 'bind', 'Destination': '/run/aws-access', 'RW': False}])
+        with TemporaryDirectory() as tmp, patch.object(sandbox, 'inspect', return_value=mounted), \
+                patch.object(sandbox, 'restart_existing') as restart, \
+                patch.object(aws_access, 'up', side_effect=ValueError('Sign in again')):
+            state = Path(tmp)
+            (state / 'allowlist.txt').write_text('')
+            original_policy = sandbox.network_policy(config, [])
+            (state / 'squid.conf').write_text(original_policy)
+            with self.assertRaisesRegex(ValueError, 'Sign in again'):
+                sandbox.apply_aws_settings(config, state, self.value, approval='gateway')
+            restart.assert_not_called()
+            self.assertEqual((state / 'squid.conf').read_text(), original_policy)
+
+    def test_first_install_preserves_stopped_state_and_running_state(self):
+        config = dict(name='test', engine='podman', network='unrestricted')
+        dev = sandbox.names(config)[0]
+        for running, effect in [(False, 'replace'), (True, 'restart')]:
+            with self.subTest(running=running), TemporaryDirectory() as tmp:
+                state = Path(tmp)
+                (state / 'allowlist.txt').write_text('')
+                (state / 'squid.conf').write_text('')
+                old_runtime = dict(Id='old-workspace', State={'Running': running})
+                operations = Mock()
+                with patch.object(sandbox, 'inspect', return_value=old_runtime), \
+                        patch.object(sandbox, 'build', operations.build), patch.object(sandbox, 'up', operations.start), \
+                        patch.object(sandbox, 'run', operations.engine), patch.object(aws_access, 'up', operations.signer):
+                    sandbox.apply_aws_settings(config, state, self.value, approval=effect)
+                updated = json.loads((state / 'config.json').read_text())
+                self.assertEqual(updated['aws_access'], self.value)
+                operations.build.assert_called_once_with(updated)
+                commands = [args[0] for args, _ in operations.engine.call_args_list]
+                self.assertIn(['podman', 'rm', 'old-workspace'], commands)
+                self.assertFalse(any(cmd[1] == 'volume' for cmd in commands))
+                if running:
+                    operations.signer.assert_called_once_with(updated, state)
+                    operations.start.assert_called_once_with(updated, state, prepare_sign_in=False)
+                    self.assertEqual([cmd[1] for cmd in commands], ['stop', 'rename', 'exec', 'rm'])
+                    self.assertEqual(commands[2][2], dev)
+                    self.assertEqual([call[0] for call in operations.mock_calls],
+                                     ['build', 'signer', 'engine', 'engine', 'start', 'engine', 'engine'])
+                else:
+                    operations.signer.assert_not_called()
+                    operations.start.assert_not_called()
+                    self.assertEqual([cmd[1] for cmd in commands], ['rename', 'rm'])
+
+    def test_failed_replacement_restores_original_container(self):
+        config = dict(name='test', engine='podman', network='unrestricted')
+        dev = sandbox.names(config)[0]
+        updated = {**config, 'aws_access': self.value}
+        original = dict(Id='original', State={'Running': True})
+        replacement = dict(Id='replacement', State={'Running': False})
+        with TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / 'allowlist.txt').write_text('')
+            (state / 'squid.conf').write_text('previous policy')
+            (state / 'config.json').write_text(json.dumps(config))
+            with patch.object(sandbox, 'up', side_effect=[ValueError('Startup failed'), None]) as up, \
+                    patch.object(sandbox, 'inspect', side_effect=[replacement, None]), \
+                    patch.object(sandbox, 'run') as run, patch.object(aws_access, 'up'), \
+                    patch.object(aws_access, 'down') as down:
+                with self.assertRaisesRegex(ValueError, 'Startup failed'):
+                    sandbox.replace_for_aws(config, updated, state, 'restart', {dev: original})
+            commands = [args[0] for args, _ in run.call_args_list]
+            self.assertEqual(commands[-2:], [['podman', 'rm', '-f', 'replacement'],
+                                             ['podman', 'rename', 'original', dev]])
+            up.assert_called_with(config, state, prepare_sign_in=False)
+            down.assert_called_once_with(updated)
+            self.assertEqual((state / 'squid.conf').read_text(), 'previous policy')
+            self.assertEqual(json.loads((state / 'config.json').read_text()), config)

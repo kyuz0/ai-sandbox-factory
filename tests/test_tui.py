@@ -1675,8 +1675,13 @@ class WebAccessUITests(unittest.TestCase):
                 app.screen.query_one('#category-ut1-press', Checkbox).value = True
                 app.screen.query_one('#category-curlie-health', Checkbox).value = True
                 await pilot.pause()
-                news = app.screen.query_one('#category-ut1-press').parent.query_one('.checkbox-help', Static)
-                self.assertIn('UT1 Toulouse and Curlie', news.render().plain)
+                sources = app.screen.query_one('#website-category-sources', Static).render().plain
+                self.assertIn('V2Fly, UT1 Toulouse and Curlie with lists curated by Factory', sources)
+                topics = app.screen.query_one('#website-topic-sources', Static).render().plain
+                self.assertIn('News and press combines UT1 Toulouse and Curlie.', topics)
+                self.assertIn('The other topics use Curlie.', topics)
+                self.assertIn('downloads when you apply these settings',
+                              app.screen.query_one('#curlie-status', Static).render().plain)
                 self.assertIn('about 180 MB', app.screen.query_one('#curlie-download-notice').render().plain)
                 actions = app.screen.query_one('.settings-actions').content_region
                 self.assertTrue(actions.contains_region(app.screen.query_one('#apply').region))

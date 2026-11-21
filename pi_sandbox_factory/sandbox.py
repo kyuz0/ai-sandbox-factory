@@ -25,6 +25,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit, quote
 from types import SimpleNamespace
+from uuid import uuid4
 from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
                               options, memory_limit, permissions, write_json, guidance)
 
@@ -1110,9 +1111,151 @@ def prepare_options(config, state):
     guide.chmod(0o600)
 
 
+def aws_installation(config, state, access):
+    """Determine which existing containers need the AWS client mount."""
+    dev, gateway = names(config)[:2]
+    workspace = inspect(config, dev)
+    proxy = inspect(config, gateway) if network_mode(config) == 'allowlist' else None
+    saved_for_next_start = not workspace and not proxy and config.get('aws_access')
+    has_mounts = aws_access.has_client_mount(workspace) and (
+        network_mode(config) == 'unrestricted' or aws_access.has_client_mount(proxy))
+    if saved_for_next_start or has_mounts:
+        effect = 'ready'
+        if proxy and proxy['State']['Running']:
+            rules = parse_rules((state / 'allowlist.txt').read_text())
+            if network_policy({**config, 'aws_access': access}, rules) != (state / 'squid.conf').read_text():
+                effect = 'gateway'
+    elif workspace and workspace['State']['Running']:
+        effect = 'restart'
+    elif workspace or proxy:
+        effect = 'replace'
+    else:
+        effect = 'prepare'
+    return effect, {name: data for name, data in ((dev, workspace), (gateway, proxy)) if data}
+
+
+def replace_for_aws(config, updated, state, effect, containers):
+    """Keep the old writable layers until the new runtime is ready."""
+    engine = config['engine']
+    policy = state / 'squid.conf'
+    prior_policy = policy.read_text()
+    next_policy = network_policy(updated, parse_rules((state / 'allowlist.txt').read_text()))
+    moved = {}
+    stopped = []
+    if effect == 'restart':
+        aws_access.up(updated, state)  # Check the host sign-in before interrupting work.
+    try:
+        for name, info in containers.items():
+            container_id = info['Id']
+            if info['State']['Running']:
+                run([engine, 'stop', container_id])
+                stopped.append((name, container_id))
+            run([engine, 'rename', container_id, f'{name}-before-aws-{uuid4().hex}'])
+            moved[name] = container_id
+        policy.write_text(next_policy)
+        if effect == 'restart':
+            up(updated, state, prepare_sign_in=False)
+            run([engine, 'exec', names(config)[0], 'sh', '-c',
+                 'command -v aws >/dev/null && test -S /run/aws-access/request.sock'])
+        activity.save_config(state, updated)
+    except Exception:
+        try:
+            for name in names(config)[:2]:
+                current = inspect(updated, name)
+                old = containers.get(name, {})
+                if current and current['Id'] != old.get('Id'):
+                    run([engine, 'rm', '-f', current['Id']])
+                if name in moved:
+                    run([engine, 'rename', moved[name], name])
+            policy.write_text(prior_policy)
+            refresh_shell_network(config, state)
+            if not config.get('aws_access'):
+                aws_access.down(updated)
+            if effect == 'restart' and stopped:
+                up(config, state, prepare_sign_in=False)
+            else:
+                for _, container_id in reversed(stopped):
+                    run([engine, 'start', container_id])
+            write_json(state / 'config.json', config)
+        except Exception as error:
+            raise ValueError('AWS setup failed and Factory could not restore the previous runtime. '
+                             'Your project files and saved chats remain. See the output above.') from error
+        print('AWS setup failed. Factory restored the previous containers and settings.', flush=True)
+        raise
+    for container_id in moved.values():
+        try:
+            run([engine, 'rm', container_id])
+        except (OSError, subprocess.SubprocessError):
+            print(f'AWS access was saved. Could not remove the previous stopped container {container_id}.')
+
+
+def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
+    current = config.get('aws_access', {})
+    if value == current:
+        return
+    updated = {**config, 'aws_access': value}
+    effect, containers = aws_installation(config, state, value) if value else ('ready', {})
+    if approval is not None and effect != approval:
+        raise ValueError('The sandbox changed while AWS access was open. Open AWS access to review the change again.')
+    if effect in ('restart', 'replace', 'prepare'):
+        build(updated)
+        latest_effect, latest_containers = aws_installation(config, state, value)
+        if latest_effect != effect or {n: c['Id'] for n, c in latest_containers.items()} != {
+                n: c['Id'] for n, c in containers.items()}:
+            raise ValueError('The sandbox changed while AWS tools were building. Open AWS access to review the change again.')
+        if not updating.begin_apply(apply_gate):
+            return
+        replace_for_aws(config, updated, state, effect, latest_containers)
+        print('AWS access connected.' if effect == 'restart' else 'AWS access saved for the next start.')
+        return
+    if not updating.begin_apply(apply_gate):
+        return
+    running = containers.get(names(config)[0], {}).get('State', {}).get('Running')
+    policy = state / 'squid.conf'
+    previous = None
+    if value and network_mode(config) == 'allowlist':
+        old_policy = policy.read_text()
+        updated_policy = network_policy(updated, parse_rules((state / 'allowlist.txt').read_text()))
+        if updated_policy != old_policy:
+            policy.write_text(updated_policy)
+            previous = old_policy
+    gateway = names(config)[1]
+    restarting_gateway = False
+    try:
+        if not value:
+            aws_access.down(config)
+        elif running:
+            aws_access.up(updated, state)
+        if effect == 'gateway':
+            restarting_gateway = True
+            restart_existing(config, gateway)
+            ensure_gateway(config)
+    except Exception:
+        if previous is not None:
+            policy.write_text(previous)
+        if restarting_gateway:
+            if running:
+                if current:
+                    aws_access.up(config, state)
+                else:
+                    aws_access.down(updated)
+            restart_existing(config, gateway)
+            ensure_gateway(config)
+        raise
+    refresh_shell_network(updated, state)
+    activity.save_config(state, updated)
+    print('AWS permissions updated.' if value else 'AWS disconnected.')
+
+
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
+    aws_install_approval = None
+    if isinstance(changes, dict) and 'expected_aws_installation' in changes:
+        if set(changes) != {'expected_aws_installation', 'expected_aws_access', 'aws_access'}:
+            raise ValueError('An AWS profile update can only change AWS access.')
+        changes = dict(changes)
+        aws_install_approval = changes.pop('expected_aws_installation')
     if isinstance(changes, dict) and 'expected_aws_access' in changes:
         if set(changes) != {'expected_aws_access', 'aws_access'}:
             raise ValueError('An AWS profile update can only change AWS access.')
@@ -1120,24 +1263,17 @@ def apply_settings(config, state, changes, *, apply_gate=None):
             return
         if config.get('aws_access', {}) != changes['expected_aws_access']:
             raise ValueError('AWS access changed since this sandbox was selected. Reopen the profile to review it.')
+        if aws_install_approval is None:
+            # A saved profile rollout only changes permissions on prepared sandboxes.
+            aws_install_approval = 'ready'
         changes = {'aws_access': changes['aws_access']}
     allowed = {'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'}
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
     if 'aws_access' in changes:
         changes = {**changes, 'aws_access': aws_access.settings(changes['aws_access'])}
-        if set(changes) == {'aws_access'} and config.get('aws_access'):
-            if not updating.begin_apply(apply_gate):
-                return
-            updated = {**config, **changes}
-            running = inspect(config, names(config)[0])
-            if not updated['aws_access']:
-                aws_access.down(config)
-            elif running and running['State'].get('Running'):
-                aws_access.up(updated, state)
-            refresh_shell_network(updated, state)
-            activity.save_config(state, updated)
-            print('AWS permissions updated.' if updated['aws_access'] else 'AWS disconnected.')
+        if set(changes) == {'aws_access'}:
+            apply_aws_settings(config, state, changes['aws_access'], approval=aws_install_approval, apply_gate=apply_gate)
             return
     if 'ssh' in changes and changes.keys() <= {'ssh', 'options'}:
         saved_options = options(config.get('options'))

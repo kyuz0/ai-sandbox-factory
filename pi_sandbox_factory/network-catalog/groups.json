@@ -4966,7 +4966,7 @@
     },
     "ut1-financial": {
       "title": "Financial information",
-      "description": "Financial news and information sites in the UT1 financial category.",
+      "description": "Financial news and information sites.",
       "source": "Universit\u00e9 Toulouse Capitole (UT1)",
       "url": "https://dsi.ut-capitole.fr/blacklists/",
       "revision": "03501c64d230df9d84124176558d758351027be1",
@@ -5450,7 +5450,7 @@
     },
     "ut1-bank": {
       "title": "Banking",
-      "description": "Online banking domains in the UT1 bank category.",
+      "description": "Online banking sites.",
       "source": "Universit\u00e9 Toulouse Capitole (UT1)",
       "url": "https://dsi.ut-capitole.fr/blacklists/",
       "revision": "03501c64d230df9d84124176558d758351027be1",
