@@ -1,11 +1,13 @@
 """Repository SSH setup and public-key display; permissions remain server-side."""
+from pathlib import Path
+
 from textual import on, work
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Input, Label, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
 from . import host_platform, sandbox_ssh, git_settings
-from .settings_catalog import CATEGORIES
+from .file_browser import PathField
 from .tui_widgets import EntryDialog, Feedback, Checkbox
 
 
@@ -18,14 +20,12 @@ class GitIdentityFields(Vertical):
     GitIdentityFields { height: auto; }
     GitIdentityFields #git-identity-fields { height: auto; margin: 0 0 0 2; }
     GitIdentityFields #git-identity-fields.-identity-disabled { opacity: 50%; }
-    GitIdentityFields > .git-identity-note { height: auto; margin: 1 0 0 0; }
     '''
 
-    def __init__(self, value=None, defaults=False, setup=False):
+    def __init__(self, value=None, defaults=False):
         super().__init__()
         self.value = value
         self.defaults = defaults
-        self.setup = setup
 
     def compose(self):
         with Vertical(classes='setting'):
@@ -41,10 +41,6 @@ class GitIdentityFields(Vertical):
                 yield Input((self.value or {}).get('email', ''), id='git-author-email')
                 yield Static('Use an address you want recorded in Git history.', classes='setting-help')
                 yield Feedback('', id='git-identity-error', markup=False)
-        if self.setup:
-            yield Static('Configure each sandbox’s SSH destinations and keys in Settings → SSH & Git.' if self.defaults else
-                         'Configure SSH destinations and keys after creation in Settings → SSH & Git.',
-                         classes='setting-help git-identity-note')
 
     def on_mount(self):
         self.sync_fields()
@@ -57,10 +53,7 @@ class GitIdentityFields(Vertical):
         self.query_one('#git-identity-fields').set_class(not enabled, '-identity-disabled')
         section = next((node for node in self.ancestors if isinstance(node, Collapsible)), None)
         if section:
-            if self.setup:
-                section.title = CATEGORIES['ssh-settings'].label + ' · ' + git_identity_summary(enabled)
-            else:
-                section.title = 'Git commit identity · ' + ('set' if enabled else 'not set')
+            section.title = 'Git commit identity · ' + ('set' if enabled else 'not set')
 
     @on(Input.Changed)
     def clear_error(self, event):
@@ -82,6 +75,156 @@ class GitIdentityFields(Vertical):
             invalid = '#git-author-name' if not self.query_one('#git-author-name', Input).value.strip() or 'name' in str(error) else '#git-author-email'
             self.query_one(invalid, Input).add_class('-invalid')
             self.call_after_refresh(self.query_one(Feedback).scroll_visible, animate=False)
+            raise
+
+
+class SSHDestinationFields(Vertical):
+    DEFAULT_CSS = 'SSHDestinationFields { height: auto; }'
+
+    def __init__(self, settings=None, *, creating=False):
+        super().__init__()
+        self.settings = settings or {'hosts': []}
+        self.original = self.format_hosts(self.settings)
+        self.imported = None
+        self.creating = creating
+
+    @staticmethod
+    def format_hosts(settings):
+        return '\n'.join(f'{h["alias"]} {h["user"]} {h["hostname"]} {h["port"]}' for h in settings['hosts'])
+
+    def compose(self):
+        with Vertical(classes='setting'):
+            yield Label('Destinations · alias username hostname-or-IP port')
+            yield TextArea(self.original, id='ssh-hosts')
+            if not self.creating:
+                yield Static('Apply destinations before generating or importing a key.', classes='setting-help')
+        with Vertical(classes='setting'):
+            yield Button('Add repository…', id='ssh-repository')
+        with Collapsible(title='Import host SSH aliases', collapsed=True):
+            with Vertical(classes='setting'):
+                yield Label('Aliases from ~/.ssh/config · separated by spaces')
+                with Horizontal(classes='path-row'):
+                    yield Input(id='ssh-aliases')
+                    yield Button('Import', id='ssh-import-aliases')
+        with Collapsible(title='Host identity', collapsed=True):
+            with Vertical(classes='setting'):
+                yield Label('Trusted known_hosts file')
+                yield PathField('ssh-known-hosts', str(Path.home() / '.ssh/known_hosts'),
+                                title='Choose trusted known_hosts file', mode='file')
+                yield Static('Verify unknown hosts in your host terminal before saving destinations.', classes='setting-help')
+        yield Feedback('', id='ssh-destinations-error', markup=False)
+
+    @on(Button.Pressed, '#ssh-repository')
+    def repository(self, event):
+        event.stop()
+        self.app.push_screen(RepositorySetup(), self.add_repository)
+
+    @on(Button.Pressed, '#ssh-import-aliases')
+    def import_aliases(self, event):
+        event.stop()
+        feedback = self.query_one(Feedback)
+        try:
+            settings = sandbox_ssh.import_aliases(self.query_one('#ssh-aliases', Input).value, Path.home() / '.ssh/config')
+        except (OSError, ValueError) as error:
+            feedback.update(str(error))
+            feedback.scroll_visible(animate=False)
+            return
+        text = self.format_hosts(settings)
+        self.query_one('#ssh-hosts', TextArea).load_text(text)
+        self.imported = (text, settings)
+        feedback.update('')
+        self.notify('Imported destinations and trusted host keys.')
+
+    def add_repository(self, value):
+        if not value:
+            return
+        field = self.query_one('#ssh-hosts', TextArea)
+        rows = [row for row in field.text.splitlines() if row.strip()]
+        existing = [row for row in rows if row.split()[0] == 'repository']
+        if existing and [row.split() for row in existing] != [value['line'].split()]:
+            self.notify('The repository alias already points elsewhere. Edit Destinations to change it.', severity='error')
+        elif existing:
+            self.notify('Destination already present.')
+        else:
+            field.load_text('\n'.join(rows + [value['line']]))
+
+    def collect(self):
+        text = self.query_one('#ssh-hosts', TextArea).text
+        feedback = self.query_one(Feedback)
+        feedback.update('')
+        try:
+            if self.imported and self.imported[0] == text:
+                return self.imported[1]
+            if text == self.original:
+                return self.settings
+            return sandbox_ssh.parse_hosts(text, self.query_one('#ssh-known-hosts', Input).value)
+        except (ValueError, OSError) as error:
+            feedback.update(str(error))
+            raise
+
+
+class CreateSSHFields(Vertical):
+    DEFAULT_CSS = 'CreateSSHFields { height: auto; }'
+
+    def compose(self):
+        yield SSHDestinationFields(creating=True)
+        with Vertical(classes='setting'):
+            yield Label('SSH key')
+            yield Select([('Set up later', 'later'), ('Generate repository key', 'generate'),
+                          ('Import and unlock', 'import')], value='later', allow_blank=False, id='create-ssh-key')
+            yield Static('Factory keeps the private key outside the workspace.', classes='setting-help')
+            yield Feedback('', id='create-ssh-key-error', markup=False)
+        with Vertical(id='create-ssh-import', classes='setting'):
+            yield Label('Private key file')
+            yield PathField('create-ssh-key-file', title='Choose SSH private key', mode='file',
+                            initial=Path.home() / '.ssh', placeholder='~/.ssh/id_ed25519')
+            yield Static('Encrypted keys prompt for their passphrase when the sandbox is ready.', classes='setting-help')
+            yield Feedback('', id='create-ssh-key-file-error', markup=False)
+        with Vertical(id='create-ssh-duration-setting', classes='setting'):
+            yield Label('Keep SSH key unlocked for')
+            yield Input(sandbox_ssh.DEFAULT_UNLOCK_DURATION, id='create-ssh-duration')
+            yield Static('Enter 8h for eight hours or 2d for two days.', classes='setting-help')
+            yield Feedback('', id='create-ssh-duration-error', markup=False)
+
+    def on_mount(self):
+        self.key_changed()
+
+    @on(Select.Changed, '#create-ssh-key')
+    def key_changed(self):
+        importing = self.query_one('#create-ssh-key', Select).value == 'import'
+        self.query_one('#create-ssh-import').display = importing
+        self.query_one('#create-ssh-duration-setting').display = importing
+
+    def collect(self, draft):
+        for feedback in self.query(Feedback):
+            feedback.update('')
+        field = self.query_one('#ssh-hosts', TextArea)
+        try:
+            settings = self.query_one(SSHDestinationFields).collect()
+            field = self.query_one('#create-ssh-key', Select)
+            action = field.value
+            if action != 'later' and not settings['hosts']:
+                raise ValueError('Add an SSH destination before setting up a key.')
+            result = {'ssh': settings, '_ssh_key': action}
+            if action == 'import':
+                field = self.query_one('#create-ssh-key-file', Input)
+                path = field.value.strip()
+                if not path:
+                    raise ValueError('Choose a private key file.')
+                result['_ssh_key_file'] = str(sandbox_ssh.key_source(draft, path))
+                field = self.query_one('#create-ssh-duration', Input)
+                duration = field.value.strip().lower()
+                sandbox_ssh.unlock_seconds(duration)
+                result['_ssh_key_duration'] = duration
+            return result
+        except (ValueError, OSError) as error:
+            next(node for node in self.ancestors if isinstance(node, Collapsible)).collapsed = False
+            message = self.query_one('#ssh-destinations-error', Feedback)
+            if not message.display:
+                message = self.query_one(f'#{field.id}-error', Feedback)
+                message.update(str(error))
+            field.focus()
+            self.call_after_refresh(message.scroll_visible, animate=False)
             raise
 
 
@@ -215,4 +358,4 @@ class PublicKey(ModalScreen):
 
     def action_close(self):
         if not self.busy:
-            self.dismiss(None)
+            self.dismiss(bool(self.public_key))

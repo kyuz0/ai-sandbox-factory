@@ -134,3 +134,46 @@ class PrimaryAgentsUI(unittest.TestCase):
             self.assertEqual(screen.collect()[0]['allowlist'], 'example.com:443')
             self.assertFalse(screen.query('#web-enabled, #network-search-section, #primary-auth'))
             await app.pop_screen()
+
+    async def test_ssh_destinations_and_import_are_collected_inside_creation(self):
+        project = self.state / 'project'
+        project.mkdir()
+        known_hosts = self.state / 'known_hosts'
+        known_hosts.write_text('git.example.test ssh-ed25519 AAAA\n')
+        private_key = self.state / 'key'
+        private_key.write_text('fixture')
+        for agent, size in (('pi', (80, 24)), ('codex', (120, 40))):
+            with self.subTest(agent=agent):
+                app = Cockpit(self.state, FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await pilot.pause()
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='ssh-fixture', workspace=str(project), primary_agent=agent, primary_auth='login')
+                    review = SettingsForm(draft)
+                    await app.push_screen(review)
+                    await pilot.pause()
+                    ssh = review.query_one('#git-identity-section', Collapsible)
+                    self.assertEqual(ssh.title, 'SSH & Git')
+                    self.assertIsNotNone(ssh.query_one('#git-author-name', Input))
+                    ssh.query_one('#create-ssh-key', Select).value = 'import'
+                    await pilot.pause()
+                    with self.assertRaisesRegex(ValueError, 'Add an SSH destination'):
+                        review.collect()
+                    self.assertFalse(ssh.collapsed)
+                    ssh.query_one('#ssh-hosts', TextArea).load_text('project git git.example.test 22')
+                    ssh.query_one('#ssh-known-hosts', Input).value = str(known_hosts)
+                    key_file = ssh.query_one('#create-ssh-key-file', Input)
+                    review.query_one('#apply', Button).press()
+                    await pilot.pause()
+                    feedback = ssh.query_one('#create-ssh-key-file-error')
+                    self.assertIn('Choose a private key file.', str(feedback.render()))
+                    self.assertIs(review.focused, key_file)
+                    viewport = review.query_one('.form').content_region
+                    self.assertLessEqual(viewport.y, key_file.region.y)
+                    self.assertLessEqual(feedback.region.bottom, viewport.bottom)
+                    key_file.value = str(private_key)
+                    ssh.query_one('#create-ssh-duration', Input).value = '2d'
+                    saved, _ = review.collect()
+                    self.assertEqual(saved['ssh']['hosts'][0]['host_keys'], ['ssh-ed25519 AAAA'])
+                    self.assertEqual(saved['_ssh_key_file'], str(private_key))
+                    self.assertEqual(saved['_ssh_key_duration'], '2d')

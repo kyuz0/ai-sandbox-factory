@@ -976,6 +976,8 @@ def create(args, state):
         config['options'] = options({**config.get('options', {}), 'browser': True})
     if getattr(args, 'aws_access_file', None):
         config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
+    if getattr(args, 'ssh_file', None):
+        config['ssh'] = sandbox_ssh.validate(json.loads(Path(args.ssh_file).read_text()))
     config['website_groups'] = network_groups.snapshots(options(config.get('options'))['website_groups'])
     if not native:
         config['advisors'] = sandbox_advisors.validate({**reuse.get('advisors', {}), 'providers': getattr(args, 'advisor', [])})
@@ -1429,6 +1431,7 @@ def main():
     new.add_argument('--advisor', action='append', choices=['codex', 'claude', 'agy'], default=[],
                      help='Add an advisor companion during creation; repeat for multiple advisors, sign in afterwards')
     new.add_argument('--aws-access-file', help='JSON host AWS profile, role, region and sandbox permissions')
+    new.add_argument('--ssh-file', help='JSON SSH destinations and trusted host public keys')
     new.add_argument('--options-file', help='JSON agent, skill and MCP settings')
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')

@@ -357,7 +357,7 @@ class TUITests(unittest.TestCase):
 
     async def test_repository_setup_and_key_display(self):
         from pi_sandbox_factory.sandbox_tui import SSHScreen
-        from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey
+        from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, SSHDestinationFields
         from textual.widgets import Collapsible
         for size in ((80, 24), (120, 40), (220, 50)):
             service = FakeService(self.records)
@@ -366,8 +366,12 @@ class TUITests(unittest.TestCase):
                 await self.ready(app, pilot)
                 await app.push_screen(SSHScreen(self.records[0]))
                 self.assertTrue(app.screen.query_one('#ssh-generate-key', Button).disabled)
-                await app.push_screen(RepositorySetup(), app.screen.add_repository)
+                repository = app.screen.query_one('#ssh-repository', Button)
+                repository.scroll_visible(animate=False)
                 await pilot.pause()
+                await pilot.click('#ssh-repository')
+                await pilot.pause()
+                self.assertIsInstance(app.screen, RepositorySetup)
                 app.screen.query_one('#repository-url', Input).value = 'https://github.com/team/project'
                 await pilot.pause()
                 button = app.screen.query_one('#repository-add', Button)
@@ -376,7 +380,7 @@ class TUITests(unittest.TestCase):
                 await pilot.click('#repository-add');await pilot.pause()
                 self.assertEqual(app.screen.query_one('#ssh-hosts', TextArea).text, 'repository git github.com 22')
                 # Existing aliases must not silently switch hosts.
-                app.screen.add_repository({'line': 'repository git gitlab.com 22'})
+                app.screen.query_one(SSHDestinationFields).add_repository({'line': 'repository git gitlab.com 22'})
                 self.assertEqual(app.screen.query_one('#ssh-hosts', TextArea).text, 'repository git github.com 22')
                 with patch.object(service, 'ssh_key', create=True, return_value='ssh-ed25519 AAAA fixture'):
                     await app.push_screen(PublicKey('alpha', generate=True))

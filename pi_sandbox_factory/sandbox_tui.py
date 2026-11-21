@@ -34,7 +34,7 @@ from .communications_ui import CommunicationsForm, communications_summary
 from .models_ui import HostedProviders, ModelDialog, hosted_provider_names, local_models_title
 from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL,
                              assigned_key_label, choice_key_caption, key_caption)
-from .repository_ui import git_identity_summary
+from .repository_ui import CreateSSHFields, SSHDestinationFields, git_identity_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import EntryDialog, Checkbox, Feedback
 from .aws_ui import AWSProfileChoices, AWSProfilePicker, profile_label
@@ -275,6 +275,10 @@ class Service:
                     '--engine', draft['engine'], '--options-file', str(selected)]
             if coding_agent(draft) != 'pi':
                 args += ['--primary-agent', draft['primary_agent'], '--primary-auth', draft['primary_auth']]
+            if draft.get('ssh', {}).get('hosts'):
+                ssh_file = Path(temp) / 'ssh.json'
+                write_json(ssh_file, draft['ssh'])
+                args += ['--ssh-file', str(ssh_file)]
             if draft.get('aws_access'):
                 grant_file = Path(temp) / 'aws-access.json'
                 write_json(grant_file, draft['aws_access'])
@@ -1417,13 +1421,11 @@ class SandboxAlerts(ModalScreen[Optional[str]]):
 
 
 class SSHScreen(Screen):
-    DEFAULT_CSS = 'SSHScreen #ssh-hosts { height: 5; }'
     BINDINGS = [('escape', 'back', 'Back')]
 
     def __init__(self, record, *, key_focus=None):
         super().__init__()
         self.record = record
-        self.imported = None
         self.AUTO_FOCUS = key_focus
 
     def compose(self):
@@ -1435,26 +1437,7 @@ class SSHScreen(Screen):
             yield Label(CATEGORIES['ssh-settings'].label + ' · ' + self.record['name'], classes='title')
             yield Static('Keys stay in a separate SSH container. The remote account or deploy key determines what the sandbox can do.', classes='section-intro')
             yield Static('Applying changes to destinations or commit identity restarts the sandbox.', classes='section-intro')
-            with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True, id='git-identity-section'):
-                yield GitIdentityFields(identity)
-            with Vertical(classes='setting'):
-                yield Label('Destinations · alias username hostname-or-IP port')
-                yield TextArea('\n'.join(f'{h["alias"]} {h["user"]} {h["hostname"]} {h["port"]}' for h in hosts), id='ssh-hosts')
-                yield Static('Apply destinations before generating or importing a key.', classes='setting-help')
-            with Vertical(classes='setting'):
-                yield Button('Add repository…', id='ssh-repository')
-            with Collapsible(title='Import host SSH aliases', collapsed=True):
-                with Vertical(classes='setting'):
-                    yield Label('Aliases from ~/.ssh/config · separated by spaces')
-                    with Horizontal(classes='path-row'):
-                        yield Input(id='ssh-aliases')
-                        yield Button('Import', id='ssh-import-aliases')
-            with Collapsible(title='Host identity', collapsed=True):
-                with Vertical(classes='setting'):
-                    yield Label('Trusted known_hosts file')
-                    yield PathField('ssh-known-hosts', str(Path.home() / '.ssh/known_hosts'),
-                                    title='Choose trusted known_hosts file', mode='file')
-                    yield Static('Verify unknown hosts in your host terminal before applying destinations.', classes='setting-help')
+            yield SSHDestinationFields(self.record['config'].get('ssh'))
             with Collapsible(title='SSH key · one per sandbox', collapsed=not (hosts or self.AUTO_FOCUS), id='ssh-key-section'):
                 with Vertical(classes='setting'):
                     with Horizontal(classes='buttons'):
@@ -1477,6 +1460,8 @@ class SSHScreen(Screen):
                     yield Button('Unlock existing key', id='ssh-unlock', disabled=not hosts)
                     yield Static('Unlock takes effect immediately. Restarting the SSH service can lock the key early.', classes='setting-help')
                     yield Feedback('', id='ssh-key-feedback', markup=False)
+            with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True, id='git-identity-section'):
+                yield GitIdentityFields(identity)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='ssh-back')
             yield Button('Apply', id='ssh-apply', variant='primary')
@@ -1489,18 +1474,9 @@ class SSHScreen(Screen):
         name = self.record['name']
         try:
             if action == 'ssh-back': self.action_back()
-            elif action == 'ssh-repository':
-                from .repository_ui import RepositorySetup
-                self.app.push_screen(RepositorySetup(), self.add_repository)
             elif action in ('ssh-generate-key', 'ssh-public-key'):
                 from .repository_ui import PublicKey
                 self.app.push_screen(PublicKey(name, generate=action == 'ssh-generate-key'))
-            elif action == 'ssh-import-aliases':
-                settings = sandbox_ssh.import_aliases(self.query_one('#ssh-aliases', Input).value, Path.home() / '.ssh/config')
-                text = '\n'.join(f'{h["alias"]} {h["user"]} {h["hostname"]} {h["port"]}' for h in settings['hosts'])
-                self.query_one('#ssh-hosts', TextArea).load_text(text)
-                self.imported = (text, settings)
-                self.notify('Imported destinations and existing trusted host keys. No private key imported.')
             elif action in ('ssh-import-key', 'ssh-unlock'):
                 field = self.query_one('#ssh-duration', Input)
                 duration = field.value.strip().lower()
@@ -1529,11 +1505,8 @@ class SSHScreen(Screen):
             elif action == 'ssh-apply':
                 from .repository_ui import GitIdentityFields
                 identity = self.query_one(GitIdentityFields).collect()
-                text = self.query_one('#ssh-hosts', TextArea).text
                 old = self.record['config'].get('ssh', {'hosts': []})
-                old_text = '\n'.join(f'{h["alias"]} {h["user"]} {h["hostname"]} {h["port"]}' for h in old['hosts'])
-                settings = (self.imported[1] if self.imported and self.imported[0] == text else
-                            old if text == old_text else sandbox_ssh.parse_hosts(text, self.query_one('#ssh-known-hosts', Input).value))
+                settings = self.query_one(SSHDestinationFields).collect()
                 identity_changed = identity != options(self.record['config'].get('options'))['git_identity']
                 if settings == old and not identity_changed:
                     self.notify('No SSH or Git settings changed.')
@@ -1550,21 +1523,6 @@ class SSHScreen(Screen):
                 self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply', confirm_by_default=True), apply)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.notify(safe_text(error), severity='error')
-
-    def add_repository(self, value):
-        if not value:
-            return
-        field = self.query_one('#ssh-hosts', TextArea)
-        rows = [row for row in field.text.splitlines() if row.strip()]
-        existing = [row for row in rows if row.split()[0] == 'repository']
-        if existing and [row.split() for row in existing] != [value['line'].split()]:
-            self.notify('The repository alias already points elsewhere. Edit Destinations to change it.', severity='error')
-            return
-        if existing:
-            self.notify('Destination already present; no settings changed.')
-        else:
-            field.load_text('\n'.join(rows + [value['line']]))
-            self.notify('Destination added. Apply it, then return here to generate or import the key.')
 
     def action_back(self):
         self.app.pop_screen()
@@ -3027,15 +2985,17 @@ class SettingsForm(Screen):
             yield skills
 
     def compose_ssh_settings(self, category, value, selected):
+        from .repository_ui import GitIdentityFields
+        identity = selected['git_identity']
         if not self.editing and not self.defaults_mode:
-            from .repository_ui import GitIdentityFields
-            identity = selected['git_identity']
-            with Collapsible(title=category.label + ' · ' + git_identity_summary(identity), collapsed=True, id=category.section, classes='spaced-form-fields'):
-                yield GitIdentityFields(identity, setup=True)
+            with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+                yield CreateSSHFields()
+                with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True):
+                    yield GitIdentityFields(identity)
         if self.defaults_mode:
-            from .repository_ui import GitIdentityFields
-            with Collapsible(title=category.label + ' · ' + git_identity_summary(selected['git_identity']), collapsed=True, id=category.section, classes='spaced-form-fields'):
-                yield GitIdentityFields(selected['git_identity'], defaults=True, setup=True)
+            with Collapsible(title='Git commit identity · ' + ('set' if identity else 'not set'), collapsed=True,
+                             id=category.section, classes='spaced-form-fields'):
+                yield GitIdentityFields(identity, defaults=True)
 
     def compose_advisors(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
@@ -3302,6 +3262,7 @@ class SettingsForm(Screen):
             draft.update(self.query_one(FolderFields).collect(private_paths=[draft.get('env_file')]))
             draft['system_prompt'] = self.query_one(PromptChoice).selected()
             selected['git_identity'] = self.query_one(GitIdentityFields).collect()
+            draft.update(self.query_one(CreateSSHFields).collect(draft))
         draft['options'] = options(selected)
         return draft, {}
 
@@ -3407,6 +3368,8 @@ class SettingsForm(Screen):
         if draft['network'] == 'allowlist':
             rules += [r for r in sandbox.parse_rules('\n'.join(provider_rules)) if r not in rules]
         draft['allowlist'] = '\n'.join(f'{host}:{port}' for host,port in rules)
+        if not self.editing and not self.defaults_mode:
+            draft.update(self.query_one(CreateSSHFields).collect(draft))
         sandbox.validate_env(draft['env_file'])
         return draft, key
 
@@ -3491,7 +3454,8 @@ class SettingsForm(Screen):
                     self.query_one('#skill-library-section', Collapsible).collapsed = False
                     message.scroll_visible(animate=False)
             if not any(message.display for message in self.query(
-                    '.provider-setting Feedback, #model-ports-error, SkillSelection Feedback, #network-error, #web-config-error')):
+                    '.provider-setting Feedback, #model-ports-error, SkillSelection Feedback, #network-error, '
+                    '#web-config-error, CreateSSHFields Feedback')):
                 feedback = self.query_one('#form-error', Static)
                 feedback.update(str(error))
                 feedback.scroll_visible(animate=False)
@@ -3554,6 +3518,30 @@ class SettingsForm(Screen):
                                      lambda _: open_after_models())
             else:
                 self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
+        def after_ssh(ready=True):
+            if not ready:
+                operation.query_one('#operation-next', Static).update(
+                    'Finish setting up the SSH key in Settings → SSH & Git.')
+                operation.query_one('#operation-next', Static).display = True
+            elif choose_default:
+                choose_models()
+            else:
+                open_after_models()
+
+        def finish_creation():
+            method = draft.get('_ssh_key', 'later')
+            if method == 'generate':
+                from .repository_ui import PublicKey
+                self.app.push_screen(PublicKey(draft['name'], generate=True), after_ssh)
+            elif method == 'import':
+                args = ['ssh-import-key', draft['name'], '--key-file', draft['_ssh_key_file'],
+                        '--duration', draft['_ssh_key_duration']]
+                with self.app.suspend():
+                    result = subprocess.run(service.command(*args), check=False)
+                after_ssh(result.returncode == 0)
+            else:
+                after_ssh()
+
         if editing:
             operation = UpdateOperation('Updating ' + draft['name'], task,
                 done_on_success=True, completed_title='Updated ' + draft['name'],
@@ -3570,8 +3558,8 @@ class SettingsForm(Screen):
             operation = CreationOperation(self.app.state_root / draft['name'], task, cancellation,
                 retry=lambda: self.submit(draft, key),
                 success_message=settings_effects.bullets(next_steps) if self.guide else '\n'.join(next_steps),
-                on_success=choose_models if choose_default else
-                open_after_models if draft.get('open_editor') else None)
+                on_success=finish_creation if choose_default or draft.get('open_editor')
+                or draft.get('_ssh_key', 'later') != 'later' else None)
         self.app.push_screen(operation)
 
     def check_action(self, action, parameters):
@@ -3765,7 +3753,7 @@ class Cockpit(App):
     .compact-terminal CredentialDialog #credential-dialog-fields { height: auto; max-height: 55vh; }
     .key-dialog #remember-key { margin: 1 0 0 0; }
     .key-dialog #credential-remember { margin: 1 0; }
-    SSHScreen #ssh-hosts { height: 5; }
+    SSHDestinationFields #ssh-hosts { height: 5; }
     #web-enable-setting { margin: 0; }
     #web-fields { margin: 1 0 0 0; }
     #web-fields > .buttons { margin: 0 0 1 0; }
@@ -3884,10 +3872,11 @@ class Cockpit(App):
     }
     #details { height: auto; min-height: 3; padding: 1 0; text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
-    #ssh-duration-error, #ssh-key-feedback.error { color: #ef9a91; }
+    #ssh-duration-error, #ssh-key-feedback.error, SSHDestinationFields Feedback, CreateSSHFields Feedback { color: #ef9a91; }
     #ssh-key-feedback.unlock-succeeded { color: #87c99b; text-style: bold; }
     Screen:nocolor #ssh-key-feedback { color: white; text-style: bold; }
-    Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error { color: white; text-style: bold reverse; }
+    Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error,
+    Screen:nocolor SSHDestinationFields Feedback, Screen:nocolor CreateSSHFields Feedback { color: white; text-style: bold reverse; }
     #home-error, #open-error { height: auto; margin: 0 0 1 0; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }
     #operation-title { height: auto; text-style: bold; margin-bottom: 1; }

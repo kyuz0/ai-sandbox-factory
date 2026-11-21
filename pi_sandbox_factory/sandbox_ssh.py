@@ -234,9 +234,7 @@ def unlock(config, state, duration=DEFAULT_UNLOCK_DURATION):
     core.run([config['engine'], 'exec', *tty, names(config)[0], 'python3', '-c', helper, str(seconds)])
 
 
-def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
-    unlock_seconds(duration)
-    if not enabled(config):raise ValueError('Configure SSH destinations first')
+def key_source(config, path):
     source=Path(path).expanduser().resolve(strict=True)
     if not source.is_file() or not 0 < source.stat().st_size <= MAX_KEY_BYTES:
         raise ValueError('Select a nonempty SSH private key file up to 128 MiB.')
@@ -247,6 +245,13 @@ def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
             exposed = Path(path).resolve()
             if source == exposed or exposed in source.parents:
                 raise ValueError('Choose a key outside all shared folders; those paths are visible to the agent')
+    return source
+
+
+def import_key(config, state, path, duration=DEFAULT_UNLOCK_DURATION):
+    unlock_seconds(duration)
+    if not enabled(config):raise ValueError('Configure SSH destinations first')
+    source = key_source(config, path)
     from . import sandbox as core
     up(config,state)
     # No key bytes in argv, environment, logs, project state, or the development container.

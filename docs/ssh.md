@@ -2,7 +2,7 @@
 
 ## Commit identity
 
-During creation, expand **SSH & Git** and enable **Set Git commit identity**.
+During creation, expand **SSH & Git → Git commit identity** and enable **Set Git commit identity**.
 Enter the name and email to record on commits. For an existing sandbox, use
 **Settings → SSH & Git → Git commit identity**, then apply the settings.
 You can also set this under **Defaults for new sandboxes**.
@@ -24,6 +24,11 @@ browsing, API requests, clones and release downloads over HTTPS.
 For authenticated Git operations with an isolated private key, use SSH.
 
 ## SSH setup
+
+In **Review sandbox → SSH & Git**, enter destinations or import host SSH aliases.
+Choose **Generate repository key** or **Import and unlock** to set up the key
+as soon as the sandbox starts. If you generate a key, Factory displays its
+public half for you to register with the Git server.
 
 For GitHub or GitLab, use **Add repository…** and follow [repository setup](repository-access.md).
 
