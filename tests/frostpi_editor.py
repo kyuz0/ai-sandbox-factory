@@ -796,6 +796,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         return subprocess.check_output(['podman', *args], text=True, **kwargs).strip()
 
     def inside(*args, **kwargs):
+        if 'input' not in kwargs:
+            kwargs.setdefault('stdin', subprocess.DEVNULL)
         return podman('exec', '-i', name, *args, **kwargs)
 
     with tempfile.TemporaryDirectory(prefix='factory-frostpi-check-') as tmp, ExitStack() as resources:

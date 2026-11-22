@@ -42,8 +42,10 @@ const inference=http.createServer((req,res)=>{let data='';req.on('data',c=>data+
  try {
  const body=JSON.parse(data),messages=body.messages;
  const reviewing=JSON.stringify(messages[0]).includes('approval') && !body.tools?.some(t=>t.function?.name==='browser');
+ const naming=JSON.stringify(messages[0]).includes('Generate a concise title for a coding-agent chat session.');
  let delta,finish='stop';
- if(reviewing){reviews++;delta={content:JSON.stringify({outcome:'allow',risk_level:'low',user_authorization:'high',rationale:'Authorized local development server.'})};}
+ if(naming){delta={content:'Local application browser test'};}
+ else if(reviewing){reviews++;delta={content:JSON.stringify({outcome:'allow',risk_level:'low',user_authorization:'high',rationale:'Authorized local development server.'})};}
  else {
  requests++;
  assert(JSON.stringify(messages).includes('http://localhost:PORT'),'Missing generated localhost guidance');
@@ -59,9 +61,10 @@ const inference=http.createServer((req,res)=>{let data='';req.on('data',c=>data+
 await new Promise(r=>inference.listen(0,'127.0.0.1',r));
 await writeFile(agent+'/models.json',JSON.stringify({providers:{fixture:{baseUrl:'http://127.0.0.1:'+inference.address().port+'/v1',api:'openai-completions',apiKey:'fixture-only',models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],contextWindow:131072,maxTokens:8192,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}}]}}}));
 const client=process.argv[2]||'pi';
+assert.equal(client,'pi','This fixture exercises the shipped Pi RPC client.');
 let child;
 try {
- child=spawn(client==='pi'?'pi':'node',client==='pi'?['--mode','rpc','--provider','fixture','--model','fixture','--no-session']:['/fixture/session_worker_bridge.cjs','fixture','fixture'],{cwd:'/workspace',env:process.env,stdio:['pipe','pipe','pipe']});
+ child=spawn('pi',['--mode','rpc','--provider','fixture','--model','fixture','--no-session'],{cwd:'/workspace',env:process.env,stdio:['pipe','pipe','pipe']});
  let errors='',buffer='';const events=[];
  child.stderr.on('data',c=>errors+=c);
  await new Promise((resolve,reject)=>{

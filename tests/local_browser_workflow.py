@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run localhost regression through shipped Pi and Pendant in disposable containers."""
+"""Run localhost regression through shipped Pi in disposable containers."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -12,7 +12,7 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--image',required=True)
 p.add_argument('--packages',type=Path,help='Optional dependency checkout to test before pinning')
 p.add_argument('--editor-env',action='store_true',help='Exercise inherited browser editor Node settings and scheduling')
-p.add_argument('--goals',action='store_true',help='Also exercise native Pendant goals without review')
+p.add_argument('--goals',action='store_true',help='Also exercise native Pi goals without review')
 a=p.parse_args()
 root=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='factory-local-browser-') as directory:
@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='factory-local-browser-') as directory:
  config={'common':{'path':str(root/'pi_sandbox_factory/containers/dev')},'options':{'browser':True,'goals':a.goals,'scheduling':a.editor_env,'compaction_recall':'off'}}
  sandbox.prepare_options(config,state)
  # Mounts are read-only; UID mapping preserves the current user's private fixtures.
- for client in (('pendant',) if a.goals else ('pi','pendant')):
+ for client in ('pi',):
   name='factory-local-check-'+uuid.uuid4().hex[:10]
   mounts=[(root/'tests','/fixture'),(root/'pi_sandbox_factory/containers/editor/watch-fallback.cjs','/fixture-watch.cjs'),(state/'runtime-config','/opt/pi-security/config'),(state/'options.json','/opt/sandbox/options.json'),(root/'pi_sandbox_factory/containers/dev/bootstrap.py','/usr/local/lib/sandbox-bootstrap.py')]
   if a.packages:
