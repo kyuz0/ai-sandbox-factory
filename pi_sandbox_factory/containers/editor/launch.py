@@ -49,7 +49,8 @@ for source in shipped_extensions:
 index = extensions / 'extensions.json'
 if index.exists():
     installed = json.loads(index.read_text())
-    shipped_prefixes = ('cdervis.vscode-pi-', 'frostime.frostpi-', 'pi-sandbox-factory.editor-startup-')
+    shipped_prefixes = ('cdervis.vscode-pi-', 'frostime.frostpi-', 'pi-sandbox-factory.editor-startup-',
+                        'pi-sandbox-factory.native-editor-', 'openai.chatgpt-', 'anthropic.claude-code-')
     registered = []
     for entry in installed:
         location = entry.get('relativeLocation', '')
@@ -79,57 +80,66 @@ user = root / 'data/User'
 user.mkdir(parents=True, exist_ok=True)
 user_settings = user / 'settings.json'
 existing = json.loads(user_settings.read_text()) if user_settings.exists() else {}
+values.update(settings.get('native_settings', {}))
+if settings.get('native_settings'):
+    # Vendor executable paths have machine scope in a remote VS Code window.
+    remote_settings = root / 'data/Machine/settings.json'
+    remote_settings.parent.mkdir(parents=True, exist_ok=True)
+    configured = json.loads(remote_settings.read_text()) if remote_settings.exists() else {}
+    configured.update(settings['native_settings'])
+    remote_settings.write_text(json.dumps(configured))
 existing.update(values)
 existing.setdefault('workbench.colorTheme', 'Default Dark Modern')
 existing.setdefault('workbench.secondarySideBar.defaultVisibility', 'visible')
 user_settings.write_text(json.dumps(existing))
 # Seed the shipped chat view and carry its position forward when upgrading.
-storage = user / 'globalStorage/state.vscdb'
-storage.parent.mkdir(exist_ok=True)
-migrate_layout = False
-with sqlite3.connect(storage) as database:
-    database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
-    old_view = 'workbench.view.extension.pendant-container'
-    new_view = 'workbench.view.extension.frostpi'
-    database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
-                     ('views.customizations', json.dumps({
-                         'viewContainerLocations': {old_view if pendant else new_view: 2},
-                         'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
-                     })))
-    if not pendant:
-        (value,) = database.execute(
-            'SELECT value FROM ItemTable WHERE key = ?', ('views.customizations',)).fetchone()
-        try:
-            layout = json.loads(value)
-            locations = layout.get('viewContainerLocations')
-        except (TypeError, ValueError, AttributeError):
-            locations = None
-        if isinstance(locations, dict) and old_view in locations:
-            migrate_layout = True
-            locations.setdefault(new_view, locations.pop(old_view))
-            database.execute('UPDATE ItemTable SET value = ? WHERE key = ?',
-                             (json.dumps(layout), 'views.customizations'))
-            # The editor rebuilds these lists when it registers the new view.
-            for key in ('workbench.activity.pinnedViewlets2', 'workbench.activity.placeholderViewlets',
-                        'workbench.panel.pinnedPanels', 'workbench.panel.placeholderPanels',
-                        'workbench.auxiliarybar.pinnedPanels', 'workbench.auxiliarybar.placeholderPanels'):
-                row = database.execute('SELECT value FROM ItemTable WHERE key = ?', (key,)).fetchone()
-                if not row:
-                    continue
-                try:
-                    panels = json.loads(row[0])
-                except (TypeError, ValueError):
-                    continue
-                if isinstance(panels, list):
-                    kept = [panel for panel in panels if not isinstance(panel, dict) or panel.get('id') != old_view]
-                    if kept != panels:
-                        database.execute('UPDATE ItemTable SET value = ? WHERE key = ?', (json.dumps(kept), key))
-if migrate_layout:
-    for workspace_storage in (user / 'workspaceStorage').glob('*/state.vscdb'):
-        with sqlite3.connect(workspace_storage) as database:
-            database.execute('UPDATE ItemTable SET value = ? WHERE key IN (?, ?, ?) AND value = ?',
-                             (new_view, 'workbench.sidebar.activeviewletid', 'workbench.panel.activepanelid',
-                              'workbench.auxiliarybar.activepanelid', old_view))
+if settings.get('agent', 'pi') == 'pi':
+    storage = user / 'globalStorage/state.vscdb'
+    storage.parent.mkdir(exist_ok=True)
+    migrate_layout = False
+    with sqlite3.connect(storage) as database:
+        database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
+        old_view = 'workbench.view.extension.pendant-container'
+        new_view = 'workbench.view.extension.frostpi'
+        database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
+                         ('views.customizations', json.dumps({
+                             'viewContainerLocations': {old_view if pendant else new_view: 2},
+                             'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
+                         })))
+        if not pendant:
+            (value,) = database.execute(
+                'SELECT value FROM ItemTable WHERE key = ?', ('views.customizations',)).fetchone()
+            try:
+                layout = json.loads(value)
+                locations = layout.get('viewContainerLocations')
+            except (TypeError, ValueError, AttributeError):
+                locations = None
+            if isinstance(locations, dict) and old_view in locations:
+                migrate_layout = True
+                locations.setdefault(new_view, locations.pop(old_view))
+                database.execute('UPDATE ItemTable SET value = ? WHERE key = ?',
+                                 (json.dumps(layout), 'views.customizations'))
+                # The editor rebuilds these lists when it registers the new view.
+                for key in ('workbench.activity.pinnedViewlets2', 'workbench.activity.placeholderViewlets',
+                            'workbench.panel.pinnedPanels', 'workbench.panel.placeholderPanels',
+                            'workbench.auxiliarybar.pinnedPanels', 'workbench.auxiliarybar.placeholderPanels'):
+                    row = database.execute('SELECT value FROM ItemTable WHERE key = ?', (key,)).fetchone()
+                    if not row:
+                        continue
+                    try:
+                        panels = json.loads(row[0])
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(panels, list):
+                        kept = [panel for panel in panels if not isinstance(panel, dict) or panel.get('id') != old_view]
+                        if kept != panels:
+                            database.execute('UPDATE ItemTable SET value = ? WHERE key = ?', (json.dumps(kept), key))
+    if migrate_layout:
+        for workspace_storage in (user / 'workspaceStorage').glob('*/state.vscdb'):
+            with sqlite3.connect(workspace_storage) as database:
+                database.execute('UPDATE ItemTable SET value = ? WHERE key IN (?, ?, ?) AND value = ?',
+                                 (new_view, 'workbench.sidebar.activeviewletid', 'workbench.panel.activepanelid',
+                                  'workbench.auxiliarybar.activepanelid', old_view))
 # The selected workspace is trusted; other container folders keep normal trust checks.
 trust_store = Path('/home/node/.vscode-oss-shared/sharedStorage/state.vscdb')
 trust_store.parent.mkdir(parents=True, exist_ok=True)

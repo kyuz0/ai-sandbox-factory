@@ -34,12 +34,15 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertIn(f'{egress}:/run/primary-egress:ro', args)
             self.assertIn(f'{socket}:/run/primary-workspace:ro', args)
             self.assertIn(f'{socket}:/run/primary-workspace', worker)
+            editor = primary_agents.editor_volume(self.config)
+            self.assertIn(f'{editor}:/run/primary-editor', args)
+            self.assertIn(f'{editor}:/run/primary-editor:ro', worker)
             self.assertFalse(any(home in mount or egress in mount for mount in worker))
             controller_mounts = [args[i + 1] for i, arg in enumerate(args) if arg == '-v']
             self.assertFalse(any('/workspace' in mount.split(':')[1:2] for mount in controller_mounts))
             self.assertEqual(json.loads((state / 'primary-runtime' / 'cwd.json').read_text()), '/workspace')
             self.assertEqual(primary_agents.resources(self.config), {
-                'container': {controller, proxy}, 'volume': {socket, home, egress},
+                'container': {controller, proxy}, 'volume': {socket, home, egress, primary_agents.editor_volume(self.config)},
             })
 
     def test_copied_sign_in_goes_only_to_private_controller_stdin(self):

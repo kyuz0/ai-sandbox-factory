@@ -64,14 +64,18 @@ class PrimaryAgentsUI(unittest.TestCase):
                     self.assertIsInstance(review, SettingsForm)
                     auth = review.query_one('#primary-auth', Select)
                     self.assertIs(review.focused, auth)
-                    self.assertEqual(auth.value, 'login')
+                    self.assertEqual(auth.value, 'copy')
                     self.assertLessEqual(auth.region.width, 40)
                     self.assertFalse(review.query_one('#primary-sign-in-section', Collapsible).collapsed)
-                    self.assertFalse(review.query('#hosted-section, #editor-section, #agent-section, #web-enabled'))
+                    self.assertFalse(review.query('#hosted-section, #agent-section, #web-enabled'))
+                    self.assertEqual(bool(review.query('#editor-section')), agent != 'agy')
+                    if agent != 'agy':
+                        self.assertEqual(review.query_one('#editor-mode', Select).value, 'browser')
                     auth.value = 'copy'
                     await pilot.pause()
                     draft, keys = review.collect()
                     self.assertEqual((draft['primary_agent'], draft['primary_auth'], keys), (agent, 'copy', {}))
+                    self.assertEqual(draft['editor']['mode'], 'pi' if agent == 'agy' else 'browser')
                     self.assertEqual(review.query_one('#apply').region.height, 1)
                     self.assertLess(review.query_one('#apply').region.bottom, size[1])
                     await app.pop_screen()
@@ -86,7 +90,7 @@ class PrimaryAgentsUI(unittest.TestCase):
         directory = self.state / record['name']
         directory.mkdir()
         (directory / 'allowlist.txt').write_text('')
-        self.assertEqual(copy_draft(record, self.state)['primary_auth'], 'login')
+        self.assertEqual(copy_draft(record, self.state)['primary_auth'], 'copy')
 
         app = Cockpit(self.state, FakeService([record]))
         async with app.run_test(size=(80, 24)) as pilot:
@@ -168,7 +172,7 @@ class PrimaryAgentsUI(unittest.TestCase):
                         await pilot.pause()
                         self.assertEqual(str(launch.label), 'Open VS Code on this computer when ready')
                     else:
-                        self.assertEqual(str(launch.label), 'Open Codex when ready')
+                        self.assertEqual(str(launch.label), 'Open the browser editor when ready')
                     self.assertTrue(group.collapsed)
                     group.collapsed = False
                     choose_ssh = group.query_one('#connector-ssh', Button)

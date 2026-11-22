@@ -77,10 +77,48 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             screen.query_one('#editor-port', Input).value = 'invalid'
             await pilot.click('#editor-save')
             await pilot.pause()
-            feedback = screen.query_one('#editor-error')
-            self.assertIn('numeric editor port', str(feedback.render()))
+            feedback = screen.query_one('#editor-port-error')
+            self.assertIn('Enter a port', str(feedback.render()))
+            self.assertEqual(screen.focused.id, 'editor-port')
             self.assertGreaterEqual(feedback.region.y, screen.query_one('.form').content_region.y)
             self.assertLessEqual(feedback.region.bottom, screen.query_one('.wizard-actions').region.y)
+            screen.query_one('#editor-port', Input).value = '8443'
+            await pilot.pause()
+            self.assertFalse(screen.query_one('#editor-port', Input).has_class('-invalid'))
+            self.assertEqual(str(feedback.render()), '')
+            self.assertFalse(feedback.display)
+
+    async def test_password_is_visible_when_reached_by_keyboard(self):
+        async with self.app.run_test(size=(80, 24)) as pilot:
+            await self.ready(pilot)
+            await self.app.push_screen(EditorScreen('demo'))
+            screen = self.app.screen
+            screen.query_one('#editor-connection', Collapsible).collapsed = False
+            screen.query_one('#editor-auth', Checkbox).value = True
+            await pilot.pause()
+            screen.query_one('#editor-auth', Checkbox).focus()
+            await pilot.press('tab')
+            await pilot.pause()
+            password = screen.query_one('#editor-password', Input)
+            self.assertIs(screen.focused, password)
+            self.assertGreaterEqual(password.region.y, screen.query_one('.form').content_region.y)
+            self.assertLessEqual(password.region.bottom, screen.query_one('.wizard-actions').region.y)
+
+    async def test_restart_notice_requires_an_actual_change(self):
+        with patch('pi_sandbox_factory.browser_editor.active', return_value=True):
+            async with self.app.run_test(size=(80, 24)) as pilot:
+                await self.ready(pilot)
+                await self.app.push_screen(EditorScreen('demo'))
+                await pilot.pause()
+                notice = self.app.screen.query_one('#editor-restart-notice')
+                uploads = self.app.screen.query_one('#editor-uploads', Checkbox)
+                self.assertFalse(notice.display)
+                uploads.value = True
+                await pilot.pause()
+                self.assertTrue(notice.display)
+                uploads.value = False
+                await pilot.pause()
+                self.assertFalse(notice.display)
 
     async def test_save_without_recreating_and_password_stays_masked(self):
         async with self.app.run_test(size=(80, 24)) as pilot:

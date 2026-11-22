@@ -309,6 +309,11 @@ async def serve(container, cwd, preferences, state, ready=None):
         else:
             source = Path(__file__).parent / 'containers/editor'
             command = ['python3', '-u', '-c', (source / 'launch.py').read_text()]
+            config_path = state / 'config.json'
+            config = json.loads(config_path.read_text()) if config_path.exists() else {}
+            from . import primary_workspace, native_editor
+            selected = primary_workspace.agent(config)
+            settings.update(agent=selected, native_settings=native_editor.settings(selected))
             settings.update(binary=INSTALL + '/bin/code-server', password_hash=preferences['password_hash'],
                             allow_uploads=preferences.get('allow_uploads', False),
                             watch_fallback=(source / 'watch-fallback.cjs').read_text())
@@ -412,6 +417,9 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
                 finally:
                     subprocess.run(['podman', 'exec', '--user', '0', container, 'rm', '-rf', staging],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        from . import primary_workspace, native_editor
+        if mode == 'browser' and primary_workspace.agent(config) != 'pi':
+            native_editor.install(config, container, arch)
         if config.get('local_model_ports') or config.get('model_providers'):
             sandbox.initialize_models(config, state)
         if background:

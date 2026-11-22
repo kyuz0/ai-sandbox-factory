@@ -14,6 +14,19 @@ DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'c
             'frostpi_uploads': False, 'frostpi_downloads': False}
 
 
+def modes(agent='pi'):
+    if agent == 'pi':
+        return MODES
+    from .primary_workspace import AGENTS
+    terminal = {'pi': AGENTS[agent] + ' CLI'}
+    return {'browser': MODES['browser'], **terminal} if agent in ('codex', 'claude') else terminal
+
+
+def default_for_agent(agent, engine='podman'):
+    return default_mode(engine) if agent == 'pi' else (
+        'browser' if agent in ('codex', 'claude') and default_mode(engine) == 'browser' else 'pi')
+
+
 def validate(value=None):
     value = value or {}
     if not isinstance(value, dict) or set(value) - DEFAULTS.keys():

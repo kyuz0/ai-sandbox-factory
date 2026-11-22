@@ -40,6 +40,8 @@ def command(agent, action, settings, context):
         cwd.mkdir(parents=True, exist_ok=True)
         os.chdir(cwd)
         config += ['-c', f'projects.{json.dumps(str(cwd))}.trust_level="trusted"']
+        if action == 'editor':
+            return options + config + ['app-server']
         return options + config + ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never']
 
     if agent == 'claude':

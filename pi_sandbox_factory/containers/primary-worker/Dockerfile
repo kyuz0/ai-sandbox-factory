@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install -d -o node -g node /workspace \
     && printf 'Include /etc/sandbox-ssh/config\n' >/etc/ssh/ssh_config.d/10-sandbox.conf
 COPY entrypoint.py /opt/primary/entrypoint.py
-COPY --from=primary-files worker.sh worker-tools.mjs /opt/primary/
+COPY --from=primary-files worker.sh worker-tools.mjs editor_client.py /opt/primary/
 ENV GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/opt/sandbox/git-identity.gitconfig
 USER node
 WORKDIR /workspace

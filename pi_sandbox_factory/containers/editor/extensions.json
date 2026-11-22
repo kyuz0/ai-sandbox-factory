@@ -1,0 +1,32 @@
+{
+  "codex": {
+    "publisher": "openai",
+    "name": "chatgpt",
+    "version": "26.1111.21308",
+    "platforms": {
+      "linux-x64": {
+        "url": "https://open-vsx.org/api/openai/chatgpt/linux-x64/26.1111.21308/file/openai.chatgpt-26.1111.21308@linux-x64.vsix",
+        "sha256": "3473717ab6824e79769cfb3736c1b1d27f2cb2c145f1c835702ccdda2de06936"
+      },
+      "linux-arm64": {
+        "url": "https://open-vsx.org/api/openai/chatgpt/linux-arm64/26.1111.21308/file/openai.chatgpt-26.1111.21308@linux-arm64.vsix",
+        "sha256": "38011ee03240cda2ed8e9b32e858a49e255a826ed1603bcd1815e8db80313278"
+      }
+    }
+  },
+  "claude": {
+    "publisher": "Anthropic",
+    "name": "claude-code",
+    "version": "2.1.199",
+    "platforms": {
+      "linux-x64": {
+        "url": "https://open-vsx.org/api/Anthropic/claude-code/linux-x64/2.1.199/file/Anthropic.claude-code-2.1.199@linux-x64.vsix",
+        "sha256": "9fa52652a7f33800f367324cbd8e34801081298803b62838d400f56a2780fe44"
+      },
+      "linux-arm64": {
+        "url": "https://open-vsx.org/api/Anthropic/claude-code/linux-arm64/2.1.199/file/Anthropic.claude-code-2.1.199@linux-arm64.vsix",
+        "sha256": "fd3ec7d62b529657f587abcfcd7970a2406f34e5508d98cdba1982fe872a98f2"
+      }
+    }
+  }
+}

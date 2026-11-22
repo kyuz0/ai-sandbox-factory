@@ -17,6 +17,7 @@ AGENTS = {
     'claude': 'Claude Code',
     'agy': 'Antigravity',
 }
+DEFAULT_AUTH = 'copy'
 
 
 def agent(config):
@@ -86,7 +87,7 @@ def prepare_git(config, state):
 def image(config):
     from . import sandbox
     source = sandbox.ROOT / 'containers/primary'
-    worker_files = ['worker.sh', 'worker-tools.mjs']
+    worker_files = ['worker.sh', 'worker-tools.mjs', 'editor_client.py']
     if agent(config) == 'codex':
         # The executor is shipped by the selected Codex controller image.
         worker_files.append('Dockerfile')

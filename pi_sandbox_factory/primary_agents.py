@@ -25,9 +25,13 @@ def names(config):
     return prefix, prefix + '-proxy', prefix + '-workspace', prefix + '-home', prefix + '-egress'
 
 
+def editor_volume(config):
+    return names(config)[0] + '-editor'
+
+
 def resources(config):
     controller, proxy, *volumes = names(config)
-    return {'container': {controller, proxy}, 'volume': set(volumes)}
+    return {'container': {controller, proxy}, 'volume': {*volumes, editor_volume(config)}}
 
 
 def describe(config):
@@ -86,7 +90,7 @@ def check_ownership(config):
         data = core.inspect(config, name)
         if data and data['Config']['Labels'].get(core.LABEL + '.role') != 'primary-agent':
             raise ValueError(f'Refusing to manage an unrelated container named {name}')
-    for name in volumes:
+    for name in [*volumes, editor_volume(config)]:
         volume(config, name)
 
 
@@ -152,7 +156,7 @@ def up(config, state):
     selected = agent(config)
     label = ['--label', f'{core.LABEL}={config["name"]}',
              '--label', f'{core.LABEL}.role=primary-agent']
-    for name in (socket, home, egress):
+    for name in (socket, home, egress, editor_volume(config)):
         if not volume(config, name):
             core.run([engine, 'volume', 'create', *label, name])
     directory = Path(state) / 'primary-agent'
@@ -181,6 +185,7 @@ def up(config, state):
             args += ['--network=none', '--security-opt=label=disable',
                      '--user', f'{config["uid"]}:{config["gid"]}',
                      '-v', f'{home}:/home/node', '-v', f'{socket}:/run/primary-workspace:ro',
+                     '-v', f'{editor_volume(config)}:/run/primary-editor',
                      '-v', f'{egress}:/run/primary-egress:ro',
                      '-v', f'{directory}:/run/primary-input:ro',
                      '--env', f'FACTORY_PRIMARY_AGENT={selected}']
@@ -190,7 +195,8 @@ def up(config, state):
                 args += ['--env', f'{key}={value}']
             args.append(image(config))
         core.run(args)
-    _wait(config, controller, 'test -f /tmp/factory-primary-ready && test -S /run/primary-egress/proxy.sock',
+    editor_ready = ' && test -S /run/primary-editor/editor.sock' if agent(config) in ('codex', 'claude') else ''
+    _wait(config, controller, 'test -f /tmp/factory-primary-ready && test -S /run/primary-egress/proxy.sock' + editor_ready,
           'The coding agent did not start')
 
 
@@ -211,6 +217,7 @@ def mounts(config, state):
     if not enabled(config):
         return []
     return ['-v', f'{names(config)[2]}:/run/primary-workspace',
+            '-v', f'{editor_volume(config)}:/run/primary-editor:ro',
             '-v', f'{Path(state) / "primary-runtime"}:/run/primary-runtime:ro']
 
 
@@ -247,7 +254,7 @@ def delete_volumes(config):
         return
     from . import sandbox as core
     check_ownership(config)
-    for name in names(config)[2:]:
+    for name in [*names(config)[2:], editor_volume(config)]:
         if volume(config, name):
             core.run([config['engine'], 'volume', 'rm', name])
 
@@ -263,6 +270,13 @@ def _terminal(config, action):
 
 def open_terminal(config, state):
     _terminal(config, 'open')
+
+
+def has_sign_in(config):
+    from . import sandbox as core
+    path = {'codex': '/home/node/.codex/auth.json', 'claude': '/home/node/.claude/.credentials.json'}[agent(config)]
+    return core.run([config['engine'], 'exec', names(config)[0], 'test', '-s', path],
+                    capture=True, check=False).returncode == 0
 
 
 def login(config, state):

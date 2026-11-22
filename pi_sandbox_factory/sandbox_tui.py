@@ -46,7 +46,7 @@ from .aws_ui import AWSProfileChoices, AWSProfilePicker
 from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
 from . import embedding_models
 from . import sandbox_skills
-from .primary_workspace import AGENTS as PRIMARY_AGENTS, agent as coding_agent
+from .primary_workspace import AGENTS as PRIMARY_AGENTS, DEFAULT_AUTH, agent as coding_agent
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from .reviewer_ui import ReviewerFields
@@ -75,15 +75,16 @@ except ImportError as error:
 
 SIGN_IN_LABEL = 'Sign-in'
 SIGN_IN_OPTIONS = [
-    ('Sign in inside the sandbox', 'login'),
     ('Copy sign-in from this computer', 'copy'),
+    ('Sign in inside the sandbox', 'login'),
 ]
 SIGN_IN_HELP = {
     'login': 'The first launch opens the agent’s sign-in flow.',
-    'copy': 'Uses the existing host account and its subscription.',
+    'copy': 'Uses the account signed in on this computer and its subscription.',
 }
 PRIMARY_CATEGORIES = {
     'primary-sign-in': Category(SIGN_IN_LABEL, 'primary-sign-in-section'),
+    'editor-settings': CATEGORIES['editor-settings'],
     'folders': CATEGORIES['folders'],
     'network-settings': Category(NETWORK_LABEL, 'network-section', 'network'),
     'skills': CATEGORIES['skills'],
@@ -92,6 +93,11 @@ PRIMARY_CATEGORIES = {
     'connectors': CATEGORIES['connectors'],
     'resources': CATEGORIES['resources'],
 }
+
+
+def primary_categories(agent):
+    return {key: category for key, category in PRIMARY_CATEGORIES.items()
+            if key != 'editor-settings' or len(editor_settings.modes(agent)) > 1}
 
 def can_copy_primary_sign_in(agent):
     return not (host_platform.is_mac() and agent in ('claude', 'agy'))
@@ -185,7 +191,7 @@ def copy_draft(record, state_root):
                   'model_providers', 'advisors', 'extra_skills', 'extra_folders'):
         if field in config:
             value[field] = copy.deepcopy(config[field])
-    value.update(primary_agent=coding_agent(config), primary_auth='login',
+    value.update(primary_agent=coding_agent(config), primary_auth=DEFAULT_AUTH,
                  profile=config['profile']['path'], options=options(config.get('options')),
                  name='', workspace='', workspace_parent='', env_file='', pi_config='', working_directory='.',
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
@@ -1377,10 +1383,10 @@ class SettingsMenu(ModalScreen[Optional[str]]):
         super().__init__()
         self.sandbox_name = name
         agent = coding_agent(config)
-        self.actions = ([(category.label, action) for action, category in PRIMARY_CATEGORIES.items()]
+        self.actions = ([(category.label, action) for action, category in primary_categories(agent).items()]
                         if agent != 'pi' else self.ACTIONS)
         self.set_class(agent != 'pi', 'native-settings-menu')
-        self.summaries = {'editor-settings': editor_settings.MODES[editor_mode], 'connectors': connector_summary(config, state)}
+        self.summaries = {'editor-settings': editor_settings.modes(agent)[editor_mode], 'connectors': connector_summary(config, state)}
         if agent != 'pi':
             self.summaries['primary-sign-in'] = PRIMARY_AGENTS[agent]
         self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else NO_SYSTEM_PROMPT_ADD_ON
@@ -2821,10 +2827,11 @@ class NewSandbox(Screen):
                          else preset(metadata['name'], self.app.defaults, metadata.get('defaults')))
                 draft.update(profile=profile, name=name, workspace=str(workspace),
                              mkdir=self.query_one('#mkdir', Checkbox).value,
-                             primary_agent=agent, primary_auth='login')
+                             primary_agent=agent, primary_auth=DEFAULT_AUTH)
                 if agent != 'pi' and not self.copied_draft:
                     draft.update(model_providers={}, local_model_ports=None, subagents=False,
-                                 allowlist='', env_file='', pi_config='', editor={'mode': 'pi'})
+                                 allowlist='', env_file='', pi_config='',
+                                 editor={'mode': editor_settings.default_for_agent(agent, draft['engine'])})
                     draft['options'] = options({'git_identity': draft['options']['git_identity'],
                                                 'website_groups': draft['options']['website_groups']})
                 draft.update({k: v for k, v in self.connector_draft.items() if k != 'git_identity'})
@@ -2902,7 +2909,7 @@ class SettingsForm(Screen):
         self.setting = setting
         self.primary = coding_agent(draft)
         self.native = self.primary != 'pi'
-        self.categories = PRIMARY_CATEGORIES if self.native else CATEGORIES
+        self.categories = primary_categories(self.primary) if self.native else CATEGORIES
         if self.native:
             self.AUTO_FOCUS = '#' + self.categories[setting].focus if setting else '#primary-auth'
         self.provider_forms = {}
@@ -2979,9 +2986,9 @@ class SettingsForm(Screen):
         yield Footer()
 
     def open_client_label(self, mode):
-        client = PRIMARY_AGENTS[self.primary] if self.native else {
+        client = (('the browser editor' if mode == 'browser' else PRIMARY_AGENTS[self.primary] + ' CLI') if self.native else {
             'frostpi': 'FrostPi in your browser', 'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
-        }[mode]
+        }[mode])
         return 'Open ' + client + (' after applying' if self.editing else ' when ready')
 
     @on(Select.Changed, '#editor-mode')
@@ -2998,7 +3005,7 @@ class SettingsForm(Screen):
                 return
             with Vertical(classes='setting'):
                 yield Label('How to sign in')
-                yield Select(SIGN_IN_OPTIONS, value=value.get('primary_auth', 'login'),
+                yield Select(SIGN_IN_OPTIONS, value=value.get('primary_auth', DEFAULT_AUTH),
                              allow_blank=False, id='primary-auth')
                 yield Static('', classes='setting-help', id='primary-auth-help')
 
@@ -3173,8 +3180,9 @@ class SettingsForm(Screen):
     def compose_editor_settings(self, category, value, selected):
         if not self.editing:
             mode = value.get('editor', editor_settings.DEFAULTS)['mode']
-            with Collapsible(title=category.label + ' · ' + editor_settings.MODES[mode], collapsed=True, id=category.section):
-                yield EditorFields(value.get('editor', editor_settings.DEFAULTS), connection_settings=not self.defaults_mode)
+            with Collapsible(title=category.label + ' · ' + editor_settings.modes(self.primary)[mode], collapsed=True, id=category.section):
+                yield EditorFields(value.get('editor', editor_settings.DEFAULTS), connection_settings=not self.defaults_mode,
+                                   agent=self.primary)
 
     def compose_folders(self, category, value, selected):
         if not self.editing and not self.defaults_mode:
@@ -3578,6 +3586,10 @@ class SettingsForm(Screen):
         if self.setting in (None, 'primary-browser'):
             selected['browser'] = self.query_one('#primary-browser', Checkbox).value
         if not self.editing:
+            fields = next(iter(self.query(EditorFields)), None)
+            draft['editor'] = fields.collect() if fields else {'mode': 'pi'}
+            if draft['editor']['mode'] == 'browser' and editor_settings.default_mode(draft['engine']) != 'browser':
+                raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose the CLI client.')
             draft['primary_auth'] = (self.query_one('#primary-auth', Select).value
                                      if can_copy_primary_sign_in(self.primary) else 'login')
             draft.update(self.query_one(FolderFields).collect(private_paths=[draft.get('env_file')]))
@@ -3844,7 +3856,9 @@ class SettingsForm(Screen):
             if not draft.get('open_editor'):
                 return
             if self.native:
-                self.app.interactive('open', draft['name'])
+                if not editing and draft.get('primary_auth') == 'login' and editor['mode'] != 'pi':
+                    self.app.interactive('primary-login', draft['name'])
+                self.app.launch_client(draft['name'], editor['mode'])
             elif editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
             else: self.app.push_screen(Operation('Opening '+draft['name'], lambda log: service.run(['open',draft['name']],log)))
         def choose_models():
@@ -4012,6 +4026,8 @@ class Cockpit(App):
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
     .setting, .default-profile-setting { height: auto; }
     .setting { margin-bottom: 1; }
+    .native-primary-form > .form, .native-primary-form > .wizard-actions { max-width: 100; }
+    .native-primary-form EditorFields > .setting { margin: 0 0 1 0; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 2 0 0; }
     .compact-terminal ApprovalHelp #approval-help { max-height: 52vh; }
@@ -4129,6 +4145,8 @@ class Cockpit(App):
     #model-ports { max-width: 48; }
     Collapsible > Contents > *:last-child > .setting:last-child,
     Collapsible > Contents > *:last-child > Collapsible:last-child { margin-bottom: 0; }
+    #editor-section EditorFields > .setting { margin: 0 0 1 0; }
+    #editor-section EditorFields > .last-editor-field { margin: 0; }
     #slack-controls Button { margin-right: 0; }
     .search-provider-row Button { margin-right: 0; }
     .model-fields, #slack-fields, #copy-sandbox-fields, #search-provider-fields { padding-right: 1; }
@@ -4678,12 +4696,10 @@ class Cockpit(App):
             return
         name, config = record['name'], record['config']
         native = coding_agent(config) != 'pi'
-        if action == 'launch-with' and native:
-            self.interactive('open', name)
-        elif action == 'primary-sign-in' and native:
+        if action == 'primary-sign-in' and native:
             self.push_screen(PrimarySignIn(record))
         elif action == 'launch-with':
-            self.push_screen(OpenWith(desktop_allowed=not (self.state_root / name / 'browser-editor.enabled').exists()), lambda mode: self.launch_client(name, mode) if mode else None)
+            self.push_screen(OpenWith(agent=coding_agent(config), desktop_allowed=not (self.state_root / name / 'browser-editor.enabled').exists()), lambda mode: self.launch_client(name, mode) if mode else None)
         elif action == 'editor-settings':
             self.push_screen(EditorScreen(name))
         elif action == 'stop-editor':
@@ -4772,7 +4788,7 @@ class Cockpit(App):
         elif action in ('pi', 'shell'):
             self.interactive(action, name)
         elif action == 'open':
-            self.launch_client(name, None if native else editor_settings.load(self.state_root / name)['mode'])
+            self.launch_client(name, editor_settings.load(self.state_root / name)['mode'])
         elif action == 'connections':
             args = ['exec', name, '--', 'pi', 'mcp', 'list']
             self.operation('Checking configured MCP connections', args)

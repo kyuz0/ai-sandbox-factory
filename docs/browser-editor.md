@@ -1,9 +1,10 @@
 # Browser editor
 
 The browser editor is the default with rootless Podman on Linux, Windows
-through WSL2, and macOS through Podman Machine. It runs FrostPi and its Node
-extensions inside the sandbox. Choose **Open with…** if you want Pi CLI or
-VS Code on your computer instead. The browser editor supports amd64 and arm64
+through WSL2, and macOS through Podman Machine. Pi opens FrostPi; Codex and Claude Code
+open their own VS Code chat panels. The editor and its extensions run inside the
+workspace container. Choose **Open with…** to use the selected agent's CLI instead.
+Pi also supports VS Code on your computer. The browser editor supports amd64 and arm64
 containers. [Platform setup](platforms.md)
 
 FrostPi previews images Pi receives from tools such as `read` and Betterwright.
@@ -11,15 +12,20 @@ Click an image to enlarge it. You can see it again when you reopen the saved cha
 
 ## Open a sandbox
 
-Leave **Open the browser editor when ready** checked to open FrostPi when the sandbox
+Leave **Open the browser editor when ready** checked to open the selected agent's editor when the sandbox
 starts. The first launch downloads the pinned version of code-server for the
-container’s architecture.
+container’s architecture. Codex and Claude Code also download their pinned VS Code extension.
 [Create a sandbox](../README.md#create-a-sandbox)
 
-The selected workspace opens trusted, in dark mode, with FrostPi in the right
-secondary sidebar. The first chat opens and shows the approval mode. Select your
-model and start a conversation.
+The selected workspace opens trusted, in dark mode, with the selected agent's chat
+on the right. The built-in VS Code chat is hidden. FrostPi's first chat shows the
+approval mode; select your model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
+
+Codex and Claude Code use the sandbox's existing sign-in. Their signed-in process
+runs in a separate container; the browser editor does not receive its credentials.
+For a fresh login, complete the terminal sign-in before the editor opens. Use
+**Settings → Sign-in** to sign in again or copy a host login.
 
 Closing the tab or manager leaves the editor running. Choose **Open** beside the
 sandbox to return to it. **Actions… → Stop browser editor** stops the editor and its terminals,

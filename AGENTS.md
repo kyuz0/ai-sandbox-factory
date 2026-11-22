@@ -166,6 +166,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 - Keep short explanations beside their controls. Put longer explanations behind
   a labeled help control near the setting. Use natural, connected language in
   the help.
+- Do not add help text to a self-explanatory control unless it explains a
+  consequence the user needs to know. “Allow file uploads” needs no sentence
+  underneath about copying files into a writable folder in Explorer. Put upload
+  instructions in the relevant help or documentation.
 - Preserve existing details when moving or condensing settings help or
   documentation. Removing a detail requires explicit user authorization.
 - Render independent actions, effects and changed settings as separate bullets.

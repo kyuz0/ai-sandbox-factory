@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import copy
+import json
 import os
 from pathlib import Path
 import sys
@@ -11,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pi_sandbox_factory import sandbox
+from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
 from pi_sandbox_factory.sandbox_tui import (
     Cockpit, DEFAULT_SETTINGS, NewSandbox, PrimarySignIn, SettingsForm, SettingsMenu,
     options, preset,
@@ -64,10 +66,23 @@ async def capture(root, size):
 
                 for agent in ('pi', 'codex', 'claude', 'agy'):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
-                    draft.update(name='transit', workspace=str(project), primary_agent=agent, primary_auth='login',
+                    draft.update(name='transit', workspace=str(project), primary_agent=agent, primary_auth='copy',
                                  editor={'mode': 'pi'}, model_providers={})
                     await app.push_screen(SettingsForm(draft))
                     await shot('review-' + agent)
+                    if agent in ('codex', 'claude'):
+                        editor = app.screen.query_one('#editor-section', Collapsible)
+                        editor.collapsed = False
+                        app.screen.query_one('#editor-mode', Select).value = 'browser'
+                        app.screen.query_one('#editor-mode', Select).focus()
+                        await shot('review-editor-' + agent)
+                        app.screen.query_one('#editor-uploads').focus()
+                        await shot('review-editor-uploads-off-' + agent)
+                        app.screen.query_one('#editor-uploads').value = True
+                        await shot('review-editor-uploads-' + agent)
+                        app.screen.query_one('#editor-mode', Select).value = 'pi'
+                        await shot('review-editor-cli-' + agent)
+                        editor.collapsed = True
                     if agent == 'codex':
                         app.screen.query_one('#primary-auth', Select).value = 'copy'
                         await shot('review-copy')
@@ -91,6 +106,49 @@ async def capture(root, size):
                 await app.push_screen(SettingsMenu('transit', config, 'pi'))
                 await shot('settings')
                 await app.pop_screen()
+                (state / 'transit' / 'config.json').write_text(json.dumps({'primary_agent': 'pi'}))
+                await app.push_screen(EditorScreen('transit'))
+                app.screen.query_one('#editor-mode', Select).value = 'frostpi'
+                await shot('editor-frostpi')
+                app.screen.query_one('#frostpi-uploads').value = True
+                app.screen.query_one('#frostpi-downloads').value = True
+                await shot('editor-frostpi-transfers')
+                await app.pop_screen()
+                for agent in ('codex', 'claude'):
+                    (state / 'transit' / 'config.json').write_text(json.dumps({'primary_agent': agent}))
+                    await app.push_screen(EditorScreen('transit'))
+                    await shot('editor-' + agent)
+                    app.screen.query_one('#editor-mode', Select).value = 'pi'
+                    await shot('editor-cli-' + agent)
+                    app.screen.query_one('#editor-mode', Select).value = 'browser'
+                    app.screen.query_one('#editor-mode', Select).focus()
+                    await pilot.press('enter')
+                    await shot('editor-dropdown-' + agent)
+                    await pilot.press('escape')
+                    app.screen.query_one('#editor-connection', Collapsible).collapsed = False
+                    app.screen.query_one('#editor-port', Input).value = 'wrong'
+                    await pilot.click('#editor-save')
+                    await shot('editor-error-' + agent)
+                    assert app.screen.query_one('#editor-port-error').region.bottom <= app.screen.query_one('.wizard-actions').region.y
+                    app.screen.query_one('#editor-port', Input).value = '8443'
+                    app.screen.query_one('#editor-address', Input).value = '192.0.2.5'
+                    app.screen.query_one('#editor-auth').value = True
+                    app.screen.query_one('#editor-password', Input).value = 'synthetic-example-password'
+                    await pilot.pause()
+                    app.screen.query_one('#editor-auth').focus()
+                    await pilot.press('tab')
+                    await shot('editor-password-' + agent)
+                    app.screen.query_one('#editor-certificate', Input).focus()
+                    await shot('editor-https-' + agent)
+                    await app.pop_screen()
+                    with patch('pi_sandbox_factory.browser_editor.active', return_value=True):
+                        await app.push_screen(EditorScreen('transit'))
+                        app.screen.query_one('#editor-uploads').value = True
+                        await shot('editor-running-' + agent)
+                        await app.pop_screen()
+                    await app.push_screen(OpenWith(agent=agent))
+                    await shot('open-with-' + agent)
+                    await app.pop_screen()
                 await app.push_screen(PrimarySignIn(record))
                 await shot('sign-in')
                 app.screen.query_one('#primary-import', Button).press()

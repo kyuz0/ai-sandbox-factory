@@ -9,16 +9,17 @@ For a different setup, pick **Custom profile…** or install a profile from
 
 Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or Antigravity. A sandbox you created with Pi continues to use Pi. To work with another agent, create a separate sandbox.
 
-For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, choose **Sign in inside the sandbox** for a fresh login, or **Copy sign-in from this computer** to use an existing account. The agent reads its sign-in from a private container. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the agent’s sign-in.
+For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, **Copy sign-in from this computer** is selected by default where host sign-in copying is supported. Choose **Sign in inside the sandbox** for a fresh login instead. The agent reads its sign-in from a private container. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the agent’s sign-in.
 
 Under **Review sandbox → Connectors**, choose a service to give the workspace access. Open **SSH & Git…** to set the Git commit author, add SSH destinations or configure repository access. Open **AWS…** to select an access profile. You can edit the same choices later in **Settings → Connectors**. [Connector setup](connectors.md)
 
 ## Open a sandbox
 
-Choose **Open** on the dashboard. Codex, Claude Code and Antigravity open in the terminal. For Pi on supported hosts, Factory opens the browser
-editor on this computer without a password by default. Use **Open with…** to
-pick a different client for this launch. During creation, expand **Editor** to
-choose **Pi CLI** or **VS Code on host** as the default. Clear the checkbox for
+Choose **Open** on the dashboard. Pi, Codex and Claude Code use the browser editor by default on supported hosts. Each opens its own chat panel beside your files. Antigravity opens in the terminal.
+
+Use **Open with…** to pick a different client for this launch. During creation,
+expand **Editor** to choose the browser editor or the selected agent's CLI.
+Pi also offers **FrostPi in browser** and **VS Code on host**. Clear the checkbox for
 opening your selected client if you want to open it yourself later. For an existing sandbox,
 **Settings → Editor** lets you change the default client, address, port, or password.
 

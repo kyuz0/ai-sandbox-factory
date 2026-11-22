@@ -919,7 +919,7 @@ def configure_local_gateway(config, value, rules):
 
 def create(args, state):
     selected = primary_workspace.agent({'primary_agent': getattr(args, 'primary_agent', 'pi') or 'pi'})
-    auth_method = primary_workspace.auth({'primary_auth': getattr(args, 'primary_auth', 'login') or 'login'})
+    auth_method = primary_workspace.auth({'primary_auth': getattr(args, 'primary_auth', None) or primary_workspace.DEFAULT_AUTH})
     native = selected != 'pi'
     reuse = {}
     if getattr(args, 'reuse_from', None):
@@ -1070,7 +1070,7 @@ def create(args, state):
     (state / 'squid.conf').write_text(network_policy(config, rules))
     write_attach(config, state)
     from . import editor_settings
-    editor_settings.save(state, {'mode': 'pi' if native else (getattr(args, 'editor', None) or editor_settings.default_mode(engine))}, record_edit=False)
+    editor_settings.save(state, {'mode': getattr(args, 'editor', None) or editor_settings.default_for_agent(selected, engine)}, record_edit=False)
     activity.record(state, 'created')
     description = f'Coding agent: {primary_workspace.AGENTS[selected]}' if native else f'Profile: {profile["name"]}'
     print(f'Created {state}\n{description}. Network: {mode}; {len(rules)} hostname/port rules. Run build, then up.')
@@ -1507,14 +1507,19 @@ def configure_models(config, state, preview=False):
 
 
 def open_selected(config, state, mode=None):
-    if primary_workspace.agent(config) != 'pi':
-        from . import primary_agents
-        if mode not in (None, 'pi'):
-            raise ValueError('Open this coding agent from its terminal.')
-        up(config, state)
-        return primary_agents.open_terminal(config, state)
     from . import editor_settings, browser_editor
     mode = mode or editor_settings.load(state)['mode']
+    selected = primary_workspace.agent(config)
+    if selected != 'pi':
+        from . import primary_agents
+        if mode not in editor_settings.modes(selected):
+            raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
+        up(config, state)
+        if mode == 'pi':
+            return primary_agents.open_terminal(config, state)
+        if not primary_agents.has_sign_in(config):
+            raise ValueError('Sign in from Settings → Sign-in, then open the browser editor.')
+        return browser_editor.open_browser_editor(config, state, background=True)
     if mode == 'frostpi':
         browser_editor.open_browser_editor(config, state, background=True, mode=mode)
     elif mode == 'browser':
@@ -1630,8 +1635,8 @@ def main():
     new.add_argument('name')
     new.add_argument('--primary-agent', choices=list(primary_workspace.AGENTS), default='pi',
                      help='Coding agent to open (default: Pi)')
-    new.add_argument('--primary-auth', choices=['login', 'copy'], default='login',
-                     help='Sign in when opening the agent or explicitly copy the host sign-in on startup')
+    new.add_argument('--primary-auth', choices=['copy', 'login'], default=primary_workspace.DEFAULT_AUTH,
+                     help='Copy the host sign-in (default), or sign in inside the sandbox')
     new.add_argument('--profile', default='base', help='Installed profile name or custom profile directory (default: base)')
     new.add_argument('--workspace', required=True)
     new.add_argument('--creation-token', help=argparse.SUPPRESS)
@@ -1789,8 +1794,11 @@ def main():
         return
     config = json.loads((state / 'config.json').read_text())
     native = primary_workspace.agent(config) != 'pi'
-    if native and args.command in ('browser-editor', 'configure', 'pi', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
+    if native and args.command in ('configure', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
         raise ValueError('This command applies to Pi sandboxes. Use open to launch the selected coding agent.')
+    if native and args.command == 'pi':
+        open_selected(config, state, 'pi')
+        return
     if args.command == 'build':
         if not config.get('common'):
             config['common'] = snapshot_profile(common_profile(), state)

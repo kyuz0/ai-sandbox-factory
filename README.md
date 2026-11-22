@@ -2,7 +2,7 @@
 
 Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder, saved chats and restricted networking by default. Choose the coding agent when you create the sandbox.
 
-Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex, Claude Code and Antigravity open in the terminal.
+Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex and Claude Code offer a browser editor with their own chat panel, or a terminal client. Antigravity opens in the terminal.
 
 ![Pi Sandbox Factory dashboard](docs/sandboxes.png)
 
@@ -25,7 +25,7 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 1. Choose **New sandbox** and select a **Coding agent**. For Pi, also choose a **Profile**. Pick your **Workspace**, check the **Sandbox name**, then choose **Continue**.
 2. On **Review sandbox**, set up the agent you chose.
    - **Pi** — Open **Model Providers**. For a local model, enable **Connect to models on this computer** and enter the server port, usually `8000`. If a model is missing, check that the server is running and refresh the model list. For OpenRouter, Together, Azure/Foundry or Bedrock, choose **Connect hosted provider…**. Hosted credentials stay in a separate container. [Local models](docs/usage.md#local-models) · [Hosted models](docs/hosted-models.md)
-   - **Codex, Claude Code or Antigravity** — Under **Sign-in**, choose **Sign in inside the sandbox** or **Copy sign-in from this computer**. [Agent sign-in](docs/usage.md#choose-a-coding-agent)
+   - **Codex, Claude Code or Antigravity** — **Copy sign-in from this computer** is selected by default where supported. Choose **Sign in inside the sandbox** if you want a fresh login. [Agent sign-in](docs/usage.md#choose-a-coding-agent)
 3. Open **Connectors** if your agent needs SSH, Git, AWS or an installed HTTPS service. Choose what this sandbox may use. You can make this choice later in **Settings → Connectors**. [Connector setup](docs/connectors.md)
 4. Choose **Create and start sandbox**. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
 

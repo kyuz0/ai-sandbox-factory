@@ -34,8 +34,8 @@ RUN set -eu; case "$AGENT" in \
         install -m 755 /tmp/antigravity /usr/local/bin/factory-agent; \
         rm /tmp/agy.tar.gz /tmp/antigravity ;; \
     *) exit 2 ;; esac; /usr/local/bin/factory-agent --version
-COPY entrypoint.sh launch.py agy-policy.py /opt/primary/
-RUN install -d -o node -g node -m 700 /work /workspace /run/primary-bus \
+COPY entrypoint.sh launch.py agy-policy.py editor_protocol.py editor_bridge.py /opt/primary/
+RUN install -d -o node -g node -m 700 /work /workspace /run/primary-bus /run/primary-editor \
     && chmod 755 /opt/primary/entrypoint.sh
 ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/primary-bus/bus XDG_RUNTIME_DIR=/run/primary-bus \

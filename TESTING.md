@@ -45,6 +45,34 @@ printf 'approval-routing-ok\n' | podman exec --user 0 -i CONTAINER tee /var/lib/
 
 Ask Pi to read that receipt. Authorize the reviewed outer shell to read that specific file if the normal shell cannot. Check the reviewer's provider and model, its decision, and whether the tool ran. For an approval, check that Pi returns `approval-routing-ok`. For a denial, check that the outer command did not run. Select **Use current model for approvals** and repeat to check the chat model handles the review. Remove the disposable sandbox after the test.
 
+## Native Codex and Claude browser editors
+
+These checks use the host's existing subscription sign-in in a disposable private
+controller. The separate workspace container has no account files or provider
+connection. They require rootless Podman, Python Playwright, Chromium and the
+extracted code-server version pinned by Factory. Build the selected agent's
+controller and workspace images from the checkout first.
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/native_browser_editor.py claude \
+  --code-server /path/to/code-server-4.145.2-linux-amd64 \
+  --chromium /path/to/chromium --output /tmp/factory-claude-editor --reload
+```
+
+Repeat with `codex`. The test installs the pinned official extension through the
+production installer, runs the production editor launcher, completes two different
+workspace edits, and checks that the built-in VS Code chat is hidden. With
+`--reload`, it reopens the saved conversation from the native history control and
+asks about the previous turn without reading the workspace again. The test saves
+screenshots and browser errors and removes its containers and volumes afterward.
+
+Run `PYTHONPATH=tests:. .venv/bin/python -m unittest test_native_editor_protocol`
+for protocol validation, credential-response filtering, idle chat handoff,
+concurrent writer rejection and process cleanup. Run
+`.venv/bin/python tests/primary_worker_tools.py --image WORKSPACE_IMAGE` for the
+offline worker check: one baseline command, ten concurrent commands, five
+cancellations, a subsequent command and child-process cleanup.
+
 ## FrostPi editor and shared Pi goals
 
 Use `--standalone` in place of `--code-server` and its directory to exercise **FrostPi in browser**. It opens a new chat, sends a prompt to the local test model, reloads the page and resumes the saved conversation. The test also checks workspace browsing on desktop and phone, Markdown links and images, keyboard navigation, draft preservation, and the workspace and browser access rules. It checks that transfers start disabled, uploads and downloads a binary file, checks both copies byte for byte and verifies that duplicate names and interrupted uploads preserve existing files.
