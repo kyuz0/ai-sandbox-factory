@@ -1,5 +1,6 @@
 """Opt-in Linux integration check. Run with PYTHONPATH=. from the repository root."""
 import argparse
+import base64
 from contextlib import ExitStack
 import json
 import os
@@ -7,8 +8,10 @@ import re
 from pathlib import Path
 import secrets
 import subprocess
+import struct
 import tempfile
 import time
+import zlib
 from urllib.request import urlopen
 from urllib.error import HTTPError
 
@@ -57,6 +60,7 @@ def stop_controls(frame):
 def verify_reply(page, prompt, expected, timeout, output=None):
     deadline = time.monotonic() + timeout
     submitted = False
+    submitted_frame = None
     observations = set()
     previous_matches = 0
     last_snapshot = 0
@@ -70,14 +74,19 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                     if text.lower() in visible.lower():
                         observations.add(text)
                 if submitted:
+                    if frame != submitted_frame:
+                        continue
                     approval = frame.get_by_role('button', name=re.compile(r'^(1 Yes|Allow once)$'))
                     if approval.count() == 1 and approval.is_visible():
                         approval.click()
                         print('Approved one workspace tool request.', flush=True)
                     stopping = stop_controls(frame)
+                    busy = frame.get_by_role('button', name=re.compile(r'Recent chats\. [1-9]\d* in progress'))
                     # Do not mistake the submitted prompt's own receipt for
                     # the model's reply while the next command is still running.
-                    if visible.count(expected) > previous_matches + prompt.count(expected) and not any(stopping.nth(i).is_visible() for i in range(stopping.count())):
+                    if (visible.count(expected) > previous_matches + prompt.count(expected)
+                            and not any(stopping.nth(i).is_visible() for i in range(stopping.count()))
+                            and not any(busy.nth(i).is_visible() for i in range(busy.count()))):
                         return
                     continue
                 inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
@@ -87,6 +96,7 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                     inputs.last.fill(prompt, timeout=1500)
                     inputs.last.press('Enter')
                     submitted = True
+                    submitted_frame = frame
                     print('Sent the test prompt in the native panel.', flush=True)
                 else:
                     for name in ('Next', 'Continue', 'Skip', 'Get started', 'Start coding'):
@@ -242,6 +252,54 @@ def choose_manual_approvals(page, agent, output):
                 page.screenshot(path=str(output / 'manual-approvals.png'))
                 return
     raise RuntimeError('Could not select manual approvals in the native panel')
+
+
+def check_codex_file_isolation(page, controller, editor, output, timeout):
+    """Exercise native file tools against different files in the two containers."""
+    def png(red, green, blue):
+        def chunk(kind, data):
+            return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data))
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', 32, 32, 8, 2, 0, 0, 0)) +
+                chunk(b'IDAT', zlib.compress((b'\x00' + bytes((red, green, blue)) * 32) * 32)) + chunk(b'IEND', b''))
+    for container, color in ((controller, (255, 0, 0)), (editor, (0, 0, 255))):
+        encoded = base64.b64encode(png(*color)).decode()
+        podman('exec', '-i', container, 'python3', '-c',
+               'import sys,base64;from pathlib import Path;Path("/workspace/isolation.png").write_bytes(base64.b64decode(sys.stdin.read()))',
+               payload=encoded)
+        podman('exec', '-i', container, 'tee', '/workspace/isolation-patch.txt', payload='before\n')
+    podman('exec', controller, 'touch', '/home/node/.factory-private-isolation')
+    verify_reply(page, 'Use your native view_image tool to inspect /workspace/isolation.png. '
+                 'Do not use shell commands to inspect it. Reply with the color in lowercase.',
+                 'blue', timeout, output)
+    receipt = 'patch-' + secrets.token_hex(12)
+    verify_reply(page, 'Use apply_patch to replace the text in /workspace/isolation-patch.txt with '
+                 f'{receipt}. Then use the workspace shell to test whether '
+                 '/home/node/.factory-private-isolation exists. Do not create that file. '
+                 'Write exactly present or absent into /workspace/isolation-access.txt. '
+                 f'Reply {receipt} after both operations finish.', receipt, timeout, output)
+    for container, expected in ((editor, receipt), (controller, 'before')):
+        actual = subprocess.check_output(['podman', 'exec', container, 'cat', '/workspace/isolation-patch.txt'], text=True)
+        assert actual.strip() == expected, (container, actual)
+    actual = subprocess.check_output(['podman', 'exec', editor, 'cat', '/workspace/isolation-access.txt'], text=True)
+    assert actual.strip() == 'absent', actual
+    # Confirm that the requested native tools actually ran, rather than only
+    # accepting a model's statement about which tool it used.
+    inspection = '''import json
+from pathlib import Path
+calls=[]
+for path in (Path.home()/'.codex/sessions').rglob('*.jsonl'):
+ for line in path.read_text().splitlines():
+  try: item=json.loads(line).get('payload',{})
+  except ValueError: continue
+  if item.get('type') in ('function_call','custom_tool_call'):
+   calls.append({'name':item.get('name'),'arguments':item.get('arguments',item.get('input',''))})
+print(json.dumps({'view_image':any('view_image' in str(c) for c in calls),
+                  'apply_patch':any('apply_patch' in str(c) for c in calls),
+                  'tools':sorted(set(c['name'] for c in calls if c['name']))}))'''
+    invoked = json.loads(subprocess.check_output(['podman', 'exec', controller, 'python3', '-c', inspection], text=True))
+    (output / 'isolation-tools.json').write_text(json.dumps(invoked, indent=2))
+    assert invoked['view_image'] and invoked['apply_patch'], invoked
+    print('Native image and patch tools used workspace files; the controller file stayed unchanged and its private marker was absent.', flush=True)
 
 
 def check_denial(page, editor, output, timeout):
@@ -419,6 +477,8 @@ def run(args, root, stack):
         if args.deny:
             choose_manual_approvals(page, agent, args.output)
             check_denial(page, editor, args.output, args.timeout)
+        if args.isolation:
+            check_codex_file_isolation(page, fixture, editor, args.output, args.timeout)
         if args.reload:
             page.reload()
             resume_chat(page, args.output, args.timeout, second)
@@ -453,10 +513,13 @@ if __name__ == '__main__':
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
     parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
+    parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
     if args.api_error and args.agent != 'claude':
         parser.error('--api-error requires claude')
+    if args.isolation and args.agent != 'codex':
+        parser.error('--isolation requires codex')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:

@@ -79,6 +79,12 @@ saved approval choice takes precedence. The installer refuses an extension
 whose fallback code no longer matches.
 When updating either native client, test its CLI and extension versions together.
 
+For Codex, add `--isolation` to test native image viewing and patching. The test
+puts different images at the same path in the controller and workspace, checks
+that Codex sees the workspace image, and verifies that a patch changes only the
+workspace file. It also checks that the workspace shell cannot see a private
+controller marker and confirms the requested native tools ran.
+
 Check fresh terminal launches as well: the selected workspace should not require
 a trust confirmation. Claude must retain Auto mode and its restricted tools;
 Antigravity must retain its tool policy. Test a starting subfolder, including a
