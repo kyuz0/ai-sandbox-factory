@@ -7,6 +7,8 @@ Enter the name and email to record on commits. For an existing sandbox, use
 **Settings → Connectors → SSH & Git → Git commit identity**, then apply the settings.
 You can also set this under **Defaults for new sandboxes**.
 
+![Setting the Git commit author in the SSH and Git connector](git-identity.png)
+
 Factory sets the default name and email for commits inside the sandbox. If a
 repository already has its own `user.name` or `user.email`, those values take
 precedence. Turning off **Set Git commit identity** removes Factory’s default
@@ -20,6 +22,7 @@ clone, fetch and push; cryptographic commit signing is configured separately.
 
 Enable **GitHub** under **Settings → Network and Web Search → Network → Website categories** for repository
 browsing, API requests, clones and release downloads over HTTPS.
+For Codex, Claude Code and Antigravity, use **Settings → Network → Website categories**.
 
 For authenticated Git operations with an isolated private key, use SSH.
 
@@ -29,6 +32,8 @@ In **Review sandbox → Connectors → SSH & Git**, enter destinations or import
 Choose **Generate repository key** or **Import and unlock** to set up the key
 as soon as the sandbox starts. If you generate a key, Factory displays its
 public half for you to register with the Git server.
+
+![Configuring SSH destinations and choosing a key during sandbox creation](ssh-destinations.png)
 
 For GitHub or GitLab, use **Add repository…** and follow [repository setup](repository-access.md).
 

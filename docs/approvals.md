@@ -3,6 +3,8 @@
 The approval mode tells Pi who decides when a tool needs permission. You can
 let a reviewer decide, have Pi ask you, or turn approval prompts off.
 
+For Codex, Claude Code and Antigravity, open **Settings → Approvals**. Choose the agent's automatic mode or **Ask for approval**. Saving keeps current work running; restart the sandbox when you want to use the new mode. See [native agent approval controls](browser-editor.md#open-a-sandbox).
+
 ## Configuration and updates
 
 1. Select your sandbox in Factory and open **Settings → Approvals & sandbox**.

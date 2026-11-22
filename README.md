@@ -2,7 +2,7 @@
 
 Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder, saved chats and restricted networking by default. Choose the coding agent when you create the sandbox.
 
-Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex, Claude Code and Antigravity offer a browser editor with their own chat panel, or a terminal client.
+Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex, Claude Code and Antigravity offer a browser editor with their own chat panel, or a terminal client.
 
 ![Pi Sandbox Factory dashboard](docs/sandboxes.png)
 
@@ -29,9 +29,9 @@ Open a new terminal if `pi-sandbox-factory` is not found.
 3. Open **Connectors** if your agent needs SSH, Git, AWS or an installed HTTPS service. Choose what this sandbox may use. You can make this choice later in **Settings → Connectors**. [Connector setup](docs/connectors.md)
 4. Choose **Create and start sandbox**. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
 
-![Connector settings for SSH and Git, AWS and an example build service](docs/connectors.png)
+![Built-in SSH and Git and AWS connectors in sandbox settings](docs/connectors.png)
 
-SSH & Git and AWS are built in. **Build status** appears here because the example connector was installed for this screenshot.
+SSH & Git and AWS are built in. [Connectors](docs/connectors.md) explains how to configure them and install an HTTPS connector for another service.
 
 If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 **Connect to models on this computer**. [Linux local model requirements](docs/platforms.md#linux-local-models)
@@ -44,7 +44,7 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
   connection. HTTP and HTTPS go through a gateway that checks the destination
   hostname and port. Approved shell commands still follow those network rules.
   **Unrestricted** gives the container ordinary network access. [Isolation and approvals](docs/architecture.md#restricted-networking)
-- **Allowed destinations:** In **Settings → Network and Web Search → Network**,
+- **Allowed destinations:** Open **Settings → Network and Web Search → Network** for Pi, or **Settings → Network** for the other coding agents. Then
   select **Website categories** such as **Python**, **npm**, or **GitHub**, or
   add an exact host and port such as `docs.python.org:443`. If a package
   downloads a binary from another host, allow that host too. Editing rules keeps
@@ -93,5 +93,5 @@ For a walkthrough, choose **Getting started…** beside either profile or type
 ## Further reading
 
 - [Browser editor](docs/browser-editor.md) · [Agent browser and vault protection](docs/usage.md#see-and-interact-with-the-agents-browser) · [Slack](docs/communications.md)
-- [Approval modes](docs/approvals.md) · [SSH](docs/ssh.md) · [Git repository permissions](docs/repository-access.md) · [Advisors](docs/advisors.md)
+- [Approval modes](docs/approvals.md) · [SSH](docs/ssh.md) · [Git repository permissions](docs/repository-access.md) · [AWS access](docs/aws-access.md) · [Advisors](docs/advisors.md)
 - [Development and tests](TESTING.md) · [Agent guide](AGENTS.md)

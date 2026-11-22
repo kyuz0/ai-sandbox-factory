@@ -3,6 +3,10 @@
 Use **Settings → Connectors → SSH & Git**. Private keys stay in the SSH companion;
 GitHub or GitLab controls what the key can do. Factory holds one key per sandbox.
 
+You can also configure repository access during creation under **Review sandbox → Connectors → SSH & Git**.
+
+![Adding a repository URL and choosing an SSH alias](git-repository.png)
+
 ## Read-only repository
 
 1. Choose **Add repository…**, enter its HTTPS project URL and **Add destination**.

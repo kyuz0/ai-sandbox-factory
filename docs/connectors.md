@@ -10,6 +10,28 @@ Open **Review sandbox → Connectors** during creation, or **Settings → Connec
 
 Azure and Google Cloud access is planned. The available connectors appear in the same place for Pi, Codex, Claude Code and Antigravity.
 
+![Built-in connectors in sandbox settings](connectors.png)
+
+## Connect to an SSH host
+
+Open **SSH & Git…**. Add the SSH destinations this sandbox may reach and supply their trusted host keys. Generate a key for this sandbox or import an existing key from your computer. The private key stays in a separate container; the agent connects through the aliases you configured. [SSH setup and key management](ssh.md#ssh-setup)
+
+![SSH destinations and key selection during sandbox creation](ssh-destinations.png)
+
+## Give the agent Git access
+
+In **SSH & Git…**, choose **Add repository…** and enter its GitHub or GitLab URL. Register the sandbox's public key as a deploy key on that repository. The Git server controls whether it can read or push. Open **Git commit identity** in the same form to choose the author name and email. [Repository setup](repository-access.md) · [Commit identity](ssh.md#commit-identity)
+
+![Adding a Git repository to the SSH connector](git-repository.png)
+
+## Give the agent AWS access
+
+Sign in with AWS CLI on your computer, then open **AWS…**. Choose **New…** to save a profile with your host AWS profile, a dedicated IAM role, a region and the allowed actions and resources. Save it and choose **Use profile**. The sandbox can use AWS CLI and Boto3 within those permissions; your sign-in stays outside it. [AWS setup and permissions](aws-access.md)
+
+![A saved AWS access profile and its permissions](aws-profile.png)
+
+Use **Library → AWS access** to edit or duplicate profiles. After an edit, choose which sandboxes receive the update. Other sandboxes keep their existing permissions.
+
 ## Give a sandbox access to an HTTPS service
 
 1. Install a connector for the service on your computer. This guide uses **Build status**, a fictional service. To try the example with your own build service, replace its example URLs before installing it.
