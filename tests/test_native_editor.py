@@ -48,6 +48,7 @@ class NativeEditorInstallTests(unittest.TestCase):
             item = zipfile.ZipInfo(entry)
             item.external_attr = (0o120777 if symlink else 0o100644) << 16
             archive.writestr(item, b'{}')
+            archive.writestr('extension/extension.js', native_editor.CLAUDE_MODE_SOURCE)
         payload = buffer.getvalue()
         digest = hashlib.sha256(payload).hexdigest()
         self.stack.enter_context(patch.object(native_editor, 'specification', return_value={
@@ -65,6 +66,7 @@ class NativeEditorInstallTests(unittest.TestCase):
         self.assertIn('Anthropic.claude-code-1.2.3/package.json', self.installed)
         helper = self.installed['pi-sandbox-factory.native-editor-1.0.0/index.cjs'].decode()
         self.assertIn('claude-vscode.sidebar.open', helper)
+        self.assertIn(b'o=n||r||"auto";', self.installed['Anthropic.claude-code-1.2.3/extension.js'])
         marker = next(i for i, (cmd, _) in enumerate(self.calls) if 'tee' in cmd and cmd[-1].endswith('.factory-sha256'))
         retire = next(i for i, (cmd, _) in enumerate(self.calls) if 'python3' in cmd)
         self.assertLess(marker, retire)
@@ -76,6 +78,16 @@ class NativeEditorInstallTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native_editor.install(self.config, 'fixture', 'x86_64')
         self.assertEqual(len(self.calls), 1)  # Read the existing installation marker only.
+
+    def test_claude_mode_change_fails_closed_when_upstream_changes(self):
+        extension = self.root / 'extension'
+        extension.mkdir()
+        source = extension / 'extension.js'
+        for content in ('unrecognized implementation', native_editor.CLAUDE_MODE_SOURCE * 2):
+            source.write_text(content)
+            with self.assertRaisesRegex(ValueError, 'approval settings'):
+                native_editor.prepare_claude(extension)
+            self.assertEqual(source.read_text(), content)
 
     def test_archive_cannot_escape_or_install_symlinks(self):
         for entry, symlink in (('extension/../../outside', False), ('extension/linked', True)):

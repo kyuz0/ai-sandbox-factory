@@ -12,6 +12,22 @@ import zipfile
 from . import browser_editor, primary_workspace, sandbox_extensions
 
 CATALOG = Path(__file__).parent / 'containers/editor/extensions.json'
+CLAUDE_MODE_SOURCE = 'o=n||r;if(o==="bypassPermissions"'
+CLAUDE_MODE_REPLACEMENT = 'o=n||r||"auto";if(o==="bypassPermissions"'
+
+
+def prepare_claude(extension):
+    """Keep explicit native choices; use Auto for a new Factory editor home.
+
+    Claude's process-wrapper path otherwise defaults to Manual even when the
+    private CLI starts in Auto. Its setting schema does not accept Auto. This
+    pinned adjustment changes only the fallback after the user's saved choice.
+    """
+    source = extension / 'extension.js'
+    content = source.read_text()
+    if content.count(CLAUDE_MODE_SOURCE) != 1:
+        raise ValueError('The Claude extension changed its approval settings. Update the integration before installing it.')
+    source.write_text(content.replace(CLAUDE_MODE_SOURCE, CLAUDE_MODE_REPLACEMENT))
 
 
 def specification(agent):
@@ -36,7 +52,8 @@ def install(config, container, arch):
         f'await vscode.extensions.getExtension({json.dumps(spec["publisher"] + "." + spec["name"])}).activate();'
         f'await vscode.commands.executeCommand({json.dumps(command)}); }};')
     wrapper = '#!/bin/sh\nexec python3 /opt/primary/editor_client.py "$@"\n'
-    installed_digest = hashlib.sha256((package['sha256'] + helper_source + wrapper).encode()).hexdigest()
+    installed_digest = hashlib.sha256((package['sha256'] + helper_source + wrapper +
+        (CLAUDE_MODE_REPLACEMENT if selected == 'claude' else '')).encode()).hexdigest()
     engine = config['engine']
     existing = sandbox.run([engine, 'exec', container, 'cat', marker], capture=True,
                            check=False, stderr=subprocess.DEVNULL)
@@ -76,6 +93,8 @@ def install(config, container, arch):
                     with bundle.open(item) as source, target.open('wb') as output:
                         shutil.copyfileobj(source, output)
                     target.chmod(((item.external_attr >> 16) & 0o777) or 0o644)
+        if selected == 'claude':
+            prepare_claude(extension)
         helper = root / 'pi-sandbox-factory.native-editor-1.0.0'
         helper.mkdir()
         (helper / 'package.json').write_text(json.dumps({

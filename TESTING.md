@@ -66,6 +66,24 @@ workspace edits, and checks that the built-in VS Code chat is hidden. With
 asks about the previous turn without reading the workspace again. The test saves
 screenshots and browser errors and removes its containers and volumes afterward.
 
+Use `--cancel` to stop a running workspace command and check that a subsequent
+command succeeds. Use `--deny` with manual approvals to deny a command and verify
+that it did not run. On a fresh editor home, verify Codex uses its automatic reviewer and Claude
+starts with **Auto**. The pinned Claude extension needs a checked fallback adjustment for its process-wrapper mode; an explicit
+saved approval choice takes precedence. The installer refuses an extension
+whose fallback code no longer matches.
+When updating either native client, test its CLI and extension versions together.
+
+Check fresh terminal launches as well: the selected workspace should not require
+a trust confirmation. Claude must retain Auto mode and its restricted tools;
+Antigravity must retain its tool policy. Test a starting subfolder, including a
+non-ASCII name. Trust must not import project settings into the private controller.
+Run `.venv/bin/python tests/primary_workspace_trust.py --image CODEX_CONTROLLER_IMAGE`
+to check the real Codex parser with ordinary, dotted, Unicode, quoted and escaped
+paths. Existing trust choices for other folders must stay unchanged.
+This check uses no credentials or network connection and also verifies that the
+automatic reviewer remains enabled.
+
 Run `PYTHONPATH=tests:. .venv/bin/python -m unittest test_native_editor_protocol`
 for protocol validation, credential-response filtering, idle chat handoff,
 concurrent writer rejection and process cleanup. Run

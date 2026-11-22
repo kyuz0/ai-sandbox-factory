@@ -48,11 +48,18 @@ def listen(stack, socket_path, ticket, hub=None):
     return port
 
 
-def verify_reply(page, prompt, expected, timeout):
+def stop_controls(frame):
+    # Claude's pinned webview renders an unlabelled square in its submit button.
+    return frame.get_by_role('button', name=re.compile(r'^(stop|cancel)(\b|\s)', re.I)).or_(
+        frame.locator('button:has(svg[class*="stopIcon"])'))
+
+
+def verify_reply(page, prompt, expected, timeout, output=None):
     deadline = time.monotonic() + timeout
     submitted = False
     observations = set()
     previous_matches = 0
+    last_snapshot = 0
     while time.monotonic() < deadline:
         for frame in page.frames:
             if not frame.parent_frame:
@@ -63,12 +70,11 @@ def verify_reply(page, prompt, expected, timeout):
                     if text.lower() in visible.lower():
                         observations.add(text)
                 if submitted:
-                    approval = frame.get_by_role('button', name='1 Yes', exact=True)
+                    approval = frame.get_by_role('button', name=re.compile(r'^(1 Yes|Allow once)$'))
                     if approval.count() == 1 and approval.is_visible():
                         approval.click()
                         print('Approved one workspace tool request.', flush=True)
-                    state = visible[-5000:]
-                    stopping = frame.get_by_role('button', name=re.compile(r'^(stop|cancel)( generation| response| turn)?$', re.I))
+                    stopping = stop_controls(frame)
                     if visible.count(expected) > previous_matches and not any(stopping.nth(i).is_visible() for i in range(stopping.count())):
                         return
                     continue
@@ -90,6 +96,11 @@ def verify_reply(page, prompt, expected, timeout):
                 # Extension startup replaces frames while the panel is mounting.
                 continue
         page.wait_for_timeout(350)
+        if output and time.monotonic() - last_snapshot > 10:
+            page.screenshot(path=str(output / 'latest.png'))
+            (output / 'latest.txt').write_text('\n'.join(frame.locator('body').inner_text()
+                for frame in page.frames if frame.parent_frame))
+            last_snapshot = time.monotonic()
     page.screenshot(path='/tmp/factory-native-failure.png')
     for frame in page.frames:
         print('FRAME', frame.locator('body').inner_text()[-8000:], flush=True)
@@ -134,6 +145,93 @@ def resume_chat(page, output, timeout, expected):
         page.wait_for_timeout(250)
     page.screenshot(path=str(output / 'reload.png'))
     raise RuntimeError('Could not find the native conversation history control')
+
+
+def check_cancellation(page, editor, output, timeout):
+    """Cancel a confirmed running workspace process through the native panel."""
+    source = ('import os, signal\nfrom pathlib import Path\n'
+              'Path("/workspace/cancel.pid").write_text(str(os.getpid()))\n'
+              'signal.pause()\n'
+              'Path("/workspace/cancel-finished").touch()\n')
+    podman('exec', '-i', editor, 'tee', '/workspace/cancel-check.py', payload=source)
+    prompt = 'Run python3 /workspace/cancel-check.py in the foreground and wait for it. Do not run it in the background or change the file. I will stop it using the Stop button.'
+    deadline = time.monotonic() + timeout
+    submitted = False
+    clicked = False
+    while time.monotonic() < deadline and not clicked:
+        for frame in page.frames:
+            if not frame.parent_frame:
+                continue
+            inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, [role=textbox]:visible')
+            if not submitted and inputs.count():
+                inputs.last.fill(prompt)
+                inputs.last.press('Enter')
+                submitted = True
+            approval = frame.get_by_role('button', name='1 Yes', exact=True)
+            if approval.count() == 1 and approval.is_visible():
+                approval.click()
+            started = subprocess.run(['podman', 'exec', editor, 'test', '-f', '/workspace/cancel.pid']).returncode == 0
+            if started:
+                buttons = frame.get_by_role('button')
+                if buttons.count():
+                    (output / 'cancel-buttons.json').write_text(json.dumps(buttons.evaluate_all(
+                        '(buttons) => buttons.map(b => ({text:b.innerText, aria:b.getAttribute("aria-label"),title:b.title}))'), indent=2))
+                stop = stop_controls(frame)
+                for index in range(stop.count()):
+                    if stop.nth(index).is_visible():
+                        page.screenshot(path=str(output / 'before-cancel.png'))
+                        stop.nth(index).click()
+                        clicked = True
+                        break
+        page.wait_for_timeout(250)
+    if not clicked:
+        page.screenshot(path=str(output / 'cancel-failed.png'))
+        raise RuntimeError('Could not cancel the running workspace command from the native panel')
+    pid = subprocess.check_output(['podman', 'exec', editor, 'cat', '/workspace/cancel.pid'], text=True).strip()
+    # Use the remaining test budget: a successful click alone does not prove
+    # that cancellation reached the command in the other container.
+    while time.monotonic() < deadline:
+        alive = subprocess.run(['podman', 'exec', editor, 'test', '-e', '/proc/' + pid]).returncode == 0
+        if not alive:
+            break
+        page.wait_for_timeout(250)
+    else:
+        raise RuntimeError('The native panel stopped, but its workspace command is still running')
+    podman('exec', editor, 'test', '!', '-e', '/workspace/cancel-finished')
+    receipt = 'recovered-' + secrets.token_hex(8)
+    verify_reply(page, f'Run printf {receipt} and reply with its output.', receipt, timeout, output)
+    page.screenshot(path=str(output / 'after-cancel.png'))
+    print('Native Stop cancelled the running workspace process; the next tool request succeeded.', flush=True)
+
+
+def check_denial(page, editor, output, timeout):
+    deadline = time.monotonic() + timeout
+    submitted = denied = False
+    while time.monotonic() < deadline:
+        for frame in page.frames:
+            if not frame.parent_frame:
+                continue
+            inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, [role=textbox]:visible')
+            if not submitted and inputs.count():
+                inputs.last.fill('Run touch /workspace/denied-check. I will deny the permission request. If denied, do not retry or use another tool; just say the command was denied.')
+                inputs.last.press('Enter')
+                submitted = True
+            no = frame.get_by_role('button', name=re.compile(r'^(\d+\s+)?(No|Deny|Reject)\b', re.I))
+            for index in range(no.count()):
+                if no.nth(index).is_visible():
+                    page.screenshot(path=str(output / 'permission-request.png'))
+                    no.nth(index).click()
+                    denied = True
+                    break
+            stop = stop_controls(frame)
+            if denied and inputs.count() and not any(stop.nth(i).is_visible() for i in range(stop.count())):
+                podman('exec', editor, 'test', '!', '-e', '/workspace/denied-check')
+                page.screenshot(path=str(output / 'permission-denied.png'))
+                print('Denied the native permission request; its workspace command did not run.', flush=True)
+                return
+        page.wait_for_timeout(250)
+    page.screenshot(path=str(output / 'denial-failed.png'))
+    raise RuntimeError('The native permission denial did not complete')
 
 
 def run(args, root, stack):
@@ -230,19 +328,23 @@ def run(args, root, stack):
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(f'http://127.0.0.1:{port}/?folder=/workspace')
         expect(page).to_have_title(re.compile('workspace', re.I), timeout=args.timeout * 1000)
-        verify_reply(page, prompt, expected, args.timeout)
+        verify_reply(page, prompt, expected, args.timeout, args.output)
         if args.separate:
             second = 'second-' + secrets.token_hex(12)
             podman('exec','-i',editor,'tee','/workspace/second.txt',payload=second)
-            verify_reply(page, 'Read second.txt and write its contents to final.txt, then reply with the contents.', second, args.timeout)
+            verify_reply(page, 'Read second.txt and write its contents to final.txt, then reply with the contents.', second, args.timeout, args.output)
             final = subprocess.check_output(['podman','exec',editor,'cat','/workspace/final.txt'],text=True)
             assert final.strip() == second
             print('Two different workspace edits passed in one native chat.',flush=True)
         if args.reload:
             page.reload()
             resume_chat(page, args.output, args.timeout, second)
-            verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout)
+            verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
             print('Continued the saved chat after a page reload.', flush=True)
+        if args.deny:
+            check_denial(page, editor, args.output, args.timeout)
+        if args.cancel:
+            check_cancellation(page, editor, args.output, args.timeout)
         page.screenshot(path=str(args.output / 'working.png'))
         assert 'Build with Agent' not in page.locator('body').inner_text()
         (args.output / 'browser-errors.json').write_text(json.dumps(errors, indent=2))
@@ -263,6 +365,8 @@ if __name__ == '__main__':
     parser.set_defaults(separate=True)
     parser.add_argument('--output', type=Path, required=True, help='Directory for screenshots and browser diagnostics')
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
+    parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
+    parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
     args.code_server = args.code_server.resolve(strict=True)

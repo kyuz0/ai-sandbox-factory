@@ -11,6 +11,8 @@ Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or Antigra
 
 For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, **Copy sign-in from this computer** is selected by default where host sign-in copying is supported. Choose **Sign in inside the sandbox** for a fresh login instead. The agent reads its sign-in from a private container. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the agent’s sign-in.
 
+The selected workspace is trusted automatically in the coding agent and browser editor. Command approvals, folder permissions and network rules still apply.
+
 Under **Review sandbox → Connectors**, choose a service to give the workspace access. Open **SSH & Git…** to set the Git commit author, add SSH destinations or configure repository access. Open **AWS…** to select an access profile. You can edit the same choices later in **Settings → Connectors**. [Connector setup](connectors.md)
 
 ## Open a sandbox

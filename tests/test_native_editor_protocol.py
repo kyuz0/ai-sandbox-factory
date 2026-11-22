@@ -91,6 +91,42 @@ class NativeEditorProtocolTests(unittest.TestCase):
         self.assertNotIn('cwd', turn['params'])
         self.assertNotIn('config', turn['params'])
 
+    def test_codex_access_mode_is_honored_without_controller_paths(self):
+        bridge = protocol.CodexProtocol('/workspace', '')
+        start = bridge.incoming({'id': 1, 'method': 'thread/start', 'params': {
+            'permissions': ':read-only', 'approvalPolicy': 'never'}})
+        self.assertEqual(start['params']['sandbox'], 'read-only')
+        self.assertEqual(start['params']['approvalPolicy'], 'never')
+        bridge.conversations.add('ours')
+        for index, (name, expected) in enumerate(((':read-only', 'readOnly'),
+                (':workspace', 'workspaceWrite'), (':danger-full-access', 'dangerFullAccess')), start=2):
+            turn = bridge.incoming({'id': index, 'method': 'turn/start', 'params': {
+                'threadId': 'ours', 'input': [], 'permissions': name, 'approvalPolicy': 'untrusted',
+                'sandboxPolicy': {'type': expected, 'writableRoots': ['/home/node'], 'networkAccess': True}}})
+            self.assertEqual(turn['params']['sandboxPolicy']['type'], expected)
+            self.assertNotIn('/home/node', json.dumps(turn))
+            self.assertEqual(turn['params']['approvalPolicy'], 'untrusted')
+        with self.assertRaises(protocol.Rejected):
+            bridge.incoming({'id': 9, 'method': 'turn/start', 'params': {
+                'threadId': 'ours', 'input': [], 'permissions': 'private-profile'}})
+
+    def test_native_auto_defaults_and_explicit_manual_choice(self):
+        codex = protocol.CodexProtocol('/workspace', '')
+        start = codex.incoming({'id': 1, 'method': 'thread/start', 'params': {}})
+        self.assertEqual(start['params']['approvalsReviewer'], 'auto_review')
+        codex.conversations.add('ours')
+        turn = codex.incoming({'id': 2, 'method': 'turn/start', 'params': {
+            'threadId': 'ours', 'input': [], 'approvalsReviewer': 'user'}})
+        self.assertEqual(turn['params']['approvalsReviewer'], 'user')
+        with self.assertRaises(protocol.Rejected):
+            codex.incoming({'id': 3, 'method': 'turn/start', 'params': {
+                'threadId': 'ours', 'input': [], 'approvalsReviewer': 'bypass'}})
+        claude = protocol.ClaudeProtocol()
+        for mode in ('auto', 'default'):
+            message = {'type': 'control_request', 'request_id': mode,
+                       'request': {'subtype': 'set_permission_mode', 'mode': mode}}
+            self.assertEqual(claude.incoming(message), message)
+
     def test_codex_login_material_and_controller_files_are_unavailable(self):
         bridge = protocol.CodexProtocol('/workspace', '')
         request = bridge.incoming({'id': 8, 'method': 'getAuthStatus', 'params': {'includeToken': True}})
@@ -130,7 +166,24 @@ class NativeEditorProtocolTests(unittest.TestCase):
                 'behavior': 'allow', 'updatedInput': {'command': 'pwd'},
                 'updatedPermissions': [{'type': 'setMode', 'mode': 'bypassPermissions'}]}}})
         self.assertNotIn('updatedPermissions', answer['response']['response'])
-        self.assertEqual(answer['response']['response']['updatedInput'], {'command': 'pwd'})
+        self.assertEqual(answer['response']['response']['behavior'], 'deny')
+        self.assertTrue(answer['response']['response']['interrupt'])
+        self.assertNotIn('one', bridge.pending_permissions)
+
+    def test_claude_session_permission_applies_only_to_workspace_tools(self):
+        bridge = protocol.ClaudeProtocol()
+        for index, name in enumerate(('mcp__factory_probe__workspace_shell', 'Bash')):
+            bridge.outgoing({'type': 'control_request', 'request_id': index,
+                             'request': {'subtype': 'can_use_tool'}})
+            changes = [{'type': 'addRules', 'destination': 'session', 'behavior': 'allow',
+                        'rules': [{'toolName': name}]}]
+            answer = bridge.incoming({'type': 'control_response', 'response': {
+                'subtype': 'success', 'request_id': index,
+                'response': {'behavior': 'allow', 'updatedPermissions': changes}}})
+            if index == 0:
+                self.assertEqual(answer['response']['response']['updatedPermissions'], changes)
+            else:
+                self.assertEqual(answer['response']['response']['behavior'], 'deny')
 
     def test_conversation_resume_survives_restart_but_rejects_foreign_ids(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -148,15 +201,20 @@ class NativeEditorProtocolTests(unittest.TestCase):
             listed = restarted.outgoing({'id': 4, 'result': {'data': [{'id': 'foreign'}, {'id': 'ours'}]}})
             self.assertEqual(listed['result']['data'], [{'id': 'ours'}])
 
-    def test_codex_permissions_are_one_time_and_cannot_change_policy(self):
+    def test_codex_permissions_support_session_choices_but_cannot_write_policy(self):
         bridge = protocol.CodexProtocol('/workspace', '')
-        bridge.outgoing({'id': 'one', 'method': 'item/commandExecution/requestApproval'})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 'one', 'result': {'decision': 'acceptForSession'}})
-        allowed = bridge.incoming({'id': 'one', 'result': {'decision': 'accept', 'config': {'test': True}}})
-        self.assertEqual(allowed, {'id': 'one', 'result': {'decision': 'accept'}})
+        prompt = bridge.outgoing({'id': 'one', 'method': 'item/commandExecution/requestApproval',
+                                 'params': {'proposedExecpolicyAmendment': ['sh']}})
+        self.assertNotIn('proposedExecpolicyAmendment', prompt['params'])
+        allowed = bridge.incoming({'id': 'one', 'result': {'decision': 'acceptForSession', 'config': {'test': True}}})
+        self.assertEqual(allowed, {'id': 'one', 'result': {'decision': 'acceptForSession'}})
         with self.assertRaises(protocol.Rejected):
             bridge.incoming({'id': 'one', 'result': {'decision': 'accept'}})
+        bridge.outgoing({'id': 'two', 'method': 'item/commandExecution/requestApproval'})
+        rejected = bridge.incoming({'id': 'two', 'result': {'decision': {
+            'acceptWithExecpolicyAmendment': {'execpolicy_amendment': ['sh']}}}})
+        self.assertEqual(rejected, {'id': 'two', 'result': {'decision': 'cancel'}})
+        self.assertNotIn('two', bridge.permissions)
 
     def test_claude_history_excludes_api_diagnostics_and_preserves_local_titles(self):
         bridge = component('editor_bridge')
@@ -192,13 +250,21 @@ class NativeEditorProtocolTests(unittest.TestCase):
             conversations = bridge.Conversations()
             conversations.add('ours')
             trusted = ['--tools', '', '--strict-mcp-config', '--mcp-config', 'trusted',
-                       '--allowedTools', 'workspace_shell']
+                       '--permission-mode', 'auto']
             with patch.object(bridge, 'command', return_value=trusted.copy()), patch.object(bridge.os, 'chdir'):
                 argv = bridge.arguments('claude', ['--settings', 'attacker', '--resume', 'ours'],
                                         {'working_directory': folder}, '', conversations)
                 self.assertNotIn('attacker', argv)
                 self.assertIn('stdio', argv)
                 self.assertIn('ours', argv)
+                self.assertEqual(argv[argv.index('--permission-mode') + 1], 'auto')
+            with patch.object(bridge, 'command', return_value=trusted.copy()), patch.object(bridge.os, 'chdir'):
+                argv = bridge.arguments('claude', ['--permission-mode', 'default'],
+                                        {'working_directory': folder}, '', conversations)
+                self.assertEqual(argv[argv.index('--permission-mode') + 1], 'default')
+                with self.assertRaises(bridge.Rejected):
+                    bridge.arguments('claude', ['--permission-mode', 'bypassPermissions'],
+                                     {'working_directory': folder}, '', conversations)
             with patch.object(bridge, 'command', return_value=trusted.copy()), patch.object(bridge.os, 'chdir'):
                 with self.assertRaises(ValueError):
                     bridge.arguments('claude', ['--resume', 'foreign'], {'working_directory': folder}, '', conversations)
@@ -217,11 +283,12 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
             changed.start()
             self.addCleanup(changed.stop)
         self.tasks = set()
+        self.agent = 'codex'
         async def connect(reader, writer):
             task = asyncio.current_task()
             self.tasks.add(task)
             try:
-                await self.bridge.serve_client(reader, writer, 'codex')
+                await self.bridge.serve_client(reader, writer, self.agent)
             finally:
                 self.tasks.discard(task)
         self.server = await asyncio.start_server(connect, '127.0.0.1', 0)
@@ -248,6 +315,39 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
         result = json.loads(await asyncio.wait_for(reader.readline(), 10))
         self.assertEqual(result, {'type': 'factory_exit', 'code': 7})
         self.assertEqual(await asyncio.wait_for(reader.read(), 10), b'')
+
+    async def test_claude_plugin_discovery_returns_without_starting_a_chat(self):
+        self.agent = 'claude'
+        for args, expected in ((['plugin', 'list', '--json'], []),
+                (['plugin', 'list', '--json', '--available'], {'installed': [], 'available': []}),
+                (['plugin', 'marketplace', 'list', '--json'], [])):
+            with self.subTest(args=args), patch.object(self.bridge, 'arguments') as launch:
+                reader, writer = await asyncio.open_connection('127.0.0.1', self.server.sockets[0].getsockname()[1])
+                try:
+                    writer.write((json.dumps({'args': args}) + '\n').encode())
+                    await writer.drain()
+                    message = json.loads(await asyncio.wait_for(reader.readline(), 10))
+                    self.assertEqual(message['code'], 0)
+                    self.assertEqual(json.loads(message['stdout']), expected)
+                    self.assertEqual(await asyncio.wait_for(reader.read(), 10), b'')
+                    launch.assert_not_called()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+
+    async def test_claude_unsupported_cli_command_fails_without_waiting_for_chat_input(self):
+        self.agent = 'claude'
+        reader, writer = await asyncio.open_connection('127.0.0.1', self.server.sockets[0].getsockname()[1])
+        try:
+            writer.write(b'{"args":["plugin","install","unapproved"]}\n')
+            await writer.drain()
+            message = json.loads(await asyncio.wait_for(reader.readline(), 10))
+            self.assertEqual(message['type'], 'factory_exit')
+            self.assertEqual(message['code'], 1)
+            self.assertEqual(await asyncio.wait_for(reader.read(), 10), b'')
+        finally:
+            writer.close()
+            await writer.wait_closed()
 
     async def test_half_close_keeps_final_response(self):
         reader, writer = await self.connection('import sys, json; sys.stdin.read(); print(json.dumps({"method":"finished"}))')

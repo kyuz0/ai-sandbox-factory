@@ -12,6 +12,9 @@ from pi_sandbox_factory import primary_agents, sandbox
 
 class PrimaryAgentIsolation(unittest.TestCase):
     def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
         workspace = TemporaryDirectory()
         self.addCleanup(workspace.cleanup)
         (Path(workspace.name) / 'src').mkdir()
@@ -83,8 +86,8 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 with self.subTest(provider=provider):
                     config = {**self.config, 'primary_agent': provider, 'ssh': {'hosts': [host]}}
                     connector_settings.refresh_agent_context(config, state)
-                    settings = {'browser': False, 'working_directory': str(state)}
-                    with patch.dict(command.__globals__, {'HOME': state}), patch('subprocess.run'):
+                    settings = {'browser': False, 'working_directory': str(state / 'shadow')}
+                    with patch.dict(command.__globals__, {'HOME': state, 'WORKSPACE': state / 'shadow'}), patch('subprocess.run'):
                         args = command(provider, 'chat', settings, prompt.read_text())
                     if provider == 'agy':
                         instructions = (state / '.gemini/AGENTS.md').read_text()
@@ -99,6 +102,88 @@ class PrimaryAgentIsolation(unittest.TestCase):
                     connector_settings.refresh_agent_context({**config, 'ssh': {'hosts': []}}, state)
                     self.assertNotIn('build.example', prompt.read_text())
                     self.assertFalse((state / 'primary-runtime/connectors.md').exists())
+
+    def test_native_review_defaults_apply_to_terminal_and_editor(self):
+        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
+        self.addCleanup(os.chdir, Path.cwd())
+        with TemporaryDirectory() as temp, patch.dict(command.__globals__, {'HOME': Path(temp), 'WORKSPACE': Path(temp) / 'workspace'}):
+            settings = {'browser': False, 'working_directory': str(Path(temp) / 'workspace')}
+            for action in ('open', 'editor'):
+                with self.subTest(action=action):
+                    codex = command('codex', action, settings, '')
+                    self.assertIn('approvals_reviewer="auto_review"', codex)
+                    self.assertIn('approval_policy="on-request"', codex)
+                    self.assertIn('sandbox_mode="workspace-write"', codex)
+                    self.assertNotIn('never', codex)
+                    claude = command('claude', action, settings, '')
+                    self.assertEqual(claude[claude.index('--permission-mode') + 1], 'auto')
+                    self.assertNotIn('--allowedTools', claude)
+                    self.assertNotIn('--dangerously-skip-permissions', claude)
+
+    def test_workspace_trust_uses_selected_folder_without_disabling_approvals(self):
+        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
+        self.addCleanup(os.chdir, Path.cwd())
+        with TemporaryDirectory() as temp, patch.dict(os.environ), \
+                patch.dict(command.__globals__, {'HOME': Path(temp), 'WORKSPACE': Path(temp) / 'workspace'}), patch('subprocess.run'):
+            cwd = Path(temp) / 'workspace' / 'selected folder 🌱'
+            settings = {'browser': False, 'working_directory': str(cwd)}
+            for action in ('open', 'editor'):
+                for provider in ('codex', 'claude', 'agy'):
+                    with self.subTest(provider=provider, action=action):
+                        os.chdir(temp)
+                        args = command(provider, action, settings, '')
+                        self.assertEqual(Path.cwd(), cwd)
+                        self.assertEqual(list(cwd.iterdir()), [])
+                        if provider == 'codex':
+                            table = next(value for value in args if value.startswith('projects='))
+                            self.assertEqual(table, 'projects={' + json.dumps(str(cwd), ensure_ascii=False) +
+                                             '={trust_level="trusted"}}')
+                            self.assertIn('approval_policy="on-request"', args)
+                        elif provider == 'claude':
+                            self.assertEqual(os.environ['CLAUDE_CODE_SANDBOXED'], '1')
+                            self.assertIn('--restricted', args)
+                            self.assertEqual(args[args.index('--tools') + 1], '')
+                            self.assertEqual(args[args.index('--permission-mode') + 1], 'auto')
+                        else:
+                            configured = json.loads(args[args.index('--settings') + 1])
+                            self.assertEqual(configured['trustedWorkspaces'], [str(cwd)])
+                            self.assertIn('command(*)', configured['permissions']['deny'])
+                        self.assertNotIn('--dangerously-skip-permissions', args)
+
+    def test_workspace_trust_preserves_native_state_and_rejects_path_escape(self):
+        prepare = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['workspace_directory']
+        self.addCleanup(os.chdir, Path.cwd())
+        with TemporaryDirectory() as temp:
+            root = Path(temp) / 'workspace'
+            root.mkdir()
+            with patch.dict(prepare.__globals__, {'WORKSPACE': root}):
+                settings = {'working_directory': str(root / 'src')}
+                prepare(settings)
+                prepare({'working_directory': str(root)})  # Existing empty child folders are allowed.
+                marker = root / 'client-state.json'
+                marker.write_text('native client state')
+                prepare(settings)
+                self.assertEqual(marker.read_text(), 'native client state')
+                marker.unlink()
+                link = root / 'outside'
+                link.symlink_to(temp, target_is_directory=True)
+                with self.assertRaisesRegex(ValueError, 'symbolic link'):
+                    prepare({'working_directory': str(link)})
+                link.unlink()
+                for path in (str(Path(temp)), str(root / '..' / 'outside')):
+                    with self.assertRaisesRegex(ValueError, 'configured workspace'):
+                        prepare({'working_directory': path})
+
+    def test_login_does_not_grant_workspace_trust(self):
+        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
+        with TemporaryDirectory() as temp, patch.dict(os.environ), patch('subprocess.run'), \
+                patch.dict(command.__globals__, {'HOME': Path(temp)}):
+            os.environ.pop('CLAUDE_CODE_SANDBOXED', None)
+            for provider in ('codex', 'claude', 'agy'):
+                args = command(provider, 'login', {'browser': False}, '')
+                self.assertNotIn('CLAUDE_CODE_SANDBOXED', os.environ)
+                self.assertNotIn('trustedWorkspaces', ' '.join(args))
+                self.assertNotIn('trust_level', ' '.join(args))
 
     def test_executable_guidance_matches_active_choices(self):
         with TemporaryDirectory() as temp:

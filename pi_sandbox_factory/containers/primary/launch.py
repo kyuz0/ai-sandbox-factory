@@ -9,6 +9,7 @@ SOURCE = Path('/run/primary-input')
 AGENT = '/usr/local/bin/factory-agent'
 WORKSPACE_SOCKET = '/run/primary-workspace/tools.sock'
 HOME = Path.home()
+WORKSPACE = Path('/workspace')
 
 
 def write(path, value):
@@ -20,8 +21,26 @@ def tool_server():
     return {'command': '/usr/bin/socat', 'args': ['STDIO', 'UNIX-CONNECT:' + WORKSPACE_SOCKET]}
 
 
+def workspace_directory(settings):
+    cwd = Path(settings['working_directory'])
+    if not cwd.is_relative_to(WORKSPACE) or '..' in cwd.parts:
+        raise ValueError('The coding agent must start in its configured workspace.')
+    # Only the private controller's directory is trusted here. The real
+    # workspace is mounted separately, in the worker. Keep native client state
+    # if the client writes it here; never clear folders as part of accepting trust.
+    if cwd.resolve() != cwd:
+        raise ValueError('The coding agent’s private workspace must not be a symbolic link.')
+    cwd.mkdir(parents=True, exist_ok=True)
+    os.chdir(cwd)
+    return cwd
+
+
 def command(agent, action, settings, context):
     browser = settings['browser']
+    if action != 'login':
+        # This controller directory matches the worker's selected folder.
+        # Project files, hooks and credentials are never mounted together.
+        cwd = workspace_directory(settings)
     if agent == 'codex':
         (HOME / '.codex').mkdir(mode=0o700, exist_ok=True)
         options = ['-c', 'cli_auth_credentials_store="file"']
@@ -30,30 +49,32 @@ def command(agent, action, settings, context):
         os.environ['CODEX_EXEC_SERVER_URL'] = 'ws://127.0.0.1:36781'
         # The outer worker is already the OS boundary. Route native tools there.
         config = ['-c', 'developer_instructions=' + json.dumps(context, ensure_ascii=False),
+                  '-c', 'approvals_reviewer="auto_review"',
+                  '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"',
                   '-c', 'web_search="disabled"', '-c', 'features.shell_tool=true']
         if browser:
             config += ['-c', 'mcp_servers.factory_workspace.command="/usr/bin/socat"',
                        '-c', 'mcp_servers.factory_workspace.args=' + json.dumps(tool_server()['args'])]
-        # The controller's empty shadow directory matches the worker path but
-        # contains no project-local configuration, executable hooks or plugins.
-        cwd = Path(settings['working_directory'])
-        cwd.mkdir(parents=True, exist_ok=True)
-        os.chdir(cwd)
-        config += ['-c', f'projects.{json.dumps(str(cwd))}.trust_level="trusted"']
+        # Project-provided configuration, hooks and plugins stay in the worker.
+        # -c splits its key on dots without parsing quoted TOML keys. Supply
+        # the projects table as its value so dots/quotes in paths stay literal.
+        key = json.dumps(str(cwd), ensure_ascii=False).replace('\x7f', r'\u007f')
+        config += ['-c', 'projects={' + key + '={trust_level="trusted"}}']
         if action == 'editor':
             return options + config + ['app-server']
-        return options + config + ['--sandbox', 'danger-full-access', '--ask-for-approval', 'never']
+        return options + config
 
     if agent == 'claude':
         if action == 'login':
             return ['auth', 'login']
         os.environ['ENABLE_TOOL_SEARCH'] = 'false'
+        # The private controller has no project files. Claude's native sandbox
+        # marker, verified in pinned Claude 2.1.319, accepts workspace trust
+        # without enabling project settings or bypassing tool approvals.
+        os.environ['CLAUDE_CODE_SANDBOXED'] = '1'
         mcp = json.dumps({'mcpServers': {'factory_probe': tool_server()}})
-        available = 'mcp__factory_probe__workspace_shell'
-        if browser:
-            available += ',mcp__factory_probe__browser'
         return ['--restricted', '--tools', '', '--strict-mcp-config', '--mcp-config', mcp,
-                '--allowedTools', available, '--append-system-prompt', context]
+                '--permission-mode', 'auto', '--append-system-prompt', context]
 
     # Google’s native client performs terminal sign-in as part of its workflow.
     # Its private CLI home has no project content, and every model tool call
@@ -80,7 +101,10 @@ def command(agent, action, settings, context):
         allowed.append('mcp(factory_workspace/browser)')
     permissions = {'allow': allowed, 'deny': ['command(*)', 'read_file(*)', 'write_file(*)',
                                              'read_url(*)', 'execute_url(*)']}
-    return ['--settings', json.dumps({'modelProvider': '', 'permissions': permissions})]
+    preferences = {'modelProvider': '', 'permissions': permissions}
+    if action != 'login':
+        preferences['trustedWorkspaces'] = [str(cwd)]
+    return ['--settings', json.dumps(preferences)]
 
 
 def main():

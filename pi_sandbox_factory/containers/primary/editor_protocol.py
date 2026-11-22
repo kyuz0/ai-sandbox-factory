@@ -86,6 +86,50 @@ def content(items):
     return clean
 
 
+def codex_permissions(given, cwd, *, thread_start=False):
+    """Honor native access choices without accepting controller configuration."""
+    result = {}
+    approval = given.get('approvalPolicy')
+    if approval is not None:
+        if approval not in ('untrusted', 'on-failure', 'on-request', 'never'):
+            raise Rejected('This approval mode is unavailable in the sandbox')
+        result['approvalPolicy'] = approval
+    elif thread_start:
+        result['approvalPolicy'] = 'on-request'
+    reviewer = given.get('approvalsReviewer')
+    if reviewer is not None:
+        if reviewer not in ('user', 'auto_review'):
+            raise Rejected('This approval mode is unavailable in the sandbox')
+        result['approvalsReviewer'] = reviewer
+    elif thread_start:
+        result['approvalsReviewer'] = 'auto_review'
+    policy = given.get('sandboxPolicy')
+    mode = given.get('permissions') or given.get('sandbox')
+    profile = given.get('activePermissionProfile')
+    if profile:
+        mode = object_value(profile).get('id') or mode
+    if mode is not None:
+        kind = {'read-only': 'readOnly', ':read-only': 'readOnly',
+                'workspace-write': 'workspaceWrite', ':workspace': 'workspaceWrite',
+                'danger-full-access': 'dangerFullAccess', ':danger-full-access': 'dangerFullAccess'}.get(text(mode))
+        if not kind:
+            raise Rejected('This access mode is unavailable in the sandbox')
+    elif policy is not None:
+        kind = object_value(policy).get('type')
+    else:
+        kind = 'workspaceWrite' if thread_start else None
+    if kind is not None:
+        if kind not in ('readOnly', 'workspaceWrite', 'dangerFullAccess'):
+            raise Rejected('This access mode is unavailable in the sandbox')
+        safe = {'type': kind}
+        if kind != 'dangerFullAccess':
+            safe['networkAccess'] = object_value(policy or {}).get('networkAccess', False) is True
+        if kind == 'workspaceWrite':
+            safe['writableRoots'] = [cwd]
+        result['sandboxPolicy'] = safe
+    return result
+
+
 class ClaudeProtocol:
     def __init__(self, conversations=None):
         self.pending_permissions = set()
@@ -119,10 +163,22 @@ class ClaudeProtocol:
             safe = fields(response, ('subtype', 'request_id', 'error'))
             if response.get('subtype') == 'success':
                 decision = object_value(response.get('response', {}))
-                if decision.get('behavior') not in ('allow', 'deny'):
-                    raise Rejected('Choose whether to allow this tool request')
-                # A one-time decision must not install persistent permission rules.
-                safe['response'] = fields(decision, ('behavior', 'updatedInput', 'message', 'interrupt'))
+                changes = decision.get('updatedPermissions') or []
+                valid = isinstance(changes, list) and all(
+                    isinstance(change, dict) and change.get('destination') == 'session' and
+                    change.get('type') == 'addRules' and change.get('behavior') == 'allow' and
+                    isinstance(change.get('rules'), list) and all(
+                        isinstance(rule, dict) and rule.get('toolName') in (
+                            'mcp__factory_probe__workspace_shell', 'mcp__factory_probe__browser') and
+                        set(rule).issubset({'toolName', 'ruleContent'}) for rule in change['rules'])
+                    for change in changes)
+                if decision.get('behavior') not in ('allow', 'deny') or not valid:
+                    safe['response'] = {'behavior': 'deny', 'interrupt': True,
+                        'message': 'Choose Allow once or Allow for this session. Permanent permission changes are unavailable here.'}
+                else:
+                    safe['response'] = fields(decision, ('behavior', 'updatedInput', 'message', 'interrupt'))
+                    if changes:
+                        safe['response']['updatedPermissions'] = changes
             self.pending_permissions.remove(request_id)
             return {'type': kind, 'response': safe}
         if kind != 'control_request':
@@ -137,7 +193,7 @@ class ClaudeProtocol:
         elif subtype == 'generate_session_title':
             safe = {'subtype': subtype, 'description': text(request['description']), 'persist': False}
         elif subtype == 'set_permission_mode' and request.get('mode') in (
-                'default', 'acceptEdits', 'plan', 'dontAsk'):
+                'default', 'acceptEdits', 'plan', 'dontAsk', 'auto'):
             safe = {'subtype': subtype, 'mode': request['mode']}
         else:
             raise Rejected('This editor operation is unavailable in the sandbox')
@@ -185,10 +241,20 @@ class CodexProtocol:
                 'requiresOpenaiAuth': result.get('requiresOpenaiAuth', True)}}
         if method == 'config/read' and isinstance(result, dict):
             config = fields(result.get('config', {}), ('model', 'model_provider', 'model_reasoning_effort',
-                'model_reasoning_summary', 'service_tier', 'approval_policy', 'sandbox_mode', 'web_search'))
+                'model_reasoning_summary', 'service_tier', 'approval_policy', 'approvals_reviewer', 'sandbox_mode', 'web_search'))
             message = {**message, 'result': {'config': config, 'origins': {}, 'layers': None}}
         if message.get('method', '').endswith('/requestApproval') and 'id' in message:
+            if message['method'] not in ('item/commandExecution/requestApproval', 'item/fileChange/requestApproval'):
+                self.replies.append({'id': message['id'], 'error': {'code': -32601,
+                    'message': 'Change sandbox access in Factory settings.'}})
+                return None
             self.permissions.add(message['id'])
+            # Session choices stay in app-server memory. Lasting rules would
+            # write to the private controller, so do not offer those choices.
+            params = dict(message.get('params') or {})
+            params.pop('proposedExecpolicyAmendment', None)
+            params.pop('proposedNetworkPolicyAmendments', None)
+            message = {**message, 'params': params}
         elif message.get('method') == 'item/tool/requestUserInput' and 'id' in message:
             self.questions.add(message['id'])
         elif 'method' in message and 'id' in message:
@@ -219,10 +285,12 @@ class CodexProtocol:
             return {'id': identifier, 'result': {'answers': safe}}
         if not method and identifier in self.permissions:
             result = object_value(message.get('result', {}))
-            if result.get('decision') not in ('accept', 'decline', 'cancel'):
-                raise Rejected('Choose a one-time permission decision')
             self.permissions.remove(identifier)
-            return {'id': identifier, 'result': {'decision': result['decision']}}
+            decision = result.get('decision')
+            # Never leave app-server waiting after an unsupported response.
+            if decision not in ('accept', 'acceptForSession', 'decline', 'cancel'):
+                decision = 'cancel'
+            return {'id': identifier, 'result': {'decision': decision}}
         if method == 'initialize':
             params = {'clientInfo': {'name': 'codex_vscode', 'version': '1', 'title': 'Factory browser editor'},
                       'capabilities': {'experimentalApi': True}}
@@ -236,8 +304,12 @@ class CodexProtocol:
             params = fields(given, ('cursor', 'limit', 'includeHidden', 'archived', 'sortKey', 'sortDirection'))
         elif method in ('thread/start', 'thread/resume', 'thread/fork'):
             params = fields(given, ('model', 'effort', 'personality', 'ephemeral'))
-            params.update(cwd=self.cwd, approvalPolicy='on-request', sandbox='danger-full-access',
-                          developerInstructions=self.instructions)
+            params.update(cwd=self.cwd, developerInstructions=self.instructions)
+            permission = codex_permissions(given, self.cwd, thread_start=method == 'thread/start')
+            if policy := permission.pop('sandboxPolicy', None):
+                permission['sandbox'] = {'readOnly': 'read-only', 'workspaceWrite': 'workspace-write',
+                                         'dangerFullAccess': 'danger-full-access'}[policy['type']]
+            params.update(permission)
             if method != 'thread/start':
                 params['threadId'] = self.conversations.require(given['threadId'])
         elif method == 'turn/start':
@@ -247,6 +319,7 @@ class CodexProtocol:
             params = {'threadId': self.conversations.require(given['threadId']),
                       'input': [{'type': 'text', 'text': text(item['text']), 'text_elements': []} for item in inputs]}
             params.update(fields(given, ('model', 'effort', 'summary', 'serviceTier')))
+            params.update(codex_permissions(given, self.cwd))
         elif method in ('thread/read', 'thread/turns/list', 'thread/items/list', 'thread/archive', 'thread/unarchive', 'thread/unsubscribe',
                         'thread/attachment/list', 'thread/queue/list', 'thread/name/set', 'turn/interrupt'):
             params = {'threadId': self.conversations.require(given['threadId'])}

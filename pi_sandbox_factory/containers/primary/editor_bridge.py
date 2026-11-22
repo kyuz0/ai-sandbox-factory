@@ -50,13 +50,17 @@ def arguments(agent, supplied, settings, context, conversations):
     if agent != 'claude':
         raise Rejected('No native editor connection for this agent')
     # Every executable, tool and environment value comes from Factory.
-    allowed = base.index('--allowedTools')
-    del base[allowed:allowed + 2]
+    if '--permission-mode' in supplied:
+        index = supplied.index('--permission-mode') + 1
+        if index >= len(supplied) or supplied[index] not in (
+                'default', 'auto', 'acceptEdits', 'plan', 'dontAsk'):
+            raise Rejected('This approval mode is unavailable in the sandbox')
+        base[base.index('--permission-mode') + 1] = supplied[index]
     cwd = Path(settings['working_directory'])
     cwd.mkdir(parents=True, exist_ok=True)
     os.chdir(cwd)
     result = [AGENT, *base, '--print', '--verbose', '--input-format', 'stream-json',
-              '--output-format', 'stream-json', '--permission-mode', 'default',
+              '--output-format', 'stream-json',
               '--permission-prompt-tool', 'stdio', '--setting-sources', '', '--include-partial-messages']
     for flag, validate in (('--resume', conversations.require), ('--model', model_name), ('--effort', model_name)):
         if flag in supplied:
@@ -125,6 +129,13 @@ async def serve_client(reader, writer, agent):
             output, _ = await process.communicate()
             await send({'type': 'factory_cli', 'stdout': output.decode(), 'code': process.returncode})
             return
+        if agent == 'claude' and supplied in (['plugin', 'list', '--json'],
+                ['plugin', 'list', '--json', '--available'], ['plugin', 'marketplace', 'list', '--json']):
+            # The private controller deliberately has no installed plugins or
+            # marketplaces. Discovery must not launch a chat and wait for input.
+            result = {'installed': [], 'available': []} if '--available' in supplied else []
+            await send({'type': 'factory_cli', 'stdout': json.dumps(result) + '\n', 'code': 0})
+            return
         if agent == 'claude' and any(supplied[i:i + 2] == ['auth', 'status'] for i in range(len(supplied))):
             process = await asyncio.create_subprocess_exec(AGENT, 'auth', 'status', '--json',
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
@@ -133,6 +144,9 @@ async def serve_client(reader, writer, agent):
             safe = {key: status[key] for key in ('loggedIn', 'authMethod', 'apiProvider', 'subscriptionType') if key in status}
             await send({'type': 'factory_cli', 'stdout': json.dumps(safe) + '\n', 'code': process.returncode})
             return
+        if agent == 'claude' and not any(supplied[i:i + 2] == ['--input-format', 'stream-json']
+                                        for i in range(len(supplied))):
+            raise Rejected('This Claude CLI operation is unavailable in the browser editor.')
         settings = json.loads((SOURCE / 'settings.json').read_text())
         context = (SOURCE / 'context.md').read_text()
         conversations = Conversations(Path.home() / '.factory-editor' / agent / 'conversations')
