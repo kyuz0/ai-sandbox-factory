@@ -1,4 +1,4 @@
-FROM docker.io/library/node:24-bookworm-slim
+FROM docker.io/library/node:24-trixie-slim
 ARG AGENT
 ARG USER_UID=1000
 ARG USER_GID=1000

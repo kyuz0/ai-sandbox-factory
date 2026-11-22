@@ -1,4 +1,4 @@
-FROM docker.io/library/node:22-bookworm-slim
+FROM docker.io/library/node:22-trixie-slim
 ARG CLAUDE_VERSION=2.1.318
 ARG USER_UID=1000
 ARG USER_GID=1000

@@ -1,4 +1,4 @@
-FROM docker.io/library/node:24-bookworm-slim AS worker
+FROM docker.io/library/node:24-trixie-slim AS worker
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \

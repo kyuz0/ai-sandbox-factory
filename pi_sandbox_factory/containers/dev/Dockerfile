@@ -1,4 +1,4 @@
-FROM docker.io/library/node:24-bookworm-slim AS frostpi-build
+FROM docker.io/library/node:24-trixie-slim AS frostpi-build
 WORKDIR /src
 COPY --from=frostpi / ./
 RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
@@ -7,7 +7,7 @@ RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
 
 RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm build:browser
 
-FROM docker.io/library/node:24-bookworm-slim
+FROM docker.io/library/node:24-trixie-slim
 ARG PI_VERSION=1.4.0
 ARG USER_UID=1000
 ARG USER_GID=1000

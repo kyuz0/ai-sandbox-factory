@@ -1,4 +1,4 @@
-FROM docker.io/library/debian:bookworm-slim
+FROM docker.io/library/debian:trixie-slim
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client python3 tini \
