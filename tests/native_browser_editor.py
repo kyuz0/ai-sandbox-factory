@@ -2,6 +2,7 @@
 import argparse
 import base64
 from contextlib import ExitStack
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -85,6 +86,7 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                     # Do not mistake the submitted prompt's own receipt for
                     # the model's reply while the next command is still running.
                     if (visible.count(expected) > previous_matches + prompt.count(expected)
+                            and 'Claude is working' not in visible
                             and not any(stopping.nth(i).is_visible() for i in range(stopping.count()))
                             and not any(busy.nth(i).is_visible() for i in range(busy.count()))):
                         return
@@ -332,6 +334,76 @@ def check_denial(page, editor, output, timeout):
     raise RuntimeError('The native permission denial did not complete')
 
 
+def check_capacity(page, agent, editor, output, timeout):
+    """Exercise one workspace process, then ten, through the shipped client."""
+    fixture = '''import json,os,subprocess,sys,time
+from pathlib import Path
+if sys.argv[2]=='all':
+    children=[subprocess.Popen([sys.executable,__file__,sys.argv[1],str(i)]) for i in range(10)]
+    sys.exit(any(child.wait() for child in children))
+root=Path('/workspace/capacity')/sys.argv[1]
+root.mkdir(parents=True,exist_ok=True)
+name=sys.argv[2]
+started=time.monotonic()
+(root/(name+'.started')).write_text(json.dumps({'pid':os.getpid(),'started':started}))
+while not (root/'release').exists():time.sleep(.05)
+(root/(name+'.done')).write_text(json.dumps({'pid':os.getpid(),'started':started,'finished':time.monotonic()}))
+print('capacity-job-'+name+'-complete')
+'''
+    podman('exec', '-i', editor, 'tee', '/workspace/capacity-job.py', payload=fixture)
+    measurements = []
+    for count in (1, 10):
+        batch = secrets.token_hex(6)
+        receipt = 'capacity-' + batch + '-complete'
+
+        def release():
+            deadline = time.monotonic() + timeout
+            observed = 0
+            while time.monotonic() < deadline:
+                command = ('from pathlib import Path; '
+                           f'p=Path("/workspace/capacity/{batch}"); '
+                           'print(len(list(p.glob("*.started"))))')
+                observed = int(subprocess.check_output(
+                    ['podman', 'exec', editor, 'python3', '-c', command], text=True))
+                if observed == count:
+                    podman('exec', editor, 'touch', '/workspace/capacity/' + batch + '/release')
+                    return
+                time.sleep(.2)
+            # Release any started fixtures before reporting an incomplete run.
+            podman('exec', editor, 'mkdir', '-p', '/workspace/capacity/' + batch)
+            podman('exec', editor, 'touch', '/workspace/capacity/' + batch + '/release')
+            raise RuntimeError(f'Expected {count} concurrent native tools; observed {observed}')
+
+        prompt = (f'Run {count} separate shell tool calls concurrently, one for each index from 0 to {count - 1}. '
+                  f'Each command is: python3 /workspace/capacity-job.py {batch} INDEX . '
+                  'Use independent native shell tool calls (or parallel Factory workspace shell calls). '
+                  'Do not combine them in a shell loop or launch background jobs yourself. '
+                  'The test releases the commands after they have all started. Wait for all to finish, '
+                  f'then reply {receipt}.')
+        if agent == 'claude' and count > 1:
+            # Native Claude serializes mutating MCP tools. Do not label that
+            # scheduling policy a bridge defect or mark a shell read-only.
+            # Exercise ten concurrent workspace processes in its normal tool.
+            prompt = (f'Run python3 /workspace/capacity-job.py {batch} all using the Factory workspace shell. '
+                      'This test command runs ten child jobs and waits for them. '
+                      f'Wait for completion, then reply {receipt}.')
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(release)
+            verify_reply(page, prompt, receipt, timeout, output)
+            pending.result()
+        records = json.loads(subprocess.check_output(['podman', 'exec', editor, 'python3', '-c',
+            'import json;from pathlib import Path;'
+            f'print(json.dumps([json.loads(p.read_text()) for p in Path("/workspace/capacity/{batch}").glob("*.done")]))'], text=True))
+        assert len(records) == count, records
+        assert len({item['pid'] for item in records}) == count, records
+        assert max(item['started'] for item in records) < min(item['finished'] for item in records), records
+        measurements.append({'concurrent_workspace_processes': count,
+                             'native_tool_calls': 1 if agent == 'claude' else count,
+                             'completed_processes': len(records), 'records': records})
+        print(f'Native browser completed {count} concurrent workspace processes.', flush=True)
+    (output / 'capacity.json').write_text(json.dumps(measurements, indent=2))
+
+
 def run(args, root, stack):
     agent = args.agent
     api_error = getattr(args, 'api_error', False)
@@ -479,6 +551,8 @@ def run(args, root, stack):
             check_denial(page, editor, args.output, args.timeout)
         if args.isolation:
             check_codex_file_isolation(page, fixture, editor, args.output, args.timeout)
+        if args.capacity:
+            check_capacity(page, agent, editor, args.output, args.timeout)
         if args.reload:
             page.reload()
             resume_chat(page, args.output, args.timeout, second)
@@ -514,6 +588,7 @@ if __name__ == '__main__':
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
     parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
+    parser.add_argument('--capacity', action='store_true', help='Exercise one then ten concurrent workspace processes through the native panel')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
     if args.api_error and args.agent != 'claude':

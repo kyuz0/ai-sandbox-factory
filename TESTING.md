@@ -85,6 +85,14 @@ that Codex sees the workspace image, and verifies that a patch changes only the
 workspace file. It also checks that the workspace shell cannot see a private
 controller marker and confirms the requested native tools ran.
 
+Use `--capacity --reload --cancel` to exercise one workspace process, then ten
+concurrent processes through the native browser panel, followed by chat recovery.
+Codex starts ten independent native shell calls. Claude serializes mutating MCP
+calls, so its shell tool starts ten child processes. The test checks that all ten
+are running before releasing them, verifies their completion, and saves the
+measured process intervals in `capacity.json`. This exercises the shipped editor
+and its inherited environment; it does not claim ten concurrent Claude tool calls.
+
 Check fresh terminal launches as well: the selected workspace should not require
 a trust confirmation. Claude must retain Auto mode and its restricted tools;
 Antigravity must retain its tool policy. Test a starting subfolder, including a

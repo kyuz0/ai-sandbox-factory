@@ -27,6 +27,9 @@ runs in a separate container; the browser editor does not receive its credential
 For a fresh login, complete the terminal sign-in before the editor opens. Use
 **Settings → Sign-in** to sign in again or copy a host login.
 
+In Codex, **Stop** ends the current reply. A command it started may keep running.
+Ask Codex to stop that command if you also want to end it.
+
 Closing the tab or manager leaves the editor running. Choose **Open** beside the
 sandbox to return to it. **Actions… → Stop browser editor** stops the editor and its terminals,
 active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
