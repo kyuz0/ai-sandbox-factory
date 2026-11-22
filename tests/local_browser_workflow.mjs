@@ -33,9 +33,7 @@ if(process.argv.includes('--editor-env')) {
   {tool:'schedule_prompt',args:{action:'list'}});
 }
 if(process.argv.includes('--goals')) {
- cases.unshift({tool:'create_goal',args:{objective:'Test the local application',auto_continue:false,skip_auditor:true,verification_contract:'The browser returns API_OK.'}});
- cases.push({tool:'get_goal',args:{}},
-  {tool:'update_goal',args:{token_budget:null,status:'complete'}});
+ cases.push({tool:'goal_update',args:{status:'complete',reason:'Verified localhost, API response and popup behavior.'}});
 }
 let reviews=0,requests=0;
 const inference=http.createServer((req,res)=>{let data='';req.on('data',c=>data+=c);req.on('end',()=>{
@@ -50,7 +48,13 @@ const inference=http.createServer((req,res)=>{let data='';req.on('data',c=>data+
  requests++;
  assert(JSON.stringify(messages).includes('http://localhost:PORT'),'Missing generated localhost guidance');
  const count=messages.filter(m=>m.role==='tool').length;
- if(count<cases.length){const c=cases[count];delta={role:'assistant',tool_calls:[{index:0,id:'local-'+count,type:'function',function:{name:c.tool,arguments:JSON.stringify(c.args)}}]};finish='tool_calls';}
+ if(count<cases.length){const c=cases[count];let args=c.args;
+  if(c.tool==='goal_update'){
+   const token=JSON.stringify(messages).match(/Completion token: (\S+)\. Supply/)?.[1];
+   assert(token,'Active goal completion token missing');
+   args={...args,token};
+  }
+  delta={role:'assistant',tool_calls:[{index:0,id:'local-'+count,type:'function',function:{name:c.tool,arguments:JSON.stringify(args)}}]};finish='tool_calls';}
  else delta={content:'LOCAL_WORKFLOW_DONE'};
  }
  res.writeHead(200,{'content-type':'text/event-stream'});
@@ -71,7 +75,7 @@ try {
  const timer=setTimeout(()=>reject(Error('Workflow exceeded 180s: '+errors+' '+JSON.stringify(events.slice(-3)))),180000);
  child.on('exit',code=>{clearTimeout(timer);reject(Error('Client exited '+code+': '+errors));});
  child.stdout.on('data',c=>{buffer+=c;let n;while((n=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,n);buffer=buffer.slice(n+1);let e;try{e=JSON.parse(line);}catch{continue;}events.push(e);if(e.type==='agent_settled'){clearTimeout(timer);resolve();}}});
- child.stdin.write(JSON.stringify({type:'prompt',id:'local',message:'Build and test the synthetic local application, including a popup and API request. Start its server through bash_escalate. Use container /tmp for scratch.'+(process.argv.includes('--goals')?' Create a goal without a token budget; complete it after verification.':'')})+'\n');
+ child.stdin.write(JSON.stringify({type:'prompt',id:'local',message:(process.argv.includes('--goals')?'/goal ':'')+'Build and test the synthetic local application, including a popup and API request. Start its server through bash_escalate. Use container /tmp for scratch.'})+'\n');
  });
  const results=events.filter(e=>e.type==='tool_execution_end');
  assert.equal(results.length,cases.length,JSON.stringify(events)+' '+errors);
@@ -79,10 +83,10 @@ try {
  assert(!events.some(e=>e.type==='extension_ui_request'&&['select','confirm','input'].includes(e.method)),'Permission prompt');
  assert.equal(reviews,1,'Only server start needs review; temp files and browser localhost do not');
  if(process.argv.includes('--goals')) {
-  assert.equal(results[0].result.details.goal.status,'active');
-  assert.equal(results[0].result.details.goal.tokenBudget,undefined);
-  assert.equal(results.at(-1).result.details.goal.status,'complete');
-  console.log('PASS native goal create/read/update: no review, unlimited creation, explicit budget removal and completion');
+  const goal=results.at(-1).result.details.goal;
+  assert.equal(goal.status,'complete');
+  assert(goal.run_count_max==null && goal.cost_usd_max==null,'Default goal must have no turn or cost limit');
+  console.log('PASS Pi /goal command and goal_update: no review, no default turn/cost limit, completion after browser verification');
  }
  if(process.argv.includes('--editor-env'))console.log('PASS '+client+': inherited editor Node preload, node/npm commands and scheduling without review');
  assert.equal(requests,cases.length+1);

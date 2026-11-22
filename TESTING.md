@@ -32,6 +32,35 @@ python3 -m venv /tmp/pi-sandbox-package-check
 (cd /tmp && /tmp/pi-sandbox-package-check/bin/pi-sandbox-factory profile list)
 ```
 
+## Debian 13 validation
+
+Validated on Linux amd64 on 22 November 2026. Windows, WSL, macOS and ARM64 runtime
+checks have not been repeated for this migration. The pinned base manifests
+include Linux amd64 and ARM64 images; manifest availability is not an ARM64 test.
+
+| Check | Result |
+| --- | --- |
+| Python unit suite | 587 passed |
+| Node proxy and client suites | 39 passed |
+| Image builds and OS inspection | 22 variants built and reported Debian 13, including Pi, all three native agents, credential services and optional layers |
+| Native browser editors | Codex, Claude and Antigravity completed authenticated edits, manual denial and saved-chat reload; Antigravity also received file and image attachments |
+| Native workspace tools | All three agents passed a baseline command, ten concurrent commands, five cancellations, recovery and cleanup |
+| Browser runtime | All three native workspace images passed DOM interaction, persistent state, screenshots, download denial and blocking through the production gateway |
+| Pi and FrostPi | Both passed 21 folder-access cases, browser image delivery and saved-image reload; Pi also passed the localhost/API/popup workflow with the editor's Node preload |
+| Standalone FrostPi | Desktop and mobile chat, history, file viewing, upload, download, collision handling and cancellation passed |
+| Document tools | Python 3.13 PDF readers, encryption, OCR, Office formats, LibreOffice conversion and Pandoc checks passed |
+| Research profiles | Pi and FrostPi passed embedding/keyword search and index reuse, plus delegated web search and cited report creation |
+| Credentials and connectors | Inference isolation and key rotation, four hosted-provider fixtures, advisor credential storage, SSH/Git permissions, HTTPS grant/revoke/rollback and three AWS signer checks passed; AWS CLI and Boto3 loaded in the native client image |
+| Slack | Synthetic-token CLI checks passed, including denied sends and protected credentials; disabling/re-enabling removed tools and preserved credentials |
+| Editor and folder lifecycle | HTTP/password/HTTPS authentication, Host/Origin rejection, occupied-port recovery, mount changes and private-state preservation passed |
+| Debian 12 → 13 update | Normal Factory recreation preserved the workspace, file ownership and permissions, private home and editor SQLite state; a saved Pi chat resumed with its earlier history |
+| Wheel installation | Installed outside the checkout; help, profile/provider listing, bundled image assets and sandbox creation/deletion passed |
+
+The native editor checks used subscription sign-ins. Hosted-provider, inference,
+AWS and Slack security checks used synthetic credentials; Slack sent no messages.
+All runtime checks used disposable containers, without restarting existing sandboxes.
+See the sections below for the reusable fixture commands.
+
 ## Approval model selection
 
 In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Open Pi with the first provider as the chat model.
@@ -912,7 +941,7 @@ disposable state when finished.
 Create a disposable sandbox with `{"communications":{"slack":true}}` in its
 options file and the fixture port allowed. Run `tests/integration.py` with
 `--communications`. This installs an invalid synthetic bot token in that
-sandbox and checks both the actual Pi CLI and Pendant worker: eight Slack tools,
+sandbox and checks the actual Pi CLI and installed Pi SDK: eight Slack tools,
 API access through the proxy, missing search credentials, a rejected send, blocked
 credential-file reads and absent token environment variables. It sends no messages.
 Delete the disposable sandbox afterward. Use a separately authorized account check
@@ -922,7 +951,7 @@ The Slack extension's unit tests live in its pinned repository.
 
 Run `tests/communications_lifecycle.py --state-dir PATH --name NAME` against the
 same disposable sandbox to check token-only updates without recreation, removal
-of a duplicate npm registration, disabled tools in Pendant, network-rule removal,
+of a duplicate npm registration, disabled tools in Pi, network-rule removal,
 and credentials surviving disable/re-enable.
 
 ## Browser editor
@@ -1198,7 +1227,7 @@ image with browser support:
 
 For dependency development, add `--packages /absolute/path/to/pi-packages`.
 The fixture uses generated Factory configuration and synthetic model responses.
-It checks both Pi CLI and the actual Pendant worker: model-visible localhost
+It checks the shipped Pi CLI: model-visible localhost
 instructions, native and Bash `/tmp` writes, a preapproved network request,
 reviewed `bash_escalate` server
 startup, browser localhost navigation, API POST and popup tabs. Exactly one
@@ -1206,12 +1235,12 @@ review is expected for server startup; localhost browser traffic and scratch
 files must require neither network review nor human permission.
 
 Add `--editor-env` to inherit the browser editor’s Node preload configuration
-and verify ordinary Node/npm commands and current-chat scheduling in both clients.
+and verify ordinary Node/npm commands and current-chat scheduling.
 Scheduling must add no reviewer calls or permission prompts.
 
-Add `--goals` to run the Pendant variant with native goal creation, reading and
-completion. It checks unlimited creation and explicit budget removal, with no
-goal approval requests; the server start must still receive exactly one review.
+Add `--goals` to start the workflow with Pi's `/goal` command and complete it with
+`goal_update` after browser verification. The goal has no default turn or cost
+limit. It adds no approval requests; the server start still receives exactly one review.
 
 Exercise the browser code shipped in that image, including Chromium routing,
 WebSockets, multiple loopback names and external allow/deny behavior:

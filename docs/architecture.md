@@ -111,6 +111,12 @@ Skills supply task instructions. Extensions add capabilities such as model disco
 
 ## Packages
 
+Factory's development, agent and credential-service images use Debian 13
+(Trixie). Base tags explicitly name Trixie; the inference and HTTPS connector
+bases also pin an immutable image manifest. Existing sandboxes retain their saved
+image until you update them. Workspace images provide Python 3.13; the host application's
+Python requirement remains 3.10 or newer.
+
 The host registry stores exported Git revisions. Each sandbox copies its selected
 profile and providers into its own immutable build inputs. Installing or updating
 a registry entry does not change a running sandbox. Rebuilding applies updates

@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as temp:
         current=json.loads(read([engine,'exec',container,'cat','/home/node/.pi/agent/settings.json']))
         assert not any('pi-slack' in str(p) for p in current.get('packages',[]))
         assert not any('/opt/pi-communications/' in str(p) for p in current.get('extensions',[]))
-        call([engine,'exec','-i',container,'node','-','--communications-disabled'],input=(root/'tests/check_pendant_worker.cjs').read_text())
+        call([engine,'exec','-i',container,'node','--input-type=module','-','--disabled'],input=(root/'tests/check_communications_tools.mjs').read_text())
         assert json.loads(read(cli+['communication-key',args.name,'--status']))['botToken']
         assert 'slack.com' not in (args.state_dir/args.name/'squid.conf').read_text()
     finally:

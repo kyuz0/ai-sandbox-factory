@@ -177,7 +177,7 @@ try:
  elif a.review_images:
   checks = [('check_review_images_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--review-images'])]
  elif a.communications:
-  checks = [('check_communications_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--communications'])]
+  checks = [('check_communications_rpc.py', ['python3', '-']), ('check_communications_tools.mjs', ['node', '--input-type=module', '-'])]
  elif a.recall:
   checks = [('check_recall_rpc.py', ['python3', '-']), ('check_pendant_worker.cjs', ['node', '-', '--recall'])]
  elif a.folders:
@@ -266,7 +266,7 @@ print(json.dumps(counts))"""
   prompts = [json.loads(line) for line in (fixture/'folder-prompts.jsonl').read_text().splitlines()]
   assert len(prompts) == 22, len(prompts)
   print('PASS both clients received the mounted-folder map with project prompt overrides', flush=True)
- print('PASS Pi/Pendant approval modes' if a.approval_modes else 'PASS Pi/Pendant approval notices and reviewer settings' if a.reviewer_settings else 'PASS Pi/Pendant 46-operation automatic review integration' if a.review_recovery else 'PASS Pi/Pendant screenshot review integration' if a.review_images else 'PASS common credential-file protection through actual Pi tools' if a.credential_files else 'PASS Pi/Pendant browser shell routes' if a.browser_shell else 'PASS Pi/Pendant workflow cases' if a.skill_workflow else 'PASS Pi/Pendant expanded skill automatic approval' if a.approval_context else 'PASS Pi/Pendant Slack integration' if a.communications else 'PASS Pi/Pendant recall integration' if a.recall else 'PASS Pi/Pendant folder integration' if a.folders else 'PASS Pi/Pendant browser viewer integration' if a.browser_viewer else 'PASS Pendant startup and questions; no question review calls' if a.pendant_questions_only else 'PASS Pi/Pendant web access integration' if a.web_access else 'PASS real Pi/Pendant security, Goal, scheduling and transport using fixture replies',flush=True)
+ print('PASS Pi/Pendant approval modes' if a.approval_modes else 'PASS Pi/Pendant approval notices and reviewer settings' if a.reviewer_settings else 'PASS Pi/Pendant 46-operation automatic review integration' if a.review_recovery else 'PASS Pi/Pendant screenshot review integration' if a.review_images else 'PASS common credential-file protection through actual Pi tools' if a.credential_files else 'PASS Pi/Pendant browser shell routes' if a.browser_shell else 'PASS Pi/Pendant workflow cases' if a.skill_workflow else 'PASS Pi/Pendant expanded skill automatic approval' if a.approval_context else 'PASS Pi Slack integration and installed tool inventory' if a.communications else 'PASS Pi/Pendant recall integration' if a.recall else 'PASS Pi/Pendant folder integration' if a.folders else 'PASS Pi/Pendant browser viewer integration' if a.browser_viewer else 'PASS Pendant startup and questions; no question review calls' if a.pendant_questions_only else 'PASS Pi/Pendant web access integration' if a.web_access else 'PASS real Pi/Pendant security, Goal, scheduling and transport using fixture replies',flush=True)
 except BaseException:
  if manifest is not None:
   manifest['status']='failed'
