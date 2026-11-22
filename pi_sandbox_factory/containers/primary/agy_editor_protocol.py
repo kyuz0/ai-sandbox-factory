@@ -315,8 +315,12 @@ class AntigravityProtocol:
         public = self.public_id(value.get('id'), projects=True)
         if not public:
             raise Rejected('Unexpected project response')
+        conversations = object_value(value.get('projectConversations', {})).get('conversations', [])
         return {'id': public, 'name': Path(self.cwd).name,
-                'projectResources': {'resources': [{'folderUri': self.workspace_uri}]}, 'isWorkspaceOnly': False}
+                'projectResources': {'resources': [{'folderUri': self.workspace_uri}]}, 'isWorkspaceOnly': False,
+                'projectConversations': {'conversations': [
+                    {'conversationId': self.public_id(item.get('conversationId'))}
+                    for item in conversations if isinstance(item, dict) and self.public_id(item.get('conversationId'))]}}
 
     def step(self, supplied, chat, trajectory, index):
         s = object_value(supplied)
@@ -332,6 +336,21 @@ class AntigravityProtocol:
                 'serverName': str, 'toolCall': TOOL_CALL, 'resultString': str, 'userRejected': bool,
                 'progressMessage': str, 'progress': NUMBER, 'progressTotal': NUMBER,
             })
+        generic = s.get('generic')
+        args = generic.get('args', {}) if isinstance(generic, dict) else {}
+        if (isinstance(args, dict) and args.get('ServerName') == 'factory_workspace' and
+                'factory_workspace/' + str(args.get('ToolName')) in self.tools):
+            # Native MCP steps use this generic envelope. Keep the workspace
+            # command and its text result visible, never native payloads, media,
+            # controller file URIs or arbitrary result metadata.
+            result['generic'] = project(generic, {
+                'args': strings('ServerName ToolName Arguments'),
+                'result': {'result': str},
+            })
+            # The native renderer uses this name to show MCP arguments and
+            # results. Its generic fallback hides both. Reconstruct only the
+            # known workspace call, without forwarding other tool metadata.
+            result.setdefault('metadata', {})['toolCall'] = {'name': 'call_mcp_tool'}
         permission = object_value(s.get('requestedInteraction', {})).get('permission', {})
         resource = object_value(permission).get('resource', {})
         key = (chat, trajectory, index)
@@ -340,10 +359,11 @@ class AntigravityProtocol:
             if key not in self.resolved:
                 self.pending.add(key)
             result['requestedInteraction'] = {'permission': {
+                **project(permission, strings('reason actionDescription')),
                 'resource': project(resource, strings('action target')),
                 'approvalScopeFilter': ['PERMISSION_SCOPE_ONCE'],
             }}
-            result['generic'] = {}
+            result.setdefault('generic', {})
         else:
             self.pending.discard(key)
         if 'error' in s:

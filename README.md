@@ -2,7 +2,7 @@
 
 Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder, saved chats and restricted networking by default. Choose the coding agent when you create the sandbox.
 
-Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex and Claude Code offer a browser editor with their own chat panel, or a terminal client. Antigravity opens in the terminal.
+Open Pi in your browser with [FrostPi](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory). Choose **Browser editor** to work beside your files or **FrostPi in browser** for chat on its own. You can also use Pi CLI or VS Code on your computer. FrostPi uses the same Pi executable as the CLI. Codex, Claude Code and Antigravity offer a browser editor with their own chat panel, or a terminal client.
 
 ![Pi Sandbox Factory dashboard](docs/sandboxes.png)
 

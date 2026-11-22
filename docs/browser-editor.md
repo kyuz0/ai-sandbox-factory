@@ -1,7 +1,7 @@
 # Browser editor
 
 The browser editor is the default with rootless Podman on Linux, Windows
-through WSL2, and macOS through Podman Machine. Pi opens FrostPi; Codex and Claude Code
+through WSL2, and macOS through Podman Machine. Pi opens FrostPi; Codex, Claude Code and Antigravity
 open their own VS Code chat panels. The editor and its extensions run inside the
 workspace container. Choose **Open with…** to use the selected agent's CLI instead.
 Pi also supports VS Code on your computer. The browser editor supports amd64 and arm64
@@ -14,7 +14,7 @@ Click an image to enlarge it. You can see it again when you reopen the saved cha
 
 Leave **Open the browser editor when ready** checked to open the selected agent's editor when the sandbox
 starts. The first launch downloads the pinned version of code-server for the
-container’s architecture. Codex and Claude Code also download their pinned VS Code extension.
+container’s architecture. Codex, Claude Code and Antigravity also download their pinned VS Code extension.
 [Create a sandbox](../README.md#create-a-sandbox)
 
 The selected workspace opens trusted, in dark mode, with the selected agent's chat
@@ -22,10 +22,14 @@ on the right. The built-in VS Code chat is hidden. FrostPi's first chat shows th
 approval mode; select your model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
 
-Codex and Claude Code use the sandbox's existing sign-in. Their signed-in process
+Codex, Claude Code and Antigravity use the sandbox's existing sign-in. Their signed-in process
 runs in a separate container; the browser editor does not receive its credentials.
 For a fresh login, complete the terminal sign-in before the editor opens. Use
 **Settings → Sign-in** to sign in again or copy a host login.
+
+Antigravity supports text messages in its browser panel. Ask it to work with files
+in the workspace; attaching files to a chat message is not supported. Use Explorer
+to upload files when **Allow file uploads** is enabled.
 
 In Codex, **Stop** ends the current reply. A command it started may keep running.
 Ask Codex to stop that command if you also want to end it.
@@ -56,6 +60,8 @@ In **Files**, open the destination folder and choose **Upload file…**. If a fi
 Under **Editor**, select **Browser editor** and check **Allow file uploads**. For an existing sandbox, open **Settings → Editor**, save the change and reopen the editor. Uploads are off by default.
 
 Drag files from your computer onto a writable folder in Explorer, or right-click the folder and choose **Upload…**. Files placed in `/workspace` also appear in the project folder on your host.
+
+![Browser editor and Antigravity CLI choices in Settings](agent-editor.png)
 
 ## Connection settings
 

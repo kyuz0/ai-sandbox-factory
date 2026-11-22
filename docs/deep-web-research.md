@@ -7,7 +7,7 @@ Search uses `pi-web-access` to find sources. Pi can also read local references.
 
 ## Set up web research
 
-1. Choose **New sandbox**, keep **Pi** as the coding agent, and select the **Deep Web Research** profile and select a writable **Workspace**
+1. Choose **New sandbox**, keep **Pi** as the coding agent, and select the **Deep Web Research** profile. Pick a writable **Workspace**
    for the report. Choose **Continue** and connect a model under **Model Providers**.
 2. In **Review sandbox → Network and Web Search → Web Search**, choose your
    provider. **Automatic fallback** starts with keyless Exa. Use **Add provider**

@@ -45,7 +45,7 @@ printf 'approval-routing-ok\n' | podman exec --user 0 -i CONTAINER tee /var/lib/
 
 Ask Pi to read that receipt. Authorize the reviewed outer shell to read that specific file if the normal shell cannot. Check the reviewer's provider and model, its decision, and whether the tool ran. For an approval, check that Pi returns `approval-routing-ok`. For a denial, check that the outer command did not run. Select **Use current model for approvals** and repeat to check the chat model handles the review. Remove the disposable sandbox after the test.
 
-## Native Codex and Claude browser editors
+## Native Codex, Claude and Antigravity browser editors
 
 These checks use the host's existing subscription sign-in in a disposable private
 controller. The separate workspace container has no account files or provider
@@ -59,7 +59,7 @@ PYTHONPATH=. .venv/bin/python tests/native_browser_editor.py claude \
   --chromium /path/to/chromium --output /tmp/factory-claude-editor --reload
 ```
 
-Repeat with `codex`. The test installs the pinned official extension through the
+Repeat with `codex` and `agy`. The test installs the pinned official extension through the
 production installer, runs the production editor launcher, completes two different
 workspace edits, and checks that the built-in VS Code chat is hidden. With
 `--reload`, it reopens the saved conversation from the native history control and
@@ -77,7 +77,7 @@ before the final screenshot. On a fresh editor home, verify Codex uses its autom
 starts with **Auto**. The pinned Claude extension needs a checked fallback adjustment for its process-wrapper mode; an explicit
 saved approval choice takes precedence. The installer refuses an extension
 whose fallback code no longer matches.
-When updating either native client, test its CLI and extension versions together.
+When updating a native client, test its CLI and extension versions together.
 
 For Codex, add `--isolation` to test native image viewing and patching. The test
 puts different images at the same path in the controller and workspace, checks
@@ -87,11 +87,15 @@ controller marker and confirms the requested native tools ran.
 
 Use `--capacity --reload --cancel` to exercise one workspace process, then ten
 concurrent processes through the native browser panel, followed by chat recovery.
-Codex starts ten independent native shell calls. Claude serializes mutating MCP
-calls, so its shell tool starts ten child processes. The test checks that all ten
+Codex starts ten independent native shell calls. For Claude and Antigravity,
+one workspace shell call starts ten child processes. The test checks that all ten
 are running before releasing them, verifies their completion, and saves the
 measured process intervals in `capacity.json`. This exercises the shipped editor
-and its inherited environment; it does not claim ten concurrent Claude tool calls.
+and its inherited environment; it does not claim ten concurrent Claude or Antigravity tool calls.
+
+For Codex, `--background-controls` starts two resumable workspace commands and
+checks the native list, terminate and clean operations. It verifies both process
+IDs are gone and the final list is empty.
 
 Check fresh terminal launches as well: the selected workspace should not require
 a trust confirmation. Claude must retain Auto mode and its restricted tools;
@@ -1226,6 +1230,6 @@ For a live test, use an isolated role, a named empty log group and a stream. Gra
 
 The `--system-prompt` case in `tests/frostpi_editor.py` checks the actual model requests in the same Pi CLI and FrostPi chats. It enables a connector, adds a custom prompt, changes the SSH destination, then removes both.
 
-For live subscription checks in the official native VS Code extensions, follow the [native editor test](research/primary-agents/native-editor/README.md). It also exercises a workspace-only file edit with Codex and Claude.
+For live subscription checks in the official native VS Code extensions, follow the [native editor checks](#native-codex-claude-and-antigravity-browser-editors). They exercise workspace file edits through the production protected controllers.
 
 With the current native controller and worker images built locally, run `PYTHONPATH=. .venv/bin/python tests/connector_native_clients.py`. It launches the installed Codex, Claude Code and Antigravity binaries offline, checks their launch instructions, exercises granted and denied operations from each workspace and revokes access. It uses synthetic credentials and never submits a model prompt.

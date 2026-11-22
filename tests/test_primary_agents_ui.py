@@ -68,14 +68,13 @@ class PrimaryAgentsUI(unittest.TestCase):
                     self.assertLessEqual(auth.region.width, 40)
                     self.assertFalse(review.query_one('#primary-sign-in-section', Collapsible).collapsed)
                     self.assertFalse(review.query('#hosted-section, #agent-section, #web-enabled'))
-                    self.assertEqual(bool(review.query('#editor-section')), agent != 'agy')
-                    if agent != 'agy':
-                        self.assertEqual(review.query_one('#editor-mode', Select).value, 'browser')
+                    self.assertTrue(review.query('#editor-section'))
+                    self.assertEqual(review.query_one('#editor-mode', Select).value, 'browser')
                     auth.value = 'copy'
                     await pilot.pause()
                     draft, keys = review.collect()
                     self.assertEqual((draft['primary_agent'], draft['primary_auth'], keys), (agent, 'copy', {}))
-                    self.assertEqual(draft['editor']['mode'], 'pi' if agent == 'agy' else 'browser')
+                    self.assertEqual(draft['editor']['mode'], 'browser')
                     self.assertEqual(review.query_one('#apply').region.height, 1)
                     self.assertLess(review.query_one('#apply').region.bottom, size[1])
                     await app.pop_screen()
@@ -101,7 +100,7 @@ class PrimaryAgentsUI(unittest.TestCase):
             actions = dict((action, label) for label, action in app.screen.actions)
             self.assertEqual(set(actions), {'primary-sign-in', 'folders', 'network-settings',
                                             'connectors', 'skills', 'primary-browser',
-                                            'system-prompt', 'resources'})
+                                            'system-prompt', 'resources', 'editor-settings'})
             await app.pop_screen()
             await app.push_screen(PrimarySignIn(record))
             await pilot.pause()

@@ -53,6 +53,15 @@ class AntigravityProtocolTests(unittest.TestCase):
             with self.subTest(method=method), self.assertRaises(Rejected):
                 self.request(method, {'path': '/home/node/.gemini/credentials.json'})
 
+    def test_project_lists_only_its_owned_conversations(self):
+        public, private = uid(), uid()
+        self.protocol.projects[public] = private
+        result = self.protocol.project({'id': private, 'projectConversations': {'conversations': [
+            {'conversationId': self.private, 'environmentId': 'private-environment'},
+            {'conversationId': uid(), 'environmentId': 'foreign-environment'}]}})
+        self.assertEqual(result['projectConversations'], {'conversations': [{'conversationId': self.public}]})
+        self.assertNotIn('environment', json.dumps(result))
+
     def test_client_ids_do_not_claim_private_projects_or_chats(self):
         existing_private = uid()
         _, created = self.request('CreateProject', {'project': {
@@ -154,6 +163,23 @@ class AntigravityProtocolTests(unittest.TestCase):
         self.assertNotIn('private-token', encoded)
         self.assertIn('Finished', encoded)
         self.assertEqual(result['update']['conversationId'], self.public)
+
+    def test_generic_workspace_tool_keeps_command_and_result_without_private_metadata(self):
+        step = {'type': 'CORTEX_STEP_TYPE_GENERIC', 'status': 'CORTEX_STEP_STATUS_DONE',
+                'generic': {'args': {'ServerName': 'factory_workspace', 'ToolName': 'workspace_shell',
+                                     'Arguments': '{"command":"pwd"}', 'Private': 'private-token'},
+                            'result': {'result': '/workspace', 'fullOutputUri': 'file:///private-token',
+                                       'metadata': {'token': 'private-token'}, 'payload': {'token': 'private-token'}}}}
+        result = self.protocol.step(step, self.private, self.trajectory, 0)
+        self.assertEqual(result['generic'], {'args': {'ServerName': 'factory_workspace',
+                         'ToolName': 'workspace_shell', 'Arguments': '{"command":"pwd"}'},
+                         'result': {'result': '/workspace'}})
+        self.assertNotIn('private-token', json.dumps(result))
+        self.assertEqual(result['metadata']['toolCall'], {'name': 'call_mcp_tool'})
+        step['generic']['args']['ServerName'] = 'other'
+        self.assertNotIn('generic', self.protocol.step(step, self.private, self.trajectory, 0))
+        step['generic']['args'].update(ServerName='factory_workspace', ToolName='browser')
+        self.assertNotIn('generic', self.protocol.step(step, self.private, self.trajectory, 0))
 
     def test_project_and_chat_lists_exclude_other_controller_sessions(self):
         public, private = uid(), uid()

@@ -81,6 +81,12 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                         continue
                     one_time = frame.get_by_text('Yes, allow this time', exact=True)
                     if one_time.count() == 1 and one_time.is_visible():
+                        # Native MCP approval must display the actual arguments,
+                        # not just the tool name and a generic permission prompt.
+                        if not frame.get_by_text('command', exact=True).count() and '"command"' not in visible:
+                            raise AssertionError('Workspace command is missing from the approval display')
+                        if output:
+                            page.screenshot(path=str(output / 'permission-request.png'))
                         one_time.click()
                         frame.get_by_role('button', name=re.compile(r'^Submit')).click()
                         print('Approved one workspace tool request.', flush=True)
@@ -197,6 +203,10 @@ def check_cancellation(page, agent, editor, output, timeout):
             approval = frame.get_by_role('button', name=re.compile(r'^(1 Yes|Allow once)$'))
             if approval.count() == 1 and approval.is_visible():
                 approval.click()
+            one_time = frame.get_by_text('Yes, allow this time', exact=True)
+            if one_time.count() == 1 and one_time.is_visible():
+                one_time.click()
+                frame.get_by_role('button', name=re.compile(r'^Submit')).click()
             started = subprocess.run(['podman', 'exec', editor, 'test', '-f', '/workspace/cancel.pid']).returncode == 0
             if started:
                 buttons = frame.get_by_role('button')
@@ -317,7 +327,7 @@ print(json.dumps({'view_image':any('view_image' in str(c) for c in calls),
     print('Native image and patch tools used workspace files; the controller file stayed unchanged and its private marker was absent.', flush=True)
 
 
-def check_denial(page, editor, output, timeout):
+def check_denial(page, editor, output, timeout, agent='pi'):
     deadline = time.monotonic() + timeout
     submitted = denied = False
     while time.monotonic() < deadline:
@@ -329,9 +339,16 @@ def check_denial(page, editor, output, timeout):
                 inputs.last.fill('Run touch /workspace/denied-check. I will deny the permission request. If denied, do not retry or use another tool; just say the command was denied.')
                 inputs.last.press('Enter')
                 submitted = True
-            no = frame.get_by_role('button', name=re.compile(r'^(\d+\s+)?(No|Deny|Reject)\b', re.I))
-            for index in range(no.count()):
-                if no.nth(index).is_visible():
+            no = frame.get_by_role('button', name=re.compile(r'^(\d+\s+)?(No|Deny|Reject)(?:,? (?:deny|reject|this time|once))?$', re.I))
+            if agent == 'agy' and frame.get_by_text('Yes, allow this time', exact=True).count():
+                choice = frame.get_by_test_id('ask-question-writein')
+                if choice.count() == 1 and choice.is_visible():
+                    page.screenshot(path=str(output / 'permission-request.png'))
+                    choice.fill('Do not run this command. Report that permission was denied.')
+                    frame.get_by_role('button', name=re.compile(r'^Submit')).click()
+                    denied = True
+            for index in range(no.count() if agent != 'agy' else 0):
+                if no.nth(index).is_visible() and no.nth(index).is_enabled():
                     page.screenshot(path=str(output / 'permission-request.png'))
                     no.nth(index).click()
                     denied = True
@@ -393,7 +410,7 @@ print('capacity-job-'+name+'-complete')
                   'Do not combine them in a shell loop or launch background jobs yourself. '
                   'The test releases the commands after they have all started. Wait for all to finish, '
                   f'then reply {receipt}.')
-        if agent == 'claude' and count > 1:
+        if agent in ('claude', 'agy') and count > 1:
             # Native Claude serializes mutating MCP tools. Do not label that
             # scheduling policy a bridge defect or mark a shell read-only.
             # Exercise ten concurrent workspace processes in its normal tool.
@@ -411,7 +428,7 @@ print('capacity-job-'+name+'-complete')
         assert len({item['pid'] for item in records}) == count, records
         assert max(item['started'] for item in records) < min(item['finished'] for item in records), records
         measurements.append({'concurrent_workspace_processes': count,
-                             'native_tool_calls': 1 if agent == 'claude' else count,
+                             'native_tool_calls': 1 if agent in ('claude', 'agy') else count,
                              'completed_processes': len(records), 'records': records})
         print(f'Native browser completed {count} concurrent workspace processes.', flush=True)
     (output / 'capacity.json').write_text(json.dumps(measurements, indent=2))
@@ -501,6 +518,10 @@ def run(args, root, stack):
         podman('exec', '-i', editor, 'tee', '/workspace/input.txt', payload=expected)
         podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
     from pi_sandbox_factory import native_editor
+    if args.background_controls:
+        from native_codex_background import check
+        check(editor, args.output, args.timeout)
+        return
     native_editor.install({'engine':'podman','primary_agent':agent}, editor, 'x86_64')
     if agent == 'agy':
         state = root / 'state'
@@ -585,8 +606,9 @@ def run(args, root, stack):
             assert final.strip() == second
             print('Two different workspace edits passed in one native chat.',flush=True)
         if args.deny:
-            choose_manual_approvals(page, agent, args.output)
-            check_denial(page, editor, args.output, args.timeout)
+            if agent != 'agy':
+                choose_manual_approvals(page, agent, args.output)
+            check_denial(page, editor, args.output, args.timeout, agent)
         if args.isolation:
             check_codex_file_isolation(page, fixture, editor, args.output, args.timeout)
         if args.capacity:
@@ -598,7 +620,7 @@ def run(args, root, stack):
             verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
             print('Continued the saved chat after a page reload.', flush=True)
         if args.deny and args.reload:
-            check_denial(page, editor, args.output, args.timeout)
+            check_denial(page, editor, args.output, args.timeout, agent)
         if args.cancel:
             check_cancellation(page, agent, editor, args.output, args.timeout)
         page.screenshot(path=str(args.output / 'working.png'))
@@ -628,12 +650,15 @@ if __name__ == '__main__':
     parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
     parser.add_argument('--capacity', action='store_true', help='Exercise one then ten concurrent workspace processes through the native panel')
+    parser.add_argument('--background-controls', action='store_true', help='Codex only: verify native background-terminal list, terminate and clean with real workspace jobs')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
     if args.api_error and args.agent != 'claude':
         parser.error('--api-error requires claude')
     if args.isolation and args.agent != 'codex':
         parser.error('--isolation requires codex')
+    if args.background_controls and args.agent != 'codex':
+        parser.error('--background-controls requires codex')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:

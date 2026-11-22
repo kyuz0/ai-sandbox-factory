@@ -1,4 +1,6 @@
-# Test a native VS Code extension with an existing CLI login
+# Native extension research fixture
+
+For the supported implementation, run the [production native editor checks](../../../TESTING.md#native-codex-claude-and-antigravity-browser-editors). The fixture below explores login reuse; its shared-container results do not establish credential isolation.
 
 Run this on a Linux host with rootless Podman, Chromium, Node.js, Python Playwright and an existing CLI login for the agent being tested. Each run uses one short live subscription request. Use the official unpacked Linux extension and the extracted code-server distribution. The test prints the result and deletes its disposable containers, private homes and named volumes when it exits.
 

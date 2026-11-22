@@ -104,20 +104,21 @@ existing.setdefault('workbench.colorTheme', 'Default Dark Modern')
 existing.setdefault('workbench.secondarySideBar.defaultVisibility', 'visible')
 user_settings.write_text(json.dumps(existing))
 # Seed the shipped chat view and carry its position forward when upgrading.
-if settings.get('agent', 'pi') == 'pi':
+if settings.get('agent', 'pi') in ('pi', 'agy'):
     storage = user / 'globalStorage/state.vscdb'
     storage.parent.mkdir(exist_ok=True)
     migrate_layout = False
     with sqlite3.connect(storage) as database:
         database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
         old_view = 'workbench.view.extension.pendant-container'
-        new_view = 'workbench.view.extension.frostpi'
+        new_view = ('workbench.view.extension.antigravity-sidebar' if settings.get('agent') == 'agy'
+                    else 'workbench.view.extension.frostpi')
         database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
                          ('views.customizations', json.dumps({
                              'viewContainerLocations': {old_view if pendant else new_view: 2},
                              'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
                          })))
-        if not pendant:
+        if not pendant and settings.get('agent', 'pi') == 'pi':
             (value,) = database.execute(
                 'SELECT value FROM ItemTable WHERE key = ?', ('views.customizations',)).fetchone()
             try:

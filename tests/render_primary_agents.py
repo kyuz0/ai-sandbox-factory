@@ -70,7 +70,7 @@ async def capture(root, size):
                                  editor={'mode': 'pi'}, model_providers={})
                     await app.push_screen(SettingsForm(draft))
                     await shot('review-' + agent)
-                    if agent in ('codex', 'claude'):
+                    if agent in ('codex', 'claude', 'agy'):
                         editor = app.screen.query_one('#editor-section', Collapsible)
                         editor.collapsed = False
                         app.screen.query_one('#editor-mode', Select).value = 'browser'
@@ -114,7 +114,7 @@ async def capture(root, size):
                 app.screen.query_one('#frostpi-downloads').value = True
                 await shot('editor-frostpi-transfers')
                 await app.pop_screen()
-                for agent in ('codex', 'claude'):
+                for agent in ('codex', 'claude', 'agy'):
                     (state / 'transit' / 'config.json').write_text(json.dumps({'primary_agent': agent}))
                     await app.push_screen(EditorScreen('transit'))
                     await shot('editor-' + agent)

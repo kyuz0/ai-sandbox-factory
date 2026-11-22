@@ -1,5 +1,10 @@
 # Choosing the primary coding agent in a Factory sandbox
 
+This document records the initial research, including proposals that were later
+replaced. For the implemented sign-in choices and protected browser panels, use
+the [browser editor guide](../../docs/browser-editor.md) and
+[production checks](../../TESTING.md#native-codex-claude-and-antigravity-browser-editors).
+
 **Recommendation.** Add one choice to the first creation screen, **Coding agent**, defaulting to **Pi**. A native Codex, Claude Code or Antigravity CLI can drive a Factory-managed Chromium session. All three also accepted a model endpoint controlled by Factory in API-key mode. The important product decision is how someone wants to pay and sign in. A vendor subscription login and a protected API connection have different security properties.
 
 This is a local design experiment. The tests use the real CLI binaries, a disposable Linux container and a deterministic model response that requests a specific tool. The browser, client tool dispatch, host viewer and policy hooks are real. Synthetic responses make no claim about how often a model would choose the tool on its own.
@@ -66,7 +71,7 @@ All three official extensions answered a live prompt in Chromium with code-serve
 | Claude Code 2.1.199 | The panel completed the same file task through the workspace MCP tool. The extension used its user-level `claudeProcessWrapper` setting. The controller chose the CLI arguments and tools. |
 | Google Antigravity 1.13.0 | Login reuse worked with the editor and Google keyring together. The panel needed its own authenticated loopback address for the hub's scripts and WebSocket. This run did not establish an isolated native editing session. |
 
-Factory opens these three agents in the terminal. The Codex and Claude experiments accept one predetermined request in an empty project. A general editor connection would also need to handle user prompts, permissions, cancellation, reconnects and existing chats while keeping credentials and controller operations private. Giving the extension the same home as the CLI grants other code running as the editor user access to that login.
+At this stage of the research, Factory opened these three agents in the terminal. The Codex and Claude experiments accepted one predetermined request in an empty project. The production implementation now handles user prompts, permissions, cancellation, reconnects and existing chats through separate credential containers. Giving the extension the same home as the CLI would grant other code running as the editor user access to that login.
 
 [Run the native extension checks](native-editor/README.md).
 

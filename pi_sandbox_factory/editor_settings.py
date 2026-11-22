@@ -19,12 +19,12 @@ def modes(agent='pi'):
         return MODES
     from .primary_workspace import AGENTS
     terminal = {'pi': AGENTS[agent] + ' CLI'}
-    return {'browser': MODES['browser'], **terminal} if agent in ('codex', 'claude') else terminal
+    return {'browser': MODES['browser'], **terminal} if agent in ('codex', 'claude', 'agy') else terminal
 
 
 def default_for_agent(agent, engine='podman'):
     return default_mode(engine) if agent == 'pi' else (
-        'browser' if agent in ('codex', 'claude') and default_mode(engine) == 'browser' else 'pi')
+        'browser' if agent in ('codex', 'claude', 'agy') and default_mode(engine) == 'browser' else 'pi')
 
 
 def validate(value=None):

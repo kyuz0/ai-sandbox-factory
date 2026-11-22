@@ -17,7 +17,7 @@ Under **Review sandbox → Connectors**, choose a service to give the workspace 
 
 ## Open a sandbox
 
-Choose **Open** on the dashboard. Pi, Codex and Claude Code use the browser editor by default on supported hosts. Each opens its own chat panel beside your files. Antigravity opens in the terminal.
+Choose **Open** on the dashboard. All four agents use the browser editor by default on supported hosts. Each opens its own chat panel beside your files.
 
 Use **Open with…** to pick a different client for this launch. During creation,
 expand **Editor** to choose the browser editor or the selected agent's CLI.
