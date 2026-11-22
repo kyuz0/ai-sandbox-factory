@@ -46,6 +46,7 @@ include Linux amd64 and ARM64 images; manifest availability is not an ARM64 test
 | Native browser editors | Codex, Claude and Antigravity completed authenticated edits, manual denial and saved-chat reload; Antigravity also received file and image attachments |
 | Native workspace tools | All three agents passed a baseline command, ten concurrent commands, five cancellations, recovery and cleanup |
 | Browser runtime | All three native workspace images passed DOM interaction, persistent state, screenshots, download denial and blocking through the production gateway |
+| Live browser viewer | Desktop/mobile input, resize, clipboard, popups, tabs and reconnect passed with no browser console errors; Chromium/VNC recovery, private display isolation, owner cleanup, authenticated WebSockets, viewer restart and token rotation passed |
 | Pi and FrostPi | Both passed 21 folder-access cases, browser image delivery and saved-image reload; Pi also passed the localhost/API/popup workflow with the editor's Node preload |
 | Standalone FrostPi | Desktop and mobile chat, history, file viewing, upload, download, collision handling and cancellation passed |
 | Document tools | Python 3.13 PDF readers, encryption, OCR, Office formats, LibreOffice conversion and Pandoc checks passed |
