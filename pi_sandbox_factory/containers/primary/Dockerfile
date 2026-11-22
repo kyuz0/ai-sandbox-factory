@@ -7,6 +7,7 @@ ARG CLAUDE_VERSION=2.1.319
 ARG AGY_BUILD=1.5.13-5999302598852608
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git tini socat python3 dbus-daemon gnome-keyring libsecret-tools \
+    $(if [ "$AGENT" = agy ]; then printf python3-aiohttp; fi) \
     && rm -rf /var/lib/apt/lists/* \
     && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi
@@ -34,7 +35,7 @@ RUN set -eu; case "$AGENT" in \
         install -m 755 /tmp/antigravity /usr/local/bin/factory-agent; \
         rm /tmp/agy.tar.gz /tmp/antigravity ;; \
     *) exit 2 ;; esac; /usr/local/bin/factory-agent --version
-COPY entrypoint.sh launch.py agy-policy.py editor_protocol.py editor_bridge.py /opt/primary/
+COPY entrypoint.sh launch.py agy-policy.py editor_protocol.py editor_bridge.py agy_editor_protocol.py agy_editor_bridge.py agy_editor_assets.py /opt/primary/
 RUN install -d -o node -g node -m 700 /work /workspace /run/primary-bus /run/primary-editor \
     && chmod 755 /opt/primary/entrypoint.sh
 ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \

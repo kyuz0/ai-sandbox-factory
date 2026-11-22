@@ -20,6 +20,16 @@ try:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:
     raise SystemExit('A browser editor is still running in this container. Stop and restart the sandbox before retrying.')
+agent_hub = None
+agent_hub_port = None
+if settings.get('agent') == 'agy':
+    agent_hub = subprocess.Popen(['node', '--input-type=module', '-e', settings['agy_hub_client']],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    value = agent_hub.stdout.readline().strip()
+    if not value.isdigit() or not 0 < int(value) < 65536:
+        raise RuntimeError('Antigravity did not open its editor connection')
+    agent_hub_port = int(value)
+    settings.setdefault('native_settings', {})['antigravity.serverUrl'] = 'http://127.0.0.1:' + value
 # Do not keep a desktop remote connection alongside the browser-only editor.
 for item in Path('/proc').glob('[0-9]*/cmdline'):
     if item.parent.name == str(os.getpid()):
@@ -50,7 +60,8 @@ index = extensions / 'extensions.json'
 if index.exists():
     installed = json.loads(index.read_text())
     shipped_prefixes = ('cdervis.vscode-pi-', 'frostime.frostpi-', 'pi-sandbox-factory.editor-startup-',
-                        'pi-sandbox-factory.native-editor-', 'openai.chatgpt-', 'anthropic.claude-code-')
+                        'pi-sandbox-factory.native-editor-', 'openai.chatgpt-', 'anthropic.claude-code-',
+                        'Google.google-antigravity-', 'google.google-antigravity-')
     registered = []
     for entry in installed:
         location = entry.get('relativeLocation', '')
@@ -162,6 +173,8 @@ sock.unlink(missing_ok=True)
 env = dict(os.environ)
 for key in ('PASSWORD', 'HASHED_PASSWORD', 'GITHUB_TOKEN', 'VSCODE_IPC_HOOK_CLI'):
     env.pop(key, None)
+if agent_hub_port:
+    env['ANTIGRAVITY_SERVER_URL'] = 'http://127.0.0.1:' + str(agent_hub_port)
 watch_fallback = root / 'watch-fallback.cjs'
 watch_fallback.write_text(settings['watch_fallback'])
 # Inherited by code-server's server and extension-host children. No host changes.
@@ -224,7 +237,7 @@ try:
         try:
             with socket.socket(socket.AF_UNIX) as connection:
                 connection.connect(str(sock))
-            print('ready', flush=True)
+            print('ready' + (' ' + str(agent_hub_port) if agent_hub_port else ''), flush=True)
             break
         except OSError:
             if time.monotonic() > deadline:
@@ -233,6 +246,8 @@ try:
     while not stopping.wait(0.2) and process.poll() is None:
         reap_children()
 finally:
+    if agent_hub is not None:
+        agent_hub.stdin.close()
     for signum, delay in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
         deadline = time.monotonic() + delay
         while children := descendants():

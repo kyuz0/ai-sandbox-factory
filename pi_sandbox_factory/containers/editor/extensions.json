@@ -14,6 +14,21 @@
       }
     }
   },
+  "agy": {
+    "publisher": "Google",
+    "name": "google-antigravity",
+    "version": "1.13.0",
+    "platforms": {
+      "linux-x64": {
+        "url": "https://open-vsx.org/api/Google/google-antigravity/1.13.0/file/Google.google-antigravity-1.13.0.vsix",
+        "sha256": "b786fb6ec1babfdb7b2c3e5acabd951483539d287923a63cda7e0157bcf04704"
+      },
+      "linux-arm64": {
+        "url": "https://open-vsx.org/api/Google/google-antigravity/1.13.0/file/Google.google-antigravity-1.13.0.vsix",
+        "sha256": "b786fb6ec1babfdb7b2c3e5acabd951483539d287923a63cda7e0157bcf04704"
+      }
+    }
+  },
   "claude": {
     "publisher": "Anthropic",
     "name": "claude-code",

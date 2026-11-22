@@ -78,7 +78,7 @@ def verify_archive(path, checksum=None):
         raise ValueError('Browser editor archive checksum does not match the pinned release')
 
 
-def validate_head(head, host, scheme="http"):
+def validate_head(head, host, scheme="http", *, embedded_navigation=False):
     """Validate browser origin and authority before creating the fixed connector."""
     if len(head) > 16384:
         raise ValueError('Headers too large')
@@ -100,7 +100,13 @@ def validate_head(head, host, scheme="http"):
         headers[name] = value.strip()
     if headers.get('host') != host or headers.get('origin', scheme + '://' + host) != scheme + '://' + host:
         raise ValueError('Invalid host or origin')
-    if headers.get('sec-fetch-site') in ('cross-site', 'same-site'):
+    safe_navigation = (embedded_navigation and method == 'GET' and
+                       headers.get('sec-fetch-mode') == 'navigate' and
+                       headers.get('sec-fetch-dest') in ('document', 'iframe') and
+                       (target.split('?', 1)[0] == '/' or
+                        re.fullmatch(r'/c/[0-9a-f-]{36}', target.split('?', 1)[0])))
+    if headers.get('sec-fetch-site') == 'cross-site' or (
+            headers.get('sec-fetch-site') == 'same-site' and not safe_navigation):
         raise ValueError('Cross-site request')
     if 'expect' in headers or 'transfer-encoding' in headers or not headers.get('content-length', '0').isdigit():
         raise ValueError('Unsupported request framing')
@@ -119,6 +125,16 @@ class Relay:
         self.host = ''
         self.scheme = 'http'
         self.tasks = set()
+        self.redirector = None
+
+    def validate(self, head):
+        return validate_head(head, self.host, self.scheme)
+
+    def response_headers(self, lines):
+        return lines
+
+    def request_head(self, head):
+        return head
 
     async def connector(self):
         return await asyncio.create_subprocess_exec(
@@ -147,10 +163,17 @@ class Relay:
         try:
             while True:
                 head = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 60)
-                headers = validate_head(head, self.host, self.scheme)
+                headers = self.validate(head)
+                if self.redirector:
+                    location = self.redirector(head, headers)
+                    if location:
+                        writer.write(('HTTP/1.1 307 Temporary Redirect\r\nLocation: ' + location +
+                                      '\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n').encode('ascii'))
+                        await writer.drain()
+                        break
                 if process is None:
                     process = await self.connector()
-                process.stdin.write(head)
+                process.stdin.write(self.request_head(head))
                 await process.stdin.drain()
                 await transfer(reader, process.stdin, int(headers.get('content-length', '0')))
                 # Preserve keep-alive, checking each new request before forwarding it.
@@ -165,7 +188,7 @@ class Relay:
                             fields[key.lower()] = value.strip()
                             if key.lower() == 'set-cookie' and self.scheme == 'https':
                                 lines[i] = line + '; Secure'
-                    writer.write('\r\n'.join(lines).encode('latin1'))
+                    writer.write('\r\n'.join(self.response_headers(lines)).encode('latin1'))
                     await writer.drain()
                     if status == 101 or status >= 200:
                         break
@@ -266,6 +289,8 @@ async def serve(container, cwd, preferences, state, ready=None):
     port = server.sockets[0].getsockname()[1]
     relay.host = editor_settings.authority(address, port)
     editor = None
+    agent_hub = None
+    agent_server = None
     control = None
     heartbeat = None
     control_path = host_platform.control_path(state)
@@ -317,12 +342,25 @@ async def serve(container, cwd, preferences, state, ready=None):
             settings.update(binary=INSTALL + '/bin/code-server', password_hash=preferences['password_hash'],
                             allow_uploads=preferences.get('allow_uploads', False),
                             watch_fallback=(source / 'watch-fallback.cjs').read_text())
+            if selected == 'agy':
+                from .native_browser_hub import AntigravityRelay
+                agent_hub = AntigravityRelay(container, preferences['password_hash'], relay.scheme + '://' + relay.host)
+                agent_hub.scheme = relay.scheme
+                agent_server = await asyncio.start_server(agent_hub.handle, host_platform.listen_address(address),
+                                                         0, ssl=context, limit=16384)
+                agent_hub.host = editor_settings.authority(address, agent_server.sockets[0].getsockname()[1])
+                relay.redirector = agent_hub.redirect
+                settings['agy_hub_client'] = (source / 'agy-hub-client.mjs').read_text()
         editor = await asyncio.create_subprocess_exec('podman', 'exec', '-i', '--user', 'node',
             container, *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, start_new_session=True)
         editor.stdin.write((json.dumps(settings) + '\n').encode())
         await editor.stdin.drain()
         status = await asyncio.wait_for(editor.stdout.readline(), 60)
-        if status != b'ready\n':
+        if agent_hub and re.fullmatch(rb'ready [0-9]+\n', status):
+            agent_hub.worker_port = int(status.split()[1])
+            if not 0 < agent_hub.worker_port < 65536:
+                raise ValueError('Antigravity did not open its editor connection')
+        elif status != b'ready\n' or agent_hub:
             raise ValueError('Browser editor did not start; see the error above')
         url = relay.scheme + '://' + relay.host
         if standalone:
@@ -354,6 +392,10 @@ async def serve(container, cwd, preferences, state, ready=None):
         server.close()
         await relay.close()
         await server.wait_closed()
+        if agent_server:
+            agent_server.close()
+            await agent_hub.close()
+            await agent_server.wait_closed()
         if editor is not None:
             editor.stdin.close()
             try:

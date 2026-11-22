@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import struct
+import sys
 import tempfile
 import time
 import zlib
@@ -25,6 +26,7 @@ HERE = ROOT / 'research/primary-agents/native-editor'
 SOURCE = ROOT / 'pi_sandbox_factory/containers/primary'
 PANELS = {'codex': ('openai.chatgpt', 'chatgpt.openSidebar'),
           'claude': ('anthropic.claude-code', 'claude-vscode.sidebar.open'),
+          'agy': ('google.google-antigravity', 'workbench.view.extension.antigravity-sidebar'),
 }
 
 
@@ -77,6 +79,11 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                 if submitted:
                     if frame != submitted_frame:
                         continue
+                    one_time = frame.get_by_text('Yes, allow this time', exact=True)
+                    if one_time.count() == 1 and one_time.is_visible():
+                        one_time.click()
+                        frame.get_by_role('button', name=re.compile(r'^Submit')).click()
+                        print('Approved one workspace tool request.', flush=True)
                     approval = frame.get_by_role('button', name=re.compile(r'^(1 Yes|Allow once)$'))
                     if approval.count() == 1 and approval.is_visible():
                         approval.click()
@@ -112,8 +119,14 @@ def verify_reply(page, prompt, expected, timeout, output=None):
         page.wait_for_timeout(350)
         if output and time.monotonic() - last_snapshot > 10:
             page.screenshot(path=str(output / 'latest.png'))
-            (output / 'latest.txt').write_text('\n'.join(frame.locator('body').inner_text()
-                for frame in page.frames if frame.parent_frame))
+            snapshots = []
+            for frame in page.frames:
+                if frame.parent_frame:
+                    try:
+                        snapshots.append(frame.url.split('?')[0] + '\n' + frame.locator('body').inner_text(timeout=900))
+                    except BrowserError:
+                        continue
+            (output / 'latest.txt').write_text('\n'.join(snapshots))
             last_snapshot = time.monotonic()
     page.screenshot(path='/tmp/factory-native-failure.png')
     for frame in page.frames:
@@ -437,7 +450,9 @@ def run(args, root, stack):
     trusted.mkdir()
     (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':False,'working_directory':'/workspace'}))
     (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
-    editor_mounts = ['-v', f'{args.code_server}:/opt/editor:ro', '-v', f'{client}:/qa:rw']
+    from pi_sandbox_factory import browser_editor
+    editor_path = browser_editor.INSTALL if agent == 'agy' else '/opt/editor'
+    editor_mounts = ['-v', f'{args.code_server}:{editor_path}:ro', '-v', f'{client}:/qa:rw']
     controller_env = [arg for key, value in sandbox.RUNTIME_ENV.items() for arg in ('-e', f'{key}={value}')]
     if api_error:
         from primary_claude_errors import FIXTURE_CREDENTIAL, RECOVERY_REPLY
@@ -455,8 +470,11 @@ def run(args, root, stack):
         time.sleep(.25)
     else:
         raise RuntimeError('Controller failed to start')
-    target = {'codex': '.codex/auth.json', 'claude': '.claude/.credentials.json'}[agent]
-    store = ['python3', '-c', advisor_credentials._WRITE_FILE, '/home/node/' + target]
+    if agent == 'agy':
+        store = ['secret-tool', 'store', '--label=Antigravity CLI', 'service', 'gemini', 'username', 'antigravity']
+    else:
+        target = {'codex': '.codex/auth.json', 'claude': '.claude/.credentials.json'}[agent]
+        store = ['python3', '-c', advisor_credentials._WRITE_FILE, '/home/node/' + target]
     if api_error:
         podman('exec', '-i', fixture, 'tee', '/tmp/fixture-api.py',
                payload=(ROOT / 'tests/primary_claude_errors.py').read_text())
@@ -484,22 +502,40 @@ def run(args, root, stack):
         podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
     from pi_sandbox_factory import native_editor
     native_editor.install({'engine':'podman','primary_agent':agent}, editor, 'x86_64')
-    port = listen(stack, client / 'editor.sock', ticket, hub)
-    launch = SOURCE.parent/'editor'
-    launch_settings = {'agent':agent, 'native_settings':native_editor.settings(agent),
-        'binary':'/opt/editor/bin/code-server','authority':'127.0.0.1:' + str(port),'cwd':'/workspace',
-        'password_hash':'','allow_uploads':False,'watch_fallback':(launch/'watch-fallback.cjs').read_text()}
-    supervisor = subprocess.Popen(['podman','exec','-i',editor,'python3','-u','-c',(launch/'launch.py').read_text()],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=(root/'editor.log').open('w'),text=True)
-    stack.callback(supervisor.wait)
-    stack.callback(supervisor.stdin.close)
-    supervisor.stdin.write(json.dumps(launch_settings)+'\n'); supervisor.stdin.flush()
-    assert supervisor.stdout.readline().strip() == 'ready', (root/'editor.log').read_text()[-2000:]
-    podman('exec','-d',editor,'socat','UNIX-LISTEN:/qa/editor.sock,mode=0600,fork',
-        'UNIX-CONNECT:/home/node/.local/share/pi-browser-editor/editor.sock')
-    for _ in range(150):
-        if (client/'editor.sock').is_socket(): break
-        time.sleep(.2)
+    if agent == 'agy':
+        state = root / 'state'
+        state.mkdir()
+        (state / 'config.json').write_text(json.dumps({'primary_agent': agent}))
+        container_id = subprocess.check_output(['podman', 'inspect', '--format', '{{.Id}}', editor], text=True).strip()
+        host_source = ("import asyncio,sys;from pathlib import Path;"
+                       "from pi_sandbox_factory import browser_editor,editor_settings;"
+                       "asyncio.run(browser_editor.serve(sys.argv[1],'/workspace',editor_settings.validate(),"
+                       "Path(sys.argv[2]),lambda url:print(url,flush=True)))")
+        supervisor = subprocess.Popen([sys.executable, '-u', '-c', host_source, container_id, str(state)],
+            stdout=subprocess.PIPE, stderr=(args.output / 'editor.log').open('w'), text=True)
+        stack.callback(supervisor.wait)
+        stack.callback(supervisor.terminate)
+        url = supervisor.stdout.readline().strip()
+        if not url.startswith('http://'):
+            raise RuntimeError('Production browser editor did not start: ' + (args.output / 'editor.log').read_text()[-4000:])
+    else:
+        port = listen(stack, client / 'editor.sock', ticket, hub)
+        launch = SOURCE.parent/'editor'
+        launch_settings = {'agent':agent, 'native_settings':native_editor.settings(agent),
+            'binary':'/opt/editor/bin/code-server','authority':'127.0.0.1:' + str(port),'cwd':'/workspace',
+            'password_hash':'','allow_uploads':False,'watch_fallback':(launch/'watch-fallback.cjs').read_text()}
+        supervisor = subprocess.Popen(['podman','exec','-i',editor,'python3','-u','-c',(launch/'launch.py').read_text()],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=(root/'editor.log').open('w'),text=True)
+        stack.callback(supervisor.wait)
+        stack.callback(supervisor.stdin.close)
+        supervisor.stdin.write(json.dumps(launch_settings)+'\n'); supervisor.stdin.flush()
+        assert supervisor.stdout.readline().strip() == 'ready', (root/'editor.log').read_text()[-2000:]
+        podman('exec','-d',editor,'socat','UNIX-LISTEN:/qa/editor.sock,mode=0600,fork',
+            'UNIX-CONNECT:/home/node/.local/share/pi-browser-editor/editor.sock')
+        for _ in range(150):
+            if (client/'editor.sock').is_socket(): break
+            time.sleep(.2)
+        url = f'http://127.0.0.1:{port}'
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=args.chromium)
         page = browser.new_page(viewport={'width': 1420, 'height': 920})
@@ -521,7 +557,9 @@ def run(args, root, stack):
             };
             new MutationObserver(check).observe(document, {subtree:true, childList:true, characterData:true});
         })();""")
-        page.goto(f'http://127.0.0.1:{port}/?folder=/workspace')
+        if agent == 'agy':
+            page.on('console', lambda message: (args.output / 'console.log').open('a').write(message.type + ': ' + message.text + '\n') if message.type in ('error', 'warning') else None)
+        page.goto(url + '/?folder=/workspace')
         expect(page).to_have_title(re.compile('workspace', re.I), timeout=args.timeout * 1000)
         if api_error:
             verify_reply(page, 'Reply hello.', 'Claude could not complete the request (HTTP 400).', args.timeout, args.output)
@@ -555,7 +593,8 @@ def run(args, root, stack):
             check_capacity(page, agent, editor, args.output, args.timeout)
         if args.reload:
             page.reload()
-            resume_chat(page, args.output, args.timeout, second)
+            if agent != 'agy':
+                resume_chat(page, args.output, args.timeout, second)
             verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
             print('Continued the saved chat after a page reload.', flush=True)
         if args.deny and args.reload:

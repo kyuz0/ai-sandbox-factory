@@ -19,6 +19,8 @@ case "$FACTORY_PRIMARY_AGENT" in
 esac
 if [[ "$FACTORY_PRIMARY_AGENT" != agy ]]; then
     python3 /opt/primary/editor_bridge.py &
+else
+    python3 /opt/primary/agy_editor_bridge.py &
 fi
 touch /tmp/factory-primary-ready
 wait -n

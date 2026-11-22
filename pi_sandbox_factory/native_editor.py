@@ -46,7 +46,8 @@ def install(config, container, arch):
     identity = f'{spec["publisher"]}.{spec["name"]}-{spec["version"]}'
     destination = '/opt/editor-extensions/' + identity
     marker = destination + '/.factory-sha256'
-    command = {'codex': 'chatgpt.openSidebar', 'claude': 'claude-vscode.sidebar.open'}[selected]
+    command = {'codex': 'chatgpt.openSidebar', 'claude': 'claude-vscode.sidebar.open',
+               'agy': 'workbench.view.extension.antigravity-sidebar'}[selected]
     helper_source = (
         'const vscode = require("vscode"); exports.activate = async () => {'
         f'await vscode.extensions.getExtension({json.dumps(spec["publisher"] + "." + spec["name"])}).activate();'
