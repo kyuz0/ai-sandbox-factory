@@ -78,6 +78,15 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ## Capacity and recovery
 
+- HARD GATE — preserve diagnostic errors: never replace an upstream or proxy
+  failure with an unexplained generic error. Return the actual upstream status
+  and error, or the transport error code and message, after removing credentials.
+  Record the failure stage, time, request ID and underlying cause in container
+  logs. Use the same request ID in the client response. Mark any truncated error
+  explicitly. If a stream has already started, log its failure without changing
+  the streaming protocol. Test diagnostic visibility and credential redaction
+  together, including connection resets and failures during streaming.
+
 - HARD GATE — no elephant-in-a-crystal-shop workflows. Use the smallest change
   that does what the user asked. Preserve workspace files, saved conversations,
   sign-ins, and running work wherever the feature allows it. Replacing a

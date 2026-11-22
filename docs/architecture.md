@@ -74,6 +74,17 @@ Each upload may contain up to 32 MiB; the companion buffers up to 64 MiB of conc
 body after forwarding it. Additional uploads wait for buffer space; cancellation
 releases their reservations.
 
+Upstream HTTP errors retain their status and explanation. Connection failures
+include the underlying error code and message. Credentials are removed from both
+client diagnostics and container logs. Each request has an `x-factory-request-id`
+response header that matches its error log entry. Error bodies larger than 64 KiB
+return a prefix marked as truncated. If a stream fails after its headers have been
+sent, the proxy records the cause and closes the stream without inserting a
+different protocol into it.
+
+Read inference diagnostics with `podman logs --timestamps pi-sandbox-factory-NAME-inference`,
+replacing `NAME` with the sandbox name. Use `docker logs` for a Docker sandbox.
+
 ## Commands, approval and skills
 
 ```mermaid

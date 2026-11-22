@@ -388,6 +388,23 @@ and verifies connector cleanup. The inference suite sends 80 simultaneous 1 MiB
 uploads, keeps all responses live, tests queued upload cancellation, and advances
 a fake clock through 32 minutes of stream progress.
 
+The inference broker tests also check that connection reset codes, upstream
+statuses and error explanations reach the client and matching structured logs.
+They verify credential redaction in JSON and plain-text errors and explicitly
+marked truncation of oversized errors.
+
+Exercise the production gateway against a slow local receiver without inference:
+
+```sh
+podman build -t localhost/factory-gateway-check pi_sandbox_factory/containers/proxy
+PYTHONPATH=. .venv/bin/python tests/gateway_upload.py --image localhost/factory-gateway-check
+```
+
+This checks complete 4.55 MB and 32 MiB uploads by byte count and SHA-256, ten
+concurrent 4.55 MB uploads, recovery after a cancelled upload, and destination
+denials. It creates and removes its own gateway. The gateway image build requires
+Squid 6.13 or newer.
+
 For creation cancellation, run the real Podman fixture with a locally cached image:
 
 ```sh

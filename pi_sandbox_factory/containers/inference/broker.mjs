@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import {pipeline} from 'node:stream';
+import {randomUUID} from 'node:crypto';
 import {SignatureV4} from '@smithy/signature-v4';
 import {Sha256} from '@aws-crypto/sha256-js';
 import {checkCredential, localGatewayOptions, readCredentials} from './credentials.mjs';
@@ -14,6 +15,34 @@ const idPattern = new RegExp(`^${idSyntax}$`);
 const checkPath = new RegExp(`^/check/(${idSyntax})/([a-f0-9]{64})$`);
 const routePath = new RegExp(`^/r/(${idSyntax})(/[^?]*)(?:\\?(.*))?$`);
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Diagnostics must retain the failure, never the authentication used to send it.
+const credentialFields = ['key','accessKeyId','secretAccessKey','sessionToken'];
+function redact(text, values) {
+  const variants = values.filter(value => typeof value === 'string' && value).flatMap(value =>
+    [value, JSON.stringify(value).slice(1,-1), encodeURIComponent(value)]);
+  for (const value of [...new Set(variants)].sort((a,b) => b.length-a.length))
+    text = text.split(value).join('[redacted]');
+  return text;
+}
+function redactDetails(value, secrets) {
+  if (typeof value === 'string') return redact(value,secrets);
+  if (Array.isArray(value)) return value.map(item=>redactDetails(item,secrets));
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value).map(([key,item])=>[key,redactDetails(item,secrets)]));
+  return value;
+}
+function errorDetails(error, seen=new Set()) {
+  if (!error || typeof error !== 'object') return {message:String(error)};
+  if (seen.has(error)) return {message:'[circular error cause]'};
+  seen.add(error);
+  const detail = {};
+  for (const key of ['name','message','code','errno','syscall','address','port','stack'])
+    if (['string','number'].includes(typeof error[key])) detail[key] = error[key];
+  if (error.cause !== undefined) detail.cause = errorDetails(error.cause,seen);
+  if (Array.isArray(error.errors)) detail.errors = error.errors.map(item => errorDetails(item,seen));
+  return detail;
+}
 
 export function compileRoutes(values, {allowHttpFixture=false}={}) {
   const routes = new Map();
@@ -56,7 +85,8 @@ function matchesCredentialScope(route, secret) {
   );
 }
 
-export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=32*1024*1024, maxBuffered=64*1024*1024, concurrency=Infinity}={}) {
+export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=32*1024*1024, maxBuffered=64*1024*1024, concurrency=Infinity,
+  logError=record=>console.error(JSON.stringify(record))}={}) {
   let active = 0, reserved = 0;
   const uploads = [];
   function admitUploads() {
@@ -67,17 +97,34 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
       next.resolve(true);
     }
   }
-  function fail(res, status, detail) {
-    if (res.destroyed || res.writableEnded) return;
-    if (res.headersSent) { res.destroy(); return; }
-    const message = detail || ({401:'Provider authentication failed. Replace the credential in Factory.',
-      403:'The provider refused access to this model or operation.',429:'The provider rate or usage limit was reached.',
-      413:`Inference request exceeds this proxy's ${maxBody} byte upload limit.`,404:'Inference route is not available.',
-      503:'Inference connection is unavailable. Check its configuration in Factory.'})[status] || 'Inference request failed.';
-    res.writeHead(status, {'content-type':'application/json'});
-    res.end(JSON.stringify({error:{type:'upstream_error',message,status}}));
-  }
   const server = http.createServer({maxHeaderSize:16384}, async (req,res) => {
+    const requestId = randomUUID();
+    res.setHeader('x-factory-request-id',requestId);
+    const secrets = [req.headers.authorization, req.headers.authorization?.replace(/^Bearer /i,'')];
+    let routeId, reported = false;
+    const report = (stage,status,error,extra={}) => {
+      if (reported) return;
+      reported = true;
+      const record = redactDetails({timestamp:new Date().toISOString(),
+        request_id:requestId,route:routeId,method:req.method,stage,status,
+        ...(error === undefined ? {} : {error:errorDetails(error)}),...extra},secrets);
+      logError(record);
+      return record;
+    };
+    function fail(res, status, detail, error, stage='proxy') {
+      const message = detail || ({401:'Provider authentication failed. Replace the credential in Factory.',
+        403:'The provider refused access to this model or operation.',429:'The provider rate or usage limit was reached.',
+        413:`Inference request exceeds this proxy's ${maxBody} byte upload limit.`,404:'Inference route is not available.',
+        400:'Invalid inference proxy request.',503:'Inference connection is unavailable. Check its configuration in Factory.'})[status] || 'Inference proxy failure.';
+      const diagnostic = report(stage,status,error,{message});
+      if (res.destroyed || res.writableEnded) return;
+      if (res.headersSent) { res.destroy(); return; }
+      const cause = diagnostic?.error;
+      const safeMessage = redact(cause ? `${message} ${cause.code ? '['+cause.code+'] ' : ''}${cause.message}` : message,secrets);
+      res.writeHead(status, {'content-type':'application/json'});
+      res.end(JSON.stringify({error:{type:'upstream_error',message:safeMessage,status,request_id:requestId,
+        ...(cause ? {details:cause} : {})}}));
+    }
     let upstream, deadline, admission, body, held = 0, counted = false, finished = false;
     const releaseBody = () => {
       body = undefined;
@@ -113,11 +160,15 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         const route = routes.get(check[1]);
         if (!route || route.credentialCheckId !== check[2]) return fail(res,404);
         const secret = credentials(check[1]) || {};
+        routeId = check[1];
+        for (const field of credentialFields) if (secret[field]) secrets.push(secret[field]);
         const controller = new AbortController();
         res.once('close', () => controller.abort());
         active++; counted = true;
         const status = secret.key && secret.origin === route.origin.origin && matchesCredentialScope(route, secret)
-          ? await checkCredential(route, secret.key, fetch, controller.signal).catch(() => 'unavailable')
+          ? await checkCredential(route, secret.key, fetch, controller.signal).catch(error => {
+            report('credential_check',503,error);return 'unavailable';
+          })
           : 'not_configured';
         if (finished) return;
         // Never forward provider headers, bodies, URLs, or exception messages.
@@ -128,6 +179,7 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
       if (!match) return fail(res,404);
       const route = routes.get(match[1]);
       if (!route) return fail(res,404);
+      routeId = match[1];
       const rawPath = match[2];
       let decoded;
       try { decoded = decodeURIComponent(rawPath); } catch { return fail(res,400); }
@@ -141,12 +193,15 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         if (!op.query?.[key]?.includes(value) || query.getAll(key).length !== 1) return fail(res,400);
       }
       const secret = credentials(match[1]) || {};
+      for (const field of credentialFields) if (secret[field]) secrets.push(secret[field]);
       if ((!route.local || secret.key) && secret.origin !== route.origin.origin) return fail(res,503);
       if (!matchesCredentialScope(route, secret)) return fail(res,503);
       if (!route.local && (route.auth.type === 'sigv4' ? !(secret.accessKeyId && secret.secretAccessKey) : !secret.key)) return fail(res,503);
       if (Number(req.headers['content-length']) > maxBody) return fail(res,413);
       active++; counted = true;
-      if (totalMs > 0) deadline = setTimeout(() => { fail(res,504); cleanup(); },totalMs);
+      if (totalMs > 0) deadline = setTimeout(() => {
+        fail(res,504,`Inference request exceeded its configured ${totalMs} ms total deadline.`,undefined,'total_timeout'); cleanup();
+      },totalMs);
       // Reserve upload space before reading. Waiting sockets apply backpressure;
       // a burst must not turn valid requests into misleading size errors.
       const declared = Number(req.headers['content-length']);
@@ -194,36 +249,47 @@ export function createBroker(routes, credentials, {idleMs=0, totalMs=0, maxBody=
         if (response.statusCode < 200 || response.statusCode >= 300) {
           if (response.headers['retry-after']) res.setHeader('retry-after',response.headers['retry-after']);
           const status=response.statusCode;
-          if ((status>=300&&status<400)||status===401||status===403) {
-            response.destroy();return fail(res,status>=300&&status<400?502:status);
-          }
-          // Preserve native context-limit errors so Pi can compact and retry.
-          // Limit error bodies and redact every credential field before returning them.
+          // Preserve all upstream statuses and error text, including non-JSON errors.
+          // A bounded, explicitly marked prefix prevents an unbounded error upload.
+          const limit = 65536;
+          const lookahead = Math.max(0,...secrets.filter(Boolean).map(value=>Buffer.byteLength(encodeURIComponent(value))));
+          const chunks=[]; let size=0, truncated=false, readError;
           try {
-            const chunks=[];let size=0;
-            for await(const chunk of response){size+=chunk.length;if(size>65536)throw Error('Large error');chunks.push(chunk);}
-            const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-            let safe=JSON.stringify(parsed);
-            for(const field of ['key','accessKeyId','secretAccessKey','sessionToken']) {
-              if(secret[field])safe=safe.split(JSON.stringify(secret[field]).slice(1,-1)).join('[redacted]');
+            for await(const chunk of response){
+              const remaining=limit+lookahead-size;
+              chunks.push(chunk.subarray(0,Math.max(0,remaining))); size+=chunk.length;
+              if(size>limit+lookahead){truncated=true;response.destroy();break;}
             }
-            const errorType=response.headers['x-amzn-errortype'];
-            const headers={'content-type':'application/json'};
-            if(typeof errorType==='string'&&/^[A-Za-z0-9_.:#-]{1,256}$/.test(errorType)&&!Object.values(secret).some(v=>v&&errorType.includes(v)))headers['x-amzn-errortype']=errorType;
-            if(!finished){res.writeHead(status,headers);res.end(safe);}
-          } catch {response.destroy();fail(res,status);}
+          } catch(error) { readError=error; }
+          const rawText=Buffer.concat(chunks).toString('utf8');
+          let text=redact(rawText,secrets);
+          truncated ||= size>limit;
+          if(truncated) text=text.slice(0,limit);
+          let safe;
+          try {
+            if(truncated||readError)throw Error();
+            safe=JSON.stringify(redactDetails(JSON.parse(rawText),secrets));
+          }
+          catch {safe=JSON.stringify({error:{type:'upstream_error',message:text || response.statusMessage,
+            status,request_id:requestId,truncated,...(readError?{details:redactDetails(errorDetails(readError),secrets)}:{})}});}
+          report('upstream_http',status,readError,{body:JSON.parse(safe),truncated});
+          const errorType=response.headers['x-amzn-errortype'];
+          const headers={'content-type':'application/json'};
+          if(typeof errorType==='string'&&/^[A-Za-z0-9_.:#-]{1,256}$/.test(errorType)&&redact(errorType,secrets)===errorType)headers['x-amzn-errortype']=errorType;
+          if(!finished){res.writeHead(status,headers);res.end(safe);}
           return;
         }
         const safe = {};
         for (const key of responseHeaders) if (response.headers[key]) safe[key] = response.headers[key];
         res.writeHead(response.statusCode,safe); res.flushHeaders();
-        pipeline(response,res,()=>{});
+        response.once('error',error=>report('upstream_stream',response.statusCode,error));
+        pipeline(response,res,error=>{if(error&&!reported)report(finished?'client_disconnect':'upstream_stream',response.statusCode,error);});
       });
       upstream.on('socket',socket=>socket.setKeepAlive(true,30000));
-      upstream.on('timeout',()=>{ fail(res,504); cleanup(); });
-      upstream.on('error',()=>fail(res,502));
+      upstream.on('timeout',()=>{ fail(res,504,`Upstream connection exceeded its configured ${idleMs} ms idle timeout.`,undefined,'idle_timeout'); cleanup(); });
+      upstream.on('error',error=>{if(!finished)fail(res,502,'Upstream connection failed.',error,'upstream_connection');});
       upstream.end(body, releaseBody);
-    } catch { fail(res,502); }
+    } catch(error) { fail(res,502,'Inference proxy failed while processing the request.',error,'proxy'); }
   });
   server.headersTimeout = 15000;
   server.requestTimeout = 0;
@@ -240,7 +306,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     const server = createBroker(routes,id => readCredentials(secretsFile)[id]);
     fs.rmSync(socket,{force:true});
     server.listen(socket,()=>fs.chmodSync(socket,0o666));
-    server.on('error',()=>{ console.error('Inference service could not start.'); process.exit(1); });
+    server.on('error',error=>{ console.error(JSON.stringify({timestamp:new Date().toISOString(),stage:'startup',error:errorDetails(error)})); process.exit(1); });
     for (const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>{server.close();server.closeAllConnections();});
-  } catch { console.error('Invalid inference service configuration.'); process.exitCode = 1; }
+  } catch(error) { console.error(JSON.stringify({timestamp:new Date().toISOString(),stage:'configuration',error:errorDetails(error)})); process.exitCode = 1; }
 }

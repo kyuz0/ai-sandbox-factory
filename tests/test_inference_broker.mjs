@@ -181,7 +181,7 @@ test('unlisted routes, queries, methods, traversal and raw absolute URLs never r
 
 test('redirects are not followed and provider error bodies do not expose keys',async t=>{
  const f=await setup(t,(_req,res,body)=>{res.writeHead(body==='redirect'?302:401,{location:'http://attacker.invalid','retry-after':'9'});res.end(secret);});
- for(const [body,status]of [['redirect',502],['auth',401]]){
+ for(const [body,status]of [['redirect',302],['auth',401]]){
   const r=await f.send(body);assert.equal(r.status,status);assert.equal(r.headers.get('location'),null);assert(!(await r.text()).includes(secret));
  }
 });
@@ -279,9 +279,71 @@ test('native context-limit errors survive with credentials redacted and AWS erro
  assert(value.error.message.includes('prompt is too long'));assert(!value.error.message.includes(secret));
 });
 
-test('oversized upstream errors are withheld',async t=>{
+test('oversized upstream errors return a marked prefix and retain their status',async t=>{
  const f=await setup(t,(_req,res)=>{res.writeHead(400);res.end(JSON.stringify({message:'x'.repeat(70000)}));});
- const r=await f.send();assert.equal(r.status,400);assert((await r.text()).length<1000);
+ const r=await f.send();assert.equal(r.status,400);const body=await r.json();
+ assert.equal(body.error.truncated,true);assert(body.error.message.includes('x'.repeat(100)));
+ assert(body.error.message.length<=65536);
+});
+
+test('upstream resets return their exact code and message with a matching stored diagnostic',async t=>{
+ const logs=[];
+ const f=await setup(t,req=>req.socket.destroy(),{logError:record=>logs.push(record)});
+ const r=await f.send();assert.equal(r.status,502);const body=await r.json();
+ assert.equal(body.error.details.code,'ECONNRESET');assert.equal(body.error.details.message,'socket hang up');
+ assert.match(body.error.message,/ECONNRESET.*socket hang up/);
+ assert.equal(r.headers.get('x-factory-request-id'),body.error.request_id);
+ assert.equal(logs.length,1);assert.equal(logs[0].request_id,body.error.request_id);
+ assert.equal(logs[0].route,'sample');assert.equal(logs[0].stage,'upstream_connection');
+ assert.equal(logs[0].error.code,'ECONNRESET');assert(logs[0].error.stack);
+});
+
+test('plain upstream errors and authentication failures retain the actual explanation without credentials',async t=>{
+ const logs=[];
+ const f=await setup(t,(_req,res,body)=>{
+  res.writeHead(Number(body),{'content-type':'text/html','x-private':secret});
+  res.end('Provider diagnostic: account disabled; token='+secret+' encoded='+encodeURIComponent(secret));
+ },{logError:record=>logs.push(record)});
+ for(const status of [401,403,429,500,502,503]){
+  const r=await f.send(String(status));assert.equal(r.status,status);
+  const text=await r.text();assert(text.includes('account disabled'));assert(!text.includes(secret));
+  assert.equal(r.headers.get('x-private'),null);assert.equal(logs.at(-1).status,status);
+  assert(JSON.stringify(logs.at(-1).body).includes('account disabled'));assert(!JSON.stringify(logs).includes(secret));
+ }
+});
+
+test('a failed upstream stream keeps its protocol and logs the cause under the response request ID',async t=>{
+ const logs=[];
+ const f=await setup(t,(_req,res)=>{
+  res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: first\n\n');
+  setTimeout(()=>res.destroy(),30);
+ },{logError:record=>logs.push(record)});
+ const r=await f.send();const id=r.headers.get('x-factory-request-id');
+ await assert.rejects(r.text());
+ await new Promise(setImmediate);
+ assert.equal(logs.length,1);assert.equal(logs[0].request_id,id);
+ assert.equal(logs[0].stage,'upstream_stream');assert.equal(logs[0].error.code,'ECONNRESET');
+});
+
+test('all credential fields are redacted in JSON bodies, logs and truncated error boundaries',async t=>{
+ const stored={key:'quoted-"credential',accessKeyId:'ACCESS_ID_FIXTURE',secretAccessKey:'sensitive/secret+fixture',sessionToken:'token-fixture-long-value'};
+ const credential={...stored};
+ const logs=[];
+ const f=await setup(t,(_req,res,body)=>{
+  res.writeHead(400,{'content-type':'application/json'});
+  if(body==='large')res.end('x'.repeat(65530)+stored.sessionToken+'x'.repeat(100));
+  else res.end(JSON.stringify({error:{message:Object.values(stored).flatMap(v=>[v,encodeURIComponent(v)]).join(' ')}}));
+ },{secret:credential,logError:record=>logs.push(record)});
+ credential.origin='http://127.0.0.1:'+f.source.address().port;
+ for(const input of ['json','large']){
+  const r=await f.send(input);assert.equal(r.status,400);const value=await r.json();
+  const visible=JSON.stringify(value)+JSON.stringify(logs);
+  for(const secret of Object.values(stored)){
+   assert(!visible.includes(secret));assert(!visible.includes(JSON.stringify(secret).slice(1,-1)));
+   assert(!visible.includes(encodeURIComponent(secret)));
+  }
+  if(input==='large')assert(!value.error.message.endsWith('token-'));
+ }
 });
 
 test('eighty live inference streams release uploaded bodies and complete independently', async t => {
