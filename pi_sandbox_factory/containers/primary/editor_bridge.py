@@ -7,7 +7,7 @@ from pathlib import Path
 import signal
 
 from editor_protocol import ClaudeProtocol, CodexProtocol, Conversations, Rejected, model_name, object_value, session_id
-from launch import AGENT, SOURCE, command
+from launch import AGENT, SOURCE, command, workspace_directory
 
 SOCKET = Path('/run/primary-editor/editor.sock')
 OWNERS = {}
@@ -21,28 +21,87 @@ def history_message(identifier):
         if not source.resolve().is_relative_to(root.resolve()):
             continue
         records = []
+        skipped = {}
         for line in source.read_text().splitlines():
             try:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if (record.get('isApiErrorMessage') or 'error' in record or 'apiError' in record or
+            if not isinstance(record, dict):
+                continue
+            if record.get('type') not in ('user', 'assistant', 'summary'):
+                if isinstance(record.get('uuid'), str):
+                    skipped[record['uuid']] = record.get('parentUuid')
+                continue
+            if (record.get('isApiErrorMessage') or record.get('is_api_error_message') or
+                    'error' in record or 'apiError' in record or
                     any(tag in json.dumps(record.get('message', {})) for tag in
                         ('<local-command-stdout>', '<local-command-stderr>'))):
-                continue
+                # Keep the transcript's parent/child links. Removing an error
+                # record can hide the later conversation when it is reopened.
+                notice = 'This command’s output is not available in the browser.'
+                visible = {'role': record.get('type'), 'content': [{'type': 'text', 'text': notice}]}
+                if record.get('type') == 'assistant' and (record.get('isApiErrorMessage') or
+                        record.get('is_api_error_message') or 'error' in record or 'apiError' in record):
+                    visible = ClaudeProtocol().outgoing({**record, 'is_api_error_message': True})['message']
+                record = {**record, 'message': visible}
+                if 'summary' in record:
+                    record['summary'] = notice
             if record.get('type') in ('user', 'assistant', 'summary'):
                 keys = ('type', 'uuid', 'parentUuid', 'sessionId', 'cwd', 'timestamp', 'message',
                         'isSidechain', 'version', 'slug', 'gitBranch', 'userType', 'isMeta',
                         'summary', 'leafUuid')
                 records.append({key: record[key] for key in keys if key in record})
+        for record in records:
+            parent = record.get('parentUuid')
+            seen = set()
+            while isinstance(parent, str) and parent in skipped and parent not in seen:
+                seen.add(parent)
+                parent = skipped[parent]
+            if 'parentUuid' in record:
+                record['parentUuid'] = None if isinstance(parent, str) and parent in seen else parent
         return {'type': 'factory_history', 'project': source.parent.name,
                 'session_id': identifier, 'records': records}
     return None
 
 
-def arguments(agent, supplied, settings, context, conversations):
+def normalized_arguments(agent, supplied):
     if not isinstance(supplied, list) or any(not isinstance(arg, str) for arg in supplied):
         raise Rejected('Invalid editor arguments')
+    if (agent == 'claude' and supplied and Path(supplied[0]).is_absolute() and
+            Path(supplied[0]).name == 'claude'):
+        # The extension prefixes discovery calls with its bundled executable.
+        # This path is never executed; the controller chooses its own binary.
+        supplied = supplied[1:]
+    # Native SDK releases use both --name value and --name=value. Normalize
+    # only the options this bridge reads; all controller settings remain ours.
+    valued = {'--permission-mode', '--resume', '--model', '--effort', '--input-format', '--setting-sources'}
+    result = []
+    seen = set()
+    index = 0
+    while index < len(supplied):
+        arg = supplied[index]
+        key, separator, value = arg.partition('=')
+        if key in valued:
+            if key in seen:
+                raise Rejected('Duplicate editor option: ' + key)
+            seen.add(key)
+            if not separator:
+                index += 1
+                if index >= len(supplied):
+                    raise Rejected('Missing editor argument')
+                value = supplied[index]
+            if value.startswith('-'):
+                raise Rejected('Invalid editor option value: ' + key)
+            result.extend((key, value))
+        else:
+            result.append(arg)
+        index += 1
+    return result
+
+
+def arguments(agent, supplied, settings, context, conversations):
+    supplied = normalized_arguments(agent, supplied)
     base = command(agent, 'editor' if agent == 'codex' else 'open', settings, context)
     if agent == 'codex':
         # app-server has its own per-turn policy. Keep only controller-owned configuration.
@@ -120,9 +179,16 @@ async def serve_client(reader, writer, agent):
 
     try:
         greeting = object_value(json.loads(await read_message(reader)))
-        supplied = greeting.get('args')
-        if not isinstance(supplied, list) or any(not isinstance(arg, str) for arg in supplied):
-            raise Rejected('Invalid editor arguments')
+        supplied = normalized_arguments(agent, greeting.get('args'))
+        if agent == 'claude' and supplied == ['--setting-sources', 'user', 'workspace-trust', '--json']:
+            # Factory trusts this configured workspace by construction. Answer
+            # the newer extension's query even when the pinned CLI predates it.
+            # Never inspect or execute workspace settings in the controller.
+            settings = json.loads((SOURCE / 'settings.json').read_text())
+            cwd = workspace_directory(settings)
+            await send({'type': 'factory_cli', 'stdout': json.dumps({
+                'trusted': True, 'directory': str(cwd)}) + '\n', 'code': 0})
+            return
         if '--version' in supplied:
             process = await asyncio.create_subprocess_exec(AGENT, '--version', stdout=asyncio.subprocess.PIPE,
                                                           stderr=asyncio.subprocess.DEVNULL)
@@ -150,7 +216,7 @@ async def serve_client(reader, writer, agent):
         settings = json.loads((SOURCE / 'settings.json').read_text())
         context = (SOURCE / 'context.md').read_text()
         conversations = Conversations(Path.home() / '.factory-editor' / agent / 'conversations')
-        args = arguments(agent, greeting.get('args'), settings, context, conversations)
+        args = arguments(agent, supplied, settings, context, conversations)
         if agent == 'claude' and '--resume' in args:
             identifier = args[args.index('--resume') + 1]
             await claim(identifier)

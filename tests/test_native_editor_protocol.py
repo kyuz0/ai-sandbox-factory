@@ -23,6 +23,32 @@ def component(name):
 
 
 class NativeEditorProtocolTests(unittest.TestCase):
+    def test_claude_api_errors_cannot_repeat_private_credentials(self):
+        bridge = protocol.ClaudeProtocol()
+        secret = 'fixture-private-credential'
+        for event in (
+            {'type': 'assistant', 'session_id': 'ours', 'is_api_error_message': True,
+             'api_error_status': 400, 'error': secret,
+             'message': {'id': 'message-id', 'content': [{'type': 'text', 'text': secret}], 'diagnostics': secret}},
+            {'type': 'result', 'session_id': 'ours', 'is_error': True, 'subtype': 'success',
+             'api_error_status': 401, 'result': secret, 'errors': [secret], 'diagnostics': secret},
+            {'type': 'system', 'subtype': 'api_retry', 'api_error_status': 429,
+             'error': {'message': secret}, 'attempt': 1, 'max_retries': 11},
+        ):
+            with self.subTest(kind=event['type']):
+                result = bridge.outgoing(event)
+                self.assertNotIn(secret, json.dumps(result))
+                self.assertEqual(result['type'], event['type'])
+                self.assertEqual(result['api_error_status'], event['api_error_status'])
+                if event['type'] != 'system':
+                    self.assertIn('Claude could not complete', json.dumps(result))
+        retry = bridge.outgoing({'type': 'system', 'subtype': 'api_retry', 'error_status': 429,
+                                 'error': 'rate_limit', 'attempt': 2, 'max_retries': 11})
+        self.assertEqual(retry['error'], 'rate_limit')
+        self.assertEqual(retry['error_status'], 429)
+        ordinary = {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'A normal reply.'}]}}
+        self.assertEqual(bridge.outgoing(ordinary), ordinary)
+
     def test_codex_paginated_history_requires_an_owned_conversation(self):
         bridge = protocol.CodexProtocol('/workspace', '')
         bridge.conversations.add('ours')
@@ -127,6 +153,26 @@ class NativeEditorProtocolTests(unittest.TestCase):
                        'request': {'subtype': 'set_permission_mode', 'mode': mode}}
             self.assertEqual(claude.incoming(message), message)
 
+    def test_background_command_controls_are_limited_to_owned_chats(self):
+        bridge = protocol.CodexProtocol('/workspace', '')
+        bridge.conversations.add('ours')
+        for operation in ('list', 'terminate', 'clean'):
+            method = 'thread/backgroundTerminals/' + operation
+            supplied = {'threadId': 'ours', 'processId': '123', 'cwd': '/home/node', 'signal': 'KILL'}
+            result = bridge.incoming({'id': operation, 'method': method, 'params': supplied})
+            expected = {'threadId': 'ours'}
+            if operation == 'terminate':
+                expected['processId'] = '123'
+            self.assertEqual(result['params'], expected)
+            with self.assertRaises(protocol.Rejected):
+                bridge.incoming({'id': operation, 'method': method, 'params': {**supplied, 'threadId': 'foreign'}})
+        for invalid in ('/proc/1', '1;kill', '2147483648', '', '1.0'):
+            with self.assertRaises(protocol.Rejected):
+                bridge.incoming({'id': 9, 'method': 'thread/backgroundTerminals/terminate',
+                                 'params': {'threadId': 'ours', 'processId': invalid}})
+        with self.assertRaises(protocol.Rejected):
+            bridge.incoming({'id': 10, 'method': 'process/kill', 'params': {'processId': '123'}})
+
     def test_codex_login_material_and_controller_files_are_unavailable(self):
         bridge = protocol.CodexProtocol('/workspace', '')
         request = bridge.incoming({'id': 8, 'method': 'getAuthStatus', 'params': {'includeToken': True}})
@@ -227,12 +273,18 @@ class NativeEditorProtocolTests(unittest.TestCase):
                 {'type': 'api-request-blob', 'authorization': 'synthetic-private-token'},
                 {'type': 'assistant', 'uuid': 'one', 'message': {'content': [{'type': 'text', 'text': 'Answer'}]},
                  'internal_headers': 'synthetic-private-token'},
-                {'type': 'user', 'uuid': 'two', 'message': {'content': 'Continue'}}]
+                {'type': 'user', 'uuid': 'two', 'message': {'content': 'Continue'}},
+                {'type': 'assistant', 'uuid': 'three', 'parentUuid': 'two', 'isApiErrorMessage': True,
+                 'message': {'content': [{'type': 'text', 'text': 'synthetic-private-token'}]}},
+                {'type': 'system', 'uuid': 'retry', 'parentUuid': 'three', 'diagnostics': 'synthetic-private-token'},
+                {'type': 'progress', 'uuid': 'progress', 'parentUuid': 'retry'},
+                {'type': 'user', 'uuid': 'four', 'parentUuid': 'progress', 'message': {'content': 'Try again'}}]
             source.write_text(''.join(json.dumps(row) + '\n' for row in records))
             with patch.object(bridge.Path, 'home', return_value=home):
                 exported = bridge.history_message('conversation')
             self.assertNotIn('synthetic-private-token', json.dumps(exported))
-            self.assertEqual([row['type'] for row in exported['records']], ['assistant', 'user'])
+            self.assertEqual([row['type'] for row in exported['records']], ['assistant', 'user', 'assistant', 'user'])
+            self.assertEqual(exported['records'][-2]['uuid'], exported['records'][-1]['parentUuid'])
             editor_home = home / 'editor'
             with patch.object(client.Path, 'home', return_value=editor_home):
                 client.save_history(exported)
@@ -268,6 +320,16 @@ class NativeEditorProtocolTests(unittest.TestCase):
             with patch.object(bridge, 'command', return_value=trusted.copy()), patch.object(bridge.os, 'chdir'):
                 with self.assertRaises(ValueError):
                     bridge.arguments('claude', ['--resume', 'foreign'], {'working_directory': folder}, '', conversations)
+                argv = bridge.arguments('claude', ['--resume=ours', '--permission-mode=default',
+                    '--model=sonnet', '--effort=high'], {'working_directory': folder}, '', conversations)
+                for flag, value in (('--resume', 'ours'), ('--permission-mode', 'default'),
+                                    ('--model', 'sonnet'), ('--effort', 'high')):
+                    self.assertEqual(argv[argv.index(flag) + 1], value)
+                for supplied in (['--resume=foreign'], ['--permission-mode=bypassPermissions'],
+                                 ['--resume=ours', '--resume', 'foreign'], ['--model'],
+                                 ['--setting-sources', '--resume', 'ours']):
+                    with self.assertRaises(ValueError):
+                        bridge.arguments('claude', supplied, {'working_directory': folder}, '', conversations)
 
 
 class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
@@ -348,6 +410,27 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
         finally:
             writer.close()
             await writer.wait_closed()
+
+    async def test_claude_trust_query_uses_only_the_configured_workspace(self):
+        self.agent = 'claude'
+        for args in (['--setting-sources', 'user', 'workspace-trust', '--json'],
+                     ['--setting-sources=user', 'workspace-trust', '--json'],
+                     ['/untrusted/extension/resources/native-binary/claude', '--setting-sources',
+                      'user', 'workspace-trust', '--json']):
+            with patch.object(self.bridge, 'workspace_directory', return_value=Path('/workspace')) as directory, \
+                    patch.object(self.bridge.asyncio, 'create_subprocess_exec') as spawn:
+                reader, writer = await asyncio.open_connection('127.0.0.1', self.server.sockets[0].getsockname()[1])
+                try:
+                    writer.write((json.dumps({'args': args}) + '\n').encode())
+                    await writer.drain()
+                    message = json.loads(await asyncio.wait_for(reader.readline(), 10))
+                    self.assertEqual(message['code'], 0)
+                    self.assertEqual(json.loads(message['stdout']), {'trusted': True, 'directory': '/workspace'})
+                    directory.assert_called_once_with({'working_directory': '/workspace'})
+                    spawn.assert_not_called()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
 
     async def test_half_close_keeps_final_response(self):
         reader, writer = await self.connection('import sys, json; sys.stdin.read(); print(json.dumps({"method":"finished"}))')

@@ -66,9 +66,14 @@ workspace edits, and checks that the built-in VS Code chat is hidden. With
 asks about the previous turn without reading the workspace again. The test saves
 screenshots and browser errors and removes its containers and volumes afterward.
 
-Use `--cancel` to stop a running workspace command and check that a subsequent
-command succeeds. Use `--deny` with manual approvals to deny a command and verify
-that it did not run. On a fresh editor home, verify Codex uses its automatic reviewer and Claude
+Use `--cancel` to stop a reply and check that a subsequent command succeeds.
+For Claude, the test verifies that Stop also terminates the running command.
+Codex can retain resumable commands after Stop; the test asks it to terminate
+the remaining test process in the next turn and verifies that the process exits.
+Use `--deny` to select manual approvals, deny a command and verify that it did
+not run. With `--reload`, the test repeats the denial in the reopened chat.
+The test also records workspace-trust warnings, including warnings that disappear
+before the final screenshot. On a fresh editor home, verify Codex uses its automatic reviewer and Claude
 starts with **Auto**. The pinned Claude extension needs a checked fallback adjustment for its process-wrapper mode; an explicit
 saved approval choice takes precedence. The installer refuses an extension
 whose fallback code no longer matches.
@@ -90,6 +95,12 @@ concurrent writer rejection and process cleanup. Run
 `.venv/bin/python tests/primary_worker_tools.py --image WORKSPACE_IMAGE` for the
 offline worker check: one baseline command, ten concurrent commands, five
 cancellations, a subsequent command and child-process cleanup.
+
+`tests/primary_claude_errors.py --image CLAUDE_CONTROLLER_IMAGE` checks diagnostic
+filtering with a local fake API server and a synthetic credential. It checks
+native streaming events and saved history without contacting Anthropic. This is
+a defensive filter regression, not a test of subscription sign-in. The browser
+test's `--api-error` option checks the same error display and next-turn recovery.
 
 ## FrostPi editor and shared Pi goals
 

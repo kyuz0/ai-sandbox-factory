@@ -75,7 +75,9 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                         approval.click()
                         print('Approved one workspace tool request.', flush=True)
                     stopping = stop_controls(frame)
-                    if visible.count(expected) > previous_matches and not any(stopping.nth(i).is_visible() for i in range(stopping.count())):
+                    # Do not mistake the submitted prompt's own receipt for
+                    # the model's reply while the next command is still running.
+                    if visible.count(expected) > previous_matches + prompt.count(expected) and not any(stopping.nth(i).is_visible() for i in range(stopping.count())):
                         return
                     continue
                 inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
@@ -147,7 +149,7 @@ def resume_chat(page, output, timeout, expected):
     raise RuntimeError('Could not find the native conversation history control')
 
 
-def check_cancellation(page, editor, output, timeout):
+def check_cancellation(page, agent, editor, output, timeout):
     """Cancel a confirmed running workspace process through the native panel."""
     source = ('import os, signal\nfrom pathlib import Path\n'
               'Path("/workspace/cancel.pid").write_text(str(os.getpid()))\n'
@@ -167,7 +169,7 @@ def check_cancellation(page, editor, output, timeout):
                 inputs.last.fill(prompt)
                 inputs.last.press('Enter')
                 submitted = True
-            approval = frame.get_by_role('button', name='1 Yes', exact=True)
+            approval = frame.get_by_role('button', name=re.compile(r'^(1 Yes|Allow once)$'))
             if approval.count() == 1 and approval.is_visible():
                 approval.click()
             started = subprocess.run(['podman', 'exec', editor, 'test', '-f', '/workspace/cancel.pid']).returncode == 0
@@ -188,6 +190,21 @@ def check_cancellation(page, editor, output, timeout):
         page.screenshot(path=str(output / 'cancel-failed.png'))
         raise RuntimeError('Could not cancel the running workspace command from the native panel')
     pid = subprocess.check_output(['podman', 'exec', editor, 'cat', '/workspace/cancel.pid'], text=True).strip()
+    if agent == 'codex':
+        # Codex keeps resumable exec sessions across turn cancellation. Stop
+        # ends the reply; it does not promise to terminate background commands.
+        for frame in page.frames:
+            if frame.parent_frame:
+                stop = stop_controls(frame)
+                for index in range(stop.count()):
+                    expect(stop.nth(index)).not_to_be_visible(timeout=timeout * 1000)
+        if subprocess.run(['podman', 'exec', editor, 'test', '-e', '/proc/' + pid]).returncode == 0:
+            receipt = 'stopped-' + secrets.token_hex(8)
+            verify_reply(page, f'Stop the test command still running as process {pid} in the workspace. '
+                         f'Run kill -TERM {pid}, then verify it has exited. Do not edit any files. '
+                         f'Reply {receipt} after it has stopped.', receipt, timeout, output)
+            print('Codex stopped the reply; the next turn stopped its resumable workspace command.', flush=True)
+        deadline = time.monotonic() + timeout
     # Use the remaining test budget: a successful click alone does not prove
     # that cancellation reached the command in the other container.
     while time.monotonic() < deadline:
@@ -201,7 +218,30 @@ def check_cancellation(page, editor, output, timeout):
     receipt = 'recovered-' + secrets.token_hex(8)
     verify_reply(page, f'Run printf {receipt} and reply with its output.', receipt, timeout, output)
     page.screenshot(path=str(output / 'after-cancel.png'))
-    print('Native Stop cancelled the running workspace process; the next tool request succeeded.', flush=True)
+    print('Cancellation recovery passed: the test process is gone and the next tool request succeeded.', flush=True)
+
+
+def choose_manual_approvals(page, agent, output):
+    for frame in page.frames:
+        if not frame.parent_frame:
+            continue
+        if agent == 'codex':
+            control = frame.get_by_role('button', name='Change permissions', exact=True)
+            if control.count() == 1 and control.is_visible():
+                control.click()
+                frame.get_by_text('Ask for approval', exact=True).click()
+                page.screenshot(path=str(output / 'manual-approvals.png'))
+                return
+        elif agent == 'claude':
+            control = frame.get_by_title(
+                'Claude will approve actions that pass a safety check and pause for anything risky. '
+                'Click to change, or press Shift+Tab to cycle.', exact=True)
+            if control.count() == 1 and control.is_visible():
+                control.click()
+                frame.get_by_text('Manual', exact=True).click()
+                page.screenshot(path=str(output / 'manual-approvals.png'))
+                return
+    raise RuntimeError('Could not select manual approvals in the native panel')
 
 
 def check_denial(page, editor, output, timeout):
@@ -236,6 +276,7 @@ def check_denial(page, editor, output, timeout):
 
 def run(args, root, stack):
     agent = args.agent
+    api_error = getattr(args, 'api_error', False)
     fixture = 'factory-editor-test-' + secrets.token_hex(6)
     options = {'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
     editor = fixture + '-editor'
@@ -268,6 +309,11 @@ def run(args, root, stack):
     (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
     editor_mounts = ['-v', f'{args.code_server}:/opt/editor:ro', '-v', f'{client}:/qa:rw']
     controller_env = [arg for key, value in sandbox.RUNTIME_ENV.items() for arg in ('-e', f'{key}={value}')]
+    if api_error:
+        from primary_claude_errors import FIXTURE_CREDENTIAL, RECOVERY_REPLY
+        controller_env += ['-e', 'ANTHROPIC_API_KEY=' + FIXTURE_CREDENTIAL,
+                           '-e', 'ANTHROPIC_BASE_URL=http://127.0.0.1:18782',
+                           '-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1']
     start(fixture, *isolated, *controller_env, '-e', 'FACTORY_PRIMARY_AGENT=' + agent,
           '-v', egress + ':/run/primary-egress:ro', '-v', wire + ':/run/primary-workspace:ro,z',
           '-v', f'{private}:/run/primary-editor', '-v', f'{trusted}:/run/primary-input:ro',
@@ -281,7 +327,12 @@ def run(args, root, stack):
         raise RuntimeError('Controller failed to start')
     target = {'codex': '.codex/auth.json', 'claude': '.claude/.credentials.json'}[agent]
     store = ['python3', '-c', advisor_credentials._WRITE_FILE, '/home/node/' + target]
-    podman('exec', '-i', fixture, *store, payload=advisor_credentials.read_host(agent))
+    if api_error:
+        podman('exec', '-i', fixture, 'tee', '/tmp/fixture-api.py',
+               payload=(ROOT / 'tests/primary_claude_errors.py').read_text())
+        podman('exec', '-d', fixture, 'python3', '/tmp/fixture-api.py', '--serve-browser-fixture')
+    else:
+        podman('exec', '-i', fixture, *store, payload=advisor_credentials.read_host(agent))
 
     ticket = secrets.token_urlsafe(32)
     hub = None
@@ -322,12 +373,41 @@ def run(args, root, stack):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=args.chromium)
         page = browser.new_page(viewport={'width': 1420, 'height': 920})
+        page.set_default_timeout(args.timeout * 1000)
         page.context.add_cookies([{'name': 'editor_test', 'value': ticket, 'domain': '127.0.0.1',
                                    'path': '/', 'httpOnly': True, 'sameSite': 'Strict'}])
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
+        trust_warnings = []
+        page.expose_function('recordTrustWarning', lambda text: trust_warnings.append(text))
+        page.add_init_script(r"""(() => {
+            let recorded = false;
+            const check = () => {
+                const text = document.body?.innerText || '';
+                if (!recorded && /couldn.t check whether this folder is trusted|Do you trust the files in this folder|Trust folder\?/i.test(text)) {
+                    recorded = true;
+                    window.recordTrustWarning(text);
+                }
+            };
+            new MutationObserver(check).observe(document, {subtree:true, childList:true, characterData:true});
+        })();""")
         page.goto(f'http://127.0.0.1:{port}/?folder=/workspace')
         expect(page).to_have_title(re.compile('workspace', re.I), timeout=args.timeout * 1000)
+        if api_error:
+            verify_reply(page, 'Reply hello.', 'Claude could not complete the request (HTTP 400).', args.timeout, args.output)
+            page.screenshot(path=str(args.output / 'filtered-error.png'))
+            for frame in page.frames:
+                assert FIXTURE_CREDENTIAL not in frame.locator('body').inner_text()
+                assert FIXTURE_CREDENTIAL not in frame.content()
+            podman('exec', fixture, 'touch', '/tmp/fixture-api-recover')
+            verify_reply(page, 'Reply hello again.', RECOVERY_REPLY, args.timeout, args.output)
+            page.screenshot(path=str(args.output / 'recovered.png'))
+            (args.output / 'browser-errors.json').write_text(json.dumps(errors, indent=2))
+            assert not errors, errors
+            assert not trust_warnings, trust_warnings
+            browser.close()
+            print('Native error displayed without credentials; next turn recovered.', flush=True)
+            return
         verify_reply(page, prompt, expected, args.timeout, args.output)
         if args.separate:
             second = 'second-' + secrets.token_hex(12)
@@ -336,19 +416,24 @@ def run(args, root, stack):
             final = subprocess.check_output(['podman','exec',editor,'cat','/workspace/final.txt'],text=True)
             assert final.strip() == second
             print('Two different workspace edits passed in one native chat.',flush=True)
+        if args.deny:
+            choose_manual_approvals(page, agent, args.output)
+            check_denial(page, editor, args.output, args.timeout)
         if args.reload:
             page.reload()
             resume_chat(page, args.output, args.timeout, second)
             verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
             print('Continued the saved chat after a page reload.', flush=True)
-        if args.deny:
+        if args.deny and args.reload:
             check_denial(page, editor, args.output, args.timeout)
         if args.cancel:
-            check_cancellation(page, editor, args.output, args.timeout)
+            check_cancellation(page, agent, editor, args.output, args.timeout)
         page.screenshot(path=str(args.output / 'working.png'))
         assert 'Build with Agent' not in page.locator('body').inner_text()
         (args.output / 'browser-errors.json').write_text(json.dumps(errors, indent=2))
         assert not errors, errors
+        (args.output / 'trust-warnings.json').write_text(json.dumps(trust_warnings, indent=2))
+        assert not trust_warnings, trust_warnings
         browser.close()
     if args.separate:
         output = subprocess.check_output(['podman', 'exec', editor, 'cat', '/workspace/output.txt'], text=True)
@@ -367,10 +452,13 @@ if __name__ == '__main__':
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
+    parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
+    if args.api_error and args.agent != 'claude':
+        parser.error('--api-error requires claude')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:
         run(args, Path(directory), cleanup)
-    print(f'{args.agent}: authenticated reply verified; disposable resources removed.')
+    print(f'{args.agent}: {"synthetic error and recovery" if args.api_error else "authenticated reply"} verified; disposable resources removed.')
