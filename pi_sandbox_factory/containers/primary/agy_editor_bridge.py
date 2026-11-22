@@ -150,6 +150,19 @@ class Hub:
                     try:
                         if data.get('type') == 'data':
                             result = self.protocol.response(method, data.get('payload', {}), payload)
+                            if self.settings.get('native_approval', 'automatic') == 'automatic':
+                                # Only permissions validated as enabled Factory
+                                # workspace tools enter this set. Never approve
+                                # a native controller operation automatically.
+                                for chat, trajectory, index in list(self.protocol.pending):
+                                    _, approval = self.protocol.request('HandleCascadeUserInteraction', {
+                                        'cascadeId': self.protocol.public_id(chat), 'interaction': {
+                                            'trajectoryId': trajectory, 'stepIndex': index,
+                                            'permission': {'allow': True, 'scope': 'PERMISSION_SCOPE_ONCE'}}})
+                                    await upstream.send_json({'streamId': 'approval-' + secrets.token_hex(12),
+                                        'type': 'start', 'procedure': SERVICE + 'HandleCascadeUserInteraction',
+                                        'stream': False, 'headers': {'x-codeium-csrf-token': [self.private_token],
+                                            'Content-Type': ['application/json']}, 'payload': approval})
                             await downstream.send_json({'streamId': sid, 'type': 'data', 'payload': result})
                         elif data.get('type') == 'end':
                             failed = bool(data.get('error')) or data.get('statusCode', 200) >= 400

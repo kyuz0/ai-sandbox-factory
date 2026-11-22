@@ -4,11 +4,45 @@ The native hub also serves credentials, files, terminals and configuration. None
 of those APIs belongs on the workspace connection. Requests are reconstructed;
 responses are projected recursively, including nested native chat metadata.
 """
+import base64
+import binascii
 import json
 from pathlib import Path
 import uuid
 
 from editor_protocol import Rejected, object_value, text
+
+
+def attachments(values, *, images=False):
+    """Forward uploaded bytes only, never a URI resolved by the private hub."""
+    if not isinstance(values, list):
+        raise Rejected('Invalid chat attachments')
+    result = []
+    for supplied in values:
+        item = object_value(supplied)
+        field = 'base64Data' if images else 'inlineData'
+        data = item.get(field)
+        mime = text(item.get('mimeType', ''))
+        if (not isinstance(data, str) or not data or item.get('uri') or item.get('blobref') or
+                not mime or any(ord(c) < 33 or ord(c) > 126 for c in mime)):
+            raise Rejected('Attach a file from your computer; private file references are unavailable')
+        try:
+            base64.b64decode(data, validate=True)
+        except (ValueError, binascii.Error):
+            raise Rejected('Invalid attachment data') from None
+        safe = {field: data, 'mimeType': mime}
+        label = 'caption' if images else 'description'
+        if label in item:
+            safe[label] = text(item[label])
+        if not images and item.get('thumbnail'):
+            thumbnail = text(item['thumbnail'])
+            try:
+                base64.b64decode(thumbnail, validate=True)
+            except (ValueError, binascii.Error):
+                raise Rejected('Invalid attachment preview') from None
+            safe['thumbnail'] = thumbnail
+        result.append(safe)
+    return result
 
 
 def identifier(value):
@@ -72,7 +106,9 @@ METADATA = {
 }
 TOOL_CALL = strings('id name argumentsJson')
 PLANNER = {**strings('response modifiedResponse thinking thinkingDuration messageId'), 'stopReason': ENUM}
-USER = {**strings('userResponse clientMessageId query'), 'isQueuedMessage': bool, 'items': [{'text': str}]}
+IMAGE = strings('base64Data mimeType caption')
+MEDIA = strings('inlineData mimeType description thumbnail')
+USER = {'images': [IMAGE], 'media': [MEDIA], **strings('userResponse clientMessageId query'), 'isQueuedMessage': bool, 'items': [{'text': str}]}
 CONTEXT_USAGE = {
     **dict.fromkeys('generatorMetadataIndex lastStepIndex estimatedTokensUsed maxContextTokens'.split(), int),
     'estimatedAfterCompaction': bool,
@@ -104,6 +140,7 @@ class AntigravityProtocol:
         self.projects = {}
         self.app = {}
         self.models = set()
+        self.attachments = {}
         self.pending = set()
         self.resolved = set()
         if self.path and self.path.exists():
@@ -111,12 +148,14 @@ class AntigravityProtocol:
             for name, target in (('chats', self.chats), ('projects', self.projects)):
                 target.update({identifier(k): identifier(v) for k, v in object_value(saved[name]).items()})
             self.app = project(saved.get('app', {}), APP)
+            self.attachments = {key: attachments([value])[0] for key, value in
+                                object_value(saved.get('attachments', {})).items()}
 
     def save(self):
         if self.path:
             self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             temporary = self.path.with_suffix('.tmp')
-            temporary.write_text(json.dumps({'chats': self.chats, 'projects': self.projects, 'app': self.app}))
+            temporary.write_text(json.dumps({'chats': self.chats, 'projects': self.projects, 'app': self.app, 'attachments': self.attachments}))
             temporary.chmod(0o600)
             temporary.replace(self.path)
 
@@ -139,6 +178,19 @@ class AntigravityProtocol:
     def request(self, method, supplied):
         """Return (local/remote, payload); never forward the supplied object."""
         p = object_value(supplied)
+        if method == 'SaveMediaAsArtifact':
+            media = attachments([p.get('media')])[0]
+            uri = 'factory-attachment://' + str(uuid.uuid4())
+            self.attachments[uri] = media
+            self.save()
+            return 'local', {'uri': uri}
+        if method == 'DeleteMediaArtifact':
+            uri = text(p.get('uri'))
+            if uri not in self.attachments:
+                raise Rejected('This attachment was not uploaded in this sandbox')
+            del self.attachments[uri]
+            self.save()
+            return 'local', {'success': True}
         if method in EMPTY:
             return 'local', {}
         if method == 'GetLocalUserInfo':
@@ -199,14 +251,30 @@ class AntigravityProtocol:
             }
         if method == 'SendUserCascadeMessage':
             items = p.get('items')
-            if not isinstance(items, list) or not items or any(
+            if not isinstance(items, list) or any(
                     not isinstance(item, dict) or set(item) != {'text'} for item in items):
-                raise Rejected('Send text in the chat; read workspace files through the workspace tools')
+                raise Rejected('Attach a file from your computer or ask the agent to read it from the workspace')
+            supplied_media = p.get('media', [])
+            if not isinstance(supplied_media, list):
+                raise Rejected('Invalid chat attachments')
+            media = []
+            for item in supplied_media:
+                uri = object_value(item).get('uri')
+                if uri:
+                    if uri not in self.attachments:
+                        raise Rejected('This attachment was not uploaded in this sandbox')
+                    media.append(self.attachments[uri].copy())
+                else:
+                    media.extend(attachments([item]))
+            images = attachments(p.get('images', []), images=True)
+            if not items and not media and not images:
+                raise Rejected('Enter a message or attach a file')
             config = object_value(p.get('cascadeConfig', {}))
             planner = object_value(config.get('plannerConfig', {}))
             selected = self.model(planner.get('planModel'))
             result = {
                 'cascadeId': self.owned(p.get('cascadeId')), 'items': project(items, [{'text': str}]),
+                'media': media, 'images': images,
                 'clientMessageId': identifier(p.get('clientMessageId')),
                 'cascadeConfig': {
                     'plannerConfig': {'planModel': selected, 'useAiCredits': False, 'supportsLatexRendering': True},

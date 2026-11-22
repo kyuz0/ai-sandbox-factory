@@ -86,7 +86,7 @@ def content(items):
     return clean
 
 
-def codex_permissions(given, cwd, *, thread_start=False):
+def codex_permissions(given, cwd, *, thread_start=False, default_reviewer="auto_review"):
     """Honor native access choices without accepting controller configuration."""
     result = {}
     approval = given.get('approvalPolicy')
@@ -102,7 +102,7 @@ def codex_permissions(given, cwd, *, thread_start=False):
             raise Rejected('This approval mode is unavailable in the sandbox')
         result['approvalsReviewer'] = reviewer
     elif thread_start:
-        result['approvalsReviewer'] = 'auto_review'
+        result['approvalsReviewer'] = default_reviewer
     policy = given.get('sandboxPolicy')
     mode = given.get('permissions') or given.get('sandbox')
     profile = given.get('activePermissionProfile')
@@ -263,7 +263,8 @@ class CodexProtocol:
              'permissionProfile/list', 'experimentalFeature/list', 'mcpServerStatus/list',
              'remoteControl/status/read', 'app/installed', 'plugin/installed', 'hooks/list'}
 
-    def __init__(self, cwd, instructions, conversations=None):
+    def __init__(self, cwd, instructions, conversations=None, reviewer="auto_review"):
+        self.reviewer = reviewer
         self.cwd = cwd
         self.instructions = instructions
         self.pending = {}
@@ -362,7 +363,7 @@ class CodexProtocol:
         elif method in ('thread/start', 'thread/resume', 'thread/fork'):
             params = fields(given, ('model', 'effort', 'personality', 'ephemeral'))
             params.update(cwd=self.cwd, developerInstructions=self.instructions)
-            permission = codex_permissions(given, self.cwd, thread_start=method == 'thread/start')
+            permission = codex_permissions(given, self.cwd, thread_start=method == 'thread/start', default_reviewer=self.reviewer)
             if policy := permission.pop('sandboxPolicy', None):
                 permission['sandbox'] = {'readOnly': 'read-only', 'workspaceWrite': 'workspace-write',
                                          'dangerFullAccess': 'danger-full-access'}[policy['type']]

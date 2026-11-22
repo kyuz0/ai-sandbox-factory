@@ -35,6 +35,7 @@ def editor_migration(config):
 
 # Keep every options key explicit so new settings require an effect assessment.
 OPTION_GROUPS = {
+    'native_approval': 'Approvals',
     'approval': APPROVALS_LABEL, 'approval_model': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
     'protect_credentials': APPROVALS_LABEL,
     'protect_browser_credentials': 'Browser and saved vault protection',

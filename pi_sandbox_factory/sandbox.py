@@ -1308,6 +1308,12 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
+    if native and isinstance(changes, dict) and set(changes) == {'native_approval'}:
+        selected = options({**options(config.get('options')), 'native_approval': changes['native_approval']})
+        if updating.begin_apply(apply_gate):
+            activity.save_config(state, {**config, 'options': selected})
+            print('Approval mode saved. Restart the sandbox to use it.')
+        return
     if isinstance(changes, dict) and 'connector_ids' in changes:
         connector_settings.apply(config, state, changes, apply_gate)
         return

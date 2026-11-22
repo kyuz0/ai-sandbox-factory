@@ -27,9 +27,18 @@ runs in a separate container; the browser editor does not receive its credential
 For a fresh login, complete the terminal sign-in before the editor opens. Use
 **Settings → Sign-in** to sign in again or copy a host login.
 
-Antigravity supports text messages in its browser panel. Ask it to work with files
-in the workspace; attaching files to a chat message is not supported. Use Explorer
-to upload files when **Allow file uploads** is enabled.
+Attach files or images directly in Antigravity’s chat composer to include them in a message. The attachment is sent to your selected model. This is separate from uploading files into the workspace through Explorer.
+
+![Antigravity interpreting an image attached to a chat message](antigravity-attachments.png)
+
+Under **Settings → Approvals**, choose how the selected agent handles tool requests.
+Codex defaults to **Approve for me**, Claude to **Auto**, and Antigravity to
+**Allow configured tools**. Choose **Ask for approval** to approve requests yourself.
+These settings apply to the CLI and browser editor. Saving leaves running work alone.
+Restart the sandbox when you want to use the new mode.
+Codex and Claude also offer native chat controls for changing an individual session’s mode.
+
+![Choosing automatic or manual tool approvals during sandbox setup](native-approvals.png)
 
 In Codex, **Stop** ends the current reply. A command it started may keep running.
 Ask Codex to stop that command if you also want to end it.

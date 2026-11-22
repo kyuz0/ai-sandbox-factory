@@ -222,7 +222,8 @@ async def serve_client(reader, writer, agent):
             await claim(identifier)
             if history := await asyncio.to_thread(history_message, identifier):
                 await send(history)
-        protocol = (CodexProtocol(settings['working_directory'], context, conversations)
+        protocol = (CodexProtocol(settings['working_directory'], context, conversations,
+                        reviewer='user' if settings.get('native_approval') == 'manual' else 'auto_review')
                     if agent == 'codex' else ClaudeProtocol(conversations))
         process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)

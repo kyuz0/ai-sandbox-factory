@@ -72,7 +72,12 @@ class PrimaryAgentsUI(unittest.TestCase):
                     self.assertEqual(review.query_one('#editor-mode', Select).value, 'browser')
                     auth.value = 'copy'
                     await pilot.pause()
+                    approval = review.query_one('#native-approval', Select)
+                    self.assertEqual(approval.value, 'automatic')
+                    approval.value = 'manual'
+                    await pilot.pause()
                     draft, keys = review.collect()
+                    self.assertEqual(draft['options']['native_approval'], 'manual')
                     self.assertEqual((draft['primary_agent'], draft['primary_auth'], keys), (agent, 'copy', {}))
                     self.assertEqual(draft['editor']['mode'], 'browser')
                     self.assertEqual(review.query_one('#apply').region.height, 1)
@@ -99,7 +104,7 @@ class PrimaryAgentsUI(unittest.TestCase):
             await pilot.pause()
             actions = dict((action, label) for label, action in app.screen.actions)
             self.assertEqual(set(actions), {'primary-sign-in', 'folders', 'network-settings',
-                                            'connectors', 'skills', 'primary-browser',
+                                            'connectors', 'skills', 'primary-browser', 'primary-approvals',
                                             'system-prompt', 'resources', 'editor-settings'})
             await app.pop_screen()
             await app.push_screen(PrimarySignIn(record))
@@ -141,6 +146,40 @@ class PrimaryAgentsUI(unittest.TestCase):
             self.assertEqual(screen.collect()[0]['allowlist'], 'example.com:443')
             self.assertFalse(screen.query('#web-enabled, #network-search-section, #primary-auth'))
             await app.pop_screen()
+
+    async def test_saved_native_approval_choice_preserves_other_options(self):
+        draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+        draft.update(name='project', workspace=str(self.state), primary_agent='claude', model_providers={})
+        app = Cockpit(self.state, FakeService([]))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await app.push_screen(SettingsForm(draft, editing=True, setting='primary-approvals'))
+            await pilot.pause()
+            screen = app.screen
+            self.assertEqual(screen.focused.id, 'native-approval')
+            self.assertLess(screen.query_one('#apply', Button).region.bottom, 24)
+            self.assertGreater(screen.query_one('#apply', Button).region.height, 0)
+            screen.query_one('#native-approval', Select).value = 'manual'
+            await pilot.pause()
+            updated = screen.collect()[0]
+            self.assertEqual(updated['options'], {**draft['options'], 'native_approval': 'manual'})
+            self.assertEqual(settings_effects.configuration_changes(draft, updated), ['Approvals'])
+            self.assertIn('Ask for approval', screen.query_one('#primary-approvals-section', Collapsible).title)
+            self.assertFalse(screen.query('#approval-mode, #inner-sandbox, #primary-auth'))
+            self.assertEqual(str(screen.query_one('#apply', Button).label), 'Save')
+            self.assertFalse(screen.query_one('#open-editor').display)
+            await pilot.press('escape')
+            self.assertEqual(draft['options']['native_approval'], 'automatic')
+            with patch.object(app.service, 'update_settings', create=True) as save:
+                await app.push_screen(SettingsForm(draft, editing=True, setting='primary-approvals'))
+                await pilot.pause()
+                app.screen.query_one('#native-approval', Select).value = 'manual'
+                await pilot.click('#apply')
+                await pilot.pause()
+                self.assertEqual(save.call_args.args[:2], ('project', {'native_approval': 'manual'}))
+                self.assertNotIsInstance(app.screen, SettingsForm)
+
 
     async def test_ssh_destinations_and_import_are_collected_inside_creation(self):
         project = self.state / 'project'

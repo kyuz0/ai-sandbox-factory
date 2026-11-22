@@ -59,6 +59,8 @@ PYTHONPATH=. .venv/bin/python tests/native_browser_editor.py claude \
   --chromium /path/to/chromium --output /tmp/factory-claude-editor --reload
 ```
 
+Use `--approval manual --deny` to verify the configured manual mode. For Antigravity, `--attachments` uploads a file through the native composer and verifies the model receives its unique contents. Attachment protocol tests also reject private file URIs, opaque blob references and malformed data.
+
 Repeat with `codex` and `agy`. The test installs the pinned official extension through the
 production installer, runs the production editor launcher, completes two different
 workspace edits, and checks that the built-in VS Code chat is hidden. With

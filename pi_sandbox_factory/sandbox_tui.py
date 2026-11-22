@@ -88,6 +88,7 @@ PRIMARY_CATEGORIES = {
     'folders': CATEGORIES['folders'],
     'network-settings': Category(NETWORK_LABEL, 'network-section', 'network'),
     'skills': CATEGORIES['skills'],
+    'primary-approvals': Category('Approvals', 'primary-approvals-section', 'native-approval'),
     'primary-browser': Category('Browser', 'primary-browser-section', 'primary-browser'),
     'system-prompt': CATEGORIES['system-prompt'],
     'connectors': CATEGORIES['connectors'],
@@ -1389,6 +1390,8 @@ class SettingsMenu(ModalScreen[Optional[str]]):
         self.summaries = {'editor-settings': editor_settings.modes(agent)[editor_mode], 'connectors': connector_summary(config, state)}
         if agent != 'pi':
             self.summaries['primary-sign-in'] = PRIMARY_AGENTS[agent]
+            self.summaries['primary-approvals'] = ('Ask for approval' if options(config.get('options'))['native_approval'] == 'manual'
+                else {'codex': 'Approve for me', 'claude': 'Auto', 'agy': 'Allow configured tools'}[agent])
         self.summaries['system-prompt'] = system_prompt['name'] if system_prompt else NO_SYSTEM_PROMPT_ADD_ON
         if isinstance(config, dict) and config.get('engine'):
             local = bool(config.get('local_model_ports'))
@@ -2981,7 +2984,8 @@ class SettingsForm(Screen):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
                 apply_label = 'Save defaults' if self.defaults_mode else 'Create and start sandbox'
                 if self.editing:
-                    apply_label = 'Apply' if self.setting in ('approval-settings', 'network-settings') else 'Apply and recreate'
+                    apply_label = ('Save' if self.setting == 'primary-approvals' else
+                                   'Apply' if self.setting in ('approval-settings', 'network-settings') else 'Apply and recreate')
                 yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
 
@@ -3013,6 +3017,40 @@ class SettingsForm(Screen):
     def primary_auth_changed(self):
         method = self.query_one('#primary-auth', Select).value
         self.query_one('#primary-auth-help', Static).update(SIGN_IN_HELP[method] + '\nThe sign-in is stored outside the workspace.')
+
+    def compose_primary_approvals(self, category, value, selected):
+        with Collapsible(title=category.label, collapsed=True, id=category.section,
+                         classes='spaced-form-fields'):
+            with Vertical(classes='setting'):
+                yield Label('Tool approvals')
+                label = {'codex': 'Approve for me', 'claude': 'Auto',
+                         'agy': 'Allow configured tools'}[self.primary]
+                yield Select([(label, 'automatic'), ('Ask for approval', 'manual')],
+                             value=selected['native_approval'], allow_blank=False, id='native-approval', classes='native-approval-choice')
+                yield Static({'codex': 'Codex reviews actions that need permission.',
+                              'claude': 'Claude reviews tool requests automatically.',
+                              'agy': 'Allows the workspace tools enabled for this sandbox.'}[self.primary]
+                             if selected['native_approval'] == 'automatic' else
+                             'You decide when the agent requests permission.', classes='setting-help', id='native-approval-help')
+
+    @on(Select.Changed, '#native-approval')
+    def native_approval_changed(self):
+        mode = self.query_one('#native-approval', Select).value
+        label = ('Ask for approval' if mode == 'manual' else
+                 {'codex': 'Approve for me', 'claude': 'Auto', 'agy': 'Allow configured tools'}[self.primary])
+        self.query_one('#primary-approvals-section', Collapsible).title = 'Approvals · ' + label
+        self.query_one('#native-approval-help', Static).update(
+            'You decide when the agent requests permission.' if mode == 'manual' else
+            {'codex': 'Codex reviews actions that need permission.',
+             'claude': 'Claude reviews tool requests automatically.',
+             'agy': 'Allows the workspace tools enabled for this sandbox.'}[self.primary])
+        if self.editing:
+            self.query_one('#native-approval-help', Static).update(
+                ('You decide when the agent requests permission.' if mode == 'manual' else
+                 {'codex': 'Codex reviews actions that need permission.',
+                  'claude': 'Claude reviews tool requests automatically.',
+                  'agy': 'Allows the workspace tools enabled for this sandbox.'}[self.primary])
+                + '\nRestart the sandbox to use saved changes.')
 
     def compose_primary_browser(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section,
@@ -3336,6 +3374,9 @@ class SettingsForm(Screen):
 
     def on_mount(self):
         if self.native:
+            self.update_curlie_download_notice()
+            if self.setting == 'primary-approvals':
+                self.query_one('#open-editor').display = False
             if self.setting:
                 category = self.categories[self.setting]
                 section = self.query_one('#' + category.section, Collapsible)
@@ -3583,6 +3624,8 @@ class SettingsForm(Screen):
             sandbox.validate_env(draft['env_file'])
         if self.setting in (None, 'skills'):
             draft.update(self.query_one(SkillSelection).collect())
+        if self.setting in (None, 'primary-approvals'):
+            selected['native_approval'] = self.query_one('#native-approval', Select).value
         if self.setting in (None, 'primary-browser'):
             selected['browser'] = self.query_one('#primary-browser', Checkbox).value
         if not self.editing:
@@ -3751,6 +3794,16 @@ class SettingsForm(Screen):
             elif action == 'apply':
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
+                if self.setting == 'primary-approvals':
+                    mode = self.query_one('#native-approval', Select).value
+                    if mode == options(self.draft.get('options'))['native_approval']:
+                        self.notify('No changes to save.')
+                        return
+                    await asyncio.to_thread(self.app.service.update_settings, self.draft['name'],
+                                            {'native_approval': mode}, lambda _: None)
+                    self.app.pop_screen()
+                    self.notify('Approval mode saved. Restart the sandbox to use it.')
+                    return
                 if self.setting == 'approval-settings':
                     previous = options(self.draft.get('options'))
                     fields = self.query_one(ReviewerFields)
@@ -4109,7 +4162,7 @@ class Cockpit(App):
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
     .compact-terminal NewSandbox > #new-title { padding: 0 3; }
     NewSandbox #primary-agent { max-width: 32; }
-    SettingsForm #primary-auth { max-width: 40; }
+    SettingsForm #primary-auth, SettingsForm #native-approval { max-width: 40; }
     NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }
     NewSandbox #profile { margin: 1 0 0 0; }
     NewSandbox #sandbox-name-setting { margin: 0; }
@@ -4775,7 +4828,7 @@ class Cockpit(App):
                                                  agent=PRIMARY_AGENTS[coding_agent(config)]))
         elif action == 'models':
             self.push_screen(ModelsScreen(record))
-        elif action in EDIT_FORMS or (native and action == 'primary-browser'):
+        elif action in EDIT_FORMS or (native and action in ('primary-browser', 'primary-approvals')):
             self.push_screen(SettingsForm(self.configuration_draft(record), editing=True, setting=action))
         elif action in ('preview-models', 'refresh-models'):
             mode = 'preview' if action == 'preview-models' else 'refresh'

@@ -37,7 +37,7 @@ APPROVAL_MODES = {
             'skips approval prompts and reviewer checks. To run Bash directly in the development container, '
             'turn off the inner sandbox too. If you leave it on, Bash stays inside it.'),
 }
-DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'inner_sandbox': True, 'goals': True,
+DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'native_approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
             'knowledge_embedding': 'off', 'knowledge_embedding_provider': '', 'knowledge_embedding_url': '', 'knowledge_embedding_model': '',
@@ -82,6 +82,8 @@ def options(value=None):
     result = {**DEFAULTS, **value}
     if result['approval'] not in APPROVAL_MODES:
         raise ValueError('Approval must be automatic, assisted, manual or off')
+    if result['native_approval'] not in ('automatic', 'manual'):
+        raise ValueError('Choose an approval mode from the list.')
     ref = result['approval_model']
     if ref != 'current' and (not isinstance(ref, str) or not re.fullmatch(r'[^/\s]+(?:/[^/\s]+)+', ref)
                              or not ref.isprintable()):

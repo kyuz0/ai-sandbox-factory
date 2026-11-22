@@ -62,6 +62,28 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs['input'], fake_credential)
                 self.assertNotIn(fake_credential, ' '.join(command))
 
+    def test_saving_native_approval_never_operates_on_containers(self):
+        with TemporaryDirectory() as temp, patch.object(sandbox, 'run', side_effect=AssertionError('No runtime operation')):
+            state = Path(temp)
+            sandbox.apply_settings(self.config, state, {'native_approval': 'manual'})
+            saved = json.loads((state / 'config.json').read_text())
+            self.assertEqual(saved['options']['native_approval'], 'manual')
+            self.assertEqual(saved['workspace'], self.config['workspace'])
+            with self.assertRaises(ValueError):
+                sandbox.apply_settings(saved, state, {'native_approval': 'invalid'})
+            self.assertEqual(json.loads((state / 'config.json').read_text()), saved)
+
+    def test_native_manual_and_automatic_cli_choices(self):
+        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
+        with TemporaryDirectory() as temp, patch.dict(launcher['command'].__globals__, {'HOME': Path(temp)}), \
+                patch.dict(launcher['command'].__globals__, {'workspace_directory': lambda _: Path('/workspace')}):
+            for mode, reviewer, claude in [('automatic', 'auto_review', 'auto'), ('manual', 'user', 'default')]:
+                settings = {'browser': False, 'native_approval': mode}
+                codex = launcher['command']('codex', 'open', settings, '')
+                self.assertIn('approvals_reviewer="' + reviewer + '"', codex)
+                command = launcher['command']('claude', 'open', settings, '')
+                self.assertEqual(command[command.index('--permission-mode') + 1], claude)
+
     def test_native_codex_login_initializes_a_fresh_private_home(self):
         launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
         with TemporaryDirectory() as temporary:

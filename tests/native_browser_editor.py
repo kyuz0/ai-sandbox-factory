@@ -80,7 +80,7 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                     if frame != submitted_frame:
                         continue
                     one_time = frame.get_by_text('Yes, allow this time', exact=True)
-                    if one_time.count() == 1 and one_time.is_visible():
+                    if one_time.count() == 1 and one_time.is_visible() and not getattr(page, 'factory_automatic', False):
                         # Native MCP approval must display the actual arguments,
                         # not just the tool name and a generic permission prompt.
                         if not frame.get_by_text('command', exact=True).count() and '"command"' not in visible:
@@ -438,7 +438,8 @@ def run(args, root, stack):
     agent = args.agent
     api_error = getattr(args, 'api_error', False)
     fixture = 'factory-editor-test-' + secrets.token_hex(6)
-    options = {'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
+    options = {'options': {'native_approval': getattr(args, 'approval', 'automatic')}, 'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
+    primary_agents.build({**options, 'engine': 'podman'})
     editor = fixture + '-editor'
     client = root / 'client'
     client.mkdir()
@@ -465,7 +466,7 @@ def run(args, root, stack):
                 '--tmpfs', '/home/node:rw,mode=1777', '--tmpfs', '/workspace:rw,mode=1777']
     trusted = root / 'trusted'
     trusted.mkdir()
-    (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':False,'working_directory':'/workspace'}))
+    (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':False,'working_directory':'/workspace', 'native_approval':getattr(args, 'approval', 'automatic')}))
     (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
     from pi_sandbox_factory import browser_editor
     editor_path = browser_editor.INSTALL if agent == 'agy' else '/opt/editor'
@@ -560,6 +561,7 @@ def run(args, root, stack):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=args.chromium)
         page = browser.new_page(viewport={'width': 1420, 'height': 920})
+        page.factory_automatic = agent == 'agy' and args.approval == 'automatic'
         page.set_default_timeout(args.timeout * 1000)
         page.context.add_cookies([{'name': 'editor_test', 'value': ticket, 'domain': '127.0.0.1',
                                    'path': '/', 'httpOnly': True, 'sameSite': 'Strict'}])
@@ -598,6 +600,9 @@ def run(args, root, stack):
             print('Native error displayed without credentials; next turn recovered.', flush=True)
             return
         verify_reply(page, prompt, expected, args.timeout, args.output)
+        if args.attachments:
+            from native_agy_attachments import check as check_attachments
+            check_attachments(page, args.output, args.timeout)
         if args.separate:
             second = 'second-' + secrets.token_hex(12)
             podman('exec','-i',editor,'tee','/workspace/second.txt',payload=second)
@@ -606,7 +611,7 @@ def run(args, root, stack):
             assert final.strip() == second
             print('Two different workspace edits passed in one native chat.',flush=True)
         if args.deny:
-            if agent != 'agy':
+            if agent != 'agy' and args.approval != 'manual':
                 choose_manual_approvals(page, agent, args.output)
             check_denial(page, editor, args.output, args.timeout, agent)
         if args.isolation:
@@ -618,6 +623,9 @@ def run(args, root, stack):
             if agent != 'agy':
                 resume_chat(page, args.output, args.timeout, second)
             verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
+            if args.attachments:
+                assert any(f.locator('img[src^="data:image/"], img[src^="blob:"]').count()
+                           for f in page.frames if f.parent_frame), 'Uploaded image missing after chat reload'
             print('Continued the saved chat after a page reload.', flush=True)
         if args.deny and args.reload:
             check_denial(page, editor, args.output, args.timeout, agent)
@@ -643,6 +651,8 @@ if __name__ == '__main__':
     parser.add_argument('--code-server', required=True, type=Path, help='Extracted code-server directory')
     parser.add_argument('--chromium', required=True, help='Local Chromium executable')
     parser.set_defaults(separate=True)
+    parser.add_argument('--approval', choices=('automatic', 'manual'), default='automatic')
+    parser.add_argument('--attachments', action='store_true')
     parser.add_argument('--output', type=Path, required=True, help='Directory for screenshots and browser diagnostics')
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')

@@ -37,6 +37,7 @@ def workspace_directory(settings):
 
 def command(agent, action, settings, context):
     browser = settings['browser']
+    automatic = settings.get('native_approval', 'automatic') == 'automatic'
     if action != 'login':
         # This controller directory matches the worker's selected folder.
         # Project files, hooks and credentials are never mounted together.
@@ -49,7 +50,7 @@ def command(agent, action, settings, context):
         os.environ['CODEX_EXEC_SERVER_URL'] = 'ws://127.0.0.1:36781'
         # The outer worker is already the OS boundary. Route native tools there.
         config = ['-c', 'developer_instructions=' + json.dumps(context, ensure_ascii=False),
-                  '-c', 'approvals_reviewer="auto_review"',
+                  '-c', 'approvals_reviewer=' + json.dumps('auto_review' if automatic else 'user'),
                   '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"',
                   '-c', 'web_search="disabled"', '-c', 'features.shell_tool=true']
         if browser:
@@ -74,7 +75,7 @@ def command(agent, action, settings, context):
         os.environ['CLAUDE_CODE_SANDBOXED'] = '1'
         mcp = json.dumps({'mcpServers': {'factory_probe': tool_server()}})
         return ['--restricted', '--tools', '', '--strict-mcp-config', '--mcp-config', mcp,
-                '--permission-mode', 'auto', '--append-system-prompt', context]
+                '--permission-mode', 'auto' if automatic else 'default', '--append-system-prompt', context]
 
     # Google’s native client performs terminal sign-in as part of its workflow.
     # Its private CLI home has no project content, and every model tool call
@@ -99,7 +100,7 @@ def command(agent, action, settings, context):
     allowed = ['mcp(factory_workspace/workspace_shell)']
     if browser:
         allowed.append('mcp(factory_workspace/browser)')
-    permissions = {'allow': allowed, 'deny': ['command(*)', 'read_file(*)', 'write_file(*)',
+    permissions = {'allow': allowed if automatic else [], 'deny': ['command(*)', 'read_file(*)', 'write_file(*)',
                                              'read_url(*)', 'execute_url(*)']}
     preferences = {'modelProvider': '', 'permissions': permissions}
     if action != 'login':

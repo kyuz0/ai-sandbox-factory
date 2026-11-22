@@ -22,7 +22,7 @@ from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_
 from textual.widgets import Button, Collapsible, Input, Select, TextArea
 
 
-async def capture(root, size):
+async def capture(root, size, approvals_only=False):
     with tempfile.TemporaryDirectory(prefix='factory-ui-primary-') as tmp:
         state = Path(tmp)
         project = state / 'projects' / ('transit-service' * 5)
@@ -54,6 +54,28 @@ async def capture(root, size):
                     path.write_text(app.export_screenshot())
                     print(path.name, flush=True)
 
+                if approvals_only:
+                    for agent in ('codex', 'claude', 'agy'):
+                        for editing in (False, True):
+                            draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                            draft.update(name='transit', workspace=str(project), primary_agent=agent,
+                                         primary_auth='copy', editor={'mode':'browser'}, model_providers={})
+                            form = SettingsForm(draft, editing=editing,
+                                                setting='primary-approvals' if editing else None)
+                            await app.push_screen(form)
+                            form.query_one('#primary-approvals-section', Collapsible).collapsed = False
+                            field = form.query_one('#native-approval', Select)
+                            for mode in ('automatic', 'manual'):
+                                field.value = mode
+                                field.focus()
+                                name = 'approvals-' + agent + ('-saved-' if editing else '-create-') + mode
+                                await shot(name)
+                                field.action_show_overlay()
+                                await shot(name + '-choices')
+                                await pilot.press('escape')
+                            await app.pop_screen()
+                    return
+
                 await shot('dashboard')
                 await app.push_screen(NewSandbox())
                 await shot('create-pi')
@@ -70,6 +92,14 @@ async def capture(root, size):
                                  editor={'mode': 'pi'}, model_providers={})
                     await app.push_screen(SettingsForm(draft))
                     await shot('review-' + agent)
+                    if agent != 'pi':
+                        approvals = app.screen.query_one('#primary-approvals-section', Collapsible)
+                        approvals.collapsed = False
+                        await shot('approvals-' + agent)
+                        app.screen.query_one('#native-approval', Select).action_show_overlay()
+                        await shot('approvals-' + agent + '-choices')
+                        await pilot.press('escape')
+                        approvals.collapsed = True
                     if agent in ('codex', 'claude', 'agy'):
                         editor = app.screen.query_one('#editor-section', Collapsible)
                         editor.collapsed = False
@@ -162,6 +192,7 @@ async def capture(root, size):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--approvals-only', action='store_true')
     parser.add_argument('--size', action='append')
     parser.add_argument('--monochrome', action='store_true')
     args = parser.parse_args()
@@ -173,7 +204,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     async def all_sizes():
         for size in args.size or ['80x24', '120x40', '220x50']:
-            await capture(args.output, tuple(map(int, size.split('x'))))
+            await capture(args.output, tuple(map(int, size.split('x'))), args.approvals_only)
     asyncio.run(all_sizes())
 
 

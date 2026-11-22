@@ -101,6 +101,41 @@ class AntigravityProtocolTests(unittest.TestCase):
             with self.subTest(item=item), self.assertRaises(Rejected):
                 self.request('SendUserCascadeMessage', {'cascadeId': self.public, 'items': [item]})
 
+    def test_inline_attachments_cannot_reference_controller_files(self):
+        payload = {'cascadeId': self.public, 'items': [{'text': 'Describe this attachment'}],
+                   'cascadeConfig': {'plannerConfig': {'planModel': 'MODEL_FIXTURE'}},
+                   'clientMessageId': uid(), 'media': [{'mimeType': 'image/png', 'inlineData': 'aGVsbG8=',
+                    'description': 'example.png', 'ingestionOptions': {'unsafe': True}}]}
+        _, result = self.request('SendUserCascadeMessage', payload)
+        self.assertEqual(result['media'], [{'mimeType': 'image/png', 'inlineData': 'aGVsbG8=',
+                                          'description': 'example.png'}])
+        for unsafe in ({'uri': 'file:///home/node/private'}, {'blobref': {'id': 'private'}},
+                       {'inlineData': 'not base64'}):
+            payload['media'] = [{'mimeType': 'image/png', 'inlineData': 'aGVsbG8=', **unsafe}]
+            with self.subTest(unsafe=unsafe), self.assertRaises(Rejected):
+                self.request('SendUserCascadeMessage', payload)
+
+    def test_staged_attachment_reference_is_owned_and_reconstructed(self):
+        kind, saved = self.request('SaveMediaAsArtifact', {'media': {
+            'mimeType': 'text/plain', 'inlineData': 'aGVsbG8=', 'description': 'notes.txt'}})
+        self.assertEqual(kind, 'local')
+        payload = {'cascadeId': self.public, 'clientMessageId': uid(), 'items': [{'text': 'Read this'}],
+                   'cascadeConfig': {'plannerConfig': {'planModel': 'MODEL_FIXTURE'}},
+                   'media': [{'uri': saved['uri'], 'inlineData': 'eA==', 'mimeType': 'text/plain'}]}
+        _, sent = self.request('SendUserCascadeMessage', payload)
+        self.assertEqual(sent['media'][0]['inlineData'], 'aGVsbG8=')
+        self.assertNotIn('uri', sent['media'][0])
+        payload['items'] = []
+        self.assertEqual(self.request('SendUserCascadeMessage', payload)[1]['media'], sent['media'])
+        self.request('DeleteMediaArtifact', saved)
+        with self.assertRaises(Rejected):
+            self.request('SendUserCascadeMessage', payload)
+        for method, params in [('SaveMediaAsArtifact', {'media': {'uri': 'file:///home/node/private',
+                                 'inlineData': 'eA==', 'mimeType': 'text/plain'}}),
+                               ('DeleteMediaArtifact', {'uri': 'file:///home/node/private'})]:
+            with self.subTest(method=method), self.assertRaises(Rejected):
+                self.request(method, params)
+
     def test_models_come_from_subscription_discovery_and_unknown_fields_are_removed(self):
         result = self.protocol.response('GetUserStatus', {'userStatus': {
             'name': 'Example', 'apiKey': 'private-token', 'cascadeModelConfigData': {
@@ -201,9 +236,12 @@ class AntigravityProtocolTests(unittest.TestCase):
     def test_reconnect_retains_owned_chats_without_storing_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             self.protocol.path = Path(directory) / 'antigravity-editor.json'
+            _, uploaded = self.request('SaveMediaAsArtifact', {'media': {
+                'mimeType': 'text/plain', 'inlineData': 'aGVsbG8=', 'description': 'notes.txt'}})
             self.protocol.save()
             reopened = AntigravityProtocol(directory)
             self.assertEqual(reopened.owned(self.public), self.private)
+            self.assertEqual(reopened.attachments[uploaded['uri']]['inlineData'], 'aGVsbG8=')
             self.assertEqual(reopened.path.stat().st_mode & 0o777, 0o600)
             self.assertFalse(reopened.models)  # Refresh subscription models after reconnect.
             self.assertFalse(reopened.pending)  # Learn waiting steps from the native stream again.

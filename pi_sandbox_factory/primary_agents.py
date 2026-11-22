@@ -162,6 +162,7 @@ def up(config, state):
     directory = Path(state) / 'primary-agent'
     directory.mkdir(mode=0o700, exist_ok=True)
     write_json(directory / 'settings.json', {
+        'native_approval': options(config.get('options'))['native_approval'],
         'agent': selected, 'browser': options(config.get('options'))['browser'],
         'working_directory': folders.container_cwd(config),
     })
