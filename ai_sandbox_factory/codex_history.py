@@ -25,11 +25,13 @@ AGY_APPS = ('antigravity', 'antigravity-cli')
 AGY_HISTORY_DIRS = ('conversations', 'implicit', 'annotations', 'brain',
                     'browser_recordings', 'html_artifacts', 'context_state')
 AGY_HISTORY_FILES = ('conversation_summaries.db', 'jetbox_summaries_proto.pb', 'agyhub_summaries_proto.pb')
+HOMES = {'codex': '.codex', 'claude': '.claude', 'agy': '.gemini'}
 
 
 def allowed(name, provider='codex'):
     path = PurePosixPath(name)
-    if path.is_absolute() or '..' in path.parts or str(path) != name:
+    if (path.is_absolute() or '..' in path.parts or str(path) != name or '\\' in name
+            or not all(character.isprintable() for character in name)):
         return False
     if provider == 'claude':
         return (len(path.parts) > 2 and path.parts[0] == 'projects'
@@ -112,7 +114,7 @@ def claude_history(data, credentials):
     return encoded.encode()
 
 
-def export_history(home, stream, provider='codex', known_secrets=()):
+def export_history(home, stream, provider='codex', known_secrets=(), *, workspace=False):
     """Write only native chat files; leave the private home untouched."""
     home = Path(home)
     if home.is_symlink():
@@ -144,7 +146,7 @@ def export_history(home, stream, provider='codex', known_secrets=()):
                     with closing(sqlite3.connect(snapshot)) as target:
                         original.backup(target)
                 files.append((name, snapshot))
-        if provider == 'claude':
+        if provider == 'claude' and not workspace:
             credentials = json.loads((home / '.credentials.json').read_text()) if regular(home / '.credentials.json') else {}
             cleaned = []
             for index, (name, source) in enumerate(files):
@@ -199,11 +201,26 @@ def safe_target(home, name):
     return target
 
 
-def restore_history(home, stream, provider='codex'):
+def saved_paths(home, provider):
+    roots = {'codex': ROOTS, 'claude': ('projects',), 'agy': AGY_APPS}[provider]
+    for root in roots:
+        for parent, directories, names in os.walk(safe_target(home, root), followlinks=False):
+            directories[:] = [name for name in directories if not (Path(parent) / name).is_symlink()]
+            for name in names:
+                path = Path(parent) / name
+                if allowed(path.relative_to(home).as_posix(), provider):
+                    yield path
+    if provider == 'codex':
+        yield from (home / name for name in (*DATABASES, *METADATA) if os.path.lexists(home / name))
+
+
+def restore_history(home, stream, provider='codex', *, fresh=False):
     """Preflight the complete transfer, then install without replacing files."""
     home = Path(home)
     if home.is_symlink():
         raise ValueError(f'Cannot restore native chats into symbolic-link home {home}. Use a regular workspace home directory.')
+    if fresh and next(saved_paths(home, provider), None) is not None:
+        raise ValueError('This sandbox already has chat storage. Restore into a new sandbox before opening its coding agent.')
     # Spool outside the destination so malformed transfers cannot leave files there.
     with tempfile.TemporaryDirectory(prefix='factory-codex-restore-') as temporary:
         stage = Path(temporary)
@@ -221,7 +238,7 @@ def restore_history(home, stream, provider='codex'):
                 incoming.append((member.name, target))
         if not incoming:
             return 0
-        if (home / MARKER).exists():
+        if not fresh and (home / MARKER).exists():
             return 0
         pending = []
         for name, source in incoming:
@@ -255,17 +272,18 @@ def restore_history(home, stream, provider='codex'):
                     installed.append(target)
                 finally:
                     Path(name).unlink(missing_ok=True)
-            marker = stage / MARKER
-            marker.write_text(provider + ' native chat files preserved.\n')
-            fd, name = tempfile.mkstemp(prefix='.factory-chat-', dir=home)
-            try:
-                with os.fdopen(fd, 'wb') as output:
-                    output.write(marker.read_bytes())
-                    output.flush()
-                    os.fsync(output.fileno())
-                os.link(name, home / MARKER)
-            finally:
-                Path(name).unlink(missing_ok=True)
+            if not fresh:
+                marker = stage / MARKER
+                marker.write_text(provider + ' native chat files preserved.\n')
+                fd, name = tempfile.mkstemp(prefix='.factory-chat-', dir=home)
+                try:
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(marker.read_bytes())
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.link(name, home / MARKER)
+                finally:
+                    Path(name).unlink(missing_ok=True)
         except BaseException:
             for target in reversed(installed):
                 target.unlink()
@@ -290,7 +308,7 @@ def migrate(config, workspace_container, provider='codex'):
     from . import primary_agents
     controller = primary_agents.names(config)[0]
     engine = config['engine']
-    home = {'codex': '.codex', 'claude': '.claude', 'agy': '.gemini'}[provider]
+    home = HOMES[provider]
     checked = subprocess.run([engine, 'exec', workspace_container, 'test', '-f',
                               '/home/node/' + home + '/' + MARKER],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -322,8 +340,17 @@ def migrate(config, workspace_container, provider='codex'):
 if __name__ == '__main__':
     try:
         provider = sys.argv[2] if len(sys.argv) > 2 else 'codex'
-        private_home = Path.home() / {'codex': '.codex', 'claude': '.claude', 'agy': '.gemini'}[provider]
-        if sys.argv[1] == 'export':
+        operation = sys.argv[1]
+        private_home = (Path(sys.argv[3]) if len(sys.argv) > 3 else Path.home()) / HOMES[provider]
+        if operation == 'backup':
+            if not export_history(private_home, sys.stdout.buffer, provider, workspace=True):
+                raise ValueError('There are no saved chats to export.')
+        elif operation == 'import':
+            count = restore_history(private_home, sys.stdin.buffer, provider, fresh=True)
+            if not count:
+                raise ValueError('The backup contains no chats.')
+            print(json.dumps({'added': count, 'skipped': 0}))
+        elif operation == 'export':
             secrets = []
             if provider == 'agy':
                 result = subprocess.run(['secret-tool', 'lookup', 'service', 'gemini', 'username', 'antigravity'],
@@ -334,7 +361,7 @@ if __name__ == '__main__':
                 secrets = [value for name, value in profile.get('token', {}).items()
                            if name in ('access_token', 'refresh_token', 'id_token') and isinstance(value, str)]
             export_history(private_home, sys.stdout.buffer, provider, secrets)
-        elif sys.argv[1] == 'restore':
+        elif operation == 'restore':
             count = restore_history(private_home, sys.stdin.buffer, provider)
             print(f'Preserved {count} native chat files.' if count else 'No native chat transfer needed.')
         else:

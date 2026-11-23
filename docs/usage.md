@@ -69,22 +69,26 @@ folder stays on your computer.
 
 ## Back up and restore chats
 
-Factory can back up and restore Pi and FrostPi chats. Deleting a Codex,
-Claude Code or Antigravity sandbox removes its saved chats. The backup and
-restore actions are currently available only for Pi sandboxes.
+Choose **Actions… → Export chat history…** to save all chats from a sandbox
+to a ZIP file on this computer. You can also export from the delete dialog
+before deciding whether to delete the sandbox.
 
-- **Save a backup.** Choose **Actions… → Export chat history…**. Factory saves
-  the original Pi and FrostPi chats, including branches, to a ZIP file on this
-  computer. The same action is available when you confirm deletion. Export
-  works while the sandbox is stopped and leaves deletion up to you.
-- **Restore to another sandbox.** Choose that sandbox, then **Actions… → Import
-  chat history…**. Select the ZIP backup or a Pi `.jsonl` file. Factory adds
-  chats to the destination’s starting folder and skips chats already saved
-  there. Use **Resume session** in FrostPi or `/resume` in Pi to open them.
+- **Codex, Claude Code and Antigravity.** Stop the source sandbox before
+  exporting. To restore, create a sandbox with the same agent and starting
+  folder. Turn off the option to open the agent when the sandbox is ready.
+  Once it has started, stop it and choose **Actions… → Import chat history…**.
+  Select the ZIP, then open the sandbox and choose a chat from the agent’s
+  history. Antigravity keeps its terminal and browser histories in separate
+  stores, and the backup includes both.
+- **Pi and FrostPi.** Export preserves chat branches. To restore, select a ZIP
+  backup or a Pi `.jsonl` file. Factory adds chats to the destination’s starting
+  folder and skips chats it already has. Use **Resume session** in FrostPi or
+  `/resume` in Pi to open them.
 
-A backup contains chats only. Keep it private because transcripts can include
-tool output and file contents. Project files and sandbox settings are managed
-separately.
+Use the same project checkout if you want the restored chat to find the files it
+worked on. The ZIP contains chat history, including any text or file contents
+recorded in the conversation. Store it privately. Workspace files, sandbox
+settings and stored sign-ins stay outside the backup.
 
 ## Recover from a failed creation
 

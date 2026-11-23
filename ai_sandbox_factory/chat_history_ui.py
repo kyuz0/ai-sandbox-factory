@@ -1,4 +1,4 @@
-"""Export and import Pi and FrostPi chats from the sandbox list."""
+"""Export and import chats from the sandbox list."""
 
 from pathlib import Path
 import subprocess
@@ -23,22 +23,25 @@ def chat_count(count):
 
 def backup_message(path, count):
     path = Path(path)
-    return f'Saved {chat_count(count)}\nFolder · {path.parent}\nFile · {path.name}'
+    saved = 'Saved chat history' if count is None else f'Saved {chat_count(count)}'
+    return f'{saved}\nFolder · {path.parent}\nFile · {path.name}'
 
 
 class ChatTransfer(ModalScreen):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     .chat-result { margin: 1 0 0 0; }
-    .chat-path-label { margin: 1 0 0 0; }
+    .chat-path-label { margin: 1 0 0 0; text-style: bold; }
+    #chat-transfer-filename { text-wrap: nowrap; text-overflow: ellipsis; }
     ChatTransfer Feedback { margin: 1 0 0 0; text-style: bold; }
     """
 
-    def __init__(self, name, *, importing=False, return_to_delete=False):
+    def __init__(self, name, *, importing=False, return_to_delete=False, agent='pi'):
         super().__init__()
         self.sandbox_name = name
         self.importing = importing
         self.return_to_delete = return_to_delete
+        self.agent = agent
         self.busy = False
         self.saved = False
         self.suggested_path = '' if importing else str(chat_history.suggested_file(name))
@@ -47,20 +50,33 @@ class ChatTransfer(ModalScreen):
         with Vertical(id='confirm-box'):
             title = f'{IMPORT} into {self.sandbox_name}' if self.importing else f'{EXPORT} from {self.sandbox_name}'
             yield Label(title, markup=False)
-            if self.importing:
+            if self.agent != 'pi':
+                name = primary_workspace.AGENTS[self.agent]
+                help_text = (f'Choose a {name} backup. Stop this sandbox and restore before opening {name}.'
+                             if self.importing else
+                             f'Save all {name} chats to a ZIP file. Stop this sandbox before exporting.')
+                yield Static(help_text, id='chat-transfer-help', markup=False)
+            elif self.importing:
                 yield Static('Choose a Factory backup (.zip) or a Pi chat file (.jsonl).\n'
-                             'Chats already saved in this sandbox are skipped.', markup=False)
+                             'Chats already saved in this sandbox are skipped.', id='chat-transfer-help', markup=False)
             else:
-                yield Static('Save Pi and FrostPi conversations, including branches, to a ZIP file on this computer.', markup=False)
+                yield Static('Save Pi and FrostPi conversations, including branches, to a ZIP file on this computer.',
+                             id='chat-transfer-help', markup=False)
             with Vertical(id='chat-transfer-fields', classes='setting'):
                 label = 'File to import' if self.importing else 'Save backup as'
                 yield Static(label, classes='chat-path-label', markup=False)
                 folder = chat_history.backup_folder()
+                pi_import = self.importing and self.agent == 'pi'
+                picker_title = 'Choose where to save the backup'
+                if self.importing:
+                    picker_title = 'Choose chat backup or Pi chat file' if pi_import else 'Choose chat backup'
                 yield PathField('chat-transfer-path', self.suggested_path, browse_id='chat-transfer-browse',
-                                title='Choose chat backup or Pi chat file' if self.importing else 'Choose where to save the backup',
+                                title=picker_title,
                                 mode='file' if self.importing else 'save',
-                                file_extensions={'.zip', '.jsonl'} if self.importing else {'.zip'},
+                                placeholder='Choose a backup file' if self.importing else '',
+                                file_extensions={'.zip', '.jsonl'} if pi_import else {'.zip'},
                                 initial=folder, places={'Chat backups': folder})
+                yield Static('', id='chat-transfer-filename', markup=False)
             yield Feedback(id='chat-transfer-error', markup=False)
             yield Static('', id='chat-transfer-result', classes='chat-result', markup=False)
             with Horizontal(classes='dialog-actions'):
@@ -69,7 +85,20 @@ class ChatTransfer(ModalScreen):
 
     def on_mount(self):
         self.query_one('#chat-transfer-result', Static).display = False
-        self.query_one('#chat-transfer-path', Input).focus()
+        field = self.query_one('#chat-transfer-path', Input)
+        field.cursor_position = len(field.value)
+        field.focus()
+        self.show_filename(field.value)
+
+    def show_filename(self, value):
+        name = Path(value.strip()).name
+        label = self.query_one('#chat-transfer-filename', Static)
+        label.display = bool(name)
+        label.update(f'File · {name}' if name else '')
+
+    @on(Input.Changed, '#chat-transfer-path')
+    def path_changed(self, event):
+        self.show_filename(event.value)
 
     def action_cancel(self):
         if not self.busy:
@@ -129,7 +158,9 @@ class ChatTransfer(ModalScreen):
         self.busy = False
         self.saved = True
         if self.importing:
-            if first:
+            if self.agent != 'pi':
+                message = 'Restored chat history. Open this sandbox and choose a chat from the agent’s history.'
+            elif first:
                 message = f'Imported {chat_count(first)}.'
                 if second:
                     message += f'\nSkipped {chat_count(second)} already in this sandbox.'
@@ -144,6 +175,7 @@ class ChatTransfer(ModalScreen):
         result = self.query_one('#chat-transfer-result', Static)
         result.update(message)
         result.add_class('chat-success')
+        self.query_one('#chat-transfer-help').display = False
         self.query_one('#chat-transfer-fields').display = False
         self.query_one('#chat-transfer-apply', Button).display = False
         done = self.query_one('#chat-transfer-cancel', Button)
@@ -163,21 +195,19 @@ class DeleteSandbox(ModalScreen[bool]):
         self.sandbox_name = name
         self.has_config = has_config
         self.agent = agent
-        self.can_export = has_config and agent == 'pi'
+        self.can_export = has_config
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False)
             if self.has_config:
-                if self.can_export:
-                    yield Static('Saved Pi and FrostPi chats will be permanently deleted. '
-                                 'Export chat history to keep a copy on this computer.', markup=False)
-                else:
-                    yield Static(f'Saved {primary_workspace.AGENTS[self.agent]} chats will be permanently deleted.', markup=False)
+                name = 'Pi and FrostPi' if self.agent == 'pi' else primary_workspace.AGENTS[self.agent]
+                yield Static(f'Saved {name} chats will be permanently deleted. '
+                             'Export chat history to keep a copy on this computer.', markup=False)
             yield Static('Your workspace files stay on this computer.', classes='chat-note', markup=False)
             if self.has_config:
                 yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
-                             'Original sign-ins and keys outside this sandbox are kept.', markup=False)
+                             'Original sign-ins and keys outside this sandbox are kept.', classes='chat-note', markup=False)
             yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')
@@ -204,7 +234,7 @@ class DeleteSandbox(ModalScreen[bool]):
     def export_pressed(self):
         if not self.can_export:
             return
-        self.app.push_screen(ChatTransfer(self.sandbox_name, return_to_delete=True), self.show_backup)
+        self.app.push_screen(ChatTransfer(self.sandbox_name, return_to_delete=True, agent=self.agent), self.show_backup)
 
     def show_backup(self, message):
         if message:

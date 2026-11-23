@@ -1380,6 +1380,13 @@ failed transfers, file selection, and the separate delete confirmation. The
 `chat-history-*` visual states cover Actions, both file pickers and the transfer
 results.
 
+For Codex, Claude Code and Antigravity, also run the
+[native browser editor fixture](#authenticated-browser-editors) with
+`--chat-backup`. It saves a live chat to a ZIP, restores into a fresh named
+volume, then reopens the chat in the official editor and verifies a follow-up
+using the earlier conversation. It uses disposable sandboxes and removes the
+backup on exit.
+
 ## Skill library
 
 `PYTHONPATH=tests .venv/bin/python -m unittest test_skill_library test_skills_ui`

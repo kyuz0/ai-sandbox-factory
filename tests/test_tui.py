@@ -821,9 +821,9 @@ class TUITests(unittest.TestCase):
                         self.assertIn('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted.', text)
                         self.assertIn('Original sign-ins and keys outside this sandbox are kept.', text)
                         self.assertNotIn('private credentials', text)
-                        self.assertEqual(bool(app.screen.query('#delete-export-chats')), agent == 'pi')
+                        self.assertTrue(app.screen.query('#delete-export-chats'))
                         self.assertEqual('Pi and FrostPi' in text, agent == 'pi')
-                        self.assertEqual('Export chat history' in text, agent == 'pi')
+                        self.assertIn('Export chat history', text)
                         for button in app.screen.query(Button):
                             self.assertTrue(app.screen.region.contains_region(button.region))
                         self.assertEqual(app.focused.id, 'cancel')
@@ -896,6 +896,26 @@ class TUITests(unittest.TestCase):
             self.assertIn('Resume session', result)
             self.assertEqual(app.focused.id, 'chat-transfer-cancel')
             self.assertEqual(service.calls, [['import-chats', 'beta', str(backup)]])
+
+    async def test_native_import_uses_the_selected_agent_and_native_history(self):
+        self.records[0]['config']['primary_agent'] = 'codex'
+        self.records[0]['dev'] = 'exited'
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            await self.choose_more_action(app, pilot, 'import-chats')
+            self.assertEqual(app.screen.agent, 'codex')
+            self.assertIn('Codex backup', str(app.screen.query_one('#chat-transfer-help').render()))
+            path = self.root / 'codex.zip'
+            app.screen.query_one('#chat-transfer-path', Input).value = str(path)
+            await pilot.pause()
+            self.assertIn('codex.zip', str(app.screen.query_one('#chat-transfer-filename').render()))
+            await pilot.click('#chat-transfer-apply')
+            await self.ready(app, pilot)
+            self.assertEqual(service.calls, [['import-chats', 'alpha', str(path)]])
+            self.assertIn('Restored chat history', str(app.screen.query_one('#chat-transfer-result').render()))
+            self.assertFalse(app.screen.query_one('#chat-transfer-help').display)
 
     async def test_workspace_browser_navigates_and_returns_the_selected_folder(self):
         project = self.root / 'my-project'

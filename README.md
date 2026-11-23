@@ -69,6 +69,9 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 Click **Open** beside a sandbox’s name to start working. To use a different
 client, choose **Open with…** and pick one, such as Pi CLI. [Using a sandbox](docs/usage.md)
 
+Save a sandbox’s chats to a ZIP with **Actions… → Export chat history…**.
+[Back up and restore chats](docs/usage.md#back-up-and-restore-chats)
+
 ![FrostPi beside the updated Python route planner, with edits and a passing test run visible](docs/frostpi.png)
 
 *FrostPi updates a hiking route planner and runs its tests in the sandbox.*

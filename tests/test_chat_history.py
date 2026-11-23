@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from zipfile import ZipFile, ZipInfo
 
-from ai_sandbox_factory import chat_history, session_archive
+from ai_sandbox_factory import chat_history, codex_history, session_archive
 
 
 def transcript(session_id, cwd='/workspace', text='Existing chat'):
@@ -40,21 +40,52 @@ class ChatHistoryTests(unittest.TestCase):
         script = Path(session_archive.__file__).read_text()
         return lambda config, operation, *args: [sys.executable, '-I', '-c', script, operation, str(home), *args]
 
-    def test_native_agents_reject_transfers_before_files_or_engine_access(self):
-        for agent, label in (('codex', 'Codex'), ('claude', 'Claude Code'), ('agy', 'Antigravity')):
-            config = {**self.config, 'primary_agent': agent}
-            for operation in ('export', 'import'):
-                with self.subTest(agent=agent, operation=operation), \
-                        patch.object(chat_history, 'archive_command') as command, \
-                        patch.object(chat_history, 'transfer') as transfer:
-                    with self.assertRaisesRegex(ValueError, f'cannot {operation} chat history for {label}'):
-                        if operation == 'export':
-                            chat_history.export_chats(config, self.source, self.archive)
-                        else:
-                            chat_history.import_chats(config, self.archive)
+    def native_command(self, home):
+        script = Path(codex_history.__file__).read_text()
+        return lambda config, operation: [sys.executable, '-I', '-c', script,
+                                          'backup' if operation == 'export' else 'import',
+                                          config['primary_agent'], str(home)]
+
+    def test_native_roundtrip_requires_new_same_agent_and_keeps_sign_in_out(self):
+        files = {
+            'codex': 'sessions/2026/11/23/rollout.jsonl',
+            'claude': 'projects/-workspace-app/chat.jsonl',
+            'agy': 'antigravity/conversations/chat.pb',
+        }
+        for agent, relative in files.items():
+            with self.subTest(agent=agent):
+                config = {**self.config, 'primary_agent': agent}
+                backup = self.root / (agent + '.zip')
+                folder = self.source / codex_history.HOMES[agent]
+                native_file = folder / relative
+                native_file.parent.mkdir(parents=True)
+                record = b'{"type":"user","message":{"role":"user","content":"Synthetic saved question"}}\n'
+                native_file.write_bytes(record)
+                (folder / 'auth.json').write_text('fixture private sign-in')
+                target_folder = self.destination / codex_history.HOMES[agent]
+                target_folder.mkdir()
+                (target_folder / codex_history.MARKER).touch()
+                with patch.object(chat_history, 'archive_command', side_effect=self.native_command(self.source)):
+                    self.assertEqual(chat_history.export_chats(config, self.source, backup), (backup, None))
+                    self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+                with patch.object(chat_history, 'archive_command', side_effect=self.native_command(self.destination)) as command:
+                    wrong_agent = {**config, 'primary_agent': 'claude' if agent == 'codex' else 'codex'}
+                    with self.assertRaisesRegex(ValueError, 'This backup is for'):
+                        chat_history.import_chats(wrong_agent, backup, state=self.destination)
+                    with self.assertRaisesRegex(ValueError, 'different starting folder'):
+                        chat_history.import_chats({**config, 'working_directory': ''}, backup, state=self.destination)
                     command.assert_not_called()
-                    transfer.assert_not_called()
-                    self.assertFalse(self.archive.exists())
+                    self.assertEqual(chat_history.import_chats(config, backup, state=self.destination), (1, 0))
+                    with self.assertRaisesRegex(ValueError, 'already has chat storage'):
+                        chat_history.import_chats(config, backup, state=self.destination)
+                self.assertEqual((target_folder / relative).read_bytes(), record)
+                self.assertFalse((target_folder / 'auth.json').exists())
+
+    def test_native_transfer_refuses_running_workspace(self):
+        config = {**self.config, 'primary_agent': 'codex', 'engine': 'podman', 'name': 'fixture'}
+        with patch.object(chat_history.sandbox, 'inspect', return_value={'State': {'Status': 'running'}}):
+            with self.assertRaisesRegex(ValueError, 'Stop sandbox'):
+                chat_history.archive_command(config, 'export')
 
     def test_roundtrip_keeps_branches_and_does_not_replace_an_existing_chat(self):
         raw = transcript('shared', text='Source version')

@@ -9,8 +9,9 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from contextlib import closing
+from contextlib import closing, contextmanager
 import errno
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -626,7 +627,22 @@ def upgrade_gateway_config(state):
         print('Updated gateway configuration for restart-safe startup.')
 
 
+@contextmanager
+def native_chat_lock(state):
+    fd = os.open(state / 'native-chat.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'rb') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def up(config, state, *, prepare_sign_in=True):
+    if primary_workspace.agent(config) == 'pi':
+        return _up(config, state, prepare_sign_in=prepare_sign_in)
+    with native_chat_lock(state):
+        return _up(config, state, prepare_sign_in=prepare_sign_in)
+
+
+def _up(config, state, *, prepare_sign_in=True):
     from . import primary_agents
 
     folders.validate_config(config, state.parent, saved=True)
@@ -847,6 +863,13 @@ def down(config, remove=False):
 
 
 def delete(config, state):
+    if primary_workspace.agent(config) == 'pi':
+        return _delete(config, state)
+    with native_chat_lock(state):
+        return _delete(config, state)
+
+
+def _delete(config, state):
     if config['name'] != state.name:
         raise ValueError('Saved sandbox name does not match its state directory')
     workspace = Path(config['workspace']).resolve()

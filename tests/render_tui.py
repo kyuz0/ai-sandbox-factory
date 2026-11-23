@@ -75,7 +75,7 @@ async def capture(size):
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
         aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
         variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only else {}
-        with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None):
+        with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
             app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
             async with app.run_test(size=size, notifications=app.startup_notice) as pilot:
                 await pilot.pause()
@@ -450,7 +450,9 @@ async def capture(size):
                         await app.push_screen(ChatTransfer('demo', importing=importing))
                         await pilot.pause()
                         if not importing:
-                            app.screen.query_one('#chat-transfer-path', Input).value = sample
+                            field = app.screen.query_one('#chat-transfer-path', Input)
+                            field.value = sample
+                            field.cursor_position = len(sample)
                         await shot('chat-history-' + action)
                         if importing:
                             app.screen.query_one('#chat-transfer-path', Input).value = str(workspace / 'demo-chats.zip')
@@ -477,6 +479,32 @@ async def capture(size):
                     await app.pop_screen()
                     await shot('chat-history-export-picker', FolderPicker(str(workspace), title='Choose where to save the backup',
                                                                          mode='save', file_extensions={'.zip'}, filename='demo-chats.zip'))
+                    for agent in ('codex', 'claude', 'agy'):
+                        prefix = 'chat-history-native-' + agent
+                        if args.only and not any(name.startswith(prefix) for name in args.only):
+                            continue
+                        await shot(prefix + '-actions', MoreActions({
+                            **record, 'dev': 'exited', 'config': {**c, 'primary_agent': agent}}))
+                        await app.push_screen(DeleteSandbox('demo', has_config=True, agent=agent))
+                        await shot(prefix + '-delete')
+                        app.screen.show_backup(backup_message(sample, None))
+                        await shot(prefix + '-delete-backed-up')
+                        await app.pop_screen()
+                        for importing in (False, True):
+                            action = prefix + ('-import' if importing else '-export')
+                            await app.push_screen(ChatTransfer('demo', importing=importing, agent=agent))
+                            await pilot.pause()
+                            await shot(action)
+                            app.screen.query_one('#chat-transfer-path', Input).value = sample
+                            await shot(action + '-selected')
+                            app.screen.failed('This sandbox already has chat storage. Restore into a new sandbox before opening its coding agent.'
+                                              if importing else 'Choose Actions → Stop sandbox, then try again.')
+                            await shot(action + '-error')
+                            app.screen.query_one('#chat-transfer-error').update('')
+                            app.screen.query_one('#chat-transfer-result').display = True
+                            app.screen.completed(4, 0) if importing else app.screen.completed(sample, None)
+                            await shot(action + '-complete')
+                            await app.pop_screen()
                     if args.only and all(name.startswith('chat-history-') for name in args.only):
                         return
                 if prompts_only:

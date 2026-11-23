@@ -256,7 +256,7 @@ class Service:
         return chat_history.export_chats(self.chat_config(name), self.state / name, path)
 
     def import_chats(self, name, path):
-        return chat_history.import_chats(self.chat_config(name), path)
+        return chat_history.import_chats(self.chat_config(name), path, state=self.state / name)
 
     def chat_config(self, name):
         config = self.config(name)
@@ -1311,7 +1311,7 @@ class MoreActions(ModalScreen[Optional[str]]):
         profile = record.get('config', {}).get('profile') or {}
         if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
             self.actions.append(('Getting started…', 'profile-guide'))
-        if not native and record.get('config', {}).get('engine'):
+        if record.get('config', {}).get('engine'):
             self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
         self.actions.append(('Delete sandbox…', 'delete'))
 
@@ -4281,7 +4281,13 @@ class Cockpit(App):
     .path-row Input { width: 1fr; margin: 0; }
     .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
     .chat-success { color: #91caa6; }
-    DeleteSandbox Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
+    .tall-terminal ChatTransfer #confirm-box { width: 114; }
+    ChatTransfer .path-row { margin: 1 0 0 0; }
+    ChatTransfer Input:focus { background: #4a5360; }
+    ChatTransfer:nocolor Feedback.error { color: white; text-style: bold reverse; }
+    DeleteSandbox #yes { background: #573638; color: #ffd1cd; text-style: bold; }
+    ChatTransfer Button:focus, DeleteSandbox Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
+    DeleteSandbox #yes:focus { background: #ffd1cd; color: #442529; text-style: bold underline; }
     DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
     DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
     .error { color: #b75b52; height: auto; }
@@ -4922,7 +4928,7 @@ class Cockpit(App):
             mode = 'preview' if action == 'preview-models' else 'refresh'
             self.push_screen(Operation('Local models · ' + name, lambda log: self.service.models(name, mode, log)))
         elif action in ('export-chats', 'import-chats'):
-            self.push_screen(ChatTransfer(name, importing=(action == 'import-chats')))
+            self.push_screen(ChatTransfer(name, importing=(action == 'import-chats'), agent=coding_agent(config)))
         elif action == 'delete':
             self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)

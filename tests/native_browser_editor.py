@@ -18,7 +18,7 @@ from urllib.request import urlopen
 from urllib.error import HTTPError
 
 from playwright.sync_api import Error as BrowserError, sync_playwright, expect
-from ai_sandbox_factory import advisor_credentials, primary_agents, primary_workspace, sandbox
+from ai_sandbox_factory import advisor_credentials, chat_history, primary_agents, primary_workspace, sandbox
 FILE_TASK = 'Read /workspace/input.txt, copy its contents to /workspace/output.txt and reply with the contents.'
 COMPOSER = ('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
             'input[type=text]:visible, [role=textbox]:visible')
@@ -69,6 +69,14 @@ def open_claude_chat_here(frame, output):
     handoff.click()
     print('Used Claude’s native ownership handoff for the idle test chat.', flush=True)
     return True
+
+
+def advance_onboarding(frame):
+    for name in ('Next', 'Continue', 'Skip', 'Get started', 'Start coding'):
+        button = frame.get_by_role('button', name=name, exact=True)
+        if button.count() == 1 and button.is_visible():
+            button.click(timeout=900)
+            return
 
 
 def verify_reply(page, prompt, expected, timeout, output=None, *, claude_handoff=False):
@@ -122,11 +130,7 @@ def verify_reply(page, prompt, expected, timeout, output=None, *, claude_handoff
                     submitted_frame = frame
                     print('Sent the test prompt in the native panel.', flush=True)
                 else:
-                    for name in ('Next', 'Continue', 'Skip', 'Get started', 'Start coding'):
-                        button = frame.get_by_role('button', name=name, exact=True)
-                        if button.count() == 1 and button.is_visible():
-                            button.click(timeout=900)
-                            break
+                    advance_onboarding(frame)
             except BrowserError:
                 # Extension startup replaces frames while the panel is mounting.
                 continue
@@ -148,7 +152,37 @@ def verify_reply(page, prompt, expected, timeout, output=None, *, claude_handoff
     raise RuntimeError(f'Expected reply missing. Prompt submitted: {submitted}. Panel notices: {sorted(observations)}')
 
 
+def resume_agy_chat(page, timeout, expected):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for frame in page.frames:
+            if not frame.parent_frame:
+                continue
+            try:
+                search = frame.get_by_role('button', name='Search Conversations', exact=True)
+                if not search.count():
+                    advance_onboarding(frame)
+                    continue
+                # The extension's conversation list is offscreen at the default panel width.
+                page.get_by_role('button', name='Maximize Secondary Side Bar', exact=True).click(timeout=5000)
+                search.click(timeout=5000)
+                query = frame.get_by_placeholder(re.compile('Search for conversations', re.I))
+                expect(query).to_be_visible(timeout=timeout * 1000)
+                # This fresh fixture has one imported conversation. Native quick search selects it first.
+                query.press('Enter')
+                expect(frame.locator('body')).to_contain_text(expected, timeout=timeout * 1000)
+                print('Opened the saved Antigravity conversation and verified its previous reply.', flush=True)
+                return
+            except BrowserError:
+                if not frame.is_detached():
+                    raise
+        page.wait_for_timeout(250)
+    raise RuntimeError('The Antigravity conversation search did not open')
+
+
 def resume_chat(page, output, timeout, expected, agent=None):
+    if agent == 'agy':
+        return resume_agy_chat(page, timeout, expected)
     deadline = time.monotonic() + timeout
     opened = set()
     while time.monotonic() < deadline:
@@ -166,6 +200,7 @@ def resume_chat(page, output, timeout, expected, agent=None):
                 if agent == 'claude' and open_claude_chat_here(frame, output):
                     continue
                 if not composer.count():
+                    advance_onboarding(frame)
                     continue
                 history = frame.get_by_role('button', name=re.compile('history|past conversations|recent chats|resume', re.I))
                 if frame not in opened and history.count() and history.first.is_visible():
@@ -454,7 +489,7 @@ print('capacity-job-'+name+'-complete')
     (output / 'capacity.json').write_text(json.dumps(measurements, indent=2))
 
 
-def run(args, root, stack):
+def run(args, root, stack, *, backup=None, restored=None):
     agent = args.agent
     fixture = 'factory-editor-test-' + secrets.token_hex(6)
     options = {'options': {'native_approval': getattr(args, 'approval', 'automatic'),
@@ -464,6 +499,15 @@ def run(args, root, stack):
     options['engine'] = 'podman'
     primary_workspace.build(options, primary_workspace.image(options))
     editor = fixture + '-editor'
+    if backup:
+        workspace = root / 'workspace'
+        workspace.mkdir()
+        chat_config = {**options, 'name': editor, 'workspace': str(workspace)}
+        chat_state = root / 'chat-state'
+        chat_state.mkdir()
+        editor, _, _, home_volume = sandbox.names(chat_config)
+        podman('volume', 'create', home_volume)
+        stack.callback(podman, 'volume', 'rm', home_volume)
     client = root / 'client'
     client.mkdir()
     private = root / 'session'
@@ -522,9 +566,18 @@ def run(args, root, stack):
               'Reply with these two words joined by a hyphen. Do not use tools.')
     expected = first + '-' + last
     if args.separate:
-        start(editor, *isolated, *editor_mounts, '-v', f'{private}:/run/primary-editor:ro', '-v', wire + ':/run/primary-workspace:z',
+        editor_isolation = isolated
+        if backup:
+            index = isolated.index('/home/node:rw,mode=1777')
+            editor_isolation = isolated[:index - 1] + isolated[index + 1:] + [
+                '--label', f'{sandbox.LABEL}={chat_config["name"]}', '-v', f'{home_volume}:/home/node']
+        start(editor, *editor_isolation, *editor_mounts, '-v', f'{private}:/run/primary-editor:ro', '-v', wire + ':/run/primary-workspace:z',
               '--tmpfs', '/run/primary-runtime:rw,mode=1777', '--entrypoint', '/usr/bin/tini',
               primary_workspace.image(options), '--', 'sleep', 'infinity')
+        if restored:
+            podman('stop', editor)
+            chat_history.import_chats(chat_config, backup, state=chat_state)
+            podman('start', editor)
         for path in ('/home/node/.codex/auth.json', '/home/node/.claude/.credentials.json',
                      '/run/primary-egress/proxy.sock', '/run/primary-bus/bus', '/run/podman/podman.sock'):
             podman('exec', editor, 'test', '!', '-e', path)
@@ -621,7 +674,24 @@ def run(args, root, stack):
             page.on('console', lambda message: (args.output / 'console.log').open('a').write(message.type + ': ' + message.text + '\n') if message.type in ('error', 'warning') else None)
         page.goto(url + '/?folder=/workspace')
         expect(page).to_have_title(re.compile('workspace', re.I), timeout=args.timeout * 1000)
-        verify_reply(page, prompt, expected, args.timeout, args.output)
+        if restored:
+            page.screenshot(path=str(args.output / 'restored-editor.png'))
+            resume_chat(page, args.output, args.timeout, restored, agent)
+            verify_reply(page, 'What were the contents of input.txt that you read earlier? Reply from this chat without using tools.',
+                         restored, args.timeout, args.output)
+            page.screenshot(path=str(args.output / 'restored-chat.png'))
+            print(f'{agent}: opened the imported chat and continued it in the native editor.', flush=True)
+            return
+        try:
+            verify_reply(page, prompt, expected, args.timeout, args.output)
+        except RuntimeError:
+            if agent == 'codex' and backup:
+                log = subprocess.run(['podman', 'exec', editor, 'sh', '-c',
+                                      'tail -n 35 /home/node/.local/share/pi-browser-editor/data/logs/*/exthost*/openai.chatgpt/Codex.log'],
+                                     capture_output=True, text=True)
+                from native_codex_features import sanitized
+                (args.output / 'codex-startup.log').write_text(sanitized(log.stdout, ()))
+            raise
         if getattr(args, 'credential_attack', False):
             if agent == 'codex':
                 from native_codex_credentials import verify_attack_extension
@@ -701,6 +771,10 @@ def run(args, root, stack):
         if output.strip() != expected:
             raise RuntimeError('The output file did not contain the workspace-only value')
         podman('exec', fixture, 'test', '!', '-e', '/workspace/output.txt')
+    if backup:
+        podman('stop', editor)
+        chat_history.export_chats(chat_config, chat_state, backup)
+        return expected
 
 
 if __name__ == '__main__':
@@ -715,6 +789,8 @@ if __name__ == '__main__':
     parser.add_argument('--web-search', action='store_true', help='Claude only: check both saved web search settings in the native editor')
     parser.add_argument('--output', type=Path, required=True, help='Directory for screenshots and browser diagnostics')
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
+    parser.add_argument('--chat-backup', action='store_true',
+                        help='Back up a native chat, then import and continue it in a fresh editor')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
@@ -732,6 +808,17 @@ if __name__ == '__main__':
         parser.error('--web-search requires claude')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:
-        run(args, Path(directory), cleanup)
+    with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory:
+        if args.chat_backup:
+            root = Path(directory)
+            backup = root / 'chat-backup.zip'
+            for part in ('source', 'restored'):
+                (root / part).mkdir()
+            with ExitStack() as cleanup:
+                receipt = run(args, root / 'source', cleanup, backup=backup)
+            with ExitStack() as cleanup:
+                run(args, root / 'restored', cleanup, backup=backup, restored=receipt)
+        else:
+            with ExitStack() as cleanup:
+                run(args, Path(directory), cleanup)
     print(f'{args.agent}: authenticated reply verified; disposable resources removed.')
