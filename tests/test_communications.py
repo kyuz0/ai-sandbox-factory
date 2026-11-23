@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import communications, sandbox
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import communications, sandbox
+from ai_sandbox_factory.sandbox_options import options
 
 helper = Path(sandbox.ROOT)/'containers/dev/communications-config.py'
 spec = importlib.util.spec_from_file_location('communication_keys', helper)
@@ -46,7 +46,7 @@ class CommunicationsTests(unittest.TestCase):
 
     def test_credentials_do_not_enter_options_or_copies(self):
         with self.assertRaises(ValueError): options({'communications': {'slack': True, 'botToken':'secret'}})
-        from pi_sandbox_factory.sandbox_tui import copy_draft
+        from ai_sandbox_factory.sandbox_tui import copy_draft
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp); (state/'source').mkdir(); (state/'source/allowlist.txt').write_text('slack.com:443')
             config={'profile':{'path':'base'}, 'options':options({'communications':{'slack':True}}),

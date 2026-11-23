@@ -6,7 +6,7 @@ From the checkout, install the package into a virtual environment:
 python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
-npm ci --prefix pi_sandbox_factory/containers/inference --ignore-scripts
+npm ci --prefix ai_sandbox_factory/containers/inference --ignore-scripts
 node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
 ```
 
@@ -48,13 +48,43 @@ rendered images, including checked and unchecked controls and the error dialog.
 Install the wheel outside the checkout and check `--help`, `profile list` and
 `provider list`. Create a sandbox from that installation to verify bundled assets.
 Check Python 3.10 syntax compatibility when changing Python code.
+The wheel installs the `ai-sandbox-factory` command and `ai_sandbox_factory`
+module. The separate `kyuz0/pi-sandbox-factory` repository owns the legacy launcher
+and migration tests. Its suite covers rollback, interruption recovery, destination
+conflicts, existing absolute references and live editor-control sockets.
 
 ```sh
 .venv/bin/pip wheel --no-deps . -w dist
 python3 -m venv /tmp/pi-sandbox-package-check
-/tmp/pi-sandbox-package-check/bin/pip install dist/pi_sandbox_factory-*.whl
-(cd /tmp && /tmp/pi-sandbox-package-check/bin/pi-sandbox-factory profile list)
+/tmp/pi-sandbox-package-check/bin/pip install dist/ai_sandbox_factory-*.whl
+(cd /tmp && /tmp/pi-sandbox-package-check/bin/ai-sandbox-factory profile list)
+(cd /tmp && /tmp/pi-sandbox-package-check/bin/ai-sandbox-factory provider list)
 ```
+
+For the cross-package migration, use the migration repository's integration test
+with a clean checkout of the preceding application release and this application.
+Use separate `PIPX_HOME`, `PIPX_BIN_DIR`, `PIPX_MAN_DIR` and home directories. Check
+plain upgrade, the old manager's module relaunch, `upgrade-all`, pip installation,
+redirected output, argument forwarding and repeated runs. Keep real user state out
+of these fixtures. Test running and restarted container mounts separately.
+
+## AI Sandbox Factory migration
+
+The legacy launcher and its reusable migration tests live in
+[`kyuz0/pi-sandbox-factory`](https://github.com/kyuz0/pi-sandbox-factory).
+Linux validation covers:
+
+| Check | Result |
+| --- | --- |
+| Old manager's real upgrade method and module relaunch | New app installed, saved data migrated, new TUI opened |
+| `pipx upgrade-all` and repeated old-command launches | Passed; each package owns only its own command |
+| Pip packages in one environment | Passed; removing the old package keeps the new app usable |
+| Pip user-site packages outside PATH | Passed through the installed user-site command |
+| Migration unit tests | Rollback, interruption recovery, conflicts, XDG paths, argument forwarding and editor sockets passed |
+| Running and restarted container | Same container retained its bind mounts and private volume data; host ownership unchanged |
+
+macOS and WSL migration runtime checks have not been performed. In particular,
+macOS still needs Podman Machine mount/symlink and Keychain-access checks.
 
 ## Debian 13 validation
 
@@ -189,7 +219,7 @@ releases require this job to pass alongside the Python and package checks.
 Use `--standalone` in place of `--code-server` and its directory to exercise **FrostPi in browser**. It opens a new chat, sends a prompt to the local test model, reloads the page and resumes the saved conversation. The test also checks workspace browsing on desktop and phone, Markdown links and images, keyboard navigation, draft preservation, and the workspace and browser access rules. It checks that transfers start disabled, uploads and downloads a binary file, checks both copies byte for byte and verifies that duplicate names and interrupted uploads preserve existing files.
 
 Build the Factory image from the current checkout in a disposable sandbox.
-Use the code-server archive pinned in `pi_sandbox_factory/browser_editor.py`.
+Use the code-server archive pinned in `ai_sandbox_factory/browser_editor.py`.
 Extract it before the test. The browser check needs Podman, socat, Playwright,
 and its Chromium installation.
 
@@ -269,7 +299,7 @@ to the read-only source folder, unchanged source files, rejection of a link outs
 the allowed folders, working slash commands, and disabling and re-enabling embeddings
 preserves the saved index. The
 embedding server is a loopback fixture. The test container has no outbound network access. Use
-`--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web
+`--profile-prompt ai_sandbox_factory/profiles/deep-research` with the Deep Web
 Research image to verify the profile addendum in both clients. For a profile
 with `start-here.md`, this also checks the startup hint and `/profile-guide` in
 FrostPi. Use the Local Knowledge profile path to check its onboarding.
@@ -313,7 +343,7 @@ fresh state directory.
 ```sh
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/factory-frostpi.XXXXXX")
 mkdir "$test_root/workspace"
-.venv/bin/pi-sandbox-factory --state-dir "$test_root/state"
+.venv/bin/ai-sandbox-factory --state-dir "$test_root/state"
 ```
 
 Select the new workspace, enable **Goals** and
@@ -431,7 +461,7 @@ Exercise real relay supervision with synthetic services and no accounts:
 ```sh
 podman run --rm --network none --pids-limit=512 --user 0 --security-opt label=disable \
   --entrypoint python3 -v "$PWD/tests/relay_recovery.py:/tmp/check.py:ro" \
-  -v "$PWD/pi_sandbox_factory/containers/dev/entrypoint.sh:/tmp/entrypoint.sh:ro" \
+  -v "$PWD/ai_sandbox_factory/containers/dev/entrypoint.sh:/tmp/entrypoint.sh:ro" \
   FACTORY_IMAGE /tmp/check.py dev /tmp/entrypoint.sh --exhaust
 ```
 
@@ -446,7 +476,7 @@ Check the production editor supervisor's orphan collection and natural exit:
 ```sh
 podman run --rm --network none --pids-limit=-1 --security-opt label=disable \
   --entrypoint python3 -v "$PWD/tests/editor_orphan_reaping.py:/tmp/check.py:ro" \
-  -v "$PWD/pi_sandbox_factory/containers/editor/launch.py:/tmp/launch.py:ro" \
+  -v "$PWD/ai_sandbox_factory/containers/editor/launch.py:/tmp/launch.py:ro" \
   FACTORY_IMAGE /tmp/check.py /tmp/launch.py
 ```
 
@@ -465,7 +495,7 @@ marked truncation of oversized errors.
 Exercise the production gateway against a slow local receiver without inference:
 
 ```sh
-podman build -t localhost/factory-gateway-check pi_sandbox_factory/containers/proxy
+podman build -t localhost/factory-gateway-check ai_sandbox_factory/containers/proxy
 PYTHONPATH=. .venv/bin/python tests/gateway_upload.py --image localhost/factory-gateway-check
 ```
 
@@ -493,12 +523,12 @@ replies; it does not evaluate a real inference model.
 ```sh
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/pi-sandbox-check.XXXXXX")
 mkdir "$test_root/workspace"
-.venv/bin/pi-sandbox-factory --state-dir "$test_root/state" create pendant-check \
+.venv/bin/ai-sandbox-factory --state-dir "$test_root/state" create pendant-check \
   --workspace "$test_root/workspace" --local-model-ports 18081 \
   --allow-domain local-model.internal:18081 --start
 .venv/bin/python tests/integration.py --state-dir "$test_root/state" \
   --name pendant-check --port 18081 --pendant-questions-only
-.venv/bin/pi-sandbox-factory --state-dir "$test_root/state" delete pendant-check
+.venv/bin/ai-sandbox-factory --state-dir "$test_root/state" delete pendant-check
 ```
 
 This checks container boundaries, installed document tools, actual Pendant worker
@@ -601,7 +631,7 @@ configured companion key; discovery failures must still block agent launch.
 After the unit suites, run the companion and the installed Pi and FrostPi checks:
 
 ```sh
-podman build -t localhost/factory-inference-check pi_sandbox_factory/containers/inference
+podman build -t localhost/factory-inference-check ai_sandbox_factory/containers/inference
 .venv/bin/python tests/inference_container.py --image localhost/factory-inference-check --dev-image YOUR_FACTORY_DEV_IMAGE
 .venv/bin/python tests/hosted_container.py \
   --image YOUR_FACTORY_DEV_IMAGE --inference-image localhost/factory-inference-check \
@@ -621,7 +651,7 @@ including temporary AWS credentials and expired-session recovery.
 
 ## Runtime updates
 
-Factory passes the standalone Pi version from `pi_sandbox_factory/sandbox.py`
+Factory passes the standalone Pi version from `ai_sandbox_factory/sandbox.py`
 to the container build. The `containers/dev/extensions.lock.json` file pins
 the FrostPi source used to build the editor extension.
 Check the release metadata, rebuild the image, and run the standalone and editor
@@ -782,7 +812,7 @@ Create disposable state, workspace and an unused fixture port:
 review_root=$(mktemp -d "${TMPDIR:-/tmp}/pi-review-check.XXXXXX")
 mkdir "$review_root/workspace"
 printf '%s\n' '{"approval":"automatic"}' > "$review_root/options.json"
-.venv/bin/pi-sandbox-factory --state-dir "$review_root/state" create review-check \
+.venv/bin/ai-sandbox-factory --state-dir "$review_root/state" create review-check \
   --workspace "$review_root/workspace" --options-file "$review_root/options.json" \
   --local-model-ports 18189 --allow-domain local-model.internal:18189 --start
 .venv/bin/python tests/integration.py --state-dir "$review_root/state" \
@@ -841,13 +871,13 @@ permission dialog in automatic mode.
 After testing, delete the disposable sandbox:
 
 ```sh
-.venv/bin/pi-sandbox-factory --state-dir "$review_root/state" delete review-check
+.venv/bin/ai-sandbox-factory --state-dir "$review_root/state" delete review-check
 ```
 
 ## Launcher updates
 
 Use an isolated `PIPX_HOME` and `PIPX_BIN_DIR` to test GitHub installation and
-`pipx upgrade pi-sandbox-factory` without changing your normal installation.
+`pipx upgrade ai-sandbox-factory` without changing your normal installation.
 Check the update notice, confirmation, failure handling and relaunch.
 
 CI runs unit tests and wheel installation checks. Successful pushes to `main`
@@ -944,7 +974,7 @@ worker. It checks retrieval of the original message, tool availability, Full's
 hints, no hints in Lite, and no approval-review requests for history tools.
 
 The extension and its runtime dependencies are pinned in
-`pi_sandbox_factory/containers/dev/compaction-recall/package-lock.json`.
+`ai_sandbox_factory/containers/dev/compaction-recall/package-lock.json`.
 Its Node requirement applies to both the container CLI and VS Code's remote
 Node runtime, which Pendant uses. Check both when updating this package.
 
@@ -1029,10 +1059,10 @@ For synthetic host-file probes, create a disposable sandbox without desktop VS C
 ```sh
 check_root="${TMPDIR:-/tmp}/pi-browser-boundary-check"
 .venv/bin/python tests/browser_editor_check.py prepare --root "$check_root"
-.venv/bin/pi-sandbox-factory --state-dir "$check_root/state" create browser-check \
+.venv/bin/ai-sandbox-factory --state-dir "$check_root/state" create browser-check \
   --workspace "$check_root/workspace" --folders-file "$check_root/folders.json" \
   --allow-domain local-model.internal:8000 --start
-.venv/bin/pi-sandbox-factory --state-dir "$check_root/state" browser-editor browser-check
+.venv/bin/ai-sandbox-factory --state-dir "$check_root/state" browser-editor browser-check
 ```
 
 Leave the launcher running. In another terminal at this checkout:
@@ -1074,7 +1104,7 @@ certificate trusted by the connecting browser and verify FrostPi loads there too
 Delete the disposable sandbox after stopping the launcher:
 
 ```sh
-.venv/bin/pi-sandbox-factory --state-dir "$check_root/state" delete browser-check
+.venv/bin/ai-sandbox-factory --state-dir "$check_root/state" delete browser-check
 ```
 
 
@@ -1310,7 +1340,7 @@ With local rootless Podman, run `PYTHONPATH=. .venv/bin/python tests/connector_l
 The Python suite checks the compiled STS policy, host profile selection, independent profile copies, selective updates, session renewal and the shell network grant. Run the signing tests in the service image with synthetic credentials and networking disabled.
 
 ```sh
-podman build -t localhost/factory-aws-signer-test pi_sandbox_factory/containers/aws-access
+podman build -t localhost/factory-aws-signer-test ai_sandbox_factory/containers/aws-access
 podman run --rm -i --network=none --read-only --cap-drop=ALL \
   --entrypoint python3 localhost/factory-aws-signer-test - < tests/check_aws_signer.py
 ```

@@ -9,10 +9,10 @@ import tempfile
 from unittest.mock import patch
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
-from pi_sandbox_factory import skill_library, sandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
-from pi_sandbox_factory.skills_ui import ImportSkills
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory import skill_library, sandbox
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
+from ai_sandbox_factory.skills_ui import ImportSkills
+from ai_sandbox_factory.tui_widgets import Checkbox
 from textual.widgets import Button, Collapsible, Input
 from test_tui import FakeService
 
@@ -22,7 +22,7 @@ else:os.environ.pop('NO_COLOR',None)
 os.environ['TEXTUAL_COLOR_SYSTEM']='truecolor'
 
 async def render(size):
-    with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ,{'SANDBOX_REGISTRY_DIR':temp+'/library'}), patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+    with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ,{'SANDBOX_REGISTRY_DIR':temp+'/library'}), patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
         root=Path(temp);source=root/'source';source.mkdir()
         for i in range(10):
             folder=source/f'document-task-{i}';folder.mkdir()

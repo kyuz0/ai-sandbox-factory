@@ -8,7 +8,7 @@ import json
 import sys
 from unittest.mock import patch
 
-PATH = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/primary/editor_protocol.py'
+PATH = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/primary/editor_protocol.py'
 spec = importlib.util.spec_from_file_location('native_editor_protocol', PATH)
 protocol = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(protocol)

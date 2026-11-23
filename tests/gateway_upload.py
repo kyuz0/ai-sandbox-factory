@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 
-from pi_sandbox_factory import host_platform, sandbox
+from ai_sandbox_factory import host_platform, sandbox
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):

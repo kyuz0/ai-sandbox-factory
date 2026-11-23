@@ -14,7 +14,7 @@ root=Path(__file__).resolve().parents[1]
 config=json.loads((args.state_dir/args.name/'config.json').read_text())
 assert config['options']['communications']['slack'], 'Enable Slack in this disposable sandbox first'
 engine=config['engine']; container='pi-sandbox-factory-'+args.name
-cli=[sys.executable,'-m','pi_sandbox_factory','--state-dir',str(args.state_dir)]
+cli=[sys.executable,'-m','ai_sandbox_factory','--state-dir',str(args.state_dir)]
 def call(command, **kwargs): return subprocess.run(command,text=True,check=True,**kwargs)
 def read(command): return subprocess.check_output(command,text=True)
 def identity(): return read([engine,'inspect','--format','{{.Id}}',container]).strip()

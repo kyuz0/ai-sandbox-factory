@@ -20,7 +20,7 @@ def main():
         run('run', '-d', '--name', name, '--network', 'none',
             '--userns=keep-id:uid=1000,gid=1000', '--user', '1000:1000',
             '--entrypoint', 'sleep', args.image, 'infinity', capture_output=True)
-        for source, target in [('pi_sandbox_factory/containers/dev/bootstrap.py', 'bootstrap.py'),
+        for source, target in [('ai_sandbox_factory/containers/dev/bootstrap.py', 'bootstrap.py'),
                                ('tests/check_question_forms.mjs', 'check.mjs')]:
             run('cp', str(root / source), name + ':/tmp/' + target)
         baseline = None

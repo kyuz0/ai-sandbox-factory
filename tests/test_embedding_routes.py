@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from pi_sandbox_factory import inference, registry, sandbox
+from ai_sandbox_factory import inference, registry, sandbox
 
 
 class EmbeddingRoutesTests(unittest.TestCase):
@@ -113,7 +113,7 @@ class EmbeddingRoutesTests(unittest.TestCase):
             self.assertNotIn(name, off)
 
     def test_model_ids_keep_valid_spaces_and_errors_explain_the_failing_field(self):
-        from pi_sandbox_factory.sandbox_options import embedding_model, embedding_url
+        from ai_sandbox_factory.sandbox_options import embedding_model, embedding_url
         self.assertEqual(embedding_model('local embedding model'), 'local embedding model')
         for invalid in ('', ' ', 'model\nname', 'model\x7fname'):
             with self.assertRaises(ValueError):

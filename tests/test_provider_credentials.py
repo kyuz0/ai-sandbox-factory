@@ -9,8 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import browser_editor, inference, model_providers, sandbox
-from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
+from ai_sandbox_factory import browser_editor, inference, model_providers, sandbox
+from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
 
 
 class ProviderCredentialsTests(unittest.TestCase):

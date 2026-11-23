@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from textual.widgets import Button, Collapsible, Input, Static
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, preset
-from pi_sandbox_factory.communications_ui import CommunicationsForm, SlackCredentials
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, preset
+from ai_sandbox_factory.communications_ui import CommunicationsForm, SlackCredentials
+from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
 
@@ -20,7 +20,7 @@ class CommunicationsUITests(unittest.TestCase):
 
     async def test_channel_controls_and_private_dialog(self):
         for size in ((80,24),(120,40)):
-            with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path',return_value=Path(temp)/'keys'):
+            with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path',return_value=Path(temp)/'keys'):
                 app=Cockpit(Path(temp),FakeService([]))
                 async with app.run_test(size=size) as pilot:
                     await pilot.pause(); await app.workers.wait_for_complete()
@@ -59,7 +59,7 @@ class CommunicationsUITests(unittest.TestCase):
                     await pilot.press('escape');await pilot.pause();await pilot.press('q')
 
     async def test_edit_tokens_without_recreating_and_remove_while_disabled(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path',return_value=Path(temp)/'keys'):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path',return_value=Path(temp)/'keys'):
             service=FakeService([])
             service.communication_status=lambda name: {'botToken':True,'userToken':False}
             service.save_communication_keys=lambda name, changes, log: service.calls.append(('keys',name,changes))

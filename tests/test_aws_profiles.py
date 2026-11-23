@@ -7,11 +7,11 @@ from unittest.mock import Mock, patch
 from textual.widgets import Button, Collapsible, Input, Label, Select
 from test_tui import FakeService
 
-from pi_sandbox_factory import aws_profiles, sandbox
-from pi_sandbox_factory.aws_ui import AWSProfilePicker, AWSProfileTargets
-from pi_sandbox_factory.sandbox_options import write_json
-from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, DEFAULT_SETTINGS, SettingsForm, UpdateOperation, preset
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory import aws_profiles, sandbox
+from ai_sandbox_factory.aws_ui import AWSProfilePicker, AWSProfileTargets
+from ai_sandbox_factory.sandbox_options import write_json
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, DEFAULT_SETTINGS, SettingsForm, UpdateOperation, preset
+from ai_sandbox_factory.tui_widgets import Checkbox
 
 
 class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
@@ -60,7 +60,7 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_review_assigns_and_clears_aws_access_for_pi_and_native_agents(self):
         app = Cockpit(self.root, FakeService([]))
-        with patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with patch('ai_sandbox_factory.updates.available_update', return_value=None):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.workers.wait_for_complete()
                 for agent in ('pi', 'codex'):
@@ -120,7 +120,7 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
         service = FakeService([])
         app = Cockpit(self.root, service)
         service.update_settings = Mock()
-        with patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with patch('ai_sandbox_factory.updates.available_update', return_value=None):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.push_screen(AWSProfilePicker(self.original))
                 await pilot.pause()
@@ -159,7 +159,7 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
         service = FakeService([record])
         service.update_settings = Mock()
         app = Cockpit(self.root, service)
-        with patch('pi_sandbox_factory.updates.available_update', return_value=None), \
+        with patch('ai_sandbox_factory.updates.available_update', return_value=None), \
                 patch.object(sandbox, 'aws_installation', side_effect=[('restart', {}), ('ready', {})]):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.workers.wait_for_complete()

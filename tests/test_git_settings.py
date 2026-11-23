@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import git_settings, sandbox
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import git_settings, sandbox
+from ai_sandbox_factory.sandbox_options import options
 
 
 class GitIdentityTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class GitIdentityTests(unittest.TestCase):
                 options({'git_identity': value})
 
     def test_ssh_form_saves_only_the_identity_option_and_keeps_other_choices(self):
-        from pi_sandbox_factory.sandbox_tui import Service
+        from ai_sandbox_factory.sandbox_tui import Service
         service = Service(Path('/tmp/unused-factory-state'))
         value = {'name': 'Fixture Author', 'email': 'fixture@example.test'}
         saved = []

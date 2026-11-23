@@ -8,8 +8,8 @@ import argparse,hashlib,json,selectors,subprocess,time,urllib.request,urllib.err
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.browser_viewer import ensure_viewer
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.browser_viewer import ensure_viewer
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--state-dir',type=Path,required=True)
 parser.add_argument('--name',required=True)

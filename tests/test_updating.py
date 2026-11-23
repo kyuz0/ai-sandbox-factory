@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 
-from pi_sandbox_factory import updating
+from ai_sandbox_factory import updating
 
 
 class UpdateTests(unittest.TestCase):
@@ -43,7 +43,7 @@ import subprocess
 import sys
 import time
 from unittest.mock import patch
-from pi_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox
 
 root = Path(sys.argv[1])
 cancel = sys.argv[2] == 'True'

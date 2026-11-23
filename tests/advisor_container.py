@@ -3,11 +3,11 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import argparse
 parser=argparse.ArgumentParser(description='Disposable advisor check; no accounts or inference')
-parser.add_argument('--dev-image', required=True, help='A built Pi Sandbox Factory development image with Pi and FrostPi')
+parser.add_argument('--dev-image', required=True, help='A built AI Sandbox Factory development image with Pi and FrostPi')
 parser.add_argument('--code-server',type=Path,help='Also check the FrostPi VS Code extension using this extracted code-server directory')
 parser.add_argument('--chromium',help='Browser executable for the FrostPi checks')
 args=parser.parse_args()
-from pi_sandbox_factory import sandbox as core, sandbox_advisors as a, browser_editor, editor_settings
+from ai_sandbox_factory import sandbox as core, sandbox_advisors as a, browser_editor, editor_settings
 root=Path(tempfile.mkdtemp(prefix='advisor-check-'))
 config={'name':root.name,'engine':'podman','uid':1000,'gid':1000,'workspace':str(root),'advisors':{'providers':['codex','agy','claude']}}
 worker,proxy,socket,home,egress=a.names(config)

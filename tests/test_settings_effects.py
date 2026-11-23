@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from textual.widgets import Button
-from pi_sandbox_factory import settings_effects
-from pi_sandbox_factory.sandbox_options import DEFAULTS
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ApplySettingsReview, Operation
+from ai_sandbox_factory import settings_effects
+from ai_sandbox_factory.sandbox_options import DEFAULTS
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ApplySettingsReview, Operation
 from test_tui import FakeService
 
 
@@ -53,7 +53,7 @@ class SettingsEffectsTests(unittest.TestCase):
     def test_ui_review_and_completion_keep_actions_reachable(self):
         async def check():
             for size in ((80,24),(120,40),(220,50)):
-                with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+                with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
                     app=Cockpit(Path(temp),FakeService([]))
                     async with app.run_test(size=size) as pilot:
                         await pilot.pause();await app.workers.wait_for_complete()

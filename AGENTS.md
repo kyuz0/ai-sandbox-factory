@@ -1,6 +1,6 @@
 # Agent guide
 
-Pi Sandbox Factory manages Pi, Codex, Claude Code and Antigravity sandboxes with a Python CLI and Textual UI. FrostPi provides the Pi browser editor.
+AI Sandbox Factory manages Pi, Codex, Claude Code and Antigravity sandboxes with a Python CLI and Textual UI. FrostPi provides the Pi browser editor.
 Read `README.md` and `TESTING.md`. For package work, use `docs/profiles.md`,
 `docs/providers.md` and the runnable `examples/`.
 
@@ -21,7 +21,7 @@ a folder called `research/` or a temporary branch does not make publication priv
 
 ## Code map
 
-Implementation and shipped assets live in `pi_sandbox_factory/`:
+Implementation and shipped assets live in `ai_sandbox_factory/`:
 
 - `sandbox.py`: lifecycle, ownership, immutable snapshots and image identities.
 - `folders.py` and `folders_ui.py`: validated host mounts, starting directory and shared folder controls.
@@ -45,7 +45,11 @@ Implementation and shipped assets live in `pi_sandbox_factory/`:
 - `containers/`: images, bootstrap and extension pins; `profiles/base/`: generic profile.
 
 The root `sandbox.py` is a checkout convenience wrapper. The installed command
-is `pi-sandbox-factory`; `python -m pi_sandbox_factory` is equivalent.
+is `ai-sandbox-factory`; `python -m ai_sandbox_factory` is equivalent.
+The distribution and command are `ai-sandbox-factory`. The old command and module
+are maintained by the separate migration launcher in `kyuz0/pi-sandbox-factory`.
+Host data uses `ai-sandbox-factory` folders. Keep existing container, volume,
+protocol and keyring identifiers unchanged; they preserve live environments.
 
 ## Design
 
@@ -92,6 +96,13 @@ Keep generated browser origins separate per sandbox and validate Host and Origin
 Do not solve VM mount failures with recursive ownership changes or wider host mounts.
 
 ## Capacity and recovery
+
+- HARD GATE — actionable errors throughout AI Sandbox Factory: never hide a
+  failure behind “invalid”, “failed” or “unavailable” alone. Identify the operation
+  and rejected value or affected object, explain the exact constraint or underlying
+  cause, and retain available exit codes and diagnostic output. Provide a useful
+  next step. Redact credentials, not the reason for failure. Test the visible error
+  with realistic invalid input and upstream failures; generic replacements block release.
 
 - HARD GATE — preserve diagnostic errors: never replace an upstream or proxy
   failure with an unexplained generic error. Return the actual upstream status
@@ -346,7 +357,7 @@ shell can allow creating a socket pair but block writes, leaving Python waiting
 at thread-pool shutdown. Use execution permissions that allow local sockets;
 verify a minimal control before diagnosing a codebase hang. Never count an
 interrupted check as passed or add a product workaround for a shell restriction.
-Update pins in `pi_sandbox_factory/containers/dev/extensions.lock.json` or the
+Update pins in `ai_sandbox_factory/containers/dev/extensions.lock.json` or the
 security directory’s `sources.json`.
 FrostPi uses the standalone Pi already installed in the container. Factory pins
 FrostPi source in the extension lock and builds its VSIX from that commit.
@@ -369,7 +380,7 @@ this public project. Add an example or test when it explains a contract better
 than another paragraph.
 
 Release versions use UTC CalVer. On pushes to `main`, GitHub starts the release
-workflow for changes to `pi_sandbox_factory/`, `pyproject.toml` or `MANIFEST.in`.
+workflow for changes to `ai_sandbox_factory/`, `pyproject.toml` or `MANIFEST.in`.
 Pull requests and manual runs still run the checks. When publishing a release,
 use the latest commit on `main` if its package matches the tested commit.
 Keep update checks off the UI thread. Upgrades require confirmation and must

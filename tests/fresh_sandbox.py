@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 from frostpi_editor import check
-from pi_sandbox_factory import browser_editor, sandbox
+from ai_sandbox_factory import browser_editor, sandbox
 
 
 def main():

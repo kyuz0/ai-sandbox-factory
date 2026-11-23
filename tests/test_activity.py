@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from pi_sandbox_factory import activity, editor_settings
+from ai_sandbox_factory import activity, editor_settings
 
 class ActivityTests(unittest.TestCase):
     def test_creation_edits_and_noop_save(self):

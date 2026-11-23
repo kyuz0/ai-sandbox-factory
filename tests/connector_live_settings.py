@@ -6,8 +6,8 @@ import tempfile
 import unittest.mock as mock
 import uuid
 
-from pi_sandbox_factory import connectors, sandbox
-from pi_sandbox_factory.sandbox_options import write_json
+from ai_sandbox_factory import connectors, sandbox
+from ai_sandbox_factory.sandbox_options import write_json
 
 
 def podman(*args, **kwargs):
@@ -47,7 +47,7 @@ def main():
 
         try:
             with mock.patch.object(connectors, 'directory', return_value=plugin_dir), \
-                    mock.patch('pi_sandbox_factory.provider_credentials.os_store') as store:
+                    mock.patch('ai_sandbox_factory.provider_credentials.os_store') as store:
                 store.return_value.get_password.return_value = 'fixture-only-token'
                 with mock.patch.object(connectors, 'client_socket', return_value='/missing-mount/api.sock'):
                     try:

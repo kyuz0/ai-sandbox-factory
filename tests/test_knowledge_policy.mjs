@@ -3,7 +3,7 @@ import test from 'node:test';
 import {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {indexingTool,localSource,sourceAccess} from '../pi_sandbox_factory/containers/dev/local-knowledge/index-policy.mjs';
+import {indexingTool,localSource,sourceAccess} from '../ai_sandbox_factory/containers/dev/local-knowledge/index-policy.mjs';
 
 function fixture(t){
  const root=mkdtempSync(join(tmpdir(),'knowledge-policy-'));t.after(()=>rmSync(root,{recursive:true,force:true}));

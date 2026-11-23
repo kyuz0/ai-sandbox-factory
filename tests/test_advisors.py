@@ -2,11 +2,11 @@ import json
 import unittest
 import tempfile
 from pathlib import Path
-from pi_sandbox_factory.sandbox_tui import Service, preset, DEFAULT_SETTINGS
+from ai_sandbox_factory.sandbox_tui import Service, preset, DEFAULT_SETTINGS
 from unittest.mock import patch
 from types import SimpleNamespace
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory import sandbox_advisors as advisors
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox_advisors as advisors
 
 class AdvisorTests(unittest.TestCase):
     def test_disabled_has_no_mount_or_provider_requirement(self):

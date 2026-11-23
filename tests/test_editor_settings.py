@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from argon2 import PasswordHasher
-from pi_sandbox_factory import editor_settings as settings
+from ai_sandbox_factory import editor_settings as settings
 
 
 class Preferences(unittest.TestCase):

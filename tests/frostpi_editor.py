@@ -20,7 +20,7 @@ import uuid
 from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 
 REPO = Path(__file__).resolve().parents[1]
-DEV = REPO / 'pi_sandbox_factory/containers/dev'
+DEV = REPO / 'ai_sandbox_factory/containers/dev'
 EDITOR = DEV.parent / 'editor'
 APPROVAL_LABELS = {
     'automatic': 'Auto (non-interactive)', 'assisted': 'Auto (interactive)',
@@ -28,7 +28,7 @@ APPROVAL_LABELS = {
 }
 sys.path.insert(0, str(REPO))
 from knowledge_documents import write_documents
-from pi_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
+from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -886,7 +886,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 time.sleep(.05)
             assert sock.is_socket(), (root / 'provider.log').read_text()
         if deep_research:
-            profile = sandbox.load_profile(str(REPO / 'pi_sandbox_factory/profiles/deep-research'))
+            profile = sandbox.load_profile(str(REPO / 'ai_sandbox_factory/profiles/deep-research'))
             config.update(profile=profile, subagents=profile['defaults']['subagents'], network='unrestricted')
             config['options']['web_access'] = {
                 'enabled': profile['defaults']['web_search'], 'mode': 'searxng',
@@ -896,7 +896,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             (root / 'reference/fixture.md').write_text('# Local source\nCEDAR_LOCAL_EVIDENCE_746\n')
             config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if local_knowledge:
-            config['profile'] = sandbox.load_profile(str(REPO / 'pi_sandbox_factory/profiles/local-knowledge'))
+            config['profile'] = sandbox.load_profile(str(REPO / 'ai_sandbox_factory/profiles/local-knowledge'))
             config['options']['knowledge_embedding'] = local_knowledge
             if local_knowledge == 'endpoint':
                 config['options'].update(knowledge_embedding_url='http://127.0.0.1:19381/v1',

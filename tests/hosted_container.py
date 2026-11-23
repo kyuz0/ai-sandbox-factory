@@ -23,7 +23,7 @@ def check_editor(name, root, folder, output, call):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         address = f'127.0.0.1:{sock.getsockname()[1]}'
-    assets = root/'pi_sandbox_factory/containers/editor'
+    assets = root/'ai_sandbox_factory/containers/editor'
     settings = {'binary':'/opt/test-code-server/bin/code-server','authority':address,'cwd':'/workspace',
                 'password_hash':'','watch_fallback':(assets/'watch-fallback.cjs').read_text()}
     relay = None
@@ -90,7 +90,7 @@ def main():
     name = 'factory-hosted-check-' + uuid.uuid4().hex[:10]
     volume = name + '-home'
     root = Path(__file__).resolve().parents[1]
-    script = (root / 'pi_sandbox_factory/providers/hosted-models.mjs').read_text()
+    script = (root / 'ai_sandbox_factory/providers/hosted-models.mjs').read_text()
     def call(**value):
         result = subprocess.run(['podman','exec','-i','--user','node',name,'node','--input-type=module','-e',script],
                                 input=json.dumps(value),text=True,capture_output=True,timeout=75)
@@ -100,7 +100,7 @@ def main():
         return reply
     import sys, tempfile, shutil, base64, time
     sys.path.insert(0,str(root))
-    from pi_sandbox_factory import inference
+    from ai_sandbox_factory import inference
     broker=name+'-inference';socket=broker+'-socket';keys=broker+'-keys'
     folder=Path(tempfile.mkdtemp(prefix='factory-native-inference-'))
     config={'hosted_connections':{'openrouter':{},'together':{},'azure':{'endpoint':'https://fixture.openai.azure.com/openai/v1'},'amazon-bedrock':{'region':'eu-west-1','method':'iam'}}}

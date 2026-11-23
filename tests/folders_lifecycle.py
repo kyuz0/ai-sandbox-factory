@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--state-dir', type=Path, required=True)
@@ -49,7 +49,7 @@ sandbox.apply_settings(config, state, {'working_directory': '.'})
 assert cid() == original_id
 saved = json.loads((state / 'config.json').read_text())
 assert json.loads((state / 'attached-container.json').read_text())['workspaceFolder'] == '/workspace'
-command = [sys.executable, '-m', 'pi_sandbox_factory', '--state-dir', str(args.state_dir), 'exec', args.name, '--', 'pwd']
+command = [sys.executable, '-m', 'ai_sandbox_factory', '--state-dir', str(args.state_dir), 'exec', args.name, '--', 'pwd']
 assert subprocess.check_output(command, text=True).strip() == '/workspace'
 sandbox.apply_settings(saved, state, {'working_directory': 'app'})
 assert cid() == original_id

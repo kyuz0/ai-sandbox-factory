@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox
 
 
 class LifecycleTestCase(unittest.TestCase):
@@ -297,8 +297,8 @@ class LocalModelSetupTests(unittest.TestCase):
             with self.assertRaises(ValueError): sandbox.local_model_ports(value)
 
     def test_sandbox_name_fits_all_generated_resource_names(self):
-        from pi_sandbox_factory import inference, sandbox_advisors, sandbox_ssh
-        from pi_sandbox_factory.sandbox_options import SANDBOX_NAME, SANDBOX_NAME_LIMIT
+        from ai_sandbox_factory import inference, sandbox_advisors, sandbox_ssh
+        from ai_sandbox_factory.sandbox_options import SANDBOX_NAME, SANDBOX_NAME_LIMIT
         name = 'a' * SANDBOX_NAME_LIMIT
         config = {'name': name}
         resources = (*sandbox.names(config), *inference.names(config),
@@ -611,7 +611,7 @@ class ListTests(unittest.TestCase):
             self.assertNotIn('fixture-sensitive-value', output.getvalue() + errors.getvalue())
 
     def test_cli_accepts_no_name_and_uses_default_or_custom_state_root(self):
-        for args, root in ((['sandbox.py', 'list'], Path.home() / '.local/state/pi-sandbox-factory'),
+        for args, root in ((['sandbox.py', 'list'], Path.home() / '.local/state/ai-sandbox-factory'),
                            (['sandbox.py', '--state-dir', '/tmp/custom-sandbox-state', 'list'],
                             Path('/tmp/custom-sandbox-state'))):
             with self.subTest(args=args), patch('sys.argv', args), patch.object(sandbox, 'list_sandboxes') as listing:
@@ -880,7 +880,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(json.loads(trust.read_text()), {'/other': True, '/workspace': True})
 
     def test_git_identity_applies_to_new_commits_and_preserves_local_overrides(self):
-        from pi_sandbox_factory import git_settings
+        from ai_sandbox_factory import git_settings
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for directory in ('shared', 'home', 'sandbox', 'repo'):

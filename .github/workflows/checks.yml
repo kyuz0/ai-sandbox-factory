@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'pi_sandbox_factory/**'
+      - 'ai_sandbox_factory/**'
       - 'pyproject.toml'
       - 'MANIFEST.in'
   pull_request:
@@ -52,7 +52,7 @@ jobs:
             baseline=$BEFORE
           fi
           status=0
-          git diff --quiet "$baseline" "$AFTER" -- pi_sandbox_factory/ pyproject.toml MANIFEST.in || status=$?
+          git diff --quiet "$baseline" "$AFTER" -- ai_sandbox_factory/ pyproject.toml MANIFEST.in || status=$?
           case "$status" in
             0) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
             1) echo 'changed=true' >> "$GITHUB_OUTPUT" ;;
@@ -68,16 +68,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/check_dependency_main.py
-      - run: npm ci --prefix pi_sandbox_factory/containers/inference --ignore-scripts
+      - run: npm ci --prefix ai_sandbox_factory/containers/inference --ignore-scripts
       - run: node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
       - run: |
           python -m pip wheel --no-deps . -w dist
           python -m venv /tmp/factory-package
-          /tmp/factory-package/bin/pip install dist/pi_sandbox_factory-*.whl
+          /tmp/factory-package/bin/pip install dist/ai_sandbox_factory-*.whl
           cd /tmp
-          /tmp/factory-package/bin/pi-sandbox-factory --version
-          /tmp/factory-package/bin/pi-sandbox-factory profile list
-          /tmp/factory-package/bin/pi-sandbox-factory provider list
+          /tmp/factory-package/bin/ai-sandbox-factory --version
+          /tmp/factory-package/bin/ai-sandbox-factory --help
+          /tmp/factory-package/bin/ai-sandbox-factory profile list
+          /tmp/factory-package/bin/ai-sandbox-factory provider list
   fresh-sandbox:
     name: Fresh Pi and FrostPi sandbox
     runs-on: ubuntu-latest
@@ -139,7 +140,7 @@ jobs:
               git('merge-base', '--is-ancestor', tested, latest)
               # Docs may have landed since the tests started. Release only the tested package.
               diff = git('diff', '--quiet', tested, latest, '--',
-                         'pi_sandbox_factory/', 'pyproject.toml', 'MANIFEST.in', check=False)
+                         'ai_sandbox_factory/', 'pyproject.toml', 'MANIFEST.in', check=False)
               if diff.returncode == 1:
                   print('Main has newer package changes. The newer push will run its own release checks.')
                   break

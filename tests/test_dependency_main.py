@@ -36,7 +36,7 @@ class DependencyMainTests(unittest.TestCase):
     def test_archive_pin_must_match_manifest_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            dev = root/'pi_sandbox_factory/containers/dev'
+            dev = root/'ai_sandbox_factory/containers/dev'
             (dev/'security').mkdir(parents=True)
             (dev/'extensions.lock.json').write_text('{"extensions":{}}')
             (dev/'security/sources.json').write_text(json.dumps({'test': {'commit':'a'*40,'url':'https://codeload.github.com/owner/project/tar.gz/'+'b'*40}}))

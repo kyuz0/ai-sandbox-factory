@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / 'pi_sandbox_factory/containers/primary'))
+sys.path.insert(0, str(Path(__file__).parents[1] / 'ai_sandbox_factory/containers/primary'))
 from agy_editor_assets import CONFIG, ORIGIN_CHECK, Rejected, render
 
 

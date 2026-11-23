@@ -2,8 +2,8 @@
 import unittest
 from urllib.parse import quote
 
-from pi_sandbox_factory.native_browser_hub import AntigravityRelay
-from pi_sandbox_factory.browser_editor import validate_head
+from ai_sandbox_factory.native_browser_hub import AntigravityRelay
+from ai_sandbox_factory.browser_editor import validate_head
 
 
 class NativeHubBoundary(unittest.TestCase):

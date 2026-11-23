@@ -7,7 +7,7 @@ import unittest
 import uuid
 
 
-SOURCE = Path(__file__).parents[1] / 'pi_sandbox_factory/containers/primary'
+SOURCE = Path(__file__).parents[1] / 'ai_sandbox_factory/containers/primary'
 sys.path.insert(0, str(SOURCE))
 from agy_editor_protocol import AntigravityProtocol, Rejected, project
 

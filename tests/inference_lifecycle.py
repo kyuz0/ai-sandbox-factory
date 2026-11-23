@@ -8,7 +8,7 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox, inference, hosted_models
+from ai_sandbox_factory import sandbox, inference, hosted_models
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
         (root/'providers.json').write_text('{}')
         config=None
         try:
-            subprocess.run([sys.executable,'-m','pi_sandbox_factory','--state-dir',str(state.parent),'create',name,
+            subprocess.run([sys.executable,'-m','ai_sandbox_factory','--state-dir',str(state.parent),'create',name,
                 '--workspace',str(workspace),'--engine','podman','--allow-domain','pi.dev:443',
                 '--providers-file',str(root/'providers.json'),'--editor','pi'],check=True,capture_output=True,text=True)
             config=json.loads((state/'config.json').read_text())

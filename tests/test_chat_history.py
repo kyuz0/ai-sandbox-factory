@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from zipfile import ZipFile, ZipInfo
 
-from pi_sandbox_factory import chat_history, session_archive
+from ai_sandbox_factory import chat_history, session_archive
 
 
 def transcript(session_id, cwd='/workspace', text='Existing chat'):

@@ -5,11 +5,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ModelsScreen, SettingsForm, preset
-from pi_sandbox_factory.models_ui import HostedProviders, ModelDialog, ProviderDialog
-from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
-from pi_sandbox_factory.tui_widgets import Checkbox
-from pi_sandbox_factory import editor_settings, hosted_models, inference, provider_credentials
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ModelsScreen, SettingsForm, preset
+from ai_sandbox_factory.models_ui import HostedProviders, ModelDialog, ProviderDialog
+from ai_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
+from ai_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory import editor_settings, hosted_models, inference, provider_credentials
 from test_tui import FakeService
 
 
@@ -32,14 +32,14 @@ class HostedUITests(unittest.TestCase):
     def _callTestMethod(self,method): self.runner.run(method())
 
     async def test_post_creation_reviewer_choice_survives_skipping_chat_default(self):
-        from pi_sandbox_factory.reviewer_ui import ReviewerFields
+        from ai_sandbox_factory.reviewer_ui import ReviewerFields
         service = ModelService([])
         service.plugin_model = Mock(side_effect=service.hosted_request)
         service.approval_models = lambda name: [
             {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
             {'provider': 'openrouter', 'id': 'other/model', 'name': 'Other'},
         ]
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(Path(temp), service)
             async with app.run_test(size=(80, 24)) as pilot:
                 dialog = ModelDialog('test', 'chaucer', plugin_label='Chaucer', optional=True, approval_model='current')
@@ -64,7 +64,7 @@ class HostedUITests(unittest.TestCase):
                           'operations': [{'method': 'GET', 'path': '/models'}]},
         }}
         record = {'name': 'test', 'config': {'model_providers': [source]}}
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             service = ModelService([])
             configured = []
             service.provider_key_status = lambda name: {'configured': list(configured)}
@@ -106,7 +106,7 @@ class HostedUITests(unittest.TestCase):
         work, test = 'a' * 32, 'b' * 32
         records = {work: {'label':'Work', 'scope':binding}, test: {'label':'Test', 'scope':binding}}
         with tempfile.TemporaryDirectory() as temp, \
-             patch('pi_sandbox_factory.updates.available_update', return_value=None), \
+             patch('ai_sandbox_factory.updates.available_update', return_value=None), \
              patch.object(provider_credentials, 'entries', side_effect=lambda scope: records if scope == binding else {}):
             app = Cockpit(Path(temp), ModelService([]))
             chosen = []
@@ -159,7 +159,7 @@ class HostedUITests(unittest.TestCase):
                 self.assertEqual(chosen[-1], {'ref': work})
 
     async def test_key_only_save_does_not_show_unrelated_model_or_reload_steps(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
             root=Path(temp);(root/'test').mkdir()
             editor_settings.save(root/'test',{'mode':'pi'})
             app=Cockpit(root,ModelService([]))
@@ -188,8 +188,8 @@ class HostedUITests(unittest.TestCase):
         binding = provider_credentials.scope('local', inference.local_route(8000))
         records = {work: {'label': 'Work', 'scope': binding}}
         with tempfile.TemporaryDirectory() as temp, \
-             patch('pi_sandbox_factory.updates.available_update', return_value=None), \
-             patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), \
+             patch('ai_sandbox_factory.updates.available_update', return_value=None), \
+             patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), \
              patch.object(provider_credentials, 'entries', side_effect=lambda scope: records if scope == binding else {}):
             app = Cockpit(Path(temp), ModelService([]))
             async with app.run_test(size=(80, 24)) as pilot:
@@ -252,7 +252,7 @@ class HostedUITests(unittest.TestCase):
 
     async def test_create_edit_model_selection_and_small_terminal(self):
         for size in [(80,24),(120,40),(220,50)]:
-            with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+            with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
                 service=ModelService([]);app=Cockpit(Path(temp),service)
                 async with app.run_test(size=size) as pilot:
                     await pilot.pause();await app.workers.wait_for_complete()

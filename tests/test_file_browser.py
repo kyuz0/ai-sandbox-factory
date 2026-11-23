@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 from textual.app import App
 from textual.widgets import Button, Input
-from pi_sandbox_factory.file_browser import FolderPicker, matching_paths
-from pi_sandbox_factory.sandbox_tui import Cockpit
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.file_browser import FolderPicker, matching_paths
+from ai_sandbox_factory.sandbox_tui import Cockpit
+from ai_sandbox_factory.tui_widgets import Checkbox
 
 
 class PickerApp(App):
@@ -132,7 +132,7 @@ class FileBrowserTests(unittest.IsolatedAsyncioTestCase):
                 app = PickerApp()
                 async with app.run_test(size=size) as pilot:
                     (self.root / 'Downloads').mkdir(exist_ok=True)
-                    with patch('pi_sandbox_factory.file_browser.Path.home', return_value=self.root):
+                    with patch('ai_sandbox_factory.file_browser.Path.home', return_value=self.root):
                         picker = FolderPicker(self.root, mode='save', filename='backup.zip', places={'Chat backups': self.root})
                     await app.push_screen(picker)
                     await self.settle(app, pilot)
@@ -219,7 +219,7 @@ class FileBrowserTests(unittest.IsolatedAsyncioTestCase):
             picker = FolderPicker(self.root, mode='file')
             await app.push_screen(picker)
             await self.settle(app, pilot)
-            with patch('pi_sandbox_factory.file_browser.matching_paths', side_effect=scanning):
+            with patch('ai_sandbox_factory.file_browser.matching_paths', side_effect=scanning):
                 picker.query_one('#folder-filter', Input).value = 'report'
                 picker.query_one('#folder-recursive', Checkbox).value = True
                 await pilot.pause()
@@ -253,7 +253,7 @@ class FileBrowserTests(unittest.IsolatedAsyncioTestCase):
             if path == self.root / 'archive':
                 raise PermissionError('access denied')
             return real(path)
-        with patch('pi_sandbox_factory.file_browser.os.scandir', side_effect=read):
+        with patch('ai_sandbox_factory.file_browser.os.scandir', side_effect=read):
             values, errors = self.scan()
         self.assertIn(self.root / 'report.zip', values)
         self.assertEqual(len(errors), 1)

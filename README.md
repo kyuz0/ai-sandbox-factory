@@ -1,4 +1,4 @@
-# Pi Sandbox Factory
+# AI Sandbox Factory
 
 Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder, saved chats and restricted networking by default. Choose the coding agent when you create the sandbox.
 
@@ -8,7 +8,7 @@ You can also use the selected agent’s CLI. For Pi, **FrostPi in browser** prov
 
 If you have VS Code installed on your computer, choose **VS Code on host** for a Pi sandbox. This gives less isolation from editor extensions because host-side extensions can access your computer. Choose this when creating a separate sandbox; a sandbox already used with the browser editor cannot switch to host VS Code. [Editor options and security](docs/browser-editor.md#choose-a-client)
 
-![Pi Sandbox Factory dashboard](docs/sandboxes.png)
+![AI Sandbox Factory dashboard](docs/sandboxes.png)
 
 ## Install
 
@@ -18,11 +18,17 @@ Pi CLI or VS Code on host. [Platform setup](docs/platforms.md)
 
 ```sh
 pipx ensurepath
-pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git
-pi-sandbox-factory
+pipx install git+https://github.com/kyuz0/ai-sandbox-factory.git
+ai-sandbox-factory
 ```
 
-Open a new terminal if `pi-sandbox-factory` is not found.
+Open a new terminal if `ai-sandbox-factory` is not found.
+
+Previously installed Pi Sandbox Factory? Use **Upgrade now** or
+`pipx upgrade pi-sandbox-factory`, then run `pi-sandbox-factory`. Its migration
+launcher asks before installing AI Sandbox Factory and moving your saved setup
+to the new folders. Project files and saved chats are kept. The old command
+continues to forward to the new application. [Migration details](docs/usage.md#upgrade-from-pi-sandbox-factory)
 
 ## Create a sandbox
 
@@ -66,11 +72,11 @@ client, choose **Open with…** and pick one, such as Pi CLI. [Using a sandbox](
 
 *FrostPi updates a hiking route planner and runs its tests in the sandbox.*
 
-Update Factory with **Upgrade now** or `pipx upgrade pi-sandbox-factory`.
+Update Factory with **Upgrade now** or `pipx upgrade ai-sandbox-factory`.
 To update a sandbox, use **Actions… → Update sources and recreate…**. This
 builds the replacement first, then restarts the sandbox with its workspace
 and saved chats intact. **Show Alerts** offers **Update to FrostPi…** for older
-Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes) · [Archived Pendant branch](https://github.com/kyuz0/pi-sandbox-factory/tree/pendant)
+Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes) · [Archived Pendant branch](https://github.com/kyuz0/ai-sandbox-factory/tree/pendant)
 
 ## Profiles and providers
 

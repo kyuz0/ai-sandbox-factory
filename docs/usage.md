@@ -87,8 +87,8 @@ the build cache.
 
 ## Update Factory and sandboxes
 
-`pi-sandbox-factory --version` shows the installed Factory version. With pipx,
-use **Upgrade now** or `pipx upgrade pi-sandbox-factory`. For a source checkout,
+`ai-sandbox-factory --version` shows the installed Factory version. With pipx,
+use **Upgrade now** or `pipx upgrade ai-sandbox-factory`. For a source checkout,
 pull the changes and reinstall the package.
 
 Update a sandbox with **Actions… → Update sources and recreate…**. Use **Cancel
@@ -102,6 +102,27 @@ dependency files after updating the sandbox. Your project files and saved chats 
 
 For a sandbox that still uses Pendant, open **Show Alerts → Update to FrostPi…**
 when you’re ready to switch.
+
+### Upgrade from Pi Sandbox Factory
+
+Existing installations can use **Upgrade now** or `pipx upgrade pi-sandbox-factory`.
+Then run `pi-sandbox-factory` and press Enter to install AI Sandbox Factory. After
+migration, use `ai-sandbox-factory` and `pipx upgrade ai-sandbox-factory`.
+
+The migration launcher moves the default settings, saved sandbox state, chat backups
+and cache into sibling folders named `ai-sandbox-factory`. It leaves compatibility
+links at the old paths so existing snapshots, container mounts and editor connections
+keep working. Project files and custom `--state-dir` locations are not moved.
+Containers, volumes and credential-service identifiers retain their existing names.
+
+If the new application is already installed, the launcher reuses it. The old command
+forwards all arguments to the new application. With pip, both packages use the same
+Python environment; with pipx, each has its own environment. You can remove the old
+launcher with `pipx uninstall pi-sandbox-factory` when you no longer need that command.
+
+For unattended migration, pass `--yes` to the old command. Otherwise, a first launch
+without a terminal reports how to confirm and exits. If both an old folder and its
+new destination exist, migration stops and names both paths without overwriting either.
 
 ## Change approval and sandbox settings
 
@@ -132,7 +153,7 @@ in place.
 
 For a sandbox you have already created:
 
-1. Open `pi-sandbox-factory` on the host and select the sandbox.
+1. Open `ai-sandbox-factory` on the host and select the sandbox.
 2. Open **Settings → Approvals & sandbox**.
 3. Set **Use inner command sandbox** and **Protect common credential files**,
    then choose **Approval mode**. **Explain** compares all four modes. Leave
@@ -248,7 +269,7 @@ For CLI creation, use `--working-directory apps/api` and optionally
 ```
 
 To edit these later, pass an object containing `working_directory` and/or
-`extra_folders` to `pi-sandbox-factory update NAME --settings-file settings.json`.
+`extra_folders` to `ai-sandbox-factory update NAME --settings-file settings.json`.
 Additional folders require Docker Engine 25+ when using Docker.
 Separately mounted filesystems nested inside an added host folder are excluded;
 add each filesystem as its own folder if needed.
@@ -294,19 +315,19 @@ model, use `/local-models refresh` or **Settings → Model Providers → Local m
 ## CLI and storage
 
 ```sh
-pi-sandbox-factory create example --workspace /absolute/path/to/project \
+ai-sandbox-factory create example --workspace /absolute/path/to/project \
   --engine podman --memory 8g --local-model-ports 8000 \
   --allow-domain local-model.internal:8000 --start
-pi-sandbox-factory open example
-pi-sandbox-factory pi example
-pi-sandbox-factory down example
-pi-sandbox-factory up example
-pi-sandbox-factory delete example
+ai-sandbox-factory open example
+ai-sandbox-factory pi example
+ai-sandbox-factory down example
+ai-sandbox-factory up example
+ai-sandbox-factory delete example
 ```
 
-Saved state lives in `~/.local/state/pi-sandbox-factory`. Pass `--state-dir PATH`
+Saved state lives in `~/.local/state/ai-sandbox-factory`. Pass `--state-dir PATH`
 before the command for a separate inventory. TUI defaults live in
-`~/.config/pi-sandbox-factory/cockpit.json` (or under `XDG_CONFIG_HOME`).
+`~/.config/ai-sandbox-factory/cockpit.json` (or under `XDG_CONFIG_HOME`).
 
 ### Package downloads and website categories
 

@@ -7,7 +7,7 @@ import sys
 import tempfile
 import uuid
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--image',required=True)
 p.add_argument('--packages',type=Path,help='Optional dependency checkout to test before pinning')
@@ -18,12 +18,12 @@ root=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='factory-local-browser-') as directory:
  state=Path(directory)
  (state/'allowlist.txt').write_text('fixture.test:80\n')
- config={'common':{'path':str(root/'pi_sandbox_factory/containers/dev')},'options':{'browser':True,'goals':a.goals,'scheduling':a.editor_env,'compaction_recall':'off'}}
+ config={'common':{'path':str(root/'ai_sandbox_factory/containers/dev')},'options':{'browser':True,'goals':a.goals,'scheduling':a.editor_env,'compaction_recall':'off'}}
  sandbox.prepare_options(config,state)
  # Mounts are read-only; UID mapping preserves the current user's private fixtures.
  for client in ('pi',):
   name='factory-local-check-'+uuid.uuid4().hex[:10]
-  mounts=[(root/'tests','/fixture'),(root/'pi_sandbox_factory/containers/editor/watch-fallback.cjs','/fixture-watch.cjs'),(state/'runtime-config','/opt/pi-security/config'),(state/'options.json','/opt/sandbox/options.json'),(root/'pi_sandbox_factory/containers/dev/bootstrap.py','/usr/local/lib/sandbox-bootstrap.py')]
+  mounts=[(root/'tests','/fixture'),(root/'ai_sandbox_factory/containers/editor/watch-fallback.cjs','/fixture-watch.cjs'),(state/'runtime-config','/opt/pi-security/config'),(state/'options.json','/opt/sandbox/options.json'),(root/'ai_sandbox_factory/containers/dev/bootstrap.py','/usr/local/lib/sandbox-bootstrap.py')]
   if a.packages:
    mounts.append((a.packages/'packages','/opt/pi-security/packages'))
    # Browser imports are relative to the installed Betterwright package tree.

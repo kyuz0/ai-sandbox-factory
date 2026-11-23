@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
-from pi_sandbox_factory import prompt_library, sandbox
-from pi_sandbox_factory.prompt_ui import EditPrompt, PromptChoice, SandboxPromptScreen
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
-from pi_sandbox_factory.tui_widgets import Feedback
+from ai_sandbox_factory import prompt_library, sandbox
+from ai_sandbox_factory.prompt_ui import EditPrompt, PromptChoice, SandboxPromptScreen
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
+from ai_sandbox_factory.tui_widgets import Feedback
 from test_tui import FakeService
 
 
@@ -21,8 +21,8 @@ class SystemPromptTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.enterContext(patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(self.root / 'library')))
-        self.enterContext(patch('pi_sandbox_factory.sandbox_tui.load_defaults', return_value=DEFAULT_SETTINGS))
-        self.enterContext(patch('pi_sandbox_factory.updates.available_update', return_value=None))
+        self.enterContext(patch('ai_sandbox_factory.sandbox_tui.load_defaults', return_value=DEFAULT_SETTINGS))
+        self.enterContext(patch('ai_sandbox_factory.updates.available_update', return_value=None))
 
     def test_editing_or_removing_library_entry_preserves_sandbox_copy(self):
         prompt_library.save('Research', 'Use primary sources.')

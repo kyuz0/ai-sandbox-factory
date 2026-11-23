@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import host_platform as host, sandbox
+from ai_sandbox_factory import host_platform as host, sandbox
 
 
 class PastaCompatibilityTests(unittest.TestCase):

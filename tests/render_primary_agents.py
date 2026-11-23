@@ -11,9 +11,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
-from pi_sandbox_factory.sandbox_tui import (
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.editor_ui import EditorScreen, OpenWith
+from ai_sandbox_factory.sandbox_tui import (
     Cockpit, DEFAULT_SETTINGS, NewSandbox, PrimarySignIn, SettingsForm, SettingsMenu,
     options, preset,
 )
@@ -35,8 +35,8 @@ async def capture(root, size, approvals_only=False):
         record = dict(name='transit', profile='base', engine='podman', dev='running',
                       proxy='running', workspace=str(project), config=config)
         with (patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(state / 'library')),
-              patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)),
-              patch('pi_sandbox_factory.updates.available_update', return_value=None)):
+              patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)),
+              patch('ai_sandbox_factory.updates.available_update', return_value=None)):
             app = Cockpit(state, FakeService([record]))
             async with app.run_test(size=size) as pilot:
                 await pilot.pause()
@@ -171,7 +171,7 @@ async def capture(root, size, approvals_only=False):
                     app.screen.query_one('#editor-certificate', Input).focus()
                     await shot('editor-https-' + agent)
                     await app.pop_screen()
-                    with patch('pi_sandbox_factory.browser_editor.active', return_value=True):
+                    with patch('ai_sandbox_factory.browser_editor.active', return_value=True):
                         await app.push_screen(EditorScreen('transit'))
                         app.screen.query_one('#editor-uploads').value = True
                         await shot('editor-running-' + agent)

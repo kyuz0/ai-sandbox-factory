@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import sandbox, model_providers
-from pi_sandbox_factory.sandbox_tui import copy_draft, Service
+from ai_sandbox_factory import sandbox, model_providers
+from ai_sandbox_factory.sandbox_tui import copy_draft, Service
 
 
 class CopySettingsTests(unittest.TestCase):
@@ -104,7 +104,7 @@ class CopySettingsTests(unittest.TestCase):
         self.assertEqual(setup.call_args.args[2], {'exa': 'synthetic-key'})
 
     def test_create_copies_multiple_library_skills_with_saved_selection(self):
-        from pi_sandbox_factory import skill_library
+        from ai_sandbox_factory import skill_library
         with patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': str(self.root / 'library')}):
             source=self.root/'new-skills'
             for name in ('first','second'):
@@ -119,7 +119,7 @@ class CopySettingsTests(unittest.TestCase):
             self.assertTrue(all((Path(row['path'])/'SKILL.md').exists() for row in config['extra_skills']))
 
     def test_failed_multi_skill_update_preserves_config_and_running_container(self):
-        from pi_sandbox_factory import skill_library
+        from ai_sandbox_factory import skill_library
         self.config.update(workspace=str(self.workspace), env_file=None, extra_folders=[], ssh={'hosts':[]}, advisors={'providers':[]})
         (self.source/'config.json').write_text(json.dumps(self.config))
         original=(self.source/'config.json').read_bytes()

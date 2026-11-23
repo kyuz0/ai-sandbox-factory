@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 import unittest
-from pi_sandbox_factory.sandbox_options import permissions, guidance
+from ai_sandbox_factory.sandbox_options import permissions, guidance
 
-TEMPLATE = json.loads((Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev/security/config/permissions.json').read_text())
+TEMPLATE = json.loads((Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/dev/security/config/permissions.json').read_text())
 
 class SkillPermissionTests(unittest.TestCase):
     def test_installed_reads_match_native_scope(self):

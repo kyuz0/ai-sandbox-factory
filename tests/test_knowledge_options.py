@@ -5,8 +5,8 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.sandbox_options import options
 
 
 class DocumentSearchTests(unittest.TestCase):

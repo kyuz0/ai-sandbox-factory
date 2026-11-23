@@ -3,7 +3,7 @@ import asyncio,copy,os,sys,tempfile
 from pathlib import Path
 from unittest.mock import patch
 sys.path[:0]=[str(Path(__file__).resolve().parents[1]),str(Path(__file__).resolve().parent)]
-from pi_sandbox_factory.sandbox_tui import Cockpit,DEFAULT_SETTINGS
+from ai_sandbox_factory.sandbox_tui import Cockpit,DEFAULT_SETTINGS
 from textual.widgets import Select,Input
 from test_tui import FakeService
 out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=True)
@@ -11,7 +11,7 @@ if '--mono' in sys.argv:os.environ['NO_COLOR']='1'
 else:os.environ.pop('NO_COLOR',None)
 os.environ['TEXTUAL_COLOR_SYSTEM']='truecolor'
 async def main(size):
- with tempfile.TemporaryDirectory() as temp,patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)),patch('pi_sandbox_factory.updates.available_update',return_value=None):
+ with tempfile.TemporaryDirectory() as temp,patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)),patch('ai_sandbox_factory.updates.available_update',return_value=None):
   records=[]
   for n,name in enumerate(['project-alpha','a-longer-project-name','legacy-project']):
    records.append(dict(name=name,profile='base',engine='podman',dev='running' if n==0 else 'exited',proxy='running',workspace='/home/example/projects/'+name,config={'network':'allowlist','local_model_ports':'8000'},activity={key:f'2026-11-{12+n}T12:30:00+00:00' if n<2 else None for key in ('created','edited','started')}))

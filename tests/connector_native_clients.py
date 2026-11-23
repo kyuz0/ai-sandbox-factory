@@ -6,8 +6,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from connector_live_settings import podman
-from pi_sandbox_factory import connectors, primary_agents, primary_workspace, sandbox
-from pi_sandbox_factory.sandbox_options import write_json
+from ai_sandbox_factory import connectors, primary_agents, primary_workspace, sandbox
+from ai_sandbox_factory.sandbox_options import write_json
 
 
 # Capture the actual native process at launch, before it asks the user to sign in.
@@ -94,7 +94,7 @@ def main():
                     'operations': {'report': 'https://127.0.0.1:1/report', 'private': 'https://127.0.0.1:1/private'}}
         write_json(root / 'plugins/build/connector.json', manifest)
         with patch.object(connectors, 'directory', return_value=root / 'plugins'), \
-                patch('pi_sandbox_factory.provider_credentials.os_store') as store:
+                patch('ai_sandbox_factory.provider_credentials.os_store') as store:
             store.return_value.get_password.return_value = 'fixture-only-token'
             for agent in ('codex', 'claude', 'agy'):
                 check(agent, root)

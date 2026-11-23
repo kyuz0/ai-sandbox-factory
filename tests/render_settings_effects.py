@@ -10,13 +10,13 @@ from unittest.mock import patch
 sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).resolve().parent)]
 from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Input, OptionList
-from pi_sandbox_factory import sandbox, settings_effects
-from pi_sandbox_factory.sandbox_tui import (
+from ai_sandbox_factory import sandbox, settings_effects
+from ai_sandbox_factory.sandbox_tui import (
     Cockpit, DEFAULT_SETTINGS, ApplySettingsReview, Operation, NetworkForm,
     SSHScreen, AdvisorsScreen, ModelsScreen, SettingsForm, preset,
 )
-from pi_sandbox_factory.editor_ui import EditorScreen
-from pi_sandbox_factory.models_ui import ModelDialog
+from ai_sandbox_factory.editor_ui import EditorScreen
+from ai_sandbox_factory.models_ui import ModelDialog
 from test_hosted_models_ui import ModelService
 
 out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
@@ -25,7 +25,7 @@ else: os.environ.pop('NO_COLOR', None)
 os.environ['TEXTUAL_COLOR_SYSTEM'] = 'truecolor'
 
 async def render(size):
-    with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp + '/library'}):
+    with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp + '/library'}):
         root = Path(temp); (root/'demo').mkdir()
         draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS)); draft.update(name='demo', workspace=str(root), engine='podman')
         config = copy.deepcopy(draft); config['profile'] = sandbox.load_profile('base')

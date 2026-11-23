@@ -7,9 +7,9 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Input, Label, Select
 
-from pi_sandbox_factory import embedding_models
-from pi_sandbox_factory.models_ui import HostedProviders
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, preset
+from ai_sandbox_factory import embedding_models
+from ai_sandbox_factory.models_ui import HostedProviders
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, SettingsForm, preset
 from test_tui import FakeService
 
 
@@ -30,7 +30,7 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
         self.draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
         self.draft.update(name='research', workspace=self.temp.name, model_providers=[embedding_provider_fixture()])
         self.addCleanup(patch.stopall)
-        patch('pi_sandbox_factory.updates.available_update', return_value=None).start()
+        patch('ai_sandbox_factory.updates.available_update', return_value=None).start()
 
     async def open_form(self, pilot, editing=False):
         form = SettingsForm(self.draft, editing=editing, setting='document-search' if editing else None)

@@ -29,10 +29,10 @@ providers and extra skills after building the profile.
 ## Install and update
 
 ```sh
-pi-sandbox-factory profile add reporting ./examples/profile
-pi-sandbox-factory profile list
-pi-sandbox-factory profile show reporting
-pi-sandbox-factory create reports --profile reporting --workspace /absolute/path/to/reports \
+ai-sandbox-factory profile add reporting ./examples/profile
+ai-sandbox-factory profile list
+ai-sandbox-factory profile show reporting
+ai-sandbox-factory create reports --profile reporting --workspace /absolute/path/to/reports \
   --local-model-ports 8000 --allow-domain local-model.internal:8000 --start
 ```
 
@@ -40,7 +40,7 @@ Replace the folder with a Git HTTPS or SSH URL to install from a repository.
 For a repository containing several plugins, select the folder:
 
 ```sh
-pi-sandbox-factory profile add reporting git@git.example.com:team/plugins.git --subdir reporting
+ai-sandbox-factory profile add reporting git@git.example.com:team/plugins.git --subdir reporting
 ```
 
 Factory installs the selected subfolder and uses that same folder when you
@@ -49,15 +49,15 @@ Factory uses committed files from a local Git repository, so commit your edits
 before updating. For an ordinary folder it uses the files as they are.
 
 ```sh
-pi-sandbox-factory profile update reporting
-pi-sandbox-factory recreate reports --profile reporting
+ai-sandbox-factory profile update reporting
+ai-sandbox-factory recreate reports --profile reporting
 ```
 
 Update fetches the selected branch or ref. Recreate builds the updated profile
 before stopping the old containers, then preserves the workspace and private
 home. Close the editor first. Updating a pinned commit keeps that commit.
 
-`pi-sandbox-factory profile remove reporting` removes the registration while
+`ai-sandbox-factory profile remove reporting` removes the registration while
 preserving existing sandboxes and their snapshots.
 **Library → Profiles** provides the same install, update and remove operations in the TUI.
 Choose **Details…** on a profile to read its system prompt addendum.
@@ -109,7 +109,7 @@ for the dependency; use `COPY source/ ...` in the Dockerfile. Git credentials an
 `.git` directories are excluded from the image inputs.
 
 Keep service-specific setup in the profile's README and agent instructions.
-Use `pi-sandbox-factory exec NAME -- COMMAND ...` to configure a tool inside its sandbox;
+Use `ai-sandbox-factory exec NAME -- COMMAND ...` to configure a tool inside its sandbox;
 add required destinations through **Settings → Network and Web Search → Network** first.
 
 ## Check it
@@ -117,7 +117,7 @@ add required destinations through **Settings → Network and Web Search → Netw
 Install the example, create a disposable sandbox and run:
 
 ```sh
-pi-sandbox-factory check reports --allowed-url http://local-model.internal:8000/v1/models
+ai-sandbox-factory check reports --allowed-url http://local-model.internal:8000/v1/models
 ```
 
 The endpoint must be running and allowed. This checks the container boundaries,

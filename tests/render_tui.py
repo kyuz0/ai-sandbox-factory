@@ -21,26 +21,26 @@ sys.path[:0] = [str(root), str(root / 'tests')]
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout, check_table_layout
 from test_hosted_models_ui import ModelService
-from pi_sandbox_factory import sandbox, registry, host_platform
-from pi_sandbox_factory import aws_profiles
-from pi_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
-from pi_sandbox_factory.creation import Creation
-from pi_sandbox_factory.settings_catalog import EDIT_FORMS
-from pi_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
-from pi_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
+from ai_sandbox_factory import sandbox, registry, host_platform
+from ai_sandbox_factory import aws_profiles
+from ai_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
+from ai_sandbox_factory.creation import Creation
+from ai_sandbox_factory.settings_catalog import EDIT_FORMS
+from ai_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
+from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
-from pi_sandbox_factory.tui_widgets import Checkbox
-from pi_sandbox_factory.folders_ui import FolderEditor
-from pi_sandbox_factory.editor_ui import EditorScreen, OpenWith
-from pi_sandbox_factory.models_ui import ProviderDialog, ModelDialog
-from pi_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
-from pi_sandbox_factory import hosted_models, inference, provider_credentials
-from pi_sandbox_factory.communications_ui import SlackCredentials
-from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields, CreateSSHDialog
-from pi_sandbox_factory import prompt_library
-from pi_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
-from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox, backup_message
+from ai_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.folders_ui import FolderEditor
+from ai_sandbox_factory.editor_ui import EditorScreen, OpenWith
+from ai_sandbox_factory.models_ui import ProviderDialog, ModelDialog
+from ai_sandbox_factory.credentials_ui import CredentialDialog, LocalKeysDialog
+from ai_sandbox_factory import hosted_models, inference, provider_credentials
+from ai_sandbox_factory.communications_ui import SlackCredentials
+from ai_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields, CreateSSHDialog
+from ai_sandbox_factory import prompt_library
+from ai_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
+from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox, backup_message
 from textual_fspicker.parts import DirectoryNavigation
 
 class ReviewService(FakeService):
@@ -75,9 +75,9 @@ async def capture(size):
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
         aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
         variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only else {}
-        with patch.dict(os.environ, variables), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('pi_sandbox_factory.updates.available_update', return_value=None):
-            app = Cockpit(root, ReviewService([record]))
-            async with app.run_test(size=size) as pilot:
+        with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
+            async with app.run_test(size=size, notifications=app.startup_notice) as pilot:
                 await pilot.pause()
                 await app.workers.wait_for_complete()
                 await pilot.pause()
@@ -133,6 +133,45 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and set(args.only) <= {'home', 'home-renamed'}:
+                    await shot('home-renamed' if app.startup_notice else 'home')
+                    return
+                if args.only and set(args.only) == {'ssh-alias-invalid'}:
+                    draft = preset('base', DEFAULT_SETTINGS)
+                    await app.push_screen(CreateSSHDialog(draft, 'SSH & Git'))
+                    await pilot.pause()
+                    aliases = app.screen.query_one('#ssh-aliases', Input)
+                    for ancestor in aliases.ancestors:
+                        if isinstance(ancestor, Collapsible):
+                            ancestor.collapsed = False
+                    aliases.value = 'build*'
+                    aliases.focus()
+                    aliases.scroll_visible(animate=False)
+                    await pilot.pause()
+                    app.screen.query_one('#ssh-import-aliases', Button).press()
+                    await shot('ssh-alias-invalid')
+                    return
+                if args.only and all(name.startswith('native-docs-') for name in args.only):
+                    record['config']['primary_agent'] = 'agy'
+                    app.service.records = [record]
+                    await app.push_screen(EditorScreen('demo'))
+                    await pilot.pause()
+                    app.screen.query_one('#editor-mode', Select).expanded = True
+                    await shot('native-docs-editor', focus='#editor-mode')
+                    await app.pop_screen()
+                    draft = preset('base', DEFAULT_SETTINGS)
+                    draft.update(name='demo', workspace=str(workspace), primary_agent='codex')
+                    await app.push_screen(SettingsForm(draft))
+                    await pilot.pause()
+                    app.screen.query_one('#primary-approvals-section', Collapsible).collapsed = False
+                    await pilot.pause()
+                    choice = app.screen.query_one('#native-approval', Select)
+                    choice.focus()
+                    choice.scroll_visible(animate=False)
+                    await pilot.pause()
+                    choice.expanded = True
+                    await shot('native-docs-approvals')
+                    return
                 if args.only and all(name.startswith('picker-') for name in args.only):
                     for relative in ('reports', 'archive', '.hidden'):
                         (workspace / relative).mkdir()
@@ -169,8 +208,8 @@ async def capture(size):
                     await app.pop_screen()
                     return
                 if not args.only or any(name.startswith('connector-settings-') for name in args.only):
-                    from pi_sandbox_factory import connectors
-                    from pi_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
+                    from ai_sandbox_factory import connectors
+                    from ai_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
                     with patch.dict(os.environ, XDG_CONFIG_HOME=str(root / 'connector-home')), \
                             patch.object(connectors, 'has_token', return_value=True) as saved_token:
                         await shot('connector-settings-menu', SettingsMenu('demo', c, 'browser'))
@@ -254,7 +293,7 @@ async def capture(size):
                     package.mkdir(parents=True)
                     example = Path(__file__).resolve().parents[1] / 'examples/connectors/build-status/connector.json'
                     (package / 'connector.json').write_bytes(example.read_bytes())
-                    with patch('pi_sandbox_factory.connectors.directory', return_value=package.parent):
+                    with patch('ai_sandbox_factory.connectors.directory', return_value=package.parent):
                         draft = preset('base', DEFAULT_SETTINGS)
                         draft.update(name='demo', workspace='/home/sam/projects/research')
                         await app.push_screen(SettingsForm(draft))
@@ -371,7 +410,7 @@ async def capture(size):
                                                                   str(workspace), root), focus='#folder-name')
                     return
                 if not args.only or any(name.startswith('chat-history-') for name in args.only):
-                    sample = '/home/sam/.local/share/pi-sandbox-factory/chat-backups/demo-chats-20261120-164101.zip'
+                    sample = '/home/sam/.local/share/ai-sandbox-factory/chat-backups/demo-chats-20261120-164101.zip'
                     (workspace / 'demo-chats.zip').touch()
                     (workspace / 'old-chat.jsonl').touch()
                     await shot('chat-history-actions', MoreActions(record))
@@ -466,7 +505,7 @@ async def capture(size):
                     await app.pop_screen()
                     return
                 if args.only and all(name.startswith('embedding-picker-') for name in args.only):
-                    from pi_sandbox_factory import embedding_models
+                    from ai_sandbox_factory import embedding_models
                     from test_document_search_ui import embedding_provider_fixture
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='research', workspace='/home/user/projects/research',
@@ -726,7 +765,7 @@ async def capture(size):
                     resolve = registry.resolve
                     def choices(kind):
                         return {'local': 'Local models', 'example': 'Example Models'} if kind == 'provider' else {'base': 'Default Developer Sandbox'}
-                    with patch('pi_sandbox_factory.skill_library.entries', return_value={}), \
+                    with patch('ai_sandbox_factory.skill_library.entries', return_value={}), \
                          patch.object(registry, 'choices', side_effect=choices), \
                          patch.object(registry, 'resolve', side_effect=lambda kind, name:
                                       root if kind == 'provider' else resolve(kind, name)), \
@@ -877,7 +916,7 @@ async def capture(size):
                     return
                 if args.only and all(name.startswith('home-update-') for name in args.only):
                     app.receive_inventory([{**record, 'workspace': '/home/user/projects/demo'}])
-                    with patch('pi_sandbox_factory.updates.pipx_install', return_value=True), \
+                    with patch('ai_sandbox_factory.updates.pipx_install', return_value=True), \
                             patch.object(host_platform.shutil, 'which', return_value='/usr/bin/pipx'):
                         app.show_update('2099.11.20.153000')
                         await shot('home-update-available', focus='#search')
@@ -887,21 +926,23 @@ async def capture(size):
                         await pilot.pause()
                         await pilot.press('escape')
                         with patch.object(app, 'suspend', return_value=nullcontext()), \
-                                patch('pi_sandbox_factory.sandbox_tui.subprocess.run',
-                                      side_effect=subprocess.CalledProcessError(1, ['pipx', 'upgrade', 'pi-sandbox-factory'],
+                                patch('ai_sandbox_factory.sandbox_tui.subprocess.run',
+                                      side_effect=subprocess.CalledProcessError(1, ['pipx', 'upgrade', 'ai-sandbox-factory'],
                                                                               stderr='Could not connect to the repository.')):
                             app.upgrade(True)
                         await shot('home-update-failed', focus='#close-update-details')
                         await pilot.press('escape')
-                    with patch('pi_sandbox_factory.updates.pipx_install', return_value=False):
+                        await pilot.pause()
+                    with patch('ai_sandbox_factory.updates.pipx_install', return_value=False):
                         app.show_update('2099.11.20.153000')
+                        await pilot.pause()
                         await shot('home-update-source', focus='#application-update-help')
                         await pilot.click('#application-update-help')
                         await shot('home-update-instructions', focus='#close-update-details')
                     return
                 with patch.object(host_platform, 'is_mac', return_value=False), \
                         patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/pipx' if name == 'pipx' else None), \
-                        patch('pi_sandbox_factory.updates.pipx_install', return_value=True):
+                        patch('ai_sandbox_factory.updates.pipx_install', return_value=True):
                     app.check_dependencies()
                     app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown',
                                             'workspace': '/home/user/projects/demo'}])
@@ -912,7 +953,7 @@ async def capture(size):
                 if args.only and 'home-missing-dependencies-long-workspace' in args.only:
                     with patch.object(host_platform, 'is_mac', return_value=False), \
                             patch.object(host_platform.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name if name in ('docker', 'pipx') else None), \
-                            patch('pi_sandbox_factory.updates.pipx_install', return_value=True):
+                            patch('ai_sandbox_factory.updates.pipx_install', return_value=True):
                         app.check_dependencies()
                         app.show_update('2099.11.18.150000')
                         app.receive_inventory([{**record, 'dev': 'unknown', 'proxy': 'unknown',
@@ -961,7 +1002,7 @@ async def capture(size):
                     return SettingsForm(value, editing=True, setting='network-settings')
 
                 if args.only and all(name.startswith('curlie-') for name in args.only):
-                    from pi_sandbox_factory.sandbox_tui import WebsiteGroups
+                    from ai_sandbox_factory.sandbox_tui import WebsiteGroups
                     before = {'revision': 'a' * 32, 'downloaded_at': 1795077720}
                     newer = {'revision': 'b' * 32, 'downloaded_at': 1795209420}
                     research = copy.deepcopy(c)
@@ -977,7 +1018,7 @@ async def capture(size):
                         await pilot.pause()
 
                     for name, info in [('curlie-first-use', None), ('curlie-saved', newer)]:
-                        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=info):
+                        with patch('ai_sandbox_factory.curlie_catalog.metadata', return_value=info):
                             await app.push_screen(SettingsForm({**draft, 'options': research['options']}))
                             await topics()
                             await shot(name)
@@ -992,7 +1033,7 @@ async def capture(size):
                                     await shot('curlie-create-' + part)
                             await app.pop_screen()
                     research['website_groups'] = {'ut1-press': {'curlie_download': before}}
-                    with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=newer):
+                    with patch('ai_sandbox_factory.curlie_catalog.metadata', return_value=newer):
                         await app.push_screen(network_form(config=research))
                         await topics()
                         await shot('curlie-existing')
@@ -1006,7 +1047,7 @@ async def capture(size):
                         websites.confirm_curlie_download('about 180 MB')
                         await shot('curlie-confirm')
                         await app.pop_screen()
-                        with patch('pi_sandbox_factory.curlie_catalog.refresh', side_effect=ValueError(
+                        with patch('ai_sandbox_factory.curlie_catalog.refresh', side_effect=ValueError(
                                 'The Curlie download failed. The connection closed.')):
                             websites.download_curlie()
                             await app.workers.wait_for_complete()
@@ -1052,7 +1093,7 @@ async def capture(size):
                     await app.push_screen(network_form())
                     app.screen.query_one('#allowlist', TextArea).load_text('local-model.internal:8000\nexample.test:443')
                     app.screen.query_one('#web-enabled', Checkbox).value = True
-                    with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                    with patch('ai_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                         app.screen.query_one('#apply', Button).press()
                         await pilot.pause()
                     await shot('network-group-edit-review')
@@ -1097,7 +1138,7 @@ async def capture(size):
                     await shot('settings-ux-advisors', AdvisorsScreen(record))
                     settings = {**draft, 'allowlist': 'local-model.internal:8000'}
                     if any(name.startswith('settings-ux-reviewer-') for name in args.only):
-                        from pi_sandbox_factory.reviewer_ui import ReviewerPicker
+                        from ai_sandbox_factory.reviewer_ui import ReviewerPicker
                         catalogue = [
                             dict(provider='chaucer', id='global-deepseek-v4-1-flash', name='DeepSeek'),
                             dict(provider='openrouter', id='openai/gpt-4o-mini', name='GPT-4o mini'),
@@ -1424,7 +1465,7 @@ async def capture(size):
                         return
 
                 if not args.only or any(name.startswith('advisor-choice-') for name in args.only):
-                    from pi_sandbox_factory.advisors_ui import AdvisorModelHelp
+                    from ai_sandbox_factory.advisors_ui import AdvisorModelHelp
                     for entry, form in [('setup', SettingsForm(copy.deepcopy(draft))), ('settings', AdvisorsScreen(record))]:
                         await app.push_screen(form)
                         if entry == 'setup':

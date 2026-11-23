@@ -9,8 +9,8 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox as core, sandbox_advisors as advisors
-from pi_sandbox_factory import advisor_credentials as credentials
+from ai_sandbox_factory import sandbox as core, sandbox_advisors as advisors
+from ai_sandbox_factory import advisor_credentials as credentials
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--host-logins', action='store_true', help='Copy this user’s host logins and run account/model status checks; no inference')

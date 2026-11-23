@@ -5,8 +5,8 @@ import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {compileRoutes,createBroker} from '../pi_sandbox_factory/containers/inference/broker.mjs';
-import {checkCredential,readCredentials,updateCredentials} from '../pi_sandbox_factory/containers/inference/credentials.mjs';
+import {compileRoutes,createBroker} from '../ai_sandbox_factory/containers/inference/broker.mjs';
+import {checkCredential,readCredentials,updateCredentials} from '../ai_sandbox_factory/containers/inference/credentials.mjs';
 
 const listen = server => new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
 const close = server => {server.closeAllConnections();return new Promise(resolve=>server.close(resolve));};

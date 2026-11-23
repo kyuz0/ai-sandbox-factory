@@ -16,7 +16,7 @@ from uuid import uuid4
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import browser_editor, sandbox
+from ai_sandbox_factory import browser_editor, sandbox
 
 MODEL = 'eu-deepseek-v4-flash'
 WORKER_ROLE = 'fixture-arithmetic'

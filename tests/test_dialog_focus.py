@@ -7,23 +7,23 @@ from unittest.mock import patch
 
 from textual.widgets import Input, Select
 
-from pi_sandbox_factory.aws_ui import AWSAccessDialog
-from pi_sandbox_factory.chat_history_ui import ChatTransfer
-from pi_sandbox_factory.communications_ui import SlackCredentials
-from pi_sandbox_factory.credentials_ui import CredentialDialog
-from pi_sandbox_factory.file_browser import FolderPicker
-from pi_sandbox_factory.folders_ui import FolderEditor
-from pi_sandbox_factory.models_ui import ModelDialog, ProviderDialog
-from pi_sandbox_factory.prompt_ui import EditPrompt
-from pi_sandbox_factory.repository_ui import RepositorySetup
-from pi_sandbox_factory.sandbox_tui import Cockpit, SearchProviderDialog
+from ai_sandbox_factory.aws_ui import AWSAccessDialog
+from ai_sandbox_factory.chat_history_ui import ChatTransfer
+from ai_sandbox_factory.communications_ui import SlackCredentials
+from ai_sandbox_factory.credentials_ui import CredentialDialog
+from ai_sandbox_factory.file_browser import FolderPicker
+from ai_sandbox_factory.folders_ui import FolderEditor
+from ai_sandbox_factory.models_ui import ModelDialog, ProviderDialog
+from ai_sandbox_factory.prompt_ui import EditPrompt
+from ai_sandbox_factory.repository_ui import RepositorySetup
+from ai_sandbox_factory.sandbox_tui import Cockpit, SearchProviderDialog
 from test_hosted_models_ui import ModelService
 
 
 class DialogFocusTests(unittest.IsolatedAsyncioTestCase):
     async def test_type_immediately_after_opening(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None), \
-                patch('pi_sandbox_factory.provider_credentials.entries', return_value={}):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None), \
+                patch('ai_sandbox_factory.provider_credentials.entries', return_value={}):
             root = Path(temp)
             service = ModelService([])
             service.plugin_model = service.hosted_request
@@ -66,7 +66,7 @@ class DialogFocusTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause()
 
     async def test_model_search_keeps_typed_filter_while_catalogue_loads(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             service = ModelService([])
             release = threading.Event()
 

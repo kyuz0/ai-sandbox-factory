@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
-from pi_sandbox_factory import sandbox_extensions as extensions
+from ai_sandbox_factory import sandbox_extensions as extensions
 
 
 def bundle(name='package.json', content=b'{}', kind=tarfile.REGTYPE):
@@ -100,7 +100,7 @@ class ExtensionTests(unittest.TestCase):
             'url': 'https://example.test/pi-packages.tar.gz', 'commit': self.source['commit'],
             'sha256': hashlib.sha256(blob).hexdigest(),
         }}))
-        source = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev/security/fetch.py'
+        source = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/dev/security/fetch.py'
         script = self.root / 'fetch.py'
         script.write_bytes(source.read_bytes())
         with patch('urllib.request.urlopen', return_value=io.BytesIO(blob)):

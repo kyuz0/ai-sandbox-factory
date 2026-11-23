@@ -59,7 +59,7 @@ reviewerSourceSha256:hash.digest('hex')}));"""
  versions['pi'] = subprocess.check_output(['podman','exec',DEV,'pi','--version'],text=True).strip()
  test_files = ['tests/integration.py','tests/mock_inference.py','tests/check_review_images_rpc.py','tests/check_pendant_worker.cjs']
  manifest = {'scenario':'review-recovery','status':'running','factoryCommit':revision,
-  'declaredSourcePin':json.loads((ROOT/'pi_sandbox_factory/containers/dev/security/sources.json').read_text()),
+  'declaredSourcePin':json.loads((ROOT/'ai_sandbox_factory/containers/dev/security/sources.json').read_text()),
   'testFileSha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in test_files},
   'runtime':versions,'reviewer':a.review_model or 'scripted','operations':46,'reviewDecisions':44,
   'reviewerInputLimit':4096}

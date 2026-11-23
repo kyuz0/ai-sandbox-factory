@@ -9,7 +9,7 @@ import time
 import uuid
 from unittest.mock import patch
 
-from pi_sandbox_factory import sandbox, sandbox_ssh as ssh, git_settings
+from ai_sandbox_factory import sandbox, sandbox_ssh as ssh, git_settings
 
 SERVER = '''FROM docker.io/library/debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-server git python3 && rm -rf /var/lib/apt/lists/* \\

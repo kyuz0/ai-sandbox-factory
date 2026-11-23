@@ -60,8 +60,8 @@ websites use your normal network rules. View the allowed service destinations un
 From a terminal, configure a running sandbox with masked prompts:
 
 ```sh
-pi-sandbox-factory communication-key NAME
-pi-sandbox-factory communication-key NAME --status
+ai-sandbox-factory communication-key NAME
+ai-sandbox-factory communication-key NAME --status
 ```
 
 The integration uses [@dreki-gg/pi-slack](https://github.com/jalbarrang/pi-slack),

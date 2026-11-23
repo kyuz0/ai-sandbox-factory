@@ -22,7 +22,7 @@ def prepare(root):
 
 
 def install(container):
-    from pi_sandbox_factory.browser_editor import INSTALL
+    from ai_sandbox_factory.browser_editor import INSTALL
     for name in ('browser_editor_probe', 'browser_editor_web_probe'):
         folder = Path(__file__).parent / name
         meta = json.loads((folder / 'package.json').read_text())

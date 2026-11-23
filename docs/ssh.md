@@ -28,7 +28,7 @@ For authenticated Git operations with an isolated private key, use SSH.
 
 ## SSH setup
 
-In **Review sandbox → Connectors → SSH & Git**, enter destinations or import host SSH aliases.
+In **Review sandbox → Connectors → SSH & Git**, enter destinations or import host SSH aliases. Import errors identify the rejected alias and explain the constraint. OpenSSH configuration errors include its exit status, diagnostic, and the file and line number when supplied by OpenSSH.
 Choose **Generate repository key** or **Import and unlock** to set up the key
 as soon as the sandbox starts. If you generate a key, Factory displays its
 public half for you to register with the Git server.
@@ -65,10 +65,10 @@ when the companion starts.
 CLI key management after configuring destinations:
 
 ```sh
-pi-sandbox-factory ssh-import-key NAME --key-file ~/.ssh/id_ed25519
-pi-sandbox-factory ssh-unlock NAME --duration 2d
-pi-sandbox-factory ssh-generate-key NAME
-pi-sandbox-factory ssh-public-key NAME
+ai-sandbox-factory ssh-import-key NAME --key-file ~/.ssh/id_ed25519
+ai-sandbox-factory ssh-unlock NAME --duration 2d
+ai-sandbox-factory ssh-generate-key NAME
+ai-sandbox-factory ssh-public-key NAME
 ```
 
 For GitHub, configure an alias such as `github-project`, username `git`, hostname `github.com`, port `22`, and its trusted host keys. Import a key with the repository access you need. A read-only deploy key limits access to one repository.

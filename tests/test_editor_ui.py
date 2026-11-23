@@ -6,10 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Footer, Input, OptionList, Select, Static
-from pi_sandbox_factory import editor_settings
-from pi_sandbox_factory.editor_ui import EditorFields, EditorScreen, OpenWith
-from pi_sandbox_factory.sandbox_tui import Cockpit, Operation
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory import editor_settings
+from ai_sandbox_factory.editor_ui import EditorFields, EditorScreen, OpenWith
+from ai_sandbox_factory.sandbox_tui import Cockpit, Operation
+from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
 
@@ -21,7 +21,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
         self.state = self.root / 'demo'
         self.state.mkdir()
         for name in ('available_update',):
-            mock = patch('pi_sandbox_factory.updates.' + name, return_value=None)
+            mock = patch('ai_sandbox_factory.updates.' + name, return_value=None)
             mock.start(); self.addCleanup(mock.stop)
         self.app = Cockpit(self.root, FakeService([]))
 
@@ -105,7 +105,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(password.region.bottom, screen.query_one('.wizard-actions').region.y)
 
     async def test_restart_notice_requires_an_actual_change(self):
-        with patch('pi_sandbox_factory.browser_editor.active', return_value=True):
+        with patch('ai_sandbox_factory.browser_editor.active', return_value=True):
             async with self.app.run_test(size=(80, 24)) as pilot:
                 await self.ready(pilot)
                 await self.app.push_screen(EditorScreen('demo'))
@@ -128,7 +128,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             screen = self.app.screen
             screen.query_one('#editor-auth', Checkbox).value = True
             screen.query_one('#editor-password', Input).value = 'synthetic-password-only'
-            with patch('pi_sandbox_factory.browser_editor.stop') as stop:
+            with patch('ai_sandbox_factory.browser_editor.stop') as stop:
                 await pilot.click('#editor-save')
                 await self.ready(pilot)
                 stop.assert_called_once_with(self.state)
@@ -143,12 +143,12 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(password.value, '')
             self.assertTrue(password.password)
             self.assertEqual(self.app.screen.query_one(EditorFields).collect(), value)
-            with patch('pi_sandbox_factory.browser_editor.stop') as stop:
+            with patch('ai_sandbox_factory.browser_editor.stop') as stop:
                 await pilot.click('#editor-save'); await pilot.pause()
                 stop.assert_not_called()
 
     async def test_defaults_show_only_the_client_and_summary_updates(self):
-        from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, SettingsForm, preset
+        from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, SettingsForm, preset
         import copy
         async with self.app.run_test(size=(80, 24)) as pilot:
             await self.ready(pilot)

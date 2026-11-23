@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const {pollWatch, install} = require('../pi_sandbox_factory/containers/editor/watch-fallback.cjs');
+const {pollWatch, install} = require('../ai_sandbox_factory/containers/editor/watch-fallback.cjs');
 const delay = ms => new Promise(r => setTimeout(r, ms));
 async function until(predicate) {
   for(let n=0;n<100;n++){if(predicate())return;await delay(20);}

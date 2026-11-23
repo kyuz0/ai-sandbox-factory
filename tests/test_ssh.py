@@ -6,12 +6,39 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory import sandbox_ssh as ssh
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox_ssh as ssh
 
 HOST={'alias':'build','hostname':'192.0.2.10','port':22,'user':'demo','host_keys':['ssh-ed25519 AAAA']}
 
 class SSHTests(unittest.TestCase):
+    def test_import_errors_identify_the_alias_and_constraint(self):
+        for alias in ('_build', '.build', 'build+ci', 'build=ci'):
+            self.assertEqual(ssh.validate({'hosts': [{**HOST, 'alias': alias}]})['hosts'][0]['alias'], alias)
+        for alias, reason in [('build*', 'wildcard'), ('root@build', 'relay filenames'),
+                              ('a' * (ssh.MAX_ALIAS_LENGTH + 1), 'relay socket path')]:
+            with self.subTest(alias=alias), patch.object(ssh.subprocess, 'run') as run:
+                with self.assertRaises(ValueError) as error:
+                    ssh.import_aliases(alias)
+                self.assertIn(repr(alias), str(error.exception))
+                self.assertIn(reason, str(error.exception))
+                run.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'Host aliases'):
+            ssh.import_aliases('')
+
+    def test_import_preserves_the_real_openssh_parse_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / 'config'
+            config.write_text('Host build\n  NotAnSSHOption yes\n')
+            with self.assertRaises(ValueError) as error:
+                ssh.import_aliases('build', config)
+            message = str(error.exception)
+            self.assertIn("SSH alias 'build'", message)
+            self.assertIn('ssh -G exited with status 255', message)
+            self.assertIn(str(config), message)
+            self.assertIn('line 2', message)
+            self.assertIn('Bad configuration option', message)
+
     def test_status_distinguishes_missing_route_unloaded_key_and_agent_failure(self):
         spec = importlib.util.spec_from_file_location('ssh_status', sandbox.ROOT / 'containers/dev/ssh-status.py')
         module = importlib.util.module_from_spec(spec)
@@ -121,13 +148,13 @@ class SSHTests(unittest.TestCase):
             file=Path(tmp)/'known_hosts';file.touch()
             for marker in ['@revoked','@cert-authority']:
                 response=SimpleNamespace(returncode=0,stdout=f'{marker} host ssh-ed25519 AAAA\n')
-                with patch('pi_sandbox_factory.sandbox_ssh.subprocess.run',return_value=response):
+                with patch('ai_sandbox_factory.sandbox_ssh.subprocess.run',return_value=response):
                     with self.assertRaisesRegex(ValueError,'Marked'):ssh.trusted_keys('host',22,file)
 
     def test_known_host_lookup_does_not_scan_or_accept_new_hosts(self):
         with tempfile.TemporaryDirectory() as tmp:
             file=Path(tmp)/'known_hosts';file.touch()
-            with patch('pi_sandbox_factory.sandbox_ssh.subprocess.run',return_value=SimpleNamespace(returncode=1,stdout='')) as run:
+            with patch('ai_sandbox_factory.sandbox_ssh.subprocess.run',return_value=SimpleNamespace(returncode=1,stdout='')) as run:
                 with self.assertRaises(ssh.MissingHostKey):ssh.trusted_keys('example.test',2222,file)
                 self.assertEqual(run.call_args.args[0],['ssh-keygen','-F','[example.test]:2222','-f',str(file)])
 

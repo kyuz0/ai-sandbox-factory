@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import primary_agents, sandbox
+from ai_sandbox_factory import primary_agents, sandbox
 
 
 class PrimaryAgentIsolation(unittest.TestCase):
@@ -94,7 +94,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertTrue((home / '.codex').is_dir())
 
     def test_each_native_launcher_receives_only_current_connector_grants(self):
-        from pi_sandbox_factory import connector_settings
+        from ai_sandbox_factory import connector_settings
         launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
         command = launcher['command']
         with TemporaryDirectory() as temp:

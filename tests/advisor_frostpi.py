@@ -5,7 +5,7 @@ import subprocess
 
 from playwright.sync_api import Error, expect, sync_playwright
 
-from pi_sandbox_factory import browser_editor, editor_settings
+from ai_sandbox_factory import browser_editor, editor_settings
 
 
 def check_image(container, root, mode, chromium):

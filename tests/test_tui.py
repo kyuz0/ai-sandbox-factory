@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
 from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static
 from textual_fspicker.parts import DirectoryNavigation
 from tui_geometry import check_table_layout
@@ -44,6 +44,48 @@ class FakeService:
         return 2, 1
 
 class TUITests(unittest.TestCase):
+    async def test_ssh_import_diagnostic_stays_with_the_alias_control(self):
+        from ai_sandbox_factory.repository_ui import CreateSSHDialog
+        from ai_sandbox_factory.sandbox_tui import preset
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = Cockpit(self.root, FakeService(self.records))
+            async with app.run_test(size=size) as pilot:
+                await self.ready(app, pilot)
+                await app.push_screen(CreateSSHDialog(preset('base', DEFAULT_SETTINGS), 'SSH & Git'))
+                await pilot.pause()
+                aliases = app.screen.query_one('#ssh-aliases', Input)
+                for ancestor in aliases.ancestors:
+                    if isinstance(ancestor, Collapsible):
+                        ancestor.collapsed = False
+                await pilot.pause()
+                aliases.value = 'build*'
+                aliases.focus()
+                aliases.scroll_visible(animate=False)
+                await pilot.pause()
+                app.screen.query_one('#ssh-import-aliases', Button).scroll_visible(animate=False)
+                await pilot.pause()
+                self.assertTrue(await pilot.click('#ssh-import-aliases'))
+                await pilot.pause()
+                feedback = app.screen.query_one('#ssh-aliases-error')
+                self.assertIn("'build*'", str(feedback.render()))
+                self.assertIn('wildcard', str(feedback.render()))
+                self.assertEqual(feedback.parent, aliases.parent.parent)
+                self.assertEqual(str(app.screen.query_one('#ssh-destinations-error').render()), '')
+
+    async def test_optional_launcher_notice_is_visible_only_when_supplied(self):
+        message = 'Opened by a launcher.'
+        for notice in (False, True):
+            app = Cockpit(self.root, FakeService(self.records), startup_notice=message if notice else '')
+            async with app.run_test(size=(80, 24), notifications=True) as pilot:
+                await self.ready(app, pilot)
+                shown = app.query_one('#startup-notice')
+                self.assertEqual(shown.display, notice)
+                self.assertEqual(str(shown.render()), message if notice else '')
+                self.assertEqual(app.title, 'AI Sandbox Factory')
+                self.assertFalse(app.screen.query('Toast'))
+                for action in ('#more', '#settings', '#launch-with'):
+                    self.assertTrue(app.screen.region.contains_region(app.query_one(action).region))
+
     @classmethod
     def setUpClass(cls):cls.runner=asyncio.Runner()
     @classmethod
@@ -51,9 +93,9 @@ class TUITests(unittest.TestCase):
     def _callTestMethod(self,method):self.runner.run(method())
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
-        self.search_keys=patch('pi_sandbox_factory.sandbox_tui.search_keys_path', return_value=self.root/'web-access-keys.json');self.search_keys.start()
-        self.defaults=patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS));self.defaults.start()
-        self.update_check=patch('pi_sandbox_factory.updates.available_update',return_value=None);self.update_check.start()
+        self.search_keys=patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=self.root/'web-access-keys.json');self.search_keys.start()
+        self.defaults=patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS));self.defaults.start()
+        self.update_check=patch('ai_sandbox_factory.updates.available_update',return_value=None);self.update_check.start()
         self.records=[]
         for name in ['alpha','beta']:
             state=self.root/name;state.mkdir();(state/'allowlist.txt').write_text('local-model.internal:8000\n')
@@ -83,7 +125,7 @@ class TUITests(unittest.TestCase):
 
     async def test_select_approval_model_across_providers(self):
         from textual.widgets import Select
-        from pi_sandbox_factory.reviewer_ui import ReviewerPicker
+        from ai_sandbox_factory.reviewer_ui import ReviewerPicker
         service = FakeService(self.records)
         service.approval_models = lambda name: [
             {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
@@ -145,7 +187,7 @@ class TUITests(unittest.TestCase):
             async with app.run_test(size=size) as pilot:
                 await self.ready(app,pilot)
                 self.assertFalse(app.query_one('#application-update').display)
-                with patch('pi_sandbox_factory.updates.pipx_install',return_value=True), patch('pi_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
+                with patch('ai_sandbox_factory.updates.pipx_install',return_value=True), patch('ai_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
                     app.show_update('2099.1.1.1')
                 await pilot.pause()
                 title=app.query_one('#title-banner')
@@ -155,7 +197,7 @@ class TUITests(unittest.TestCase):
                 else:
                     self.assertEqual(title.content_region.height, 9)
                     self.assertEqual(title.styles.padding.top, 1)
-                    self.assertIn('Configurable Pi Sandboxes', str(title.render()))
+                    self.assertIn('AI coding sandboxes', str(title.render()))
                 upgrade = app.query_one('#application-update-run', Button)
                 self.assertFalse(upgrade.disabled)
                 self.assertTrue(upgrade.display)
@@ -183,12 +225,12 @@ class TUITests(unittest.TestCase):
         app=Cockpit(self.root,FakeService([]))
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot)
-            with patch('pi_sandbox_factory.updates.pipx_install',return_value=True), patch('pi_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
+            with patch('ai_sandbox_factory.updates.pipx_install',return_value=True), patch('ai_sandbox_factory.sandbox_tui.shutil.which',return_value='/bin/pipx'):
                 app.show_update('2099.1.1.1')
             await pilot.pause()
             dashboard_positions = {selector: app.query_one(selector).region for selector in ('#search', '#sandboxes', '#new')}
             failure = subprocess.CalledProcessError(1, ['pipx'], stderr='Could not connect to the repository.')
-            with patch.object(app,'suspend',return_value=nullcontext()), patch('pi_sandbox_factory.sandbox_tui.subprocess.run',side_effect=failure) as run:
+            with patch.object(app,'suspend',return_value=nullcontext()), patch('ai_sandbox_factory.sandbox_tui.subprocess.run',side_effect=failure) as run:
                 await pilot.click('#application-update-run');await pilot.pause()
                 self.assertIsInstance(app.screen,Confirm)
                 upgrade = app.screen.query_one('#yes', Button)
@@ -208,11 +250,11 @@ class TUITests(unittest.TestCase):
                 await pilot.click('#application-update-run');await pilot.pause()
                 run.assert_not_called()
                 await pilot.press('enter');await pilot.pause()
-                run.assert_called_once_with(('pipx','upgrade','pi-sandbox-factory'),check=True, stderr=subprocess.PIPE, text=True, errors='replace')
+                run.assert_called_once_with(('pipx','upgrade','ai-sandbox-factory'),check=True, stderr=subprocess.PIPE, text=True, errors='replace')
                 self.assertEqual(app.screen.heading, 'Factory upgrade failed')
                 self.assertIn('pipx exited with status 1.', app.screen.message)
                 self.assertIn(failure.stderr, app.screen.message)
-                self.assertIn('pipx upgrade pi-sandbox-factory', app.screen.message)
+                self.assertIn('pipx upgrade ai-sandbox-factory', app.screen.message)
                 self.assertEqual(app.focused.id, 'close-update-details')
                 await pilot.press('escape');await pilot.pause()
                 self.assertEqual({selector: app.query_one(selector).region for selector in dashboard_positions}, dashboard_positions)
@@ -220,7 +262,7 @@ class TUITests(unittest.TestCase):
                 self.assertFalse(app.query_one('#application-update-run',Button).disabled)
 
     async def test_startup_reports_missing_dependencies_and_refresh_clears_notice(self):
-        from pi_sandbox_factory import host_platform
+        from ai_sandbox_factory import host_platform
         records = copy.deepcopy(self.records)
         records[0]['workspace'] = '/work/' + 'nested-project-directory/' * 9
         for size in ((80, 24), (120, 40), (220, 50)):
@@ -252,11 +294,11 @@ class TUITests(unittest.TestCase):
 
     async def test_successful_update_relaunches_and_source_install_disables_button(self):
         from contextlib import nullcontext
-        from pi_sandbox_factory import updates
+        from ai_sandbox_factory import updates
         app=Cockpit(self.root,FakeService([]))
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot)
-            with patch('pi_sandbox_factory.updates.pipx_install',return_value=False):
+            with patch('ai_sandbox_factory.updates.pipx_install',return_value=False):
                 app.show_update('2099.1.1.1')
             self.assertTrue(app.query_one('#application-update-run',Button).disabled)
             self.assertFalse(app.query_one('#application-update-run',Button).display)
@@ -266,7 +308,7 @@ class TUITests(unittest.TestCase):
             self.assertIn('git pull --ff-only', app.screen.message)
             self.assertIn('python -m pip install --upgrade', app.screen.message)
             await pilot.click('#close-update-details');await pilot.pause()
-            with patch.object(app,'suspend',return_value=nullcontext()), patch('pi_sandbox_factory.sandbox_tui.subprocess.run'), patch.object(app,'exit') as finish:
+            with patch.object(app,'suspend',return_value=nullcontext()), patch('ai_sandbox_factory.sandbox_tui.subprocess.run'), patch.object(app,'exit') as finish:
                 app.upgrade(True)
                 finish.assert_called_once_with(result=updates.RELAUNCH)
 
@@ -301,7 +343,7 @@ class TUITests(unittest.TestCase):
                     self.assertIsInstance(app.screen, NewSandbox)
 
     async def test_advisors_live_in_settings_and_allow_initial_setup(self):
-        from pi_sandbox_factory.sandbox_tui import AdvisorsScreen
+        from ai_sandbox_factory.sandbox_tui import AdvisorsScreen
         service=FakeService(self.records)
         service.advisors=lambda name,settings,log,update=None:service.calls.append(['advisors',name,settings])
         app=Cockpit(self.root,service)
@@ -327,7 +369,7 @@ class TUITests(unittest.TestCase):
             await pilot.press('q')
 
     async def test_advisor_worker_can_start_after_settings_screen_closes(self):
-        from pi_sandbox_factory.sandbox_tui import AdvisorsScreen
+        from ai_sandbox_factory.sandbox_tui import AdvisorsScreen
         service = FakeService(self.records)
         service.advisors = lambda name, settings, log, update=None: service.calls.append(['advisors', name])
         app = Cockpit(self.root, service)
@@ -352,7 +394,7 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(service.calls, [['advisors', 'alpha']])
 
     async def test_models_without_provider_plugins(self):
-        from pi_sandbox_factory.sandbox_tui import ModelsScreen
+        from ai_sandbox_factory.sandbox_tui import ModelsScreen
         self.records[0]['config']['model_providers'] = []
         service = FakeService(self.records)
         app = Cockpit(self.root, service)
@@ -368,7 +410,7 @@ class TUITests(unittest.TestCase):
             self.assertNotIsInstance(app.screen, ModelsScreen)
 
     async def test_models_refresh_selected_provider(self):
-        from pi_sandbox_factory.sandbox_tui import ModelsScreen
+        from ai_sandbox_factory.sandbox_tui import ModelsScreen
         from textual.widgets import Select
         self.records[0]['config']['model_providers'] = [
             {'name': 'local', 'manifest': {'description': 'Local models'}},
@@ -420,8 +462,8 @@ class TUITests(unittest.TestCase):
             await pilot.press('q')
 
     async def test_repository_setup_and_key_display(self):
-        from pi_sandbox_factory.sandbox_tui import SSHScreen
-        from pi_sandbox_factory.repository_ui import RepositorySetup, PublicKey, SSHDestinationFields
+        from ai_sandbox_factory.sandbox_tui import SSHScreen
+        from ai_sandbox_factory.repository_ui import RepositorySetup, PublicKey, SSHDestinationFields
         from textual.widgets import Collapsible
         for size in ((80, 24), (120, 40), (220, 50)):
             service = FakeService(self.records)
@@ -466,7 +508,7 @@ class TUITests(unittest.TestCase):
                 await pilot.press('escape')
 
     async def test_ssh_settings_keep_key_import_separate(self):
-        from pi_sandbox_factory.sandbox_tui import SSHScreen
+        from ai_sandbox_factory.sandbox_tui import SSHScreen
         service=FakeService(self.records);app=Cockpit(self.root,service)
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot);await self.settings_page(app,pilot,action="connectors")
@@ -484,9 +526,9 @@ class TUITests(unittest.TestCase):
             await pilot.press('q')
 
     async def test_connector_settings_review_grants_and_can_revoke_an_uninstalled_connector(self):
-        from pi_sandbox_factory import connectors
-        from pi_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
-        from pi_sandbox_factory.aws_ui import AWSProfilePicker
+        from ai_sandbox_factory import connectors
+        from ai_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog
+        from ai_sandbox_factory.aws_ui import AWSProfilePicker
 
         record = self.records[0]
         service = FakeService([record])
@@ -621,7 +663,7 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(changes[-1]['connector_ids'], [])
 
     async def test_ssh_unlock_and_unchanged_apply_leave_the_sandbox_running(self):
-        from pi_sandbox_factory.sandbox_tui import SSHScreen
+        from ai_sandbox_factory.sandbox_tui import SSHScreen
         self.records[0]['config']['ssh'] = {'hosts': [{
             'alias': 'repository', 'hostname': 'git.example.test', 'user': 'git', 'port': 22,
             'host_keys': ['ssh-ed25519 AAAA'],
@@ -635,7 +677,7 @@ class TUITests(unittest.TestCase):
             self.assertFalse(unlock.disabled)
             with (patch.object(app, 'suspend', return_value=nullcontext()),
                   patch.object(service, 'command', create=True, side_effect=lambda *args: list(args)),
-                  patch('pi_sandbox_factory.sandbox_tui.subprocess.run',
+                  patch('ai_sandbox_factory.sandbox_tui.subprocess.run',
                         side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]) as run,
                   patch.object(app.screen, 'notify') as notify):
                 field = app.screen.query_one('#ssh-duration', Input)
@@ -663,8 +705,8 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(service.calls, [])
 
     async def test_git_identity_is_optional_validated_and_saved_with_ssh_settings(self):
-        from pi_sandbox_factory.sandbox_tui import SSHScreen, preset
-        from pi_sandbox_factory.repository_ui import GitIdentityFields
+        from ai_sandbox_factory.sandbox_tui import SSHScreen, preset
+        from ai_sandbox_factory.repository_ui import GitIdentityFields
         from textual.widgets import Collapsible
         for size in ((80, 24), (120, 40), (220, 50)):
             service = FakeService(self.records)
@@ -710,7 +752,7 @@ class TUITests(unittest.TestCase):
                 self.assertIsNone(review.collect()[0]['options']['git_identity'])
 
     async def test_browser_vault_option_follows_browser_selection_and_is_saved(self):
-        from pi_sandbox_factory.sandbox_tui import preset
+        from ai_sandbox_factory.sandbox_tui import preset
         from textual.widgets import Collapsible, Select, Static
         for size in ((80, 24), (120, 40), (220, 50)):
             app = Cockpit(self.root, FakeService(self.records))
@@ -798,7 +840,7 @@ class TUITests(unittest.TestCase):
             await self.ready(app, pilot)
             app.query_one(DataTable).move_cursor(row=1)
             await pilot.pause()
-            with patch('pi_sandbox_factory.chat_history.backup_folder', return_value=self.root):
+            with patch('ai_sandbox_factory.chat_history.backup_folder', return_value=self.root):
                 await self.choose_more_action(app, pilot, 'import-chats')
                 self.assertEqual(app.screen.sandbox_name, 'beta')
                 await pilot.click('#chat-transfer-browse')
@@ -855,7 +897,7 @@ class TUITests(unittest.TestCase):
             self.assertEqual(app.screen.query_one('#name', Input).value, 'my-project')
 
     async def test_file_picker_labels_and_actions_align_at_all_sizes(self):
-        from pi_sandbox_factory.file_browser import FolderPicker
+        from ai_sandbox_factory.file_browser import FolderPicker
         for size in ((80, 24), (120, 40), (220, 50)):
             with self.subTest(size=size):
                 app = Cockpit(self.root, FakeService(self.records))
@@ -890,7 +932,7 @@ class TUITests(unittest.TestCase):
             self.assertFalse(service.calls)
 
     async def test_create_from_is_visible_and_copies_settings_without_credentials(self):
-        from pi_sandbox_factory.sandbox_tui import CreateFromSandbox, WebAccessForm
+        from ai_sandbox_factory.sandbox_tui import CreateFromSandbox, WebAccessForm
         from textual.widgets import Select
         record = self.records[0]
         record['config'].update(
@@ -904,7 +946,7 @@ class TUITests(unittest.TestCase):
         workspace = self.root / 'new-project'
         workspace.mkdir()
         app = Cockpit(self.root, service)
-        with patch('pi_sandbox_factory.web_access.saved_keys', return_value={'exa': 'workstation-key'}) as defaults:
+        with patch('ai_sandbox_factory.web_access.saved_keys', return_value={'exa': 'workstation-key'}) as defaults:
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app,pilot)
                 button = app.query_one('#create-from', Button)
@@ -937,7 +979,7 @@ class TUITests(unittest.TestCase):
                 self.assertTrue(app.screen.query_one('#browser',Checkbox).value)
                 self.assertEqual(app.screen.query_one('#env-file',Input).value,'')
                 self.assertEqual(app.screen.query_one('#pi-config',Input).value,'')
-                with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+                with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                     await pilot.click('#apply'); await self.ready(app,pilot)
                 draft = service.calls[0][1]
                 self.assertEqual(draft['reuse_from'],'alpha')
@@ -948,7 +990,7 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(record,original)
 
     async def test_create_from_copies_keys_only_when_selected_and_handles_stopped_source(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm
         from textual.widgets import Select
         self.records[0]['config']['options']={'web_access':{'enabled':True,'providers':{'exa':{'has_key':True}}}}
         self.records[1]['dev']='exited'
@@ -1000,7 +1042,7 @@ class TUITests(unittest.TestCase):
             app.screen.query_one('#new-advisor-codex',Checkbox).value=True
             app.screen.query_one('#new-advisor-agy',Checkbox).value=True
             app.screen.query_one('#new-advisor-claude',Checkbox).value=True
-            with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+            with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 await pilot.click('#apply');await self.ready(app,pilot)
             self.assertIsInstance(app.screen,Operation)
             draft=service.calls[0][1]
@@ -1080,7 +1122,7 @@ class TUITests(unittest.TestCase):
             await pilot.click('#model-sources');await pilot.pause()
             form=app.screen;self.assertIsInstance(form,SettingsForm)
             form.query_one('#model-ports',Input).value='8080'
-            with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+            with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 await pilot.click('#apply');await pilot.pause()
             self.assertIsInstance(app.screen,Confirm);await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][0:2],['update','beta'])
@@ -1162,7 +1204,7 @@ class TUITests(unittest.TestCase):
                 if edit_rules:
                     form.query_one('#allowlist', TextArea).load_text('example.test:443')
                 await pilot.pause()
-                with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                with patch('ai_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                     form.query_one('#apply', Button).press()
                     await pilot.pause()
                 self.assertIsInstance(app.screen, Confirm)
@@ -1185,7 +1227,7 @@ class TUITests(unittest.TestCase):
             await self.ready(app,pilot)
             app.query_one(DataTable).move_cursor(row=1)
             with patch.object(app,'suspend',return_value=nullcontext()) as suspend, \
-                 patch('pi_sandbox_factory.sandbox_tui.subprocess.run',return_value=subprocess.CompletedProcess([],0)) as run:
+                 patch('ai_sandbox_factory.sandbox_tui.subprocess.run',return_value=subprocess.CompletedProcess([],0)) as run:
                 await pilot.click('#launch-with');await pilot.pause()
                 choices=app.screen.query_one('#editor-choices',OptionList)
                 choices.highlighted=1;choices.focus()
@@ -1203,7 +1245,7 @@ class TUITests(unittest.TestCase):
 
     async def test_creation_cancel_button_escape_cleanup_failure_and_no_success_callback(self):
         import threading
-        from pi_sandbox_factory.creation import Creation, Cancelled
+        from ai_sandbox_factory.creation import Creation, Cancelled
         from textual.widgets import Static, Footer
         for size in ((80,24),(120,40),(220,50)):
             for failure in (False, True):
@@ -1256,7 +1298,7 @@ class TUITests(unittest.TestCase):
     async def test_update_cancel_confirmation_and_preserved_sandbox(self):
         import threading
         from textual.widgets import Footer, Static
-        from pi_sandbox_factory.updating import UpdateCancelled
+        from ai_sandbox_factory.updating import UpdateCancelled
 
         app = Cockpit(self.root, FakeService(self.records))
         success = []
@@ -1466,7 +1508,7 @@ class TUITests(unittest.TestCase):
                 launch.assert_called_once_with(records[-1]['name'], 'browser')
 
     async def test_sandbox_alerts_follow_selection_and_open_existing_actions(self):
-        from pi_sandbox_factory.sandbox_tui import SSHScreen, SandboxAlerts
+        from ai_sandbox_factory.sandbox_tui import SSHScreen, SandboxAlerts
         old = self.records[0]
         common = self.root / 'legacy-common'
         common.mkdir()
@@ -1529,7 +1571,7 @@ class TUITests(unittest.TestCase):
 
     async def test_automatic_approval_default_and_human_fallback_selection(self):
         from textual.widgets import Select, Static, Collapsible
-        from pi_sandbox_factory import settings_effects
+        from ai_sandbox_factory import settings_effects
         from unittest.mock import Mock
         service=FakeService(self.records);app=Cockpit(self.root,service)
         self.records[0]['config']['options'] = {
@@ -1587,7 +1629,7 @@ class TUITests(unittest.TestCase):
             await pilot.pause()
             self.assertIs(app.screen, form)
             self.assertEqual(choice.value, 'assisted')
-            with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+            with patch('ai_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                 await pilot.click('#apply');await pilot.pause()
             self.assertIsInstance(app.screen, Confirm)
             await pilot.click('#yes')
@@ -1612,11 +1654,11 @@ class TUITests(unittest.TestCase):
             await pilot.pause();choice.focus();choice.scroll_visible(animate=False);await pilot.pause()
             await pilot.press('enter','down','enter');await pilot.pause()
             self.assertEqual(choice.value,'full')
-            with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+            with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 draft,_=form.collect()
             self.assertEqual(draft['options']['compaction_recall'],'full')
             choice.value='off'
-            with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+            with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 draft,_=form.collect()
             self.assertEqual(draft['options']['compaction_recall'],'off')
 
@@ -1636,7 +1678,7 @@ class TUITests(unittest.TestCase):
             self.assertIsInstance(app.screen,Operation)
 
     async def test_saved_unregistered_provider_remains_in_configuration(self):
-        from pi_sandbox_factory import registry
+        from ai_sandbox_factory import registry
         provider={'name':'company','settings':{'endpoint':'https://models.example.com/v1'},
                   'manifest':{'description':'Company models','settings':{'endpoint':{'type':'text','network':True},'key':{'type':'secret'}}}}
         self.records[0]['config']['model_providers']=[provider]
@@ -1649,15 +1691,15 @@ class TUITests(unittest.TestCase):
                 self.assertTrue(form.query_one('#source-company',Checkbox).value)
                 self.assertEqual(form.query_one('#source-company-endpoint',Input).value,'https://models.example.com/v1')
                 self.assertEqual(len(form.query('#source-company-key')),0)
-                with patch('pi_sandbox_factory.sandbox.choose_engine',return_value='podman'):
+                with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                     draft,_=form.collect()
                 self.assertEqual(draft['model_providers']['company'],provider['settings'])
                 self.assertIn('models.example.com:443',draft['allowlist'])
 
 
     async def test_creation_provider_credentials_are_masked_and_separate_from_settings(self):
-        from pi_sandbox_factory import registry
-        from pi_sandbox_factory.sandbox_tui import preset
+        from ai_sandbox_factory import registry
+        from ai_sandbox_factory.sandbox_tui import preset
         info = {'description': 'Company models', 'network': ['models.example.com:443'],
                 'settings': {'key': {'type': 'secret', 'label': 'Company API key'}},
                 'inference': {'origin': 'https://models.example.com', 'auth': {'type': 'bearer'}}}
@@ -1689,7 +1731,7 @@ class TUITests(unittest.TestCase):
                     field.value = 'synthetic-secret'
                     field.focus(); field.scroll_visible(animate=False)
                     await pilot.pause()
-                    with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                    with patch('ai_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                         selected, _ = form.collect()
                     self.assertEqual(selected['_provider_keys'], {'company': 'synthetic-secret'})
                     self.assertNotIn('synthetic-secret', json.dumps(selected['model_providers']))
@@ -1709,7 +1751,7 @@ class TUITests(unittest.TestCase):
                     self.assertFalse(details.display)
                     self.assertEqual(str(checkbox.label), label)
                     self.assertFalse(form.query_one('#source-company-key-error').display)
-                    with patch('pi_sandbox_factory.sandbox.choose_engine', return_value='podman'):
+                    with patch('ai_sandbox_factory.sandbox.choose_engine', return_value='podman'):
                         selected, _ = form.collect()
                     self.assertEqual(selected['_provider_keys'], {})
                     await app.pop_screen()
@@ -1726,7 +1768,7 @@ class WebAccessUITests(unittest.TestCase):
     tearDown = TUITests.tearDown
     ready = TUITests.ready
     async def test_web_settings_keep_key_out_of_saved_options(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm, SearchProviderDialog, preset
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm, SearchProviderDialog, preset
         from textual.widgets import Select
         app = Cockpit(self.root, FakeService([]))
         async with app.run_test(size=(80,24)) as pilot:
@@ -1782,10 +1824,10 @@ class WebAccessUITests(unittest.TestCase):
             self.assertEqual(value['options']['web_access']['providers']['searxng']['endpoint'], 'https://search.example.net')
 
     async def test_save_web_defaults_preserves_other_defaults_and_keys_stay_private(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm, preset
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm, preset
         from textual.widgets import Select
         app = Cockpit(self.root, FakeService([]))
-        with patch('pi_sandbox_factory.sandbox_tui.defaults_path', return_value=self.root / 'cockpit.json'):
+        with patch('ai_sandbox_factory.sandbox_tui.defaults_path', return_value=self.root / 'cockpit.json'):
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
                 draft = preset('base', DEFAULT_SETTINGS)
@@ -1806,8 +1848,8 @@ class WebAccessUITests(unittest.TestCase):
                 self.assertTrue(app.defaults['options']['web_access']['providers']['brave']['has_key'])
 
     async def test_copy_search_settings_without_keys_does_not_use_default_keys(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm, CopyWebAccess, preset
-        from pi_sandbox_factory import web_access
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm, CopyWebAccess, preset
+        from ai_sandbox_factory import web_access
         source = self.records[0]
         source['config']['options'] = {'web_access': {'enabled': True, 'mode': 'auto',
             'providers': {'exa': {}, 'brave': {'has_key': True}}}}
@@ -1845,8 +1887,8 @@ class WebAccessUITests(unittest.TestCase):
             self.assertFalse(app.screen.query_one('#copy-web-keys', Checkbox).value)
 
     async def test_edit_copy_without_keys_keeps_matching_target_key(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm, preset
-        from pi_sandbox_factory import web_access
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm, preset
+        from ai_sandbox_factory import web_access
         app = Cockpit(self.root, FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app, pilot)
@@ -1863,7 +1905,7 @@ class WebAccessUITests(unittest.TestCase):
             self.assertNotIn('brave', keys)  # No key replacement or deletion queued.
 
     async def test_missing_runtime_key_is_not_displayed_as_configured(self):
-        from pi_sandbox_factory.sandbox_tui import WebAccessForm, preset
+        from ai_sandbox_factory.sandbox_tui import WebAccessForm, preset
         service = FakeService(self.records)
         service.search_status = lambda name: {'exa': False, 'brave': False}
         app = Cockpit(self.root, service)
@@ -1879,7 +1921,7 @@ class WebAccessUITests(unittest.TestCase):
 
     async def test_network_category_selection_reaches_cli(self):
         app = Cockpit(self.root, FakeService(self.records))
-        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=None):
+        with patch('ai_sandbox_factory.curlie_catalog.metadata', return_value=None):
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
                 app.perform_action('network-settings')
@@ -1903,15 +1945,15 @@ class WebAccessUITests(unittest.TestCase):
                 self.assertEqual(app.service.calls[-1][-3:], ['--website-groups', 'ut1-press', 'curlie-health'])
 
     async def test_curlie_refresh_and_apply_are_separate_choices(self):
-        from pi_sandbox_factory.sandbox_tui import Confirm, WebsiteGroups
+        from ai_sandbox_factory.sandbox_tui import Confirm, WebsiteGroups
         old = {'revision': 'a' * 32, 'downloaded_at': 1700000000}
         latest = {'revision': 'b' * 32, 'downloaded_at': 1700000100}
         self.records[0]['config']['options'] = {'website_groups': ['ut1-press']}
         self.records[0]['config']['website_groups'] = {'ut1-press': {'curlie_download': old}}
         app = Cockpit(self.root, FakeService(self.records))
-        with patch('pi_sandbox_factory.curlie_catalog.metadata', return_value=old), \
-             patch('pi_sandbox_factory.curlie_catalog.check', return_value={'size': '179000000'}), \
-             patch('pi_sandbox_factory.curlie_catalog.refresh', return_value=latest) as refresh:
+        with patch('ai_sandbox_factory.curlie_catalog.metadata', return_value=old), \
+             patch('ai_sandbox_factory.curlie_catalog.check', return_value={'size': '179000000'}), \
+             patch('ai_sandbox_factory.curlie_catalog.refresh', return_value=latest) as refresh:
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
                 app.perform_action('network-settings')
@@ -1938,7 +1980,7 @@ class WebAccessUITests(unittest.TestCase):
                 self.assertEqual(app.service.calls[-1][-2:], ['--curlie-list', latest['revision']])
 
     async def test_allow_all_is_scoped_and_saves_explicit_categories(self):
-        from pi_sandbox_factory.sandbox_tui import WebsiteGroups, network_groups
+        from ai_sandbox_factory.sandbox_tui import WebsiteGroups, network_groups
         from textual.widgets import Label
         app = Cockpit(self.root, FakeService(self.records))
         async with app.run_test(size=(80, 24)) as pilot:

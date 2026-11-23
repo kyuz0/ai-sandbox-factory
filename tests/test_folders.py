@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pi_sandbox_factory import folders, sandbox
-from pi_sandbox_factory.sandbox_tui import Cockpit, FoldersScreen, NewSandbox, SettingsForm, DEFAULT_SETTINGS, copy_draft, preset
-from pi_sandbox_factory.folders_ui import FolderFields, FolderEditor
+from ai_sandbox_factory import folders, sandbox
+from ai_sandbox_factory.sandbox_tui import Cockpit, FoldersScreen, NewSandbox, SettingsForm, DEFAULT_SETTINGS, copy_draft, preset
+from ai_sandbox_factory.folders_ui import FolderFields, FolderEditor
 from textual.widgets import Input, Button, Checkbox, Collapsible, Static
 from tui_geometry import check_input_layout
 from test_tui import FakeService
@@ -145,7 +145,7 @@ class FolderTests(unittest.TestCase):
         async def check():
             class Service:
                 def inventory(self): return []
-            with patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', return_value=copy.deepcopy(DEFAULT_SETTINGS)):
+            with patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults', return_value=copy.deepcopy(DEFAULT_SETTINGS)):
                 app = Cockpit(self.state, Service())
                 async with app.run_test(size=(80, 24)) as pilot:
                     await app.workers.wait_for_complete()
@@ -212,14 +212,14 @@ class FolderTests(unittest.TestCase):
                         save = dialog.query_one('#folder-save')
                         self.assertIs(dialog.get_widget_at(save.region.x, save.region.y)[0], save)
                         await app.pop_screen()
-        with patch('pi_sandbox_factory.updates.available_update', return_value=None):
+        with patch('ai_sandbox_factory.updates.available_update', return_value=None):
             asyncio.run(check())
 
     def test_creation_passes_selected_workspace_to_folder_review(self):
         async def check():
             class Service:
                 def inventory(self): return []
-            with patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', return_value=copy.deepcopy(DEFAULT_SETTINGS)):
+            with patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults', return_value=copy.deepcopy(DEFAULT_SETTINGS)):
                 app = Cockpit(self.state, Service())
                 async with app.run_test(size=(80, 24)) as pilot:
                     await app.workers.wait_for_complete()

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from pi_sandbox_factory import registry, sandbox, model_providers
+from ai_sandbox_factory import registry, sandbox, model_providers
 
 
 class RegistryTests(unittest.TestCase):
@@ -103,7 +103,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(existing.read_text(), 'User instructions')
 
     def test_research_profile_defaults_are_optional_and_resolve(self):
-        from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
+        from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
 
         self.assertNotIn('defaults', sandbox.load_profile('base'))
         self.assertEqual(registry.choices('profile')['deep-research'], 'Deep Web Research')

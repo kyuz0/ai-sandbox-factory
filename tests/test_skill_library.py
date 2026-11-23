@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import skill_library, sandbox, sandbox_skills
+from ai_sandbox_factory import skill_library, sandbox, sandbox_skills
 
 
 class SkillLibraryTests(unittest.TestCase):
@@ -147,7 +147,7 @@ class SkillLibraryTests(unittest.TestCase):
             Path(target).mkdir()
             (Path(target)/'partial').write_text('partial')
             raise OSError('disk full')
-        with patch('pi_sandbox_factory.skill_library.shutil.copytree',side_effect=fail):
+        with patch('ai_sandbox_factory.skill_library.shutil.copytree',side_effect=fail):
             with self.assertRaises(OSError):skill_library.install(rows)
         self.assertFalse(skill_library.entries())
         self.assertFalse((self.root/'library'/'skills'/rows[0]['digest']).exists())

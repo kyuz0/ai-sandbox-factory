@@ -1,8 +1,8 @@
 """Recall selection and permission contract."""
 import json
 import unittest
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.sandbox_options import options, permissions
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.sandbox_options import options, permissions
 
 class RecallTests(unittest.TestCase):
     def test_default_and_validation(self):

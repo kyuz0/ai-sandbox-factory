@@ -8,8 +8,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import creation, host_platform, sandbox
-from pi_sandbox_factory.sandbox_tui import Service
+from ai_sandbox_factory import creation, host_platform, sandbox
+from ai_sandbox_factory.sandbox_tui import Service
 
 
 class CreationTests(unittest.TestCase):
@@ -181,7 +181,7 @@ except KeyboardInterrupt:
             self.assertFalse(self.state.exists())
 
     def test_missing_podman_reports_install_hint_and_releases_name(self):
-        from pi_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
+        from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, preset
         workspace = self.root / 'project'
         workspace.mkdir()
         draft = preset('base', DEFAULT_SETTINGS)

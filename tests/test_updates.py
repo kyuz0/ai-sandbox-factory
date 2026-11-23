@@ -2,7 +2,7 @@ import io
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import updates
+from ai_sandbox_factory import updates
 
 
 class UpdateTests(unittest.TestCase):
@@ -23,15 +23,15 @@ class UpdateTests(unittest.TestCase):
                 self.assertIsNone(updates.available_update('1.0'))
 
     def test_upgrade_command_and_pipx_detection(self):
-        self.assertEqual(updates.UPGRADE_COMMAND,('pipx','upgrade','pi-sandbox-factory'))
+        self.assertEqual(updates.UPGRADE_COMMAND,('pipx','upgrade','ai-sandbox-factory'))
         with patch.object(updates.Path,'is_file',return_value=True):
             self.assertTrue(updates.pipx_install())
 
     def test_relaunch_preserves_inventory(self):
-        from pi_sandbox_factory import sandbox_tui
+        from ai_sandbox_factory import sandbox_tui
         with patch.object(sandbox_tui.Cockpit,'run',return_value=updates.RELAUNCH), patch.object(sandbox_tui.os,'execv') as execute:
             sandbox_tui.launch('/tmp/factory-test-state')
         argv=execute.call_args.args[1]
         self.assertEqual(argv[1:3], ['-I', '-c'])
-        self.assertIn("run_module('pi_sandbox_factory',", argv[3])
+        self.assertIn("run_module('ai_sandbox_factory',", argv[3])
         self.assertEqual(argv[4:], ['--state-dir', '/tmp/factory-test-state', 'tui'])

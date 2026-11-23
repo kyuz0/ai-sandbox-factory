@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import hosted_models, inference, provider_credentials as keys
+from ai_sandbox_factory import hosted_models, inference, provider_credentials as keys
 
 
 class Vault:

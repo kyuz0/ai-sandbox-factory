@@ -17,7 +17,7 @@ def dependency_pins(root):
         if name in pins and pins[name] != commit:
             raise ValueError('Conflicting dependency pins: ' + name)
         pins[name] = commit
-    dev = root / 'pi_sandbox_factory/containers/dev'
+    dev = root / 'ai_sandbox_factory/containers/dev'
     for entry in json.loads((dev/'extensions.lock.json').read_text())['extensions'].values():
         add(entry['repository'], entry['commit'])
     for entry in json.loads((dev/'security/sources.json').read_text()).values():

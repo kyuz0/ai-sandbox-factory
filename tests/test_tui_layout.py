@@ -7,14 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Label, OptionList, Select, Static, RichLog
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.sandbox_options import APPROVAL_MODES
-from pi_sandbox_factory.sandbox_tui import (
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.sandbox_options import APPROVAL_MODES
+from ai_sandbox_factory.sandbox_tui import (
     Cockpit, Confirm, DEFAULT_SETTINGS, FolderPicker, NewSandbox, SettingsForm,
     SettingsMenu, WebAccessForm, preset,
 )
-from pi_sandbox_factory.folders_ui import FolderEditor
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.folders_ui import FolderEditor
+from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout
 
@@ -41,9 +41,9 @@ class TUILayoutTests(unittest.TestCase):
         self.record = dict(name='demo', profile='base', engine='podman', dev='running',
                            proxy='running', workspace=str(self.workspace), config=config)
         for target, kwargs in [
-            ('pi_sandbox_factory.sandbox_tui.load_defaults', dict(side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS))),
-            ('pi_sandbox_factory.sandbox_tui.search_keys_path', dict(return_value=self.root/'keys.json')),
-            ('pi_sandbox_factory.updates.available_update', dict(return_value=None)),
+            ('ai_sandbox_factory.sandbox_tui.load_defaults', dict(side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS))),
+            ('ai_sandbox_factory.sandbox_tui.search_keys_path', dict(return_value=self.root/'keys.json')),
+            ('ai_sandbox_factory.updates.available_update', dict(return_value=None)),
         ]:
             mock = patch(target, **kwargs)
             mock.start()
@@ -106,7 +106,7 @@ class TUILayoutTests(unittest.TestCase):
                 await pilot.press('q')
 
     async def test_profile_and_provider_dropdowns_open_from_a_single_row(self):
-        from pi_sandbox_factory.models_ui import ProviderDialog
+        from ai_sandbox_factory.models_ui import ProviderDialog
         for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
@@ -154,9 +154,9 @@ class TUILayoutTests(unittest.TestCase):
                 await pilot.press('q')
 
     async def test_advisor_labels_order_and_explicit_copy_controls(self):
-        from pi_sandbox_factory.advisors_ui import AdvisorChoices
-        from pi_sandbox_factory.advisor_credentials import LABELS
-        from pi_sandbox_factory.sandbox_tui import AdvisorsScreen
+        from ai_sandbox_factory.advisors_ui import AdvisorChoices
+        from ai_sandbox_factory.advisor_credentials import LABELS
+        from ai_sandbox_factory.sandbox_tui import AdvisorsScreen
         for creation in (True, False):
             app = self.app()
             async with app.run_test(size=(120, 40)) as pilot:
@@ -269,7 +269,7 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.press('q')
 
     async def test_create_and_edit_share_category_names_and_order(self):
-        from pi_sandbox_factory.settings_catalog import CATEGORIES
+        from ai_sandbox_factory.settings_catalog import CATEGORIES
         expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
                           'Agent tools', 'Custom system prompt add-on', 'Advisors (Codex/Claude/Antigravity)', 'Communications',
                           'Skills', 'Connectors', 'Document search', 'Resources & environment']
@@ -788,8 +788,8 @@ class TUILayoutTests(unittest.TestCase):
 
 
     async def test_context_actions_and_modal_actions_have_padding(self):
-        from pi_sandbox_factory.repository_ui import RepositorySetup
-        from pi_sandbox_factory.sandbox_tui import SSHScreen
+        from ai_sandbox_factory.repository_ui import RepositorySetup
+        from ai_sandbox_factory.sandbox_tui import SSHScreen
         for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
@@ -874,8 +874,8 @@ class TUILayoutTests(unittest.TestCase):
             self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Approvals & sandbox'))
 
     async def test_labels_controls_and_feedback_do_not_create_empty_rows(self):
-        from pi_sandbox_factory.sandbox_tui import CreateFromSandbox, Operation
-        from pi_sandbox_factory.models_ui import ProviderDialog
+        from ai_sandbox_factory.sandbox_tui import CreateFromSandbox, Operation
+        from ai_sandbox_factory.models_ui import ProviderDialog
         for size in ((80, 24), (120, 40)):
             app = self.app()
             async with app.run_test(size=size) as pilot:

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import host_platform as host, editor_settings, browser_editor, folders
+from ai_sandbox_factory import host_platform as host, editor_settings, browser_editor, folders
 
 
 class HostTests(unittest.TestCase):
@@ -114,13 +114,13 @@ class HostTests(unittest.TestCase):
     def test_helpers_ignore_workspace_python_modules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ('json', 'asyncio', 'runpy', 'pi_sandbox_factory'):
+            for name in ('json', 'asyncio', 'runpy', 'ai_sandbox_factory'):
                 (root / (name + '.py')).write_text("raise RuntimeError('WORKSPACE CODE EXECUTED')")
             env = {**os.environ, 'PYTHONPATH': str(root)}
-            result = subprocess.run(host.python_command('pi_sandbox_factory', '--help'),
+            result = subprocess.run(host.python_command('ai_sandbox_factory', '--help'),
                                     cwd=root, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('usage: pi-sandbox-factory', result.stdout)
+            self.assertIn('usage: ai-sandbox-factory', result.stdout)
 
     def test_case_insensitive_host_boundaries(self):
         with patch.object(host, 'is_mac', return_value=True):

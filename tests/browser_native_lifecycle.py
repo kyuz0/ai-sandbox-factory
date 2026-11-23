@@ -3,8 +3,8 @@
 import argparse,json,subprocess,sys,time,selectors
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.browser_viewer import ensure_viewer
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.browser_viewer import ensure_viewer
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--state-dir',type=Path,required=True);p.add_argument('--name',required=True)
 a=p.parse_args();config=json.loads((a.state_dir/a.name/'config.json').read_text())

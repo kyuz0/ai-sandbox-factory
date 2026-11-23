@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import curlie_catalog as curlie, network_groups
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import curlie_catalog as curlie, network_groups
+from ai_sandbox_factory.sandbox_options import options
 
 
 class CurlieTests(unittest.TestCase):

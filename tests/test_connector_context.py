@@ -4,8 +4,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import connectors
-from pi_sandbox_factory.connectors import context
+from ai_sandbox_factory import connectors
+from ai_sandbox_factory.connectors import context
 
 
 class ConnectorContextTests(unittest.TestCase):

@@ -18,12 +18,12 @@ from urllib.request import urlopen
 from urllib.error import HTTPError
 
 from playwright.sync_api import Error as BrowserError, sync_playwright, expect
-from pi_sandbox_factory import advisor_credentials, primary_agents, primary_workspace, sandbox
+from ai_sandbox_factory import advisor_credentials, primary_agents, primary_workspace, sandbox
 FILE_TASK = 'Read /workspace/input.txt, copy its contents to /workspace/output.txt and reply with the contents.'
 
 ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).resolve().parent
-SOURCE = ROOT / 'pi_sandbox_factory/containers/primary'
+SOURCE = ROOT / 'ai_sandbox_factory/containers/primary'
 PANELS = {'codex': ('openai.chatgpt', 'chatgpt.openSidebar'),
           'claude': ('anthropic.claude-code', 'claude-vscode.sidebar.open'),
           'agy': ('google.google-antigravity', 'workbench.view.extension.antigravity-sidebar'),
@@ -468,7 +468,7 @@ def run(args, root, stack):
     trusted.mkdir()
     (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':False,'working_directory':'/workspace', 'native_approval':getattr(args, 'approval', 'automatic')}))
     (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
-    from pi_sandbox_factory import browser_editor
+    from ai_sandbox_factory import browser_editor
     editor_path = browser_editor.INSTALL if agent == 'agy' else '/opt/editor'
     editor_mounts = ['-v', f'{args.code_server}:{editor_path}:ro', '-v', f'{client}:/qa:rw']
     controller_env = [arg for key, value in sandbox.RUNTIME_ENV.items() for arg in ('-e', f'{key}={value}')]
@@ -518,7 +518,7 @@ def run(args, root, stack):
         prompt, expected = FILE_TASK, 'proof-' + secrets.token_hex(16)
         podman('exec', '-i', editor, 'tee', '/workspace/input.txt', payload=expected)
         podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
-    from pi_sandbox_factory import native_editor
+    from ai_sandbox_factory import native_editor
     if args.background_controls:
         from native_codex_background import check
         check(editor, args.output, args.timeout)
@@ -530,7 +530,7 @@ def run(args, root, stack):
         (state / 'config.json').write_text(json.dumps({'primary_agent': agent}))
         container_id = subprocess.check_output(['podman', 'inspect', '--format', '{{.Id}}', editor], text=True).strip()
         host_source = ("import asyncio,sys;from pathlib import Path;"
-                       "from pi_sandbox_factory import browser_editor,editor_settings;"
+                       "from ai_sandbox_factory import browser_editor,editor_settings;"
                        "asyncio.run(browser_editor.serve(sys.argv[1],'/workspace',editor_settings.validate(),"
                        "Path(sys.argv[2]),lambda url:print(url,flush=True)))")
         supervisor = subprocess.Popen([sys.executable, '-u', '-c', host_source, container_id, str(state)],

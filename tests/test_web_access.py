@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import network_groups as groups, web_access, sandbox
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import network_groups as groups, web_access, sandbox
+from ai_sandbox_factory.sandbox_options import options
 
 
 class WebAccessTests(unittest.TestCase):
@@ -52,7 +52,7 @@ class WebAccessTests(unittest.TestCase):
 
     def test_private_keys_migrate_and_project_only_active_credentials(self):
         import runpy
-        runtime_code = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev/web-access-config.py'))
+        runtime_code = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/dev/web-access-config.py'))
         configure, identity = runtime_code['configure'], runtime_code['identity']
         with tempfile.TemporaryDirectory() as temp:
             agent = Path(temp) / 'agent'; agent.mkdir()
@@ -110,8 +110,8 @@ class WebAccessTests(unittest.TestCase):
             self.assertEqual(web_access.saved_keys(path, value), {'exa': 'replacement-exa'})
 
     def test_default_settings_failure_restores_saved_keys(self):
-        from pi_sandbox_factory import sandbox_tui
-        from pi_sandbox_factory.sandbox_options import write_json
+        from ai_sandbox_factory import sandbox_tui
+        from ai_sandbox_factory.sandbox_options import write_json
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/'cockpit.json'
             keyfile = path.with_name('web-access-keys.json')
@@ -138,7 +138,7 @@ class WebAccessTests(unittest.TestCase):
 
     def test_search_and_fetch_have_separate_permission_rules(self):
         policy = json.loads((Path(__file__).resolve().parents[1] /
-            'pi_sandbox_factory/containers/dev/security/config/permissions.json').read_text())['permission']
+            'ai_sandbox_factory/containers/dev/security/config/permissions.json').read_text())['permission']
         self.assertEqual(policy['web_search'], 'allow')
         self.assertEqual(policy['get_search_content'], 'allow')
         self.assertEqual(policy['fetch_content'], 'ask')

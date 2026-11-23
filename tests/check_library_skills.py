@@ -7,7 +7,7 @@ parser=argparse.ArgumentParser(description='Build two synthetic library skills a
 parser.add_argument('image', help='Existing Factory development image')
 parser.add_argument('--local-model-manager', help='Optional dependency checkout to mount for pre-build integration')
 args=parser.parse_args()
-from pi_sandbox_factory import skill_library,sandbox_skills,sandbox
+from ai_sandbox_factory import skill_library,sandbox_skills,sandbox
 with tempfile.TemporaryDirectory(prefix='factory-library-runtime-') as temp:
  root=Path(temp);os.environ['SANDBOX_REGISTRY_DIR']=str(root/'library')
  source=root/'source';source.mkdir()

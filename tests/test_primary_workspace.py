@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import primary_workspace, sandbox
+from ai_sandbox_factory import primary_workspace, sandbox
 
 
 class PrimaryWorkspaceTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class PrimaryWorkspaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             config = {'primary_agent': 'codex', 'primary_auth': 'copy'}
-            with patch('pi_sandbox_factory.primary_agents.copy_host',
+            with patch('ai_sandbox_factory.primary_agents.copy_host',
                        side_effect=[ValueError('Unavailable'), None]) as copy:
                 primary_workspace.initial_sign_in({'primary_agent': 'codex'}, state)
                 copy.assert_not_called()

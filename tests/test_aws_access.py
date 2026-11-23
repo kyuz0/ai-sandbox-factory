@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from pi_sandbox_factory import aws_access, sandbox
+from ai_sandbox_factory import aws_access, sandbox
 
 
 class AWSAccessTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class AWSAccessTests(unittest.TestCase):
         credentials = dict(AccessKeyId='fixture', SecretAccessKey='example', SessionToken='sample', Expiration='date')
         result = SimpleNamespace(returncode=0, stdout=json.dumps(credentials))
         with patch.dict(os.environ, AWS_ACCESS_KEY_ID='other-account', AWS_SESSION_TOKEN='unrelated'), \
-                patch('pi_sandbox_factory.aws_access.subprocess.run', return_value=result) as run:
+                patch('ai_sandbox_factory.aws_access.subprocess.run', return_value=result) as run:
             self.assertEqual(aws_access.assume('aws-sandbox-preview', self.value), credentials)
         command = run.call_args.args[0]
         self.assertEqual(command[command.index('--role-session-name') + 1], 'aws-sandbox-preview')
@@ -58,7 +58,7 @@ class AWSAccessTests(unittest.TestCase):
             path.write_text(json.dumps(self.value))
             with patch.object(aws_access, 'assume', return_value=refreshed) as assume, \
                     patch.object(aws_access, '_deliver') as deliver, \
-                    patch('pi_sandbox_factory.aws_access.subprocess.run',
+                    patch('ai_sandbox_factory.aws_access.subprocess.run',
                           side_effect=[subprocess.TimeoutExpired('wait', 0), SimpleNamespace(returncode=0)]) as wait:
                 aws_access.renew('podman', 'container-id', path, 'demo', '2000-01-01T00:00:00+00:00')
         assume.assert_called_once_with('demo', self.value)

@@ -5,8 +5,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import activity, connector_settings, connectors, sandbox
-from pi_sandbox_factory.sandbox_options import write_json
+from ai_sandbox_factory import activity, connector_settings, connectors, sandbox
+from ai_sandbox_factory.sandbox_options import write_json
 
 
 class ConnectorSettingsTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class ConnectorSettingsTests(unittest.TestCase):
         self.config = {'name': 'sandbox', 'engine': 'podman', 'uid': 1000, 'gid': 1000}
         write_json(self.state / 'config.json', self.config)
         self.enterContext(patch.object(connectors, 'directory', return_value=self.file.parent.parent))
-        self.store = self.enterContext(patch('pi_sandbox_factory.provider_credentials.os_store')).return_value
+        self.store = self.enterContext(patch('ai_sandbox_factory.provider_credentials.os_store')).return_value
         self.store.get_password.return_value = 'fixture-token'
         self.inspect = self.enterContext(patch.object(sandbox, 'inspect', return_value=None))
         self.probe = self.enterContext(patch.object(connector_settings, 'check_sockets'))
@@ -187,7 +187,7 @@ class ConnectorSettingsTests(unittest.TestCase):
         self.enterContext(patch.object(sandbox.os, 'getuid', return_value=1000))
         self.enterContext(patch.object(sandbox.os, 'getgid', return_value=1000))
         self.enterContext(patch.object(sandbox, 'snapshot_profile', return_value=profile))
-        self.enterContext(patch('pi_sandbox_factory.provider_credentials.os_store')).return_value.get_password.return_value = 'fixture'
+        self.enterContext(patch('ai_sandbox_factory.provider_credentials.os_store')).return_value.get_password.return_value = 'fixture'
         args = sandbox.argparse.Namespace(name='example', profile='base', workspace=str(workspace),
                                           pi_config=None, allowlist=None, allow_domain=[], env_file=None,
                                           engine='docker', memory=None)

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from pi_sandbox_factory import native_editor
+from ai_sandbox_factory import native_editor
 
 
 class NativeEditorInstallTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class NativeEditorInstallTests(unittest.TestCase):
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         self.cache = self.root / 'native-editors'
         self.cache.mkdir()
-        self.stack.enter_context(patch('pi_sandbox_factory.sandbox_extensions.cache_root',
+        self.stack.enter_context(patch('ai_sandbox_factory.sandbox_extensions.cache_root',
                                       return_value=self.root / 'extensions'))
         self.calls = []
         self.installed = {}
@@ -38,7 +38,7 @@ class NativeEditorInstallTests(unittest.TestCase):
                                       for item in archive if item.isfile()}
             return subprocess.CompletedProcess(command, 0, '')
 
-        self.runner = self.stack.enter_context(patch('pi_sandbox_factory.sandbox.run', side_effect=run))
+        self.runner = self.stack.enter_context(patch('ai_sandbox_factory.sandbox.run', side_effect=run))
         self.download = self.stack.enter_context(patch('urllib.request.urlopen'))
         self.config = {'engine': 'podman', 'primary_agent': 'claude'}
 

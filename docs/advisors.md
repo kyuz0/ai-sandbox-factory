@@ -22,10 +22,10 @@ Set an optional per-session call limit under **Usage and network**.
 The CLI can add providers during creation with `--advisor codex`, `--advisor claude` and/or `--advisor agy`. Sign in afterwards:
 
 ```sh
-pi-sandbox-factory advisor-login NAME codex
-pi-sandbox-factory advisor-login NAME claude
-pi-sandbox-factory advisor-login NAME agy
-pi-sandbox-factory advisor-check NAME
+ai-sandbox-factory advisor-login NAME codex
+ai-sandbox-factory advisor-login NAME claude
+ai-sandbox-factory advisor-login NAME agy
+ai-sandbox-factory advisor-check NAME
 ```
 
 Codex's [device login](https://developers.openai.com/codex/auth/) must be enabled for your account. Antigravity uses its documented [remote login flow and Linux Secret Service](https://antigravity.google/docs/install?tab=cli). The companion has its own keyring; it never mounts your desktop session bus.
@@ -36,9 +36,9 @@ Codex's [device login](https://developers.openai.com/codex/auth/) must be enable
 that advisor’s saved login with the host login. The CLI equivalent is:
 
 ```sh
-pi-sandbox-factory advisor-import NAME codex
-pi-sandbox-factory advisor-import NAME claude
-pi-sandbox-factory advisor-import NAME agy
+ai-sandbox-factory advisor-import NAME codex
+ai-sandbox-factory advisor-import NAME claude
+ai-sandbox-factory advisor-import NAME agy
 ```
 
 Codex imports the ChatGPT sign-in from `$CODEX_HOME/auth.json` (default

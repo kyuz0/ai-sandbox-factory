@@ -15,8 +15,8 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pi_sandbox_factory import browser_editor, inference, provider_credentials, sandbox
-from pi_sandbox_factory.sandbox_tui import Service
+from ai_sandbox_factory import browser_editor, inference, provider_credentials, sandbox
+from ai_sandbox_factory.sandbox_tui import Service
 
 
 @contextmanager

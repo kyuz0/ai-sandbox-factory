@@ -5,12 +5,12 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from pi_sandbox_factory import hosted_models as h, sandbox, inference
+from ai_sandbox_factory import hosted_models as h, sandbox, inference
 
 
 class HostedModelsTests(unittest.TestCase):
     def test_reviewer_only_update_preserves_runtime_and_chat_settings(self):
-        from pi_sandbox_factory.sandbox_options import options, write_json
+        from ai_sandbox_factory.sandbox_options import options, write_json
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)
             runtime = state / 'runtime-config' / 'auto-review.json'
@@ -111,7 +111,7 @@ class HostedModelsTests(unittest.TestCase):
             self.assertEqual(request.call_args.args[1],'test')
 
     def test_service_saves_and_removes_using_saved_configuration(self):
-        from pi_sandbox_factory.sandbox_tui import Service
+        from ai_sandbox_factory.sandbox_tui import Service
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp) / 'fixture'
             state.mkdir()
@@ -144,7 +144,7 @@ class HostedModelsTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_plugin_key_goes_only_to_companion(self):
-        from pi_sandbox_factory import model_providers
+        from ai_sandbox_factory import model_providers
         config={'name':'test','engine':'podman','model_providers':[
             {'name':'company','manifest':{'inference':{'origin':'https://models.example','auth':{'type':'bearer'}}}}]}
         with patch.object(inference,'credentials') as credentials,patch.object(sandbox,'run',return_value=subprocess.CompletedProcess([],0,'{"state":"ready","message":"configured"}')) as run:

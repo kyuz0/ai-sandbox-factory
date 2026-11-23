@@ -11,7 +11,7 @@ import sys
 import tempfile
 from urllib.parse import urlencode, urlsplit
 
-from pi_sandbox_factory import browser_editor, editor_settings, host_platform
+from ai_sandbox_factory import browser_editor, editor_settings, host_platform
 
 
 def request(url, path='/?folder=/workspace', *, method='GET', body=None, headers=None, context=None):
@@ -29,7 +29,7 @@ def request(url, path='/?folder=/workspace', *, method='GET', body=None, headers
 
 def check(state, tls_address):
     previous = editor_settings.load(state)
-    command = [sys.executable, '-m', 'pi_sandbox_factory', '--state-dir', str(state.parent),
+    command = [sys.executable, '-m', 'ai_sandbox_factory', '--state-dir', str(state.parent),
                'browser-editor', state.name, '--background', '--no-open']
     def launch():
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL)

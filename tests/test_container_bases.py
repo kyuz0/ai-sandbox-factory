@@ -4,7 +4,7 @@ import re
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory'
+ROOT = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory'
 
 
 class ContainerBaseTests(unittest.TestCase):

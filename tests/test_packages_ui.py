@@ -3,8 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Static, TabbedContent, TextArea, Tabs
-from pi_sandbox_factory import registry
-from pi_sandbox_factory.sandbox_tui import Cockpit, Confirm, InstallPackage, Operation, PackageRow, PackagesScreen, ProfileDetails
+from ai_sandbox_factory import registry
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, InstallPackage, Operation, PackageRow, PackagesScreen, ProfileDetails
 from test_tui import FakeService
 from tui_geometry import check_input_layout
 import test_tui

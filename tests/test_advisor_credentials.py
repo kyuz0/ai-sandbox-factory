@@ -10,8 +10,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import advisor_credentials as auth
-from pi_sandbox_factory.sandbox_tui import Service, preset, DEFAULT_SETTINGS
+from ai_sandbox_factory import advisor_credentials as auth
+from ai_sandbox_factory.sandbox_tui import Service, preset, DEFAULT_SETTINGS
 
 class CredentialTests(unittest.TestCase):
     def setUp(self):

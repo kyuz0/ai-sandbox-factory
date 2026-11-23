@@ -13,8 +13,8 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import sandbox, host_platform
-from pi_sandbox_factory.browser_viewer import ensure_viewer
+from ai_sandbox_factory import sandbox, host_platform
+from ai_sandbox_factory.browser_viewer import ensure_viewer
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--state-dir', type=Path, required=True)
@@ -33,7 +33,7 @@ def relay_pids():
     result = []
     for line in subprocess.check_output(['ps','-eo','pid,args'],text=True).splitlines():
         fields = line.split()
-        if "run_module('pi_sandbox_factory.browser_viewer'" in line and f' {engine} {cid} ' in line:
+        if "run_module('ai_sandbox_factory.browser_viewer'" in line and f' {engine} {cid} ' in line:
             result.append(int(fields[0]))
     return result
 

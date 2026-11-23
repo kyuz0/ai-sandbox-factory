@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from pi_sandbox_factory import sandbox, folders
-from pi_sandbox_factory.sandbox_options import guidance
+from ai_sandbox_factory import sandbox, folders
+from ai_sandbox_factory.sandbox_options import guidance
 
 class LocalDevelopmentTests(unittest.TestCase):
     def test_trusted_network_and_scratch_are_consistent(self):
-        source = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev'
+        source = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/dev'
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             (state/'allowlist.txt').write_text('git.example.com:22\napi.example.com:8443\n')
@@ -33,7 +33,7 @@ class LocalDevelopmentTests(unittest.TestCase):
             self.assertEqual(after['filesystem'],data['filesystem'])
 
     def test_runtime_and_guidance_keep_private_temp_separate(self):
-        source=Path(__file__).resolve().parents[1]/'pi_sandbox_factory/containers/dev'
+        source=Path(__file__).resolve().parents[1]/'ai_sandbox_factory/containers/dev'
         self.assertIn('RUN install -d -o node -g node -m 700 /var/tmp/pi',(source/'Dockerfile').read_text())
         self.assertNotIn('/tmp/pi-sandbox-factory-ready',(source/'entrypoint.sh').read_text())
         self.assertIn('/var/tmp/pi/pi-sandbox-factory-ready',(source/'entrypoint.sh').read_text())

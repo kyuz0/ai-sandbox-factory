@@ -124,7 +124,7 @@ if __name__ == '__main__':
         subprocess.run(['podman', 'run', '--rm', '--network=none', '--security-opt=label=disable',
                         '--entrypoint', 'python3',
                         '-v', f'{Path(__file__).resolve()}:/tmp/check.py:ro',
-                        '-v', f'{root / "pi_sandbox_factory/containers/primary"}:/opt/check-source:ro',
+                        '-v', f'{root / "ai_sandbox_factory/containers/primary"}:/opt/check-source:ro',
                         args.image, '/tmp/check.py', '--inside'], check=True)
     else:
         parser.error('--image is required')

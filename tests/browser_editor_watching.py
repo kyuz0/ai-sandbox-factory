@@ -20,7 +20,7 @@ def run(*args):
 
 def check(image, code_server, output):
     output.mkdir(parents=True, exist_ok=True)
-    fallback = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/editor/watch-fallback.cjs'
+    fallback = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/editor/watch-fallback.cjs'
     with tempfile.TemporaryDirectory(prefix='factory-editor-watch-') as temp, sync_playwright() as playwright:
         root = Path(temp); (root/'workspace').mkdir()
         policy = root/'seccomp.json'

@@ -7,7 +7,7 @@ saved sandboxes. Requires a built Factory proxy image, curl and Podman/Docker.
 import argparse,json,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import network_groups,sandbox
+from ai_sandbox_factory import network_groups,sandbox
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--engine',default='podman',choices=['podman','docker'])
 p.add_argument('--proxy-image',default='localhost/pi-sandbox-factory-proxy:1')

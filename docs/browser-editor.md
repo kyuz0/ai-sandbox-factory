@@ -111,12 +111,12 @@ browser-editor startup.
 ## Command line
 
 ```sh
-pi-sandbox-factory open NAME
-pi-sandbox-factory open NAME --editor pi
-pi-sandbox-factory open NAME --editor frostpi
-pi-sandbox-factory open NAME --editor desktop
-pi-sandbox-factory browser-editor NAME --background
-pi-sandbox-factory browser-editor NAME --stop
+ai-sandbox-factory open NAME
+ai-sandbox-factory open NAME --editor pi
+ai-sandbox-factory open NAME --editor frostpi
+ai-sandbox-factory open NAME --editor desktop
+ai-sandbox-factory browser-editor NAME --background
+ai-sandbox-factory browser-editor NAME --stop
 ```
 
 `open` uses the saved client. The `browser-editor` command without `--background`

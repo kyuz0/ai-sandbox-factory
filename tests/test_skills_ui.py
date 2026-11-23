@@ -7,10 +7,10 @@ import unittest
 from unittest.mock import patch
 
 from textual.widgets import Button, Input, Collapsible
-from pi_sandbox_factory import skill_library
-from pi_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
-from pi_sandbox_factory.skills_ui import ImportSkills, SkillSelection
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory import skill_library
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
+from ai_sandbox_factory.skills_ui import ImportSkills, SkillSelection
+from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
 
@@ -22,7 +22,7 @@ class SkillsUITests(unittest.TestCase):
     def _callTestMethod(self, method): self.runner.run(method())
 
     async def test_import_multiple_select_and_remove_without_affecting_saved_copy(self):
-        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
             source = Path(temp)/'source'
             for name in ('one','two'):
                 folder=source/name;folder.mkdir(parents=True)
@@ -50,7 +50,7 @@ class SkillsUITests(unittest.TestCase):
 
     async def test_changed_source_requires_validation_and_errors_keep_actions_visible(self):
         for size in ((80,24),(120,40),(220,50)):
-            with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+            with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
                 app=Cockpit(Path(temp),FakeService([]))
                 async with app.run_test(size=size) as pilot:
                     await pilot.pause();await app.workers.wait_for_complete()
@@ -66,7 +66,7 @@ class SkillsUITests(unittest.TestCase):
                     self.assertNotIsInstance(app.screen,ImportSkills)
 
     async def test_default_selection_summary_and_update_conflict_are_visible(self):
-        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'SANDBOX_REGISTRY_DIR': temp+'/library'}), patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
             source=Path(temp)/'source';source.mkdir()
             (source/'SKILL.md').write_text('---\nname: example\ndescription: Example skill\n---\n')
             rows=skill_library.discover(str(source),Path(temp)/'fetched');skill_library.install(rows)
@@ -104,7 +104,7 @@ class SkillsUITests(unittest.TestCase):
                 self.assertEqual(selection.collect()['library_skills'],[key])
 
     async def test_update_prefill_survives_mount_and_browse_is_available(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update',return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults',side_effect=lambda:copy.deepcopy(DEFAULT_SETTINGS)):
             app=Cockpit(Path(temp),FakeService([]))
             async with app.run_test(size=(80,24)) as pilot:
                 await pilot.pause();await app.workers.wait_for_complete()
@@ -117,7 +117,7 @@ class SkillsUITests(unittest.TestCase):
                 self.assertEqual(source.region.y, browse.region.y)
 
     async def test_search_preserves_hidden_selections_and_imports_them(self):
-        with tempfile.TemporaryDirectory() as temp, patch('pi_sandbox_factory.updates.available_update', return_value=None), patch('pi_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)):
             app = Cockpit(Path(temp), FakeService([]))
             async with app.run_test(size=(80, 24)) as pilot:
                 await pilot.pause(); await app.workers.wait_for_complete()

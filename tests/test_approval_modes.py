@@ -2,12 +2,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from pi_sandbox_factory import sandbox
-from pi_sandbox_factory.sandbox_options import options, permissions, guidance
+from ai_sandbox_factory import sandbox
+from ai_sandbox_factory.sandbox_options import options, permissions, guidance
 
 class ApprovalModeTests(unittest.TestCase):
     def test_goal_status_and_scheduling_preserve_other_review_rules(self):
-        source = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/containers/dev'
+        source = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/dev'
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             for mode in ('automatic', 'assisted', 'manual'):
@@ -59,7 +59,7 @@ class ApprovalModeTests(unittest.TestCase):
             self.assertTrue(guidance({'approval':mode}))
 
     def test_generated_settings_match_selected_mode(self):
-        source=Path(__file__).resolve().parents[1]/'pi_sandbox_factory/containers/dev'
+        source=Path(__file__).resolve().parents[1]/'ai_sandbox_factory/containers/dev'
         with tempfile.TemporaryDirectory() as tmp:
             state=Path(tmp)
             for mode in ('automatic','assisted','manual','off'):
@@ -70,7 +70,7 @@ class ApprovalModeTests(unittest.TestCase):
                 self.assertEqual(config['reasoning'],'low')
 
     def test_generated_sandbox_config_matches_credential_file_protection_choice(self):
-        source=Path(__file__).resolve().parents[1]/'pi_sandbox_factory/containers/dev'
+        source=Path(__file__).resolve().parents[1]/'ai_sandbox_factory/containers/dev'
         with tempfile.TemporaryDirectory() as tmp:
             state=Path(tmp)
             for protected in (True, False):

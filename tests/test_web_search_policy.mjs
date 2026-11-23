@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { searchOnly } from '../pi_sandbox_factory/containers/dev/web-access/search-policy.mjs';
+import { searchOnly } from '../ai_sandbox_factory/containers/dev/web-access/search-policy.mjs';
 
 for (const params of [{ includeContent: true }, { workflow: 'auto-summary' }, { workflow: 'summary-review' }]) {
   test(`search rejects automatic retrieval: ${JSON.stringify(params)}`, async () => {

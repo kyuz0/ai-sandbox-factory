@@ -17,8 +17,8 @@ import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory import creation, host_platform, sandbox, sandbox_advisors, sandbox_ssh, inference
-from pi_sandbox_factory.sandbox_tui import Service, DEFAULT_SETTINGS, preset
+from ai_sandbox_factory import creation, host_platform, sandbox, sandbox_advisors, sandbox_ssh, inference
+from ai_sandbox_factory.sandbox_tui import Service, DEFAULT_SETTINGS, preset
 
 
 def engine(*args):
@@ -95,7 +95,7 @@ def check(image):
                     triggered = True
                     job.cancel()
             def command(module, *args):
-                if module == 'pi_sandbox_factory.creation':
+                if module == 'ai_sandbox_factory.creation':
                     return [sys.executable, str(Path(__file__).resolve()), '--worker', phase,
                             '--image', image, '--fixture', fixture]
                 return original_command(module, *args)

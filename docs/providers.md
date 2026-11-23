@@ -28,9 +28,9 @@ networking, allow the service’s host and port under
 ## Install and select
 
 ```sh
-pi-sandbox-factory provider add company git@git.example.com:team/company-models.git
-pi-sandbox-factory provider list
-pi-sandbox-factory provider show company
+ai-sandbox-factory provider add company git@git.example.com:team/company-models.git
+ai-sandbox-factory provider list
+ai-sandbox-factory provider show company
 ```
 
 Add `--subdir FOLDER` to install from a shared plugin repository. Updates retain
@@ -59,12 +59,12 @@ For the CLI, put settings in a JSON file:
 ```
 
 ```sh
-pi-sandbox-factory create project --workspace /absolute/path/to/project \
+ai-sandbox-factory create project --workspace /absolute/path/to/project \
   --providers-file providers.json --local-model-ports 8000 \
   --allow-domain local-model.internal:8000 --start
-pi-sandbox-factory configure project --provider company --key
-pi-sandbox-factory configure project --provider company --preview
-pi-sandbox-factory configure project --provider company --status
+ai-sandbox-factory configure project --provider company --key
+ai-sandbox-factory configure project --provider company --preview
+ai-sandbox-factory configure project --provider company --status
 ```
 
 `--key` prompts without echo. `--key-stdin` accepts a key from a credential tool.

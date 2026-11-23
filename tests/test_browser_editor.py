@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from pi_sandbox_factory import browser_editor as editor
+from ai_sandbox_factory import browser_editor as editor
 
 HOST = '127.12.34.56:12345'
 

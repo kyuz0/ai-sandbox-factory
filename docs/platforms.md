@@ -54,14 +54,14 @@ Inside **Ubuntu**:
 sudo apt update
 sudo apt install podman passt uidmap git pipx
 pipx ensurepath
-pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git
+pipx install git+https://github.com/kyuz0/ai-sandbox-factory.git
 mkdir -p ~/Projects
 ```
 
-Reopen Ubuntu, then run `pi-sandbox-factory`. Choose **New sandbox**, a folder
+Reopen Ubuntu, then run `ai-sandbox-factory`. Choose **New sandbox**, a folder
 under `~/Projects`, then **Create and start sandbox**. The editor opens in your Windows
 browser. Pi CLI runs in the Ubuntu terminal. Update with
-`pipx upgrade pi-sandbox-factory`.
+`pipx upgrade ai-sandbox-factory`.
 
 Use Linux Podman inside Ubuntu; Docker Desktop and Windows Podman Machine are
 not required. Projects under `~/Projects` have normal Linux permissions and file
@@ -95,11 +95,11 @@ brew install podman pipx git
 podman machine init --cpus 4 --memory 8192 --disk-size 60
 podman machine start
 pipx ensurepath
-pipx install git+https://github.com/kyuz0/pi-sandbox-factory.git
+pipx install git+https://github.com/kyuz0/ai-sandbox-factory.git
 mkdir -p ~/Projects
 ```
 
-Open a new Terminal window and run `pi-sandbox-factory`. Choose **New sandbox**,
+Open a new Terminal window and run `ai-sandbox-factory`. Choose **New sandbox**,
 a project folder under `~/Projects`, then **Create and start sandbox**. The browser editor
 opens automatically.
 
@@ -113,7 +113,7 @@ option. Changes are visible inside the container, but native file-watch events
 may not cross the VM share. See [Node's file-watching caveats](https://nodejs.org/api/fs.html#availability).
 
 After restarting your Mac, run `podman machine start` before opening the manager.
-To update Factory, run `pipx upgrade pi-sandbox-factory`.
+To update Factory, run `pipx upgrade ai-sandbox-factory`.
 
 **Connect to models on this computer** reaches model servers on the Mac. For
 OpenRouter or a custom endpoint, follow [model setup](providers.md#hosted-services).

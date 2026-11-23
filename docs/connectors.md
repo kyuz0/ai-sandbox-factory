@@ -35,7 +35,7 @@ Use **Library → AWS access** to edit or duplicate profiles. After an edit, cho
 ## Give a sandbox access to an HTTPS service
 
 1. Install a connector for the service on your computer. This guide uses **Build status**, a fictional service. To try the example with your own build service, replace its example URLs before installing it.
-2. Run `pi-sandbox-factory connector-login build-status` on your computer. Check the service URLs and enter your token at the hidden prompt.
+2. Run `ai-sandbox-factory connector-login build-status` on your computer. Check the service URLs and enter your token at the hidden prompt.
 3. In **Connectors**, open **Build status…**. Select the requests the sandbox may make. For example, selecting only **latest** lets the sandbox read the latest build result. Choose **Add** when creating a sandbox or **Connect** in Settings.
 4. To change access later, open the same connector in Settings, change the selected requests and choose **Save changes**. New requests use the new permissions immediately in a running sandbox. A stopped sandbox uses the new permissions when you start it. **Disconnect** removes access for this sandbox. Other sandboxes keep their settings.
 
@@ -48,12 +48,12 @@ Each sandbox keeps a copy of the connector it uses. Installing a new version on 
 To create a sandbox that can read only the latest build, run this from your project folder on the host.
 
 ```sh
-pi-sandbox-factory create research --workspace "$PWD" --connector build-status:latest
+ai-sandbox-factory create research --workspace "$PWD" --connector build-status:latest
 ```
 
 Separate several request names with commas, as in `--connector build-status:latest,test-results`. Using `--connector build-status` grants all requests in the installed manifest. Repeat the flag to grant access to another service.
 
-For a saved sandbox, run `pi-sandbox-factory update research --settings-file grants.json`. List every HTTPS connector the sandbox should use in `connector_ids`. In `connector_operations`, list the requests for each new connector and any existing connector you want to change. Other retained connectors keep their permissions. This example switches an existing grant from **latest** to **test-results**. The two `expected_` fields prevent overwriting someone else’s changes.
+For a saved sandbox, run `ai-sandbox-factory update research --settings-file grants.json`. List every HTTPS connector the sandbox should use in `connector_ids`. In `connector_operations`, list the requests for each new connector and any existing connector you want to change. Other retained connectors keep their permissions. This example switches an existing grant from **latest** to **test-results**. The two `expected_` fields prevent overwriting someone else’s changes.
 
 ```json
 {
@@ -82,7 +82,7 @@ In a sandbox created with this version, Pi reads updated instructions when you s
 
 Start with the [Build status manifest](../examples/connectors/build-status/connector.json). Replace its example URLs with HTTPS endpoints you trust to receive the token. Choose endpoints whose response bodies the sandbox may read. A connector can grant access to a service independently of the sandbox’s ordinary browsing rules.
 
-Install the file at `~/.config/pi-sandbox-factory/connectors/<id>/connector.json`. If you set `XDG_CONFIG_HOME`, use that directory in place of `~/.config`. Open Connectors again to see the service.
+Install the file at `~/.config/ai-sandbox-factory/connectors/<id>/connector.json`. If you set `XDG_CONFIG_HOME`, use that directory in place of `~/.config`. Open Connectors again to see the service.
 
 | Manifest field | What to enter |
 | --- | --- |
@@ -116,7 +116,7 @@ The connector makes the selected GET request with its bearer token. Callers cann
 | What you see | What to do |
 | --- | --- |
 | The service is missing from Connectors | Check that the folder name matches `id` and the file is named `connector.json`. Reopen Connectors. An invalid manifest produces a message beside the list. |
-| A token is missing or the keyring is locked | Unlock your computer’s keyring and run `pi-sandbox-factory connector-login <id>` on the host. Enter a bearer token for the listed URLs, then choose **Check again** in the dialog. Changing the operation names or URLs requires saving a token for the new set. |
+| A token is missing or the keyring is locked | Unlock your computer’s keyring and run `ai-sandbox-factory connector-login <id>` on the host. Enter a bearer token for the listed URLs, then choose **Check again** in the dialog. Changing the operation names or URLs requires saving a token for the new set. |
 | The connector returns HTTP 404 | Check the operation name and the requests allowed in this sandbox. Use the command in its `connectors.md` file. |
 | The connector returns HTTP 502 | Read the error message. A service status such as 401 or 403 means the service rejected the request. Check the token and its permissions. A connection error means the connector could not reach the service over HTTPS. The service’s error body stays private. |
 
@@ -124,9 +124,9 @@ To rotate a token, run `connector-login` again. Each running connector keeps its
 
 ## Develop a built-in connector
 
-The external manifest format supports bearer-authenticated HTTPS GET requests. SSH and AWS use different protocols and have dedicated implementations. Each built-in has a folder under [connectors/builtin](../pi_sandbox_factory/connectors/builtin). Its `connector.json` describes the built-in service and its availability. External plugins use the version 1 manifest above, which declares each allowed URL.
+The external manifest format supports bearer-authenticated HTTPS GET requests. SSH and AWS use different protocols and have dedicated implementations. Each built-in has a folder under [connectors/builtin](../ai_sandbox_factory/connectors/builtin). Its `connector.json` describes the built-in service and its availability. External plugins use the version 1 manifest above, which declares each allowed URL.
 
-For a new protocol, implement a settings adapter in `plugin.py` and register it in `builtin.ADAPTERS`. The [SSH adapter](../pi_sandbox_factory/connectors/builtin/ssh/plugin.py) and [AWS adapter](../pi_sandbox_factory/connectors/builtin/aws/plugin.py) show the interface.
+For a new protocol, implement a settings adapter in `plugin.py` and register it in `builtin.ADAPTERS`. The [SSH adapter](../ai_sandbox_factory/connectors/builtin/ssh/plugin.py) and [AWS adapter](../ai_sandbox_factory/connectors/builtin/aws/plugin.py) show the interface.
 
 | Adapter member | Responsibility |
 | --- | --- |
@@ -135,4 +135,4 @@ For a new protocol, implement a settings adapter in `plugin.py` and register it 
 | `saved_action` | Identify the existing Settings action that applies changes to a saved sandbox. |
 | `hint(config)` | Describe the access actually granted to the agent. Return `None` when no service access is enabled. Use the full reference for longer guidance. |
 
-The adapter handles the UI and agent instructions. Connect the new protocol to sandbox creation, startup, update, stop and cleanup separately. The SSH and AWS credential containers are managed by [sandbox_ssh.py](../pi_sandbox_factory/sandbox_ssh.py) and [aws_access.py](../pi_sandbox_factory/aws_access.py). Test allowed and denied operations from inside a sandbox, how it recovers from a failed change, and where a workspace process can read credentials. Installing an external JSON manifest never loads Python code from that folder.
+The adapter handles the UI and agent instructions. Connect the new protocol to sandbox creation, startup, update, stop and cleanup separately. The SSH and AWS credential containers are managed by [sandbox_ssh.py](../ai_sandbox_factory/sandbox_ssh.py) and [aws_access.py](../ai_sandbox_factory/aws_access.py). Test allowed and denied operations from inside a sandbox, how it recovers from a failed change, and where a workspace process can read credentials. Installing an external JSON manifest never loads Python code from that folder.

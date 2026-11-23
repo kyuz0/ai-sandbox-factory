@@ -9,11 +9,11 @@ from unittest.mock import patch
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Select, TextArea
 
-from pi_sandbox_factory import sandbox, settings_effects
-from pi_sandbox_factory.sandbox_tui import (
+from ai_sandbox_factory import sandbox, settings_effects
+from ai_sandbox_factory.sandbox_tui import (
     Cockpit, DEFAULT_SETTINGS, PrimarySignIn, SettingsForm, SettingsMenu, copy_draft, preset,
 )
-from pi_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
 
@@ -30,11 +30,11 @@ class PrimaryAgentsUI(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix='factory-primary-ui-')
         self.addCleanup(self.directory.cleanup)
         self.state = Path(self.directory.name)
-        defaults = patch('pi_sandbox_factory.sandbox_tui.load_defaults',
+        defaults = patch('ai_sandbox_factory.sandbox_tui.load_defaults',
                          side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS))
         defaults.start()
         self.addCleanup(defaults.stop)
-        updates = patch('pi_sandbox_factory.updates.available_update', return_value=None)
+        updates = patch('ai_sandbox_factory.updates.available_update', return_value=None)
         updates.start()
         self.addCleanup(updates.stop)
 
@@ -264,9 +264,9 @@ class PrimaryAgentsUI(unittest.TestCase):
             version=1, id='build-status', title='Build status', description='Read the latest build.',
             documentation='Connect a read-only service account.', operations=routes,
             agent_instructions='Use the latest request to check the current build.')))
-        self.enterContext(patch('pi_sandbox_factory.connectors.has_token', return_value=True))
+        self.enterContext(patch('ai_sandbox_factory.connectors.has_token', return_value=True))
         app = Cockpit(self.state, FakeService([]))
-        with patch('pi_sandbox_factory.connectors.directory', return_value=package.parent):
+        with patch('ai_sandbox_factory.connectors.directory', return_value=package.parent):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.workers.wait_for_complete()
                 app.action_new()

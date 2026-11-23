@@ -3,8 +3,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from pi_sandbox_factory import embedding_models, inference
-from pi_sandbox_factory.sandbox_options import options
+from ai_sandbox_factory import embedding_models, inference
+from ai_sandbox_factory.sandbox_options import options
 
 
 class EmbeddingModelTests(unittest.TestCase):

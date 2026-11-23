@@ -170,7 +170,7 @@ also stores a private copy on the workstation; keys never appear in command argu
 For CLI use, enter a configured provider’s key at a masked prompt:
 
 ```sh
-pi-sandbox-factory web-key my-project --provider brave
+ai-sandbox-factory web-key my-project --provider brave
 ```
 
 Use `--key-stdin` to pipe a key from a secret manager.
@@ -197,10 +197,10 @@ Pass an options file during creation or as `options` in an `update` settings fil
 Save Brave’s key with the command above to activate it.
 
 For an existing sandbox, keep your manual rules in a file and pass category IDs
-such as `dev-python` and `ut1-press`. [Category IDs](../pi_sandbox_factory/network-catalog/groups.json)
+such as `dev-python` and `ut1-press`. [Category IDs](../ai_sandbox_factory/network-catalog/groups.json)
 
 ```sh
-pi-sandbox-factory network my-project --allowlist hosts.txt \
+ai-sandbox-factory network my-project --allowlist hosts.txt \
   --website-groups dev-python ut1-press
 ```
 

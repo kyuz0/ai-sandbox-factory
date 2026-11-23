@@ -1,6 +1,6 @@
 # Extensions
 
-Pi Sandbox Factory installs extensions from their repositories:
+AI Sandbox Factory installs extensions from their repositories:
 
 | Extension | Repository |
 | --- | --- |
@@ -11,9 +11,9 @@ Pi Sandbox Factory installs extensions from their repositories:
 | Codex, Claude and Antigravity advisors | [pi-advisor](https://github.com/kyuz0/pi-advisor) |
 | Automatic approval, inner sandbox and escalation | [pi-packages](https://github.com/kyuz0/pi-packages) |
 
-[extensions.lock.json](../pi_sandbox_factory/containers/dev/extensions.lock.json) pins the editor, discovery, advisor and question-extension revisions. The manager downloads them over HTTPS and passes exported source files to the image builder. Downloaded revisions are cached under `~/.cache/pi-sandbox-factory/extensions`.
+[extensions.lock.json](../ai_sandbox_factory/containers/dev/extensions.lock.json) pins the editor, discovery, advisor and question-extension revisions. The manager downloads them over HTTPS and passes exported source files to the image builder. Downloaded revisions are cached under `~/.cache/ai-sandbox-factory/extensions`.
 
-The security packages use the commit and archive checksum in [sources.json](../pi_sandbox_factory/containers/dev/security/sources.json). Updating a pin and rebuilding installs that revision. Existing containers keep their installed version until recreated.
+The security packages use the commit and archive checksum in [sources.json](../ai_sandbox_factory/containers/dev/security/sources.json). Updating a pin and rebuilding installs that revision. Existing containers keep their installed version until recreated.
 
 Fixes and unit tests belong in the extension repositories. This repository manages container lifecycle, network rules, credentials and integration tests.
 
@@ -44,7 +44,7 @@ To update an existing sandbox, use **Actions → Update sources and recreate…*
 or run:
 
 ```sh
-pi-sandbox-factory recreate NAME --profile base
+ai-sandbox-factory recreate NAME --profile base
 ```
 
 Replace `base` with the sandbox’s current profile. Close the editor before rebuilding

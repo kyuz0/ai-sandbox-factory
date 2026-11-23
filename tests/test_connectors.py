@@ -9,8 +9,8 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from pi_sandbox_factory import connectors
-from pi_sandbox_factory.connectors import runtime
+from ai_sandbox_factory import connectors
+from ai_sandbox_factory.connectors import runtime
 
 spec = importlib.util.spec_from_file_location('connector_broker', connectors.ROOT / 'companion/broker.py')
 broker = importlib.util.module_from_spec(spec)
@@ -39,8 +39,8 @@ class DiscoveryTests(unittest.TestCase):
         self.addCleanup(patched.stop)
 
     def test_registered_builtin_editors_and_settings(self):
-        from pi_sandbox_factory.aws_ui import AWSProfilePicker
-        from pi_sandbox_factory.repository_ui import CreateSSHDialog
+        from ai_sandbox_factory.aws_ui import AWSProfilePicker
+        from ai_sandbox_factory.repository_ui import CreateSSHDialog
         installed = {item.id: item for item in connectors.catalog() if item.available and not item.external}
         self.assertEqual(set(installed), set(connectors.ADAPTERS))
         draft = {'options': {}, '_ssh_key_file': 'old', '_ssh_key_duration': '1h'}
@@ -108,9 +108,9 @@ class DiscoveryTests(unittest.TestCase):
         self.config['connector_operations'] = {'status': ['summary']}
         connectors.snapshot(['status'], self.state)
         plugin = connectors.saved(self.config, self.state)[0]
-        with (patch('pi_sandbox_factory.provider_credentials.os_store') as store,
-              patch('pi_sandbox_factory.sandbox.inspect', return_value=None),
-              patch('pi_sandbox_factory.sandbox.run') as run,
+        with (patch('ai_sandbox_factory.provider_credentials.os_store') as store,
+              patch('ai_sandbox_factory.sandbox.inspect', return_value=None),
+              patch('ai_sandbox_factory.sandbox.run') as run,
               patch('subprocess.run') as deliver):
             store.return_value.get_password.return_value = 'private-token'
             run.return_value.stdout = 'worker-id'
@@ -139,8 +139,8 @@ class DiscoveryTests(unittest.TestCase):
         plugin = connectors.saved(self.config, self.state)[0]
         current = {'Id': 'same-worker', 'State': {'Running': True},
                    'Config': {'Labels': {runtime.ROLE: plugin.id, runtime.SCOPE: plugin.account}}}
-        with (patch('pi_sandbox_factory.sandbox.inspect', return_value=current),
-              patch('pi_sandbox_factory.provider_credentials.os_store') as keyring,
+        with (patch('ai_sandbox_factory.sandbox.inspect', return_value=current),
+              patch('ai_sandbox_factory.provider_credentials.os_store') as keyring,
               patch('subprocess.run') as run):
             run.return_value.returncode = 0
             connectors.configure_running(self.config, self.state)
@@ -153,9 +153,9 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_start_checks_missing_token_before_build_or_workspace_start(self):
         connectors.snapshot(['status'], self.state)
-        with (patch('pi_sandbox_factory.sandbox.inspect', return_value=None),
-              patch('pi_sandbox_factory.provider_credentials.os_store') as store,
-              patch('pi_sandbox_factory.sandbox.run') as run):
+        with (patch('ai_sandbox_factory.sandbox.inspect', return_value=None),
+              patch('ai_sandbox_factory.provider_credentials.os_store') as store,
+              patch('ai_sandbox_factory.sandbox.run') as run):
             store.return_value.get_password.return_value = None
             with self.assertRaisesRegex(ValueError, 'connector-login status'):
                 connectors.up(self.config, self.state)
@@ -173,8 +173,8 @@ class DiscoveryTests(unittest.TestCase):
                     connectors._parse(raw, identifier)
 
     def test_do_not_remove_container_without_connector_role(self):
-        with (patch('pi_sandbox_factory.sandbox.inspect', return_value={'Config': {'Labels': {}}}),
-              patch('pi_sandbox_factory.sandbox.run') as run,
+        with (patch('ai_sandbox_factory.sandbox.inspect', return_value={'Config': {'Labels': {}}}),
+              patch('ai_sandbox_factory.sandbox.run') as run,
               self.assertRaisesRegex(ValueError, 'unrelated container')):
             connectors.down(self.config)
         run.assert_not_called()

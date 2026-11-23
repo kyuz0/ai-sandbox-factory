@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 
-from pi_sandbox_factory import browser_editor, editor_settings
+from ai_sandbox_factory import browser_editor, editor_settings
 
 
 def check_files(page, composer, state, url, output):

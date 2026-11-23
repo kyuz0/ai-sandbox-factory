@@ -1,7 +1,7 @@
 // Offline companion fixture for the Pi and FrostPi approval flows.
 import fs from 'node:fs';
 import http from 'node:http';
-import { compileRoutes, createBroker } from '../pi_sandbox_factory/containers/inference/broker.mjs';
+import { compileRoutes, createBroker } from '../ai_sandbox_factory/containers/inference/broker.mjs';
 
 const [socket, configFile, outcomeFile] = process.argv.slice(2);
 const key = 'FACTORY_PRIVATE_PROVIDER_TEST_KEY';

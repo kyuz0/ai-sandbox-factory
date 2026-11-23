@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pi_sandbox_factory.network_groups import domain, expand_v2fly
+from ai_sandbox_factory.network_groups import domain, expand_v2fly
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--v2fly', type=Path, required=True, help='Pinned domain-list-community checkout')
@@ -57,7 +57,7 @@ for name, title, description in [
         'revision': args.ut1_revision, 'license': 'CC-BY-SA-4.0',
         'note': 'Category coverage and maintenance vary. This is a topic list, not a security rating.',
         'omitted_entries': skipped, 'domains': domains}
-out = Path(__file__).resolve().parents[1] / 'pi_sandbox_factory/network-catalog'
+out = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/network-catalog'
 out.mkdir(exist_ok=True)
 (out / 'groups.json').write_text(json.dumps({'groups': groups}, indent=2, ensure_ascii=True) + '\n')
 for name, group in groups.items():
