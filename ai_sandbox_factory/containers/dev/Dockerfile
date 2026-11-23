@@ -1,3 +1,10 @@
+FROM docker.io/library/node:24-trixie-slim AS cli-tools
+COPY cli-tools/ /opt/cli-tools/
+RUN sh /opt/cli-tools/install.sh
+USER node
+RUN python3 /opt/cli-tools/check.py
+USER root
+
 FROM docker.io/library/node:24-trixie-slim AS frostpi-build
 WORKDIR /src
 COPY --from=frostpi / ./
@@ -7,26 +14,11 @@ RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
 
 RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm build:browser
 
-FROM docker.io/library/node:24-trixie-slim
+FROM cli-tools
 ARG PI_VERSION=1.4.0
 ARG USER_UID=1000
 ARG USER_GID=1000
-# Strip ping privileges so the executable can start with all container capabilities dropped.
-# Keep manuals for packages installed here and restore the shell manuals stripped from node:slim.
-RUN echo 'path-include=/usr/share/man/*' > /etc/dpkg/dpkg.cfg.d/zz-cli-manuals \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends --reinstall \
-    bash coreutils diffutils findutils grep gzip mawk sed tar util-linux \
-    && apt-get install -y --no-install-recommends \
-    bash-completion man-db manpages manpages-dev git-man \
-    build-essential patch tree bsdextrautils xxd acl bc time gettext-base \
-    zstd cpio lsof psmisc net-tools traceroute \
-    ca-certificates curl wget git python3 socat tini procps ripgrep iproute2 iputils-ping \
-    dnsutils netcat-openbsd jq less nano vim file zip unzip bzip2 xz-utils rsync tmux \
-    && python3 -c 'import os; p="/usr/bin/ping"; os.removexattr(p, "security.capability") if "security.capability" in os.listxattr(p) else None' \
-    && chmod u-s /usr/bin/ping \
-    && rm -rf /var/lib/apt/lists/* \
-    && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
+RUN if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi \
     && chown -R node:node /home/node
 COPY document-packages.txt document-requirements.txt install-document-tools.sh /opt/document-tools/

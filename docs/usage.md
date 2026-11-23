@@ -349,7 +349,8 @@ Configure SSH destinations separately to use an isolated Git key.
 
 ### Included command-line tools
 
-Every profile includes Bash, Git, SSH, Python and Node.js. Read command manuals offline with
+Pi, Codex, Claude Code and Antigravity workspaces include the same command-line tools,
+including Bash, Git, SSH, Python and Node.js. Read command manuals offline with
 `man ls` or `man git`, or use `apropos` to find a command by topic.
 
 | Task | Commands |

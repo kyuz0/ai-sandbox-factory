@@ -4,6 +4,16 @@ AI Sandbox Factory manages Pi, Codex, Claude Code and Antigravity sandboxes with
 Read `README.md` and `TESTING.md`. For package work, use `docs/profiles.md`,
 `docs/providers.md` and the runnable `examples/`.
 
+## Task completion
+
+Keep an explicit list of assigned tasks and their remaining checks. A new question
+or side task does not cancel unfinished work: answer briefly, record follow-up work,
+and finish the active task unless the user explicitly changes priorities. Before
+moving on, complete the authorized implementation, relevant tests, documentation
+and local commit. If blocked, state the specific blocker and what remains. Never
+report a diagnosis or proposed fix as completed implementation. Keep publication
+and user-environment changes subject to the user's current authorization.
+
 ## Public repository
 
 HARD GATE — this repository is public. Review every staged file and commit message

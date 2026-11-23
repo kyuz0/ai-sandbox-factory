@@ -129,6 +129,38 @@ printf 'approval-routing-ok\n' | podman exec --user 0 -i CONTAINER tee /var/lib/
 
 Ask Pi to read that receipt. Authorize the reviewed outer shell to read that specific file if the normal shell cannot. Check the reviewer's provider and model, its decision, and whether the tool ran. For an approval, check that Pi returns `approval-routing-ok`. For a denial, check that the outer command did not run. Select **Use current model for approvals** and repeat to check the chat model handles the review. Remove the disposable sandbox after the test.
 
+## Shared command-line tools
+
+Pi and native-agent workspace builds run `containers/dev/cli-tools/check.py` as
+an unprivileged user. This checks every documented command, offline manual pages,
+patching and compiling C++, and a zstd archive round trip. Both image definitions
+use `containers/dev/cli-tools/install.sh`; keep this installer shared.
+
+To check the native workspace base without starting an agent:
+
+```sh
+podman build -t localhost/factory-cli-tools-check \
+  --build-context primary-files=ai_sandbox_factory/containers/primary \
+  --build-context primary-dev=ai_sandbox_factory/containers/dev \
+  ai_sandbox_factory/containers/primary-worker
+podman run --rm --network=none --cap-drop=ALL \
+  --security-opt=no-new-privileges --entrypoint python3 \
+  localhost/factory-cli-tools-check /opt/cli-tools/check.py
+```
+
+Check Pi's shared base as the sandbox user:
+
+```sh
+podman build --target cli-tools -t localhost/factory-pi-cli-tools-check \
+  ai_sandbox_factory/containers/dev
+podman run --rm --network=none --user 1000:1000 --cap-drop=ALL \
+  --security-opt=no-new-privileges --entrypoint python3 \
+  localhost/factory-pi-cli-tools-check /opt/cli-tools/check.py
+```
+
+Network tools remain subject to the sandbox's network policy; installation does
+not grant external ICMP or DNS access.
+
 ## Native Codex, Claude and Antigravity browser editors
 
 These checks use the host's existing subscription sign-in in a disposable private

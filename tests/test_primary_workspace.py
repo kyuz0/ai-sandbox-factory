@@ -8,6 +8,18 @@ from ai_sandbox_factory import primary_workspace, sandbox
 
 
 class PrimaryWorkspaceTests(unittest.TestCase):
+    def test_cli_tool_changes_invalidate_each_native_workspace_image(self):
+        original = sandbox.tree_digest
+        cli_source = sandbox.ROOT / 'containers/dev/cli-tools'
+        config = {'uid': 1000, 'gid': 1000, 'options': {'browser': False}}
+        for agent in ('codex', 'claude', 'agy'):
+            with self.subTest(agent=agent):
+                config['primary_agent'] = agent
+                before = primary_workspace.image(config)
+                with patch.object(sandbox, 'tree_digest', side_effect=lambda path:
+                                  'changed-tools' if path == cli_source else original(path)):
+                    self.assertNotEqual(before, primary_workspace.image(config))
+
     def test_legacy_metadata_keeps_pi_and_existing_options(self):
         legacy = {'name': 'existing', 'uid': 1000, 'gid': 1000,
                   'options': {'browser': True}, 'profile': sandbox.load_profile('base')}

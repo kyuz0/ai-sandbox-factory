@@ -11,12 +11,17 @@ class ContainerBaseTests(unittest.TestCase):
     def test_owned_bases_explicitly_select_debian_13(self):
         count = 0
         for dockerfile in ROOT.rglob('Dockerfile*'):
+            stages = set()
             for line in dockerfile.read_text().splitlines():
                 match = re.match(r'FROM\s+(\S+)', line, re.I)
                 if not match:
                     continue
                 image = match[1]
-                if image == '${BASE_IMAGE}' or image == 'sources':
+                previous_stage = image in stages
+                alias = re.search(r'\sAS\s+(\S+)', line, re.I)
+                if alias:
+                    stages.add(alias[1])
+                if image == '${BASE_IMAGE}' or previous_stage:
                     continue
                 if image.startswith('public.ecr.aws/aws-cli/aws-cli:'):
                     # Vendor tooling is copied into our own Debian runtime.

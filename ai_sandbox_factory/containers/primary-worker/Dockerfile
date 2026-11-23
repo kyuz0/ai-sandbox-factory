@@ -1,11 +1,8 @@
 FROM docker.io/library/node:24-trixie-slim AS worker
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash build-essential ca-certificates curl fd-find file git jq less nano netcat-openbsd \
-    openssh-client patch procps python3 ripgrep rsync socat tini tmux unzip vim-tiny wget zip \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+COPY --from=primary-dev cli-tools/ /opt/cli-tools/
+RUN sh /opt/cli-tools/install.sh \
     && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi \
     && chown -R node:node /home/node \
@@ -17,4 +14,5 @@ COPY --from=primary-files worker.sh worker-tools.mjs editor_client.py /opt/prima
 ENV GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/opt/sandbox/git-identity.gitconfig
 USER node
 WORKDIR /workspace
+RUN python3 /opt/cli-tools/check.py
 ENTRYPOINT ["/usr/bin/tini", "--", "python3", "/opt/primary/entrypoint.py"]

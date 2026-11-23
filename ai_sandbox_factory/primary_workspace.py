@@ -95,6 +95,7 @@ def image(config):
     digest = hashlib.sha256()
     for filename in worker_files:
         digest.update((source / filename).read_bytes())
+    digest.update(sandbox.tree_digest(sandbox.ROOT / 'containers/dev/cli-tools').encode())
     worker_source = sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker')
     identity = f'{agent(config)}-{config["uid"]}-{config["gid"]}-{worker_source}-{digest.hexdigest()[:16]}'
     selected = options(config.get('options'))
@@ -127,7 +128,8 @@ def build(config, target):
     worker = sandbox.stage_image(target, '-base')
     sandbox.run([engine, 'build', '-t', worker, '--build-arg', f'USER_UID={config["uid"]}',
                  '--build-arg', f'USER_GID={config["gid"]}',
-                 '--build-context', f'primary-files={sandbox.ROOT / "containers/primary"}', root])
+                 '--build-context', f'primary-files={sandbox.ROOT / "containers/primary"}',
+                 '--build-context', f'primary-dev={sandbox.ROOT / "containers/dev"}', root])
     if agent(config) == 'codex':
         codex = sandbox.stage_image(target, '-codex')
         sandbox.run([engine, 'build', '-t', codex, '--build-arg', f'BASE_IMAGE={worker}',
