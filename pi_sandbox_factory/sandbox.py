@@ -1146,6 +1146,8 @@ def prepare_options(config, state):
         if path.name == 'auto-review.json':
             value['model'] = selected['approval_model']
             value['interactionMode'] = 'interactive' if selected['approval'] == 'assisted' else 'automatic'
+            if 'trustedModelEndpoints' in value:
+                value['trustedModelEndpoints'] = inference.trusted_model_endpoints(config)
         if path.name == 'permissions.json':
             value = folders.permissions(permissions(value, selected), config)
         if path.name == 'sandbox.json':

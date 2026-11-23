@@ -27,6 +27,7 @@ APPROVAL_LABELS = {
     'manual': 'Manual approval (ask me)', 'off': 'YOLO (no approvals)',
 }
 sys.path.insert(0, str(REPO))
+from knowledge_documents import write_documents
 from pi_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
 
 
@@ -453,8 +454,31 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
     prompt = 'Factory knowledge fixture' if endpoint else 'Factory keyword fixture'
     if endpoint:
         inside('test', '!', '-e', '/opt/pi-knowledge/models')
-        send('/knowledge-index /mnt/reference')
-        frame.get_by_text(re.compile(r'Indexed "reference":')).first.wait_for(timeout=120000)
+        source = options_file.parent / 'reference'
+        def hashes():
+            return {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in source.iterdir()}
+        def workflow(client, refresh=False):
+            request = (f'Refresh the index using collection {client}-docs. Then search for '
+                       f'ORCHID_REFRESH_{client.upper()}_842.' if refresh else
+                       f'Index the files in the read-only /mnt/reference folder using collection {client}-docs. '
+                       'Then search the index for the maintenance details in both the PDF and DOCX files.')
+            success = f'FACTORY KNOWLEDGE {client.upper()} {"REFRESH" if refresh else "INDEX"} VERIFIED'
+            before = hashes()
+            if client == 'frostpi':
+                send(request)
+                result = frame.get_by_text(re.compile(r'^(?:FACTORY KNOWLEDGE WORKFLOW FAILED.*|' + re.escape(success) + r')$')).last
+                result.wait_for(timeout=120000)
+                assert result.inner_text() == success, result.inner_text()
+            else:
+                result = inside('pi', '--no-session', '--print', request)
+                assert success in result, result
+            assert hashes() == before, 'Indexing modified a read-only source'
+        for client in ('frostpi', 'pi'):
+            workflow(client)
+            write_documents(source, f'ORCHID_REFRESH_{client.upper()}_842')
+            workflow(client, refresh=True)
+        send('/knowledge-refresh frostpi-docs')
+        frame.get_by_text(re.compile(r'^Updated:')).first.wait_for(timeout=60000)
         send('/knowledge-index /workspace/outside-reference')
         frame.get_by_text(re.compile('outside the allowed filesystem roots')).first.wait_for(timeout=20000)
     else:
@@ -484,8 +508,9 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
         queries = trace.count('EMBEDDING query')
         assert passages >= 1 and queries >= 2, trace
         database, = inside('find', '/home/node', '-name', 'knowledge.db', '-type', 'f').splitlines()
-        vectors, = inside('find', str(Path(database).parent / 'vectors'), '-name', '*.bin').splitlines()
-        checksum = inside('sha256sum', vectors)
+        vectors = inside('find', str(Path(database).parent / 'vectors'), '-name', '*.bin').splitlines()
+        assert len(vectors) == 2, vectors
+        checksum = inside('sha256sum', *sorted(vectors))
 
         selected = json.loads(options_file.read_text())
         reopen_with(sandbox.options({**selected, 'knowledge_embedding': 'off'}))
@@ -493,14 +518,14 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
         off_trace = inside('cat', '/tmp/fixture.log')
         assert off_trace.count('EMBEDDING') == trace.count('EMBEDDING'), off_trace
         inside('test', '-s', database)
-        assert inside('sha256sum', vectors) == checksum
+        assert inside('sha256sum', *sorted(vectors)) == checksum
 
         reopen_with(selected)
         check_clients(prompt)
         trace = inside('cat', '/tmp/fixture.log')
         assert trace.count('EMBEDDING passage') == passages, trace
         assert trace.count('EMBEDDING query') >= queries + 2, trace
-        assert inside('sha256sum', vectors) == checksum
+        assert inside('sha256sum', *sorted(vectors)) == checksum
         print('PASS Both clients switched to keyword search and reused the original index after re-enabling the endpoint.')
     else:
         assert 'EMBEDDING' not in trace, trace
@@ -854,7 +879,10 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 config['options'].update(knowledge_embedding_url='http://127.0.0.1:19381/v1',
                                          knowledge_embedding_model='fixture-embedding')
             (root / 'reference').mkdir()
-            (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
+            if local_knowledge == 'endpoint':
+                write_documents(root / 'reference')
+            else:
+                (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
             (root / 'workspace/outside-reference').symlink_to('/etc/passwd')
             config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if subagents:

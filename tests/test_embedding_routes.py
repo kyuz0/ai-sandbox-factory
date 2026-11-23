@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from pi_sandbox_factory import inference, registry
+from pi_sandbox_factory import inference, registry, sandbox
 
 
 class EmbeddingRoutesTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class EmbeddingRoutesTests(unittest.TestCase):
         self.config = {'model_providers': [{'name': 'company', 'manifest': {'inference': self.route}}]}
 
     def select(self, base):
-        self.config['options'] = {'knowledge_embedding': 'endpoint', 'knowledge_embedding_url': base}
+        self.config['options'] = {'knowledge_embedding': 'endpoint', 'knowledge_embedding_url': base, 'knowledge_embedding_model': 'fixture-embedding'}
 
     def test_endpoint_only_adds_selected_post_and_preserves_manifest(self):
         original = copy.deepcopy(self.route)
@@ -64,6 +64,53 @@ class EmbeddingRoutesTests(unittest.TestCase):
         self.select('https://other.example/api/v1')
         self.config['options']['knowledge_embedding_model'] = 'single-text'
         self.assertIsNone(inference.embedding_batch_size(self.config))
+
+    def test_reviewer_receives_selected_service_and_broker_bases_without_credentials(self):
+        self.select('https://models.example/api/v1')
+        self.assertEqual(inference.trusted_model_endpoints(self.config), sorted([
+            'https://models.example/api', 'https://models.example/api/v1',
+            f'http://127.0.0.1:{inference.PORT}/r/company/api',
+            f'http://127.0.0.1:{inference.PORT}/r/company/api/v1',
+        ]))
+        self.select('https://embeddings.example/v1')
+        self.assertIn('https://embeddings.example/v1', inference.trusted_model_endpoints(self.config))
+        self.config['options']['knowledge_embedding'] = 'off'
+        self.assertNotIn('https://embeddings.example/v1', inference.trusted_model_endpoints(self.config))
+
+    def test_runtime_trust_comes_from_configuration_and_preserves_old_snapshot_format(self):
+        self.select('https://models.example/api/v1')
+        for supported in (True, False):
+            with self.subTest(supported=supported), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                common = sandbox.common_profile()
+                # Isolate the versioned reviewer configuration from the checkout.
+                import shutil
+                shutil.copytree(common['path'], root / 'common')
+                path = root / 'common/security/config/auto-review.json'
+                config = json.loads(path.read_text())
+                if not supported:
+                    config.pop('trustedModelEndpoints', None)
+                path.write_text(json.dumps(config))
+                runtime = {**self.config, 'common': {**common, 'path': str(root / 'common')}}
+                sandbox.prepare_options(runtime, root)
+                actual = json.loads((root / 'runtime-config/auto-review.json').read_text())
+                if supported:
+                    self.assertEqual(actual['trustedModelEndpoints'], inference.trusted_model_endpoints(runtime))
+                else:
+                    self.assertNotIn('trustedModelEndpoints', actual)
+
+    def test_guarded_indexing_tools_are_allowed_only_with_embeddings(self):
+        import copy
+        policy = {'permission': {}}
+        selected = sandbox.options({'knowledge_embedding': 'endpoint',
+            'knowledge_embedding_url': 'https://embeddings.example/v1',
+            'knowledge_embedding_model': 'fixture'})
+        actual = sandbox.permissions(copy.deepcopy(policy), selected)['permission']
+        for name in ('knowledge_add', 'knowledge_update', 'knowledge_search'):
+            self.assertEqual(actual[name], 'allow')
+        off = sandbox.permissions(copy.deepcopy(policy), sandbox.options())['permission']
+        for name in ('knowledge_add', 'knowledge_update', 'knowledge_search'):
+            self.assertNotIn(name, off)
 
     def test_manifest_validates_batch_limits(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -69,7 +69,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/check_dependency_main.py
       - run: npm ci --prefix pi_sandbox_factory/containers/inference --ignore-scripts
-      - run: node --test tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
+      - run: node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
       - run: |
           python -m pip wheel --no-deps . -w dist
           python -m venv /tmp/factory-package

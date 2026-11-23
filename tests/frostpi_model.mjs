@@ -81,6 +81,43 @@ function researchReply(messages, tools) {
   return delta;
 }
 
+function knowledgeReply(messages, tools) {
+  if (!tools.length) return; // Session title generation has no agent tools.
+  const textOf = message => typeof message.content === 'string' ? message.content
+    : message.content?.map(part => part.text ?? '').join('') ?? '';
+  const user = messages.findLast(message => message.role === 'user');
+  if (!user) return;
+  const text = textOf(user);
+  if (!/(?:Index the files|Refresh the index).*collection (frostpi|pi)-docs/.test(text)) return;
+  const [, client] = text.match(/collection (frostpi|pi)-docs/);
+  const name = client + '-docs';
+  const refresh = text.startsWith('Refresh');
+  const prefix = 'factory-knowledge-workflow-' + name + (refresh ? '-refresh-' : '-index-');
+  const results = messages.filter(message => message.role === 'tool' && message.tool_call_id?.startsWith(prefix));
+  const steps = refresh ? [
+    ['knowledge_update', {target: name}, /(?:Updated|Refreshed)/i],
+    ['knowledge_search', {query: 'ORCHID_REFRESH_' + client.toUpperCase() + '_842', kb_id: name, mode: 'fast'},
+      new RegExp('ORCHID_REFRESH_' + client.toUpperCase() + '_842')],
+  ] : [
+    ['knowledge_add', {source: '/mnt/reference', name}, /2 files/],
+    ['knowledge_search', {query: 'DOCX_SOURCE_842', kb_id: name, mode: 'semantic'}, /DOCX_SOURCE_842/],
+    ['knowledge_search', {query: 'PDF_SOURCE_842', kb_id: name, mode: 'semantic'}, /PDF_SOURCE_842/],
+  ];
+  for (const [index, result] of results.entries()) {
+    if (!steps[index]?.[2].test(String(result.content)))
+      return {content: 'FACTORY KNOWLEDGE WORKFLOW FAILED ' + steps[index]?.[0] + ': ' + String(result.content).slice(0, 800)};
+  }
+  if (tools.some(name => ['knowledge_configure', 'knowledge_export'].includes(name)))
+    return {content: 'FACTORY KNOWLEDGE WORKFLOW FAILED unexpected administrative tools'};
+  if (results.length === steps.length)
+    return {content: 'FACTORY KNOWLEDGE ' + client.toUpperCase() + (refresh ? ' REFRESH' : ' INDEX') + ' VERIFIED'};
+  const [tool, args] = steps[results.length];
+  if (!tools.includes(tool)) return {content: 'FACTORY KNOWLEDGE WORKFLOW FAILED missing ' + tool};
+  const delta = choice(tool, args);
+  delta.tool_calls[0].id = prefix + results.length;
+  return delta;
+}
+
 http.createServer((request, response) => {
   let body = '';
   request.on('data', chunk => body += chunk);
@@ -111,7 +148,7 @@ http.createServer((request, response) => {
       ? message.content.filter(part => part.type === 'image_url').map(part => part.image_url.url) : [];
     // A provider that cannot embed images in tool messages receives a follow-up user image.
     const toolResult = last.role === 'tool' ? last : messageImages(last).length ? messages.at(-2) : undefined;
-    const delegatedReply = subagentReply({ messages, tools, choice });
+    const delegatedReply = knowledgeReply(messages, tools) ?? subagentReply({ messages, tools, choice });
     if (delegatedReply) {
       sendReply(response, delegatedReply);
       return;
@@ -161,14 +198,14 @@ http.createServer((request, response) => {
       delta = researchReply(messages, tools);
     } else if (userText === 'Factory keyword fixture' && tools.length) {
       delta = tools.includes('knowledge_search') ? { content: 'FACTORY UNEXPECTED SEMANTIC SEARCH' }
-        : choice('bash', { command: 'rg -n ORCHID_WINDOW /mnt/reference' });
+        : choice('bash', { command: 'rg -a -n ORCHID_WINDOW /mnt/reference' });
     } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-bash-') &&
                context.includes('Factory keyword fixture')) {
       delta = { content: String(last.content).includes('ORCHID_WINDOW_842')
         ? 'FACTORY LOCAL KNOWLEDGE VERIFIED' : 'FACTORY KEYWORD RESULT MISSING' };
     } else if (userText === 'Factory knowledge fixture' && tools.length) {
       if (!tools.includes('knowledge_search') || tools.some(name =>
-        ['knowledge_add', 'knowledge_configure', 'knowledge_export', 'knowledge_update'].includes(name))) {
+        ['knowledge_configure', 'knowledge_export'].includes(name))) {
         delta = { content: 'FACTORY INVALID KNOWLEDGE TOOL SCOPE' };
       } else {
         delta = choice('knowledge_search', { query: 'When is the field unavailable?', mode: 'semantic' });

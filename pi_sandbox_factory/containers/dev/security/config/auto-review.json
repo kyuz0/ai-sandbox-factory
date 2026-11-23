@@ -1,5 +1,6 @@
 {
   "model": "current",
+  "trustedModelEndpoints": [],
   "maxTokens": 32768,
   "timeoutMs": 600000,
   "retainedContext": true,

@@ -33,6 +33,13 @@ exact action, your instructions from the current chat, and relevant tool results
 The reviewer makes one model request for each action and has no tools of its own.
 Each approval covers one action.
 
+Your configured chat and embedding services are trusted for their normal work.
+Chat services receive the conversation and file content included in model requests;
+embedding services receive document passages when indexing and queries when searching.
+The reviewer treats this processing as authorized use of the connections you selected
+and does not ask for separate permission because a service is remote. This applies to
+the configured services, including their managed proxies, rather than arbitrary upload sites.
+
 ```mermaid
 flowchart LR
     USER[Original user instructions] --> REVIEW[Separate reviewer conversation]

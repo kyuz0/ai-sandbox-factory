@@ -43,7 +43,7 @@ export default function profileGuide(pi) {
       if (webOff) parts.push(webHelp);
       const { canIndex, canSearch } = knowledgeCapabilities(pi);
       if (canIndex && canSearch && (guide.id === 'local-knowledge' || guide.id === 'deep-research')) {
-        parts.push('pi-knowledge is enabled. Run /knowledge-index with a file or folder path before asking for semantic search.');
+        parts.push('Semantic search is on. Ask Pi to index a file or folder, then ask questions about its contents.');
       }
       ctx.ui.notify(parts.join('\n\n'), 'info');
     },

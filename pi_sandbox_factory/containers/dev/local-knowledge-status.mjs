@@ -12,7 +12,7 @@ export default function localKnowledgeStatus(pi) {
     const { skill, canIndex, canSearch } = knowledgeCapabilities(pi);
     if (!skill) return;
     const semanticHelp = canSearch && canIndex
-      ? 'Semantic search is on. The user can run /knowledge-index to choose a file or folder.'
+      ? 'Semantic search is on. When the user asks to index a file or folder, use knowledge_add. Use knowledge_update to refresh an existing index. The configured embedding service is trusted for processing these documents.'
       : canSearch ? 'Semantic search is on for previously indexed sources.'
       : 'Semantic search is unavailable in this session.';
     return { systemPrompt: systemPrompt + '\n\n' +

@@ -135,6 +135,20 @@ def routes(config):
     return providers
 
 
+def trusted_model_endpoints(config):
+    """Non-secret API bases selected by the user, supplied to the permission reviewer."""
+    endpoints = set()
+    for name, route in routes(config).items():
+        prefix = route.get('basePath', '')
+        endpoints.add(route['origin'].rstrip('/') + prefix)
+        endpoints.add(f'http://127.0.0.1:{PORT}/r/{name}' + prefix)
+    selected = config.get('options', {})
+    if selected.get('knowledge_embedding') == 'endpoint':
+        endpoints.add(selected['knowledge_embedding_url'].rstrip('/'))
+        endpoints.add(embedding_client_url(config).rstrip('/'))
+    return sorted(endpoints)
+
+
 def embedding_client_url(config):
     """Base URL for pi-knowledge. Only a matching companion injects credentials."""
     base, name = _embedding_target(config, _provider_routes(config))

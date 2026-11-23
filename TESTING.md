@@ -7,7 +7,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 npm ci --prefix pi_sandbox_factory/containers/inference --ignore-scripts
-node --test tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
+node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
 ```
 
 These suites use fixtures without account credentials. For macOS, put fixtures
@@ -227,8 +227,11 @@ a burst after a delay and checks the final average uses the reported count.
 
 Run `--local-knowledge off` with the Local Knowledge profile image to check that
 both clients can find text without an embedding request. Run `--local-knowledge endpoint`
-with the optional pi-knowledge layer to index a read-only mount, reject a link
-outside the allowed folders, and search the saved index in both clients. The
+with the optional pi-knowledge layer to ask the agent to index PDF and DOCX files
+in a read-only mount, search both formats and refresh the index in both clients.
+It also checks that source files are unchanged, a link outside the allowed folders
+is rejected, slash commands still work, and disabling and re-enabling embeddings
+preserves the saved index. The
 embedding server is a loopback fixture. The test container has no outbound network access. Use
 `--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web
 Research image to verify the profile addendum in both clients. For a profile

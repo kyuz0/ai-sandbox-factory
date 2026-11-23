@@ -1,17 +1,8 @@
-import { realpathSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
 import { getKnowledgeToolDefinitions } from "./node_modules/pi-knowledge/dist/index.js";
+import { indexingTool } from "./index-policy.mjs";
 
 const searchTools = ["knowledge_search", "knowledge_symbol_search", "knowledge_status", "knowledge_show"];
 const searchModes = ["fast", "hybrid", "semantic"];
-
-function sourceAccess() {
-  const allowedRoots = JSON.parse(process.env.SANDBOX_KNOWLEDGE_ROOTS ?? "[]");
-  if (!Array.isArray(allowedRoots) || !allowedRoots.length) {
-    throw new Error("No workspace or mounted folders are available for indexing.");
-  }
-  return { filesystemAccess: { allowedRoots, allowNetwork: false } };
-}
 
 export default function localKnowledge(pi) {
   if (!process.env.PI_KNOWLEDGE_EMBEDDING?.startsWith("openai:") ||
@@ -19,6 +10,11 @@ export default function localKnowledge(pi) {
     throw new Error("Open Document search → Configure… in Factory and enter an embedding server and model.");
   }
   const definitions = new Map(getKnowledgeToolDefinitions().map(tool => [tool.name, tool]));
+  for (const name of ["knowledge_add", "knowledge_update"]) {
+    const tool = indexingTool(definitions.get(name));
+    definitions.set(name, tool);
+    pi.registerTool(tool);
+  }
   for (const name of searchTools) {
     const { approval: _approval, promptGuidelines: _guidelines, ...tool } = definitions.get(name);
     if (name === "knowledge_search") {
@@ -32,25 +28,19 @@ export default function localKnowledge(pi) {
 
   async function indexSource(tool, parameters, context) {
     try {
-      const result = await definitions.get(tool).execute(tool, parameters(), undefined, undefined, sourceAccess());
+      const result = await definitions.get(tool).execute(tool, parameters(), undefined, undefined, context);
       context.ui.notify(result.content.map(item => item.text).join("\n"), result.isError ? "error" : "info");
     } catch (error) {
       context.ui.notify(error.message, "error");
     }
   }
 
-  // Indexing stays in user commands. Models can only search the corpus the user chose.
+  // Slash commands remain available alongside the agent's indexing tools.
   pi.registerCommand("knowledge-index", {
     description: "Index a file or folder from the workspace or a mounted folder",
     handler: (args, context) => indexSource("knowledge_add", () => {
       if (!args.trim()) throw new Error("Enter a file or folder after /knowledge-index.");
-      const source = realpathSync(resolve(context.cwd, args.trim()));
-      if (/^(?:\.env(?:\..*)?|\.npmrc|\.netrc|id_[^.]+)$|\.(?:key|pem|env)(?:\..*)?$/i.test(basename(source))) {
-        throw new Error("Choose a source file or folder without credentials.");
-      }
-      const info = statSync(source);
-      if (!info.isFile() && !info.isDirectory()) throw new Error("Choose a regular file or folder.");
-      return { source, name: basename(source) };
+      return { source: args.trim() };
     }, context),
   });
   pi.registerCommand("knowledge-refresh", {

@@ -58,10 +58,14 @@ uses the old offline model, switch to keyword search first. [Updating a sandbox]
 
 ### Index and search
 
-In Pi or FrostPi, run `/knowledge-index /mnt/reference`. You can also give it a
-single file. Wait for indexing to finish, then ask Pi to search the index and
-cite the files. After editing the sources or switching models, run
-`/knowledge-refresh reference`.
+Ask Pi or FrostPi “Index the documents in `/mnt/reference` so we can search them.”
+Pi indexes that folder using your configured embedding service. Read-only folders
+work: the source files stay unchanged and the index is saved in the sandbox's
+private home. Then ask your questions and request file or section citations.
+
+After changing the documents or embedding model, ask Pi to refresh the index.
+You can also use `/knowledge-index /mnt/reference` and
+`/knowledge-refresh reference` directly.
 
 ## Turn embeddings off
 

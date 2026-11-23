@@ -158,8 +158,8 @@ def permissions(template, selected):
     if selected['browser']:
         rules.update({name: 'allow' for name in ('browser', 'browser_login', 'browser_evidence')})
     if selected['knowledge_embedding'] != 'off':
-        rules.update({name: 'allow' for name in ('knowledge_search', 'knowledge_symbol_search',
-                                                 'knowledge_status', 'knowledge_show')})
+        rules.update({name: 'allow' for name in ('knowledge_add', 'knowledge_update', 'knowledge_search',
+                                                 'knowledge_symbol_search', 'knowledge_status', 'knowledge_show')})
     return policy
 
 
