@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import signal
 
-from editor_protocol import ClaudeProtocol, CodexProtocol, Conversations, Rejected, model_name, object_value, session_id
+from editor_protocol import ClaudeProtocol, Conversations, Rejected, model_name, object_value, session_id
 from launch import AGENT, SOURCE, command, workspace_directory
 
 SOCKET = Path('/run/primary-editor/editor.sock')
@@ -102,10 +102,7 @@ def normalized_arguments(agent, supplied):
 
 def arguments(agent, supplied, settings, context, conversations):
     supplied = normalized_arguments(agent, supplied)
-    base = command(agent, 'editor' if agent == 'codex' else 'open', settings, context)
-    if agent == 'codex':
-        # app-server has its own per-turn policy. Keep only controller-owned configuration.
-        return [AGENT, *base]
+    base = command(agent, 'open', settings, context)
     if agent != 'claude':
         raise Rejected('No native editor connection for this agent')
     # Every executable, tool and environment value comes from Factory.
@@ -222,9 +219,7 @@ async def serve_client(reader, writer, agent):
             await claim(identifier)
             if history := await asyncio.to_thread(history_message, identifier):
                 await send(history)
-        protocol = (CodexProtocol(settings['working_directory'], context, conversations,
-                        reviewer='user' if settings.get('native_approval') == 'manual' else 'auto_review')
-                    if agent == 'codex' else ClaudeProtocol(conversations))
+        protocol = ClaudeProtocol(conversations)
         process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         async def output():
@@ -233,11 +228,8 @@ async def serve_client(reader, writer, agent):
                     raw = json.loads(line)
                 except ValueError:
                     continue
-                failed_turn = (agent == 'codex' and 'error' in raw and
-                               protocol.pending.get(raw.get('id')) == 'turn/start')
                 message = protocol.outgoing(raw)
-                if ((agent == 'claude' and raw.get('type') == 'result') or
-                        (agent == 'codex' and raw.get('method') == 'turn/completed') or failed_turn):
+                if agent == 'claude' and raw.get('type') == 'result':
                     ownership['turns'] = max(0, ownership['turns'] - 1)
                 for reply in protocol.replies:
                     if not process.stdin.is_closing():
@@ -247,8 +239,6 @@ async def serve_client(reader, writer, agent):
                     continue
                 if agent == 'claude' and message.get('type') == 'system' and message.get('subtype') == 'init':
                     await claim(message['session_id'])
-                if agent == 'codex' and message.get('method') == 'thread/started':
-                    await claim(message['params']['thread']['id'])
                 if agent == 'claude' and message.get('type') == 'result' and message.get('session_id'):
                     if history := await asyncio.to_thread(history_message, message['session_id']):
                         await send(history)
@@ -268,19 +258,12 @@ async def serve_client(reader, writer, agent):
                 outgoing = None
                 try:
                     outgoing = protocol.incoming(incoming)
-                    if agent == 'codex' and outgoing.get('method') in ('thread/resume', 'thread/fork'):
-                        await claim(outgoing['params']['threadId'])
                 except (Rejected, KeyError, TypeError, AttributeError) as error:
-                    if agent == 'codex' and outgoing is not None:
-                        protocol.pending.pop(outgoing.get('id'), None)
-                    if agent == 'codex' and 'id' in incoming:
-                        await send({'id': incoming['id'], 'error': {'code': -32602, 'message': str(error)}})
-                    elif incoming.get('type') == 'control_request':
+                    if incoming.get('type') == 'control_request':
                         await send({'type': 'control_response', 'response': {'subtype': 'error',
                             'request_id': incoming.get('request_id'), 'error': str(error)}})
                     continue
-                if (agent == 'claude' and outgoing.get('type') == 'user' or
-                        agent == 'codex' and outgoing.get('method') == 'turn/start'):
+                if agent == 'claude' and outgoing.get('type') == 'user':
                     ownership['turns'] += 1
                 await forward(outgoing)
             ownership['closed'] = True

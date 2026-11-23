@@ -85,6 +85,32 @@ different protocol into it.
 Read inference diagnostics with `podman logs --timestamps pi-sandbox-factory-NAME-inference`,
 replacing `NAME` with the sandbox name. Use `docker logs` for a Docker sandbox.
 
+## Codex subscription authentication
+
+The official Codex CLI and VS Code extension run inside the development container.
+Their native tools operate on the workspace directly. Their configuration and chat
+history live in its persistent home at `/home/node/.codex`.
+
+A separate credential companion stores the ChatGPT subscription sign-in in its
+private home volume. Codex receives placeholder tokens and sends HTTPS traffic
+through the companion over a shared Unix socket. The companion terminates TLS,
+substitutes real tokens only for HTTPS requests on port 443 to the exact
+credential destinations in `containers/primary/codex_network.json`, and masks
+tokens in HTTP responses before returning them to the workspace. It handles both a copied host sign-in
+and OAuth sign-in started inside Codex, including token refresh.
+
+That catalog also allows native service traffic, including feature settings and
+OpenAI assets. Allowing transport to a domain does not grant it account tokens.
+The cloud portal uses a separate HTTP/2 CONNECT relay inside the companion;
+it replaces recognized authorization placeholders and forwards tunnel data
+without interpreting SSH or Codex messages.
+
+The companion's private CA key and real account tokens have no workspace mount.
+Only its public CA certificate and proxy socket are shared. Workspace processes
+can use the subscription through this connection; protecting the tokens does
+not prevent permitted requests from consuming quota. Other destinations follow
+the sandbox's configured network mode and gateway rules.
+
 ## Commands, approval and skills
 
 ```mermaid
@@ -129,8 +155,9 @@ credentials enter through stdin and are never included in image layers.
 
 ## Browser access
 
-Browser support uses one headful Chromium and private TigerVNC display per Pi
-session inside the development container. noVNC shows the same native browser
+Betterwright is enabled by default for new sandboxes. Browser support uses one
+headful Chromium and private TigerVNC display per session inside the development
+container. noVNC shows the same native browser
 window controlled by the agent, including tabs and popup windows. X11 TCP and
 RFB TCP listeners are disabled; display access uses a private authority cookie
 and the RFB and WebSocket bridge use owner-only Unix sockets.

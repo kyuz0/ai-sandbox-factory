@@ -346,7 +346,7 @@ class LocalModelSetupTests(unittest.TestCase):
     def test_corrupt_configuration_blocks_editor_side_effects(self):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp)/'example';state.mkdir()
-            config={'name':'example','engine':'podman','local_model_ports':'8000'}
+            config={'name':'example','engine':'podman','local_model_ports':'8000','options':{'browser':False}}
             with patch.object(sandbox,'inspect',return_value={'State':{'Running':True}}), \
                  patch('shutil.which',return_value='/usr/bin/code'), \
                  patch.object(sandbox,'initialize_models',side_effect=ValueError('invalid configuration')) as initialize, \
@@ -625,7 +625,8 @@ class RecoveryTests(LifecycleTestCase):
         super().setUp()
         system = patch("platform.system", return_value="Linux")
         system.start(); self.addCleanup(system.stop)
-        self.config = {'name': 'demo', 'engine': 'podman', 'workspace': '/tmp'}
+        self.config = {'name': 'demo', 'engine': 'podman', 'workspace': '/tmp',
+                       'options': {'browser': False}, 'common': {'path': str(sandbox.ROOT / 'containers/dev')}}
         self.dev, self.proxy, _, _ = sandbox.names(self.config)
 
     def container(self, running=True):
@@ -633,7 +634,7 @@ class RecoveryTests(LifecycleTestCase):
 
     def test_saved_git_identity_is_mounted_readonly_in_the_development_container(self):
         config = dict(self.config, network='unrestricted', uid=1000, gid=1000, options={
-            'git_identity': {'name': 'Fixture Author', 'email': 'fixture@example.test'}},
+            'browser': False, 'git_identity': {'name': 'Fixture Author', 'email': 'fixture@example.test'}},
             common={'path': str(sandbox.ROOT / 'containers/dev')})
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -677,10 +678,16 @@ class RecoveryTests(LifecycleTestCase):
                 config = dict(self.config, engine=engine, network='allowlist', uid=1000, gid=1000,
                               memory='4g', workspace='/absolute/path/to/project',
                               pi_config='/absolute/path/to/agent')
+                # This fixture isolates the original core mounts from optional
+                # runtime configuration and the separately tested browser viewer.
+                config.pop('options')
+                configured_options = sandbox.options
                 with tempfile.TemporaryDirectory() as tmp:
                     state = Path(tmp)
                     (state / 'allowlist.txt').write_text('example.com:443\n')
                     with patch.object(sandbox, 'inspect', return_value=None), \
+                            patch.object(sandbox, 'options', side_effect=lambda value=None: {
+                                **configured_options(value), 'browser': False}), \
                             patch.object(sandbox, 'validate_models'), \
                             patch.object(sandbox, 'image_names', return_value=('dev-image', 'proxy-image')), \
                             patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
@@ -815,7 +822,8 @@ class EditorTests(unittest.TestCase):
                  patch.object(sandbox.shutil, 'which', return_value='/usr/bin/code'), \
                  patch.object(sandbox, 'run') as run, \
                  patch.dict(os.environ, {'SSH_AUTH_SOCK': '/host/agent', 'VSCODE_IPC_HOOK_CLI': '/host/editor'}):
-                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state)}, state)
+                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state),
+                                     'options': {'browser': False}}, state)
             command = run.call_args.args[0]
             self.assertIn('--reuse-window', command)
             self.assertIn('--skip-welcome', command)
@@ -851,7 +859,8 @@ class EditorTests(unittest.TestCase):
             with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
                  patch.object(sandbox.shutil, 'which', return_value='/usr/bin/code'), \
                  patch.object(sandbox, 'run'):
-                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state)}, state)
+                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state),
+                                     'options': {'browser': False}}, state)
             with closing(sqlite3.connect(storage)) as database, database:
                 self.assertEqual(json.loads(database.execute("SELECT value FROM ItemTable WHERE key='views.customizations'").fetchone()[0]), layout)
                 self.assertEqual(json.loads(database.execute('SELECT value FROM ItemTable WHERE key=?', (extension_key,)).fetchone()[0]), existing_state)

@@ -1,3 +1,10 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 COPY --from=primary-controller /usr/local/bin/factory-agent /usr/local/bin/factory-agent
+COPY --from=primary-controller /usr/local/bin/codex-code-mode-host /usr/local/bin/codex-code-mode-host
+COPY --from=primary-files codex_client.py /opt/primary/codex_client.py
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap python3-tomlkit \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '#!/bin/sh\nexec python3 /opt/primary/codex_client.py "$@"\n' > /usr/local/bin/codex && chmod 755 /usr/local/bin/codex
+USER node

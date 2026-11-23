@@ -321,7 +321,7 @@ for path in (Path.home()/'.codex/sessions').rglob('*.jsonl'):
 print(json.dumps({'view_image':any('view_image' in str(c) for c in calls),
                   'apply_patch':any('apply_patch' in str(c) for c in calls),
                   'tools':sorted(set(c['name'] for c in calls if c['name']))}))'''
-    invoked = json.loads(subprocess.check_output(['podman', 'exec', controller, 'python3', '-c', inspection], text=True))
+    invoked = json.loads(subprocess.check_output(['podman', 'exec', editor, 'python3', '-c', inspection], text=True))
     (output / 'isolation-tools.json').write_text(json.dumps(invoked, indent=2))
     assert invoked['view_image'] and invoked['apply_patch'], invoked
     print('Native image and patch tools used workspace files; the controller file stayed unchanged and its private marker was absent.', flush=True)
@@ -438,7 +438,10 @@ def run(args, root, stack):
     agent = args.agent
     api_error = getattr(args, 'api_error', False)
     fixture = 'factory-editor-test-' + secrets.token_hex(6)
-    options = {'options': {'native_approval': getattr(args, 'approval', 'automatic')}, 'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
+    options = {'options': {'native_approval': getattr(args, 'approval', 'automatic'),
+                          'browser': getattr(args, 'browser', False)},
+               'common': {'path': str(sandbox.ROOT / 'containers/dev')},
+               'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
     primary_agents.build({**options, 'engine': 'podman'})
     editor = fixture + '-editor'
     client = root / 'client'
@@ -457,7 +460,7 @@ def run(args, root, stack):
         stack.callback(podman, 'rm', '-f', '-v', name)
 
     rules = root / 'squid.conf'
-    rules.write_text(sandbox.squid_config(sandbox.parse_rules('\n'.join(primary_agents.PRIMARY_HOSTS[agent]))))
+    rules.write_text(sandbox.squid_config(primary_agents.network_rules(agent)))
     start(fixture + '-proxy', '--cap-drop=ALL', '--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID',
           '--cap-add=DAC_OVERRIDE', '-v', f'{rules}:/etc/squid/sandbox.conf:ro,z',
           '-v', egress + ':/run/egress:z', 'localhost/pi-sandbox-factory-proxy:1')
@@ -466,7 +469,8 @@ def run(args, root, stack):
                 '--tmpfs', '/home/node:rw,mode=1777', '--tmpfs', '/workspace:rw,mode=1777']
     trusted = root / 'trusted'
     trusted.mkdir()
-    (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':False,'working_directory':'/workspace', 'native_approval':getattr(args, 'approval', 'automatic')}))
+    (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':getattr(args, 'browser', False),
+        'write_roots':['/workspace'],'working_directory':'/workspace', 'native_approval':getattr(args, 'approval', 'automatic')}))
     (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
     from ai_sandbox_factory import browser_editor
     editor_path = browser_editor.INSTALL if agent == 'agy' else '/opt/editor'
@@ -479,6 +483,7 @@ def run(args, root, stack):
                            '-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1']
     start(fixture, *isolated, *controller_env, '-e', 'FACTORY_PRIMARY_AGENT=' + agent,
           '-v', egress + ':/run/primary-egress:ro', '-v', wire + ':/run/primary-workspace:ro,z',
+          *(['-v', egress + ':/run/workspace-egress:ro'] if agent == 'codex' else []),
           '-v', f'{private}:/run/primary-editor', '-v', f'{trusted}:/run/primary-input:ro',
           primary_agents.image(options))
     for _ in range(120):
@@ -517,13 +522,35 @@ def run(args, root, stack):
         podman('exec', '-i', editor, 'tee', '/run/primary-runtime/cwd.json', payload=json.dumps('/workspace'))
         prompt, expected = FILE_TASK, 'proof-' + secrets.token_hex(16)
         podman('exec', '-i', editor, 'tee', '/workspace/input.txt', payload=expected)
-        podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
+        if agent == 'codex':
+            podman('exec', '-i', editor, 'tee', '/run/primary-runtime/settings.json',
+                payload=(trusted / 'settings.json').read_text())
+            podman('exec', '-i', editor, 'tee', '/run/primary-runtime/context.md',
+                payload='Work in /workspace. Use the native shell and file tools.')
+            podman('exec', '-d', editor, 'python3', '/opt/primary/entrypoint.py')
+            for _ in range(120):
+                ready = subprocess.run(['podman', 'exec', editor, 'bash', '-c', 'true </dev/tcp/127.0.0.1/3130'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if ready.returncode == 0:
+                    break
+                time.sleep(.25)
+            else:
+                raise RuntimeError('Codex authentication relay failed to start')
+            podman('exec', editor, 'python3', '/opt/primary/codex_client.py', '--factory-prepare')
+            if getattr(args, 'browser', False):
+                podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
+            print('Prepared native Codex with subscription placeholders.', flush=True)
+        else:
+            podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
     from ai_sandbox_factory import native_editor
     if args.background_controls:
         from native_codex_background import check
         check(editor, args.output, args.timeout)
         return
     native_editor.install({'engine':'podman','primary_agent':agent}, editor, 'x86_64')
+    if agent == 'codex' and getattr(args, 'credential_attack', False):
+        from native_codex_credentials import install_attack_extension
+        credential_snapshot = install_attack_extension(editor, fixture)
     if agent == 'agy':
         state = root / 'state'
         state.mkdir()
@@ -600,8 +627,17 @@ def run(args, root, stack):
             print('Native error displayed without credentials; next turn recovered.', flush=True)
             return
         verify_reply(page, prompt, expected, args.timeout, args.output)
+        if agent == 'codex' and getattr(args, 'credential_attack', False):
+            from native_codex_credentials import verify_attack_extension
+            verify_attack_extension(editor, fixture, credential_snapshot)
+        if agent == 'codex' and getattr(args, 'controls', False):
+            from native_codex_controls import check as check_controls
+            check_controls(page, editor, args.output, args.timeout)
         if args.attachments:
-            from native_agy_attachments import check as check_attachments
+            if agent == 'codex':
+                from native_codex_controls import check_attachments
+            else:
+                from native_agy_attachments import check as check_attachments
             check_attachments(page, args.output, args.timeout)
         if args.separate:
             second = 'second-' + secrets.token_hex(12)
@@ -653,6 +689,7 @@ if __name__ == '__main__':
     parser.set_defaults(separate=True)
     parser.add_argument('--approval', choices=('automatic', 'manual'), default='automatic')
     parser.add_argument('--attachments', action='store_true')
+    parser.add_argument('--controls', action='store_true', help='Codex only: change model, reasoning power and native approval modes')
     parser.add_argument('--output', type=Path, required=True, help='Directory for screenshots and browser diagnostics')
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
@@ -660,6 +697,8 @@ if __name__ == '__main__':
     parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
     parser.add_argument('--capacity', action='store_true', help='Exercise one then ten concurrent workspace processes through the native panel')
+    parser.add_argument('--browser', action='store_true', help='Enable the Factory browser tool in the Codex test workspace')
+    parser.add_argument('--credential-attack', action='store_true', help='Codex: exercise credential reads and writes from a real VS Code extension')
     parser.add_argument('--background-controls', action='store_true', help='Codex only: verify native background-terminal list, terminate and clean with real workspace jobs')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
@@ -669,6 +708,8 @@ if __name__ == '__main__':
         parser.error('--isolation requires codex')
     if args.background_controls and args.agent != 'codex':
         parser.error('--background-controls requires codex')
+    if args.controls and args.agent != 'codex':
+        parser.error('--controls requires codex')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:

@@ -97,8 +97,11 @@ PRIMARY_CATEGORIES = {
 
 
 def primary_categories(agent):
-    return {key: category for key, category in PRIMARY_CATEGORIES.items()
-            if key != 'editor-settings' or len(editor_settings.modes(agent)) > 1}
+    categories = {key: category for key, category in PRIMARY_CATEGORIES.items()
+                  if key != 'editor-settings' or len(editor_settings.modes(agent)) > 1}
+    if agent == 'codex':
+        categories['network-settings'] = Category(CATEGORIES['network-settings'].label, 'network-section', 'codex-web-search')
+    return categories
 
 def can_copy_primary_sign_in(agent):
     return not (host_platform.is_mac() and agent in ('claude', 'agy'))
@@ -1405,7 +1408,8 @@ class SettingsMenu(ModalScreen[Optional[str]]):
             except ValueError:
                 return
             self.summaries.update({
-                'network-settings': (network_mode_label(network) if agent != 'pi' else
+                'network-settings': (network_search_summary(network, selected['codex_web_search']) if agent == 'codex' else
+                                     network_mode_label(network) if agent != 'pi' else
                                      network_search_summary(network, selected['web_access']['enabled'])),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
                 'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
@@ -3227,7 +3231,13 @@ class SettingsForm(Screen):
 
     def compose_network_settings(self, category, value, selected):
         if self.native:
-            with Collapsible(title=NETWORK_LABEL, collapsed=True, id=category.section, classes='spaced-form-fields'):
+            with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+                if self.primary == 'codex':
+                    with Vertical(classes='setting'):
+                        yield Checkbox('Enable web search', id='codex-web-search', value=selected['codex_web_search'])
+                        yield Static('Lets Codex search OpenAI’s index.' +
+                                     (' Reopen Codex CLI or reload the VS Code window to apply changes.' if self.editing else ''),
+                                     id='codex-web-search-help', classes='setting-help checkbox-help')
                 yield from self.compose_network_fields(value, selected)
             return
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -3549,12 +3559,16 @@ class SettingsForm(Screen):
         self.browser_changed()
 
     @on(Select.Changed, '#network')
+    @on(Checkbox.Changed, '#codex-web-search')
     @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
         self.update_curlie_download_notice()
         if self.native:
-            self.query_one('#network-section', Collapsible).title = NETWORK_LABEL + ' · ' + network_mode_label(mode)
+            category = self.categories['network-settings']
+            summary = (network_search_summary(mode, self.query_one('#codex-web-search', Checkbox).value)
+                       if self.primary == 'codex' else network_mode_label(mode))
+            self.query_one('#network-section', Collapsible).title = category.label + ' · ' + summary
             self.query_one('#network-rules-setting').display = mode == 'allowlist'
             return
         search = self.query_one('#web-enabled', Checkbox).value
@@ -3598,6 +3612,7 @@ class SettingsForm(Screen):
         websites = self.query_one(WebsiteGroups)
         groups, curlie_list = websites.selected(), websites.curlie_revision()
         service = self.app.service
+        search_change = self.codex_web_search_change()
         def apply(log):
             with tempfile.TemporaryDirectory(prefix='sandbox-network-') as tmp:
                 path = Path(tmp) / 'allowlist.txt'
@@ -3606,15 +3621,36 @@ class SettingsForm(Screen):
                 if curlie_list:
                     args += ['--curlie-list', curlie_list]
                 service.run(args, log)
+                if search_change:
+                    service.update_settings(name, search_change, log)
         mode = None if self.native else editor_settings.load(self.app.state_root / name)['mode']
         reopen = self.query_one('#open-editor', Checkbox).value
         self.app.pop_screen()
         message = settings_effects.NETWORK
         if self.native:
-            message = settings_effects.bullets(['Rules apply to new connections.', 'Retry interrupted connections.'])
+            effects = ['Rules apply to new connections.', 'Retry interrupted connections.']
+            if search_change:
+                effects.append('Reopen Codex CLI or reload the VS Code window to apply web-search changes.')
+            message = settings_effects.bullets(effects)
         self.app.push_screen(Operation('Updating network rules · ' + name, apply,
             success_message=message, done_on_success=True,
             on_success=(lambda: self.app.launch_client(name, mode)) if reopen else None))
+
+    def codex_web_search_change(self):
+        if self.primary != 'codex':
+            return {}
+        enabled = self.query_one('#codex-web-search', Checkbox).value
+        return ({'codex_web_search': enabled}
+                if enabled != options(self.draft.get('options'))['codex_web_search'] else {})
+
+    def network_rules_changed(self):
+        rules = self.network_rules(self.query_one('#allowlist', TextArea).text)
+        websites = self.query_one(WebsiteGroups)
+        assigned = curlie_catalog.assigned(self.draft.get('website_groups', {}))
+        revision = websites.curlie_revision()
+        return (set(rules) != set(sandbox.parse_rules(self.draft.get('allowlist', '')))
+                or set(websites.selected()) != set(options(self.draft.get('options'))['website_groups'])
+                or revision is not None and revision != (assigned or {}).get('revision'))
 
     def collect_primary(self):
         draft = dict(self.draft)
@@ -3622,6 +3658,8 @@ class SettingsForm(Screen):
         draft['open_editor'] = self.query_one('#open-editor', Checkbox).value
         draft['skill_repo'] = draft['skill_path'] = ''
         if self.setting in (None, 'network-settings'):
+            if self.primary == 'codex':
+                selected['codex_web_search'] = self.query_one('#codex-web-search', Checkbox).value
             draft['network'] = self.query_one('#network', Select).value
             draft['allowlist'] = self.query_one('#allowlist', TextArea).text if draft['network'] == 'allowlist' else ''
             self.network_rules(draft['allowlist'])
@@ -3835,8 +3873,12 @@ class SettingsForm(Screen):
                     mode = self.query_one('#network', Select).value
                     search = options(self.draft.get('options'))['web_access']
                     if mode == self.draft['network'] and (self.native or not self.query_one(WebAccessForm).has_changes(search)):
-                        if mode == 'allowlist':
+                        if mode == 'allowlist' and (self.primary != 'codex' or self.network_rules_changed()):
                             self.apply_network_rules()
+                        elif change := self.codex_web_search_change():
+                            await asyncio.to_thread(self.app.service.update_settings, self.draft['name'], change, lambda _: None)
+                            self.app.pop_screen()
+                            self.notify('Web search saved. Reopen Codex CLI or reload the VS Code window to apply it.')
                         else:
                             self.notify('No changes to apply.')
                         return
@@ -4875,7 +4917,7 @@ class Cockpit(App):
         elif action in ('export-chats', 'import-chats'):
             self.push_screen(ChatTransfer(name, importing=(action == 'import-chats')))
         elif action == 'delete':
-            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine'))),
+            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
         elif action in ('pi', 'shell'):
             self.interactive(action, name)

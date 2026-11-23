@@ -12,12 +12,25 @@ from .sandbox_options import RESOURCE_PREFIX, options, write_json
 
 SOURCE = Path(__file__).resolve().parent / 'containers' / 'primary'
 PRIMARY_HOSTS = {**sandbox_advisors.HOSTS,
+                 # The native editor loads approval-feature settings here.
+                 'codex': [*sandbox_advisors.HOSTS['codex'], 'ab.chatgpt.com:443'],
                  # Antigravity 1.5.13 uses this endpoint during native account startup.
                  'agy': [*sandbox_advisors.HOSTS['agy'], 'play.googleapis.com:443']}
 
 
 def enabled(config):
     return agent(config) != 'pi'
+
+
+def network_rules(selected):
+    from . import sandbox as core
+    if selected != 'codex':
+        return core.parse_rules('\n'.join(PRIMARY_HOSTS[selected]))
+    catalog = json.loads((SOURCE / 'codex_network.json').read_text())
+    # Only the shipped service catalog supports domain suffixes. User workspace
+    # allowlists retain their existing exact-host validation.
+    return [(host, 443) for host in catalog['transport_hosts']] + [
+        ('.' + domain, 443) for domain in catalog['transport_domains']]
 
 
 def names(config):
@@ -104,7 +117,7 @@ def guidance(config, state):
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
         'Run shell commands and access files only through ' +
-        ('the native tools connected to the workspace executor.' if current == 'codex'
+        ('the native tools, which run inside this workspace.' if current == 'codex'
          else 'the Factory workspace_shell tool, which runs in the workspace container.'),
         'The workspace has the following mounts:',
     ]
@@ -140,10 +153,20 @@ def guidance(config, state):
 def write_context(config, state):
     from .connectors.context import write_text
     write_text(Path(state) / 'primary-agent/context.md', guidance(config, state))
+    if agent(config) == 'codex':
+        write_text(Path(state) / 'primary-runtime/context.md', guidance(config, state))
 
 
 def prepare_workspace(config, state):
     write_json(Path(state) / 'primary-runtime' / 'cwd.json', folders.container_cwd(config))
+    if agent(config) == 'codex':
+        write_json(Path(state) / 'primary-runtime/settings.json', {
+            'working_directory': folders.container_cwd(config),
+            'native_approval': options(config.get('options'))['native_approval'],
+            'browser': options(config.get('options'))['browser'],
+            'codex_web_search': options(config.get('options'))['codex_web_search'],
+            'write_roots': [path for path, read_only in folders.roots(config) if not read_only],
+        })
 
 
 def up(config, state):
@@ -164,13 +187,14 @@ def up(config, state):
     write_json(directory / 'settings.json', {
         'native_approval': options(config.get('options'))['native_approval'],
         'agent': selected, 'browser': options(config.get('options'))['browser'],
+        'network_mode': core.network_mode(config),
         'working_directory': folders.container_cwd(config),
     })
     prepare_workspace(config, state)
     write_context(config, state)
     proxy_conf = directory / 'squid.conf'
     # This file stays on the same inode across startups because Squid bind-mounts it.
-    proxy_conf.write_text(core.squid_config(core.parse_rules('\n'.join(PRIMARY_HOSTS[selected]))))
+    proxy_conf.write_text(core.squid_config(network_rules(selected)))
     for name in (proxy, controller):
         data = core.inspect(config, name)
         if data:
@@ -183,20 +207,28 @@ def up(config, state):
                      '-v', f'{proxy_conf}:/etc/squid/sandbox.conf:{host_platform.bind_mode()}',
                      '-v', f'{egress}:/run/egress:z', core.image_names(config)[1]]
         else:
-            args += ['--network=none', '--security-opt=label=disable',
+            network = 'bridge' if selected == 'codex' and core.network_mode(config) != 'allowlist' else 'none'
+            args += ['--network=' + network, '--security-opt=label=disable',
                      '--user', f'{config["uid"]}:{config["gid"]}',
                      '-v', f'{home}:/home/node', '-v', f'{socket}:/run/primary-workspace:ro',
                      '-v', f'{editor_volume(config)}:/run/primary-editor',
                      '-v', f'{egress}:/run/primary-egress:ro',
                      '-v', f'{directory}:/run/primary-input:ro',
                      '--env', f'FACTORY_PRIMARY_AGENT={selected}']
+            if selected == 'codex' and core.network_mode(config) == 'allowlist':
+                args += ['-v', f'{core.names(config)[2]}:/run/workspace-egress:ro']
             if engine == 'podman':
                 args += ['--userns=keep-id:uid=1000,gid=1000']
             for key, value in core.RUNTIME_ENV.items():
                 args += ['--env', f'{key}={value}']
             args.append(image(config))
         core.run(args)
-    editor_ready = ' && test -S /run/primary-editor/editor.sock' if agent(config) in ('codex', 'claude') else ''
+    editor_ready = ' && test -S /run/primary-editor/editor.sock' if selected == 'claude' else ''
+    if selected == 'codex':
+        # A saved CA and the socket relay can exist before the HTTPS proxy has
+        # bound its listener. Do not launch a client into that startup window.
+        editor_ready = (' && test -S /run/primary-editor/auth.sock && test -s /run/primary-editor/codex-ca.pem'
+                        " && bash -c 'true </dev/tcp/127.0.0.1/3130'")
     _wait(config, controller, 'test -f /tmp/factory-primary-ready && test -S /run/primary-egress/proxy.sock' + editor_ready,
           'The coding agent did not start')
 
@@ -229,15 +261,20 @@ def worker_start(config, container):
     current = agent(config)
     engine = config['engine']
     cwd = folders.container_cwd(config)
-    core.run([engine, 'exec', '-d', '-w', cwd, container, 'bash', '/opt/primary/worker.sh', current])
-    sockets = ['exec'] if current == 'codex' else []
+    if current == 'codex':
+        from . import codex_history
+        codex_history.migrate(config, container)
+        _wait(config, container, "bash -c 'true </dev/tcp/127.0.0.1/3130'", 'The Codex authentication connection did not start')
+        core.run([engine, 'exec', container, 'python3', '/opt/primary/codex_client.py', '--factory-prepare'])
+    if current != 'codex' or options(config.get('options'))['browser']:
+        core.run([engine, 'exec', '-d', '-w', cwd, container, 'bash', '/opt/primary/worker.sh', current])
+    sockets = []
     if current != 'codex' or options(config.get('options'))['browser']:
         sockets.append('tools')
     ready = ' && '.join(f'socat -u /dev/null UNIX-CONNECT:/run/primary-workspace/{socket}.sock'
                         for socket in sockets)
-    if current == 'codex':
-        ready += " && bash -c 'true </dev/tcp/127.0.0.1/36781'"
-    _wait(config, container, ready, 'The workspace tool connection did not start')
+    if ready:
+        _wait(config, container, ready, 'The workspace tool connection did not start')
 
 
 def down(config, remove=False):
@@ -266,7 +303,12 @@ def _terminal(config, action):
         raise ValueError('Choose Codex, Claude or Antigravity to use this sign-in')
     if not sys.stdin.isatty():
         raise ValueError('Opening the coding agent requires an interactive terminal')
-    core.run([config['engine'], 'exec', '-it', names(config)[0], 'python3', '/opt/primary/launch.py', action])
+    if agent(config) == 'codex':
+        args = ['login', '--device-auth'] if action == 'login' else []
+        core.run([config['engine'], 'exec', '-it', '-w', folders.container_cwd(config), core.names(config)[0],
+                  '/usr/local/bin/codex', *args])
+    else:
+        core.run([config['engine'], 'exec', '-it', names(config)[0], 'python3', '/opt/primary/launch.py', action])
 
 
 def open_terminal(config, state):

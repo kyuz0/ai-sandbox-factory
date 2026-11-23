@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Select, TextArea
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from ai_sandbox_factory import sandbox, settings_effects
 from ai_sandbox_factory.sandbox_tui import (
@@ -123,6 +123,7 @@ class PrimaryAgentsUI(unittest.TestCase):
     async def test_native_browser_and_network_setting_edits_do_not_offer_pi_controls(self):
         draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
         draft.update(name='project', workspace=str(self.state), primary_agent='claude', model_providers={})
+        draft['options']['browser'] = False
         app = Cockpit(self.state, FakeService([]))
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
@@ -146,6 +147,79 @@ class PrimaryAgentsUI(unittest.TestCase):
             self.assertEqual(screen.collect()[0]['allowlist'], 'example.com:443')
             self.assertFalse(screen.query('#web-enabled, #network-search-section, #primary-auth'))
             await app.pop_screen()
+
+    async def test_web_search_is_codex_only_and_keeps_checkbox_copy_stable(self):
+        for agent in ('pi', 'codex', 'claude', 'agy'):
+            app = Cockpit(self.state, FakeService([]))
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                draft.update(name='project', workspace=str(self.state), primary_agent=agent, model_providers={})
+                await app.push_screen(SettingsForm(draft))
+                await pilot.pause()
+                self.assertEqual(bool(app.screen.query('#codex-web-search')), agent == 'codex')
+                if agent == 'codex':
+                    checkbox = app.screen.query_one('#codex-web-search', Checkbox)
+                    help_text = app.screen.query_one('#codex-web-search-help', Static)
+                    self.assertFalse(checkbox.value)
+                    label, explanation = str(checkbox.label), str(help_text.render())
+                    self.assertEqual(label, 'Enable web search')
+                    self.assertIn('OpenAI’s index', explanation)
+                    for enabled in (True, False):
+                        checkbox.value = enabled
+                        await pilot.pause()
+                        self.assertEqual(str(checkbox.label), label)
+                        self.assertEqual(str(help_text.render()), explanation)
+                        self.assertEqual(app.screen.collect()[0]['options']['codex_web_search'], enabled)
+                await app.pop_screen()
+                await app.push_screen(SettingsMenu('project', draft, 'browser'))
+                await pilot.pause()
+                actions = {action for _, action in app.screen.actions}
+                self.assertNotIn('primary-web-search', actions)
+                if agent == 'codex':
+                    labels = {action: label for label, action in app.screen.actions}
+                    self.assertIn('Network and Web Search', labels['network-settings'])
+
+    async def test_codex_web_search_saves_without_recreating_and_errors_keep_save_visible(self):
+        for size in ((80, 24), (120, 40), (220, 50)):
+            with self.subTest(size=size):
+                draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                draft.update(name='project', workspace=str(self.state), primary_agent='codex', model_providers={})
+                draft['options']['codex_web_search'] = True
+                app = Cockpit(self.state, FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    await app.push_screen(SettingsForm(draft, editing=True, setting='network-settings'))
+                    await pilot.pause()
+                    form = app.screen
+                    self.assertEqual(form.focused.id, 'codex-web-search')
+                    choice = form.query_one('#codex-web-search', Checkbox)
+                    self.assertTrue(choice.value)  # Preserve an explicit saved choice.
+                    explanation = str(form.query_one('#codex-web-search-help', Static).render())
+                    self.assertIn('Reopen Codex CLI', explanation)
+                    choice.value = False
+                    await pilot.pause()
+                    self.assertEqual(str(form.query_one('#codex-web-search-help', Static).render()), explanation)
+                    self.assertFalse(form.collect()[0]['options']['codex_web_search'])
+                    save = form.query_one('#apply', Button)
+                    self.assertEqual(str(save.label), 'Apply')
+                    self.assertEqual(save.region.height, 1)
+                    self.assertLess(save.region.bottom, size[1])
+                    with patch.object(app.service, 'update_settings', create=True,
+                                      side_effect=ValueError('Could not save web search: fixture storage is read-only.')):
+                        save.press()
+                        await pilot.pause()
+                        self.assertIs(app.screen, form)
+                        self.assertIn('fixture storage is read-only', str(form.query_one('#form-error').render()))
+                        self.assertLess(save.region.bottom, size[1])
+                    with patch.object(app.service, 'update_settings', create=True) as update:
+                        save.press()
+                        await pilot.pause()
+                        self.assertEqual(update.call_args.args[:2], ('project', {'codex_web_search': False}))
+                        self.assertNotIsInstance(app.screen, SettingsForm)
+                    self.assertFalse(app.service.calls)
 
     async def test_saved_native_approval_choice_preserves_other_options(self):
         draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))

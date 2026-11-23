@@ -40,6 +40,22 @@ class ChatHistoryTests(unittest.TestCase):
         script = Path(session_archive.__file__).read_text()
         return lambda config, operation, *args: [sys.executable, '-I', '-c', script, operation, str(home), *args]
 
+    def test_native_agents_reject_transfers_before_files_or_engine_access(self):
+        for agent, label in (('codex', 'Codex'), ('claude', 'Claude Code'), ('agy', 'Antigravity')):
+            config = {**self.config, 'primary_agent': agent}
+            for operation in ('export', 'import'):
+                with self.subTest(agent=agent, operation=operation), \
+                        patch.object(chat_history, 'archive_command') as command, \
+                        patch.object(chat_history, 'transfer') as transfer:
+                    with self.assertRaisesRegex(ValueError, f'cannot {operation} chat history for {label}'):
+                        if operation == 'export':
+                            chat_history.export_chats(config, self.source, self.archive)
+                        else:
+                            chat_history.import_chats(config, self.archive)
+                    command.assert_not_called()
+                    transfer.assert_not_called()
+                    self.assertFalse(self.archive.exists())
+
     def test_roundtrip_keeps_branches_and_does_not_replace_an_existing_chat(self):
         raw = transcript('shared', text='Source version')
         new = transcript('new')

@@ -132,8 +132,10 @@ Ask Pi to read that receipt. Authorize the reviewed outer shell to read that spe
 ## Native Codex, Claude and Antigravity browser editors
 
 These checks use the host's existing subscription sign-in in a disposable private
-controller. The separate workspace container has no account files or provider
-connection. They require rootless Podman, Python Playwright, Chromium and the
+controller. The separate workspace container has no real account credentials.
+Codex runs its official CLI and extension in the workspace and authenticates
+through the credential companion; Claude and Antigravity use their protected
+controllers. They require rootless Podman, Python Playwright, Chromium and the
 extracted code-server version pinned by Factory. Build the selected agent's
 controller and workspace images from the checkout first.
 
@@ -166,10 +168,84 @@ whose fallback code no longer matches.
 When updating a native client, test its CLI and extension versions together.
 
 For Codex, add `--isolation` to test native image viewing and patching. The test
-puts different images at the same path in the controller and workspace, checks
+puts different images at the same path in the companion and workspace, checks
 that Codex sees the workspace image, and verifies that a patch changes only the
 workspace file. It also checks that the workspace shell cannot see a private
-controller marker and confirms the requested native tools ran.
+companion marker and confirms the requested native tools ran.
+Add `--credential-attack --browser` to install a real VS Code extension that
+reads and overwrites the workspace authentication file. The check compares
+workspace tokens with the private sign-in, verifies that only placeholders are
+visible, and confirms that workspace writes leave the private sign-in unchanged.
+The browser option enables the Factory browser tools in the test workspace.
+
+Run the synthetic Codex authentication and native configuration checks separately:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -p 'test_codex_auth.py'
+.venv/bin/python -m unittest discover -s tests -p 'test_codex_history.py'
+PYTHONPATH=tests:. .venv/bin/python -m unittest test_native_codex_features
+.venv/bin/python tests/codex_client_tests.py
+.venv/bin/python tests/codex_auth_proxy_tests.py
+PYTHONPATH=tests:. .venv/bin/python tests/codex_network_tests.py
+.venv/bin/python tests/codex_auth_transport.py
+```
+
+The client checks require `tomlkit`; the proxy, network and TLS transport checks
+require `mitmproxy==12.3.1` (the version installed in the credential image). The checks cover placeholder
+storage, OAuth and refresh handling, token substitution and redaction, trusted
+upstream destinations, and preservation of native model, MCP and approval
+settings. History checks cover selective transfer, committed SQLite WAL data,
+conflict handling, rollback and retry without copying account credentials. These
+checks use synthetic data and do not submit model requests.
+Set `FACTORY_CODEX_HISTORY_BINARY` to the pinned native executable to include the
+offline history check. It verifies native thread listing, metadata reads and
+paginated retrieval of an earlier answer stored only in SQLite after restoration.
+Run it in the workspace image with networking disabled; no account sign-in is needed.
+
+`test_primary_agents_ui` checks that Codex alone offers **Enable web search**
+under **Network and Web Search**, that it defaults off and preserves explicit saved
+choices, and that its label and help stay unchanged when toggled. It also checks collection, saving without recreation,
+and visible errors and actions at 80×24, 120×40 and 220×50. Capture the selected,
+cleared, saved-settings and error states with:
+
+```sh
+.venv/bin/python tests/render_tui.py /tmp/factory-native-web-search \
+  --only native-web-search-on native-web-search-off native-web-search-edit native-web-search-error
+```
+
+For authenticated native Codex checks, use a disposable signed-in sandbox:
+
+```sh
+.venv/bin/python tests/native_codex_features.py \
+  --workspace-container DISPOSABLE_WORKSPACE_CONTAINER \
+  --credential-container DISPOSABLE_CREDENTIAL_CONTAINER \
+  --browser --output /tmp/factory-native-codex-features.json
+```
+
+This exercises native file tools, web search, compaction and continued work,
+CLI execution, and credential isolation. `--browser` also checks the managed
+browser MCP tool; start the sandbox's browser viewer first. The check creates
+`/workspace/codex-native-feature.txt` and an isolated Codex home, leaving the
+sandbox's existing chats in place. `--codex-home` selects another fixture home
+under `/home/node/.codex-*`; `--timeout` sets the allowance per native operation.
+The `test_native_codex_features` unit suite checks useful failure diagnostics and
+credential redaction without inference.
+
+To check the saved web-search choice in both native Codex clients:
+
+```sh
+.venv/bin/python tests/native_codex_web_search.py \
+  --state /path/to/disposable-state/SANDBOX \
+  --workspace-container DISPOSABLE_WORKSPACE_CONTAINER \
+  --chromium /path/to/chromium \
+  --output /tmp/factory-native-web-search
+```
+
+This runs four short turns: search enabled and disabled in the CLI and VS Code.
+It checks native configuration and search-tool records, uses **Developer: Reload
+Window** when applying the choice, then restores the original saved choice and
+checks it after reopening. The browser runs headlessly in a separate temporary
+profile. `--url` overrides the editor address saved in the sandbox state.
 
 Use `--capacity --reload --cancel` to exercise one workspace process, then ten
 concurrent processes through the native browser panel, followed by chat recovery.

@@ -10,12 +10,6 @@ rm -f "$socket_dir"/exec.sock "$socket_dir"/tools.sock
 children=()
 trap 'if (("${#children[@]}")); then kill "${children[@]}" 2>/dev/null || true; wait || true; fi' EXIT
 trap 'exit 0' TERM INT
-if [[ "$1" == codex ]]; then
-    /usr/local/bin/factory-agent exec-server --listen ws://127.0.0.1:36781 9>&- &
-    children+=("$!")
-    socat "UNIX-LISTEN:$socket_dir/exec.sock,fork,mode=0600" TCP:127.0.0.1:36781 9>&- &
-    children+=("$!")
-fi
 if [[ "$1" != codex || -f /opt/betterwright/browser.mjs ]]; then
     export FACTORY_PRIMARY_AGENT="$1"
     socat "UNIX-LISTEN:$socket_dir/tools.sock,fork,mode=0600" \

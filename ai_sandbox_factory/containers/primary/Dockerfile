@@ -7,12 +7,13 @@ ARG CLAUDE_VERSION=2.1.319
 ARG AGY_BUILD=1.5.13-5999302598852608
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git tini socat python3 dbus-daemon gnome-keyring libsecret-tools \
-    $(if [ "$AGENT" = agy ]; then printf python3-aiohttp; fi) \
+    $(if [ "$AGENT" = agy ]; then printf python3-aiohttp; elif [ "$AGENT" = codex ]; then printf python3-venv; fi) \
     && rm -rf /var/lib/apt/lists/* \
     && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi
 RUN set -eu; case "$AGENT" in \
-    codex) npm install -g "@openai/codex@$CODEX_VERSION"; \
+    codex) python3 -m venv /opt/codex-proxy; /opt/codex-proxy/bin/pip install --no-cache-dir 'mitmproxy==12.3.1'; \
+        npm install -g "@openai/codex@$CODEX_VERSION"; \
         find /usr/local/lib/node_modules/@openai -type f -name codex -executable \
             -exec install -m 755 '{}' /usr/local/bin/factory-agent ';'; \
         find /usr/local/lib/node_modules/@openai -type f -name codex-code-mode-host -executable \
@@ -36,6 +37,7 @@ RUN set -eu; case "$AGENT" in \
         rm /tmp/agy.tar.gz /tmp/antigravity ;; \
     *) exit 2 ;; esac; /usr/local/bin/factory-agent --version
 COPY entrypoint.sh launch.py agy-policy.py editor_protocol.py editor_bridge.py agy_editor_protocol.py agy_editor_bridge.py agy_editor_assets.py /opt/primary/
+COPY codex_auth.py codex_auth_proxy.py codex_connect.py codex_network.json /opt/primary/
 RUN install -d -o node -g node -m 700 /work /workspace /run/primary-bus /run/primary-editor \
     && chmod 755 /opt/primary/entrypoint.sh
 ENV HOME=/home/node CODEX_HOME=/home/node/.codex CLAUDE_CONFIG_DIR=/home/node/.claude \

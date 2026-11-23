@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import chat_history
+from . import chat_history, primary_workspace
 from .file_browser import PathField
 from .tui_widgets import Feedback
 
@@ -158,24 +158,30 @@ class DeleteSandbox(ModalScreen[bool]):
     DeleteSandbox .chat-note, DeleteSandbox .chat-result { margin: 1 0 0 0; }
     """
 
-    def __init__(self, name, *, has_config):
+    def __init__(self, name, *, has_config, agent='pi'):
         super().__init__()
         self.sandbox_name = name
         self.has_config = has_config
+        self.agent = agent
+        self.can_export = has_config and agent == 'pi'
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False)
             if self.has_config:
-                yield Static('Saved Pi and FrostPi chats will be permanently deleted. '
-                             'Export chat history to keep a copy on this computer.', markup=False)
+                if self.can_export:
+                    yield Static('Saved Pi and FrostPi chats will be permanently deleted. '
+                                 'Export chat history to keep a copy on this computer.', markup=False)
+                else:
+                    yield Static(f'Saved {primary_workspace.AGENTS[self.agent]} chats will be permanently deleted.', markup=False)
             yield Static('Your workspace files stay on this computer.', classes='chat-note', markup=False)
             if self.has_config:
-                yield Static('Sandbox settings, private credentials, and editor data will be deleted.', markup=False)
+                yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
+                             'Original sign-ins and keys outside this sandbox are kept.', markup=False)
             yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')
-                if self.has_config:
+                if self.can_export:
                     yield Button(f'{EXPORT}…', id='delete-export-chats', variant='primary')
                 yield Button('Delete sandbox', id='yes', variant='error')
 
@@ -196,6 +202,8 @@ class DeleteSandbox(ModalScreen[bool]):
 
     @on(Button.Pressed, '#delete-export-chats')
     def export_pressed(self):
+        if not self.can_export:
+            return
         self.app.push_screen(ChatTransfer(self.sandbox_name, return_to_delete=True), self.show_backup)
 
     def show_backup(self, message):

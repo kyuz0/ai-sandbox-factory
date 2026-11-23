@@ -798,6 +798,36 @@ class TUITests(unittest.TestCase):
             self.assertEqual([r['name'] for r in app.records],['alpha'])
             await pilot.press('q')
 
+    async def test_delete_warning_and_backup_action_match_selected_agent(self):
+        for agent in ('pi', 'codex', 'claude', 'agy'):
+            for size in ((80, 24), (120, 40), (220, 50)):
+                with self.subTest(agent=agent, size=size):
+                    records = copy.deepcopy(self.records)
+                    records[0]['config']['primary_agent'] = agent
+                    service = FakeService(records)
+                    app = Cockpit(self.root, service)
+                    async with app.run_test(size=size) as pilot:
+                        await self.ready(app, pilot)
+                        await self.delete_menu(app, pilot)
+                        self.assertIsInstance(app.screen, DeleteSandbox)
+                        text = ' '.join(str(widget.render()) for widget in app.screen.query(Static))
+                        self.assertIn('permanently deleted', text)
+                        label = 'Pi and FrostPi' if agent == 'pi' else sandbox.primary_workspace.AGENTS[agent]
+                        self.assertIn(f'Saved {label} chats', text)
+                        self.assertIn('workspace files stay', text)
+                        self.assertIn('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted.', text)
+                        self.assertIn('Original sign-ins and keys outside this sandbox are kept.', text)
+                        self.assertNotIn('private credentials', text)
+                        self.assertEqual(bool(app.screen.query('#delete-export-chats')), agent == 'pi')
+                        self.assertEqual('Pi and FrostPi' in text, agent == 'pi')
+                        self.assertEqual('Export chat history' in text, agent == 'pi')
+                        for button in app.screen.query(Button):
+                            self.assertTrue(app.screen.region.contains_region(button.region))
+                        self.assertEqual(app.focused.id, 'cancel')
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        self.assertFalse(service.calls)
+
     async def test_backup_from_delete_stays_separate_and_recovers_from_error(self):
         service = FakeService(self.records)
         app = Cockpit(self.root, service)

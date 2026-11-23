@@ -55,6 +55,8 @@ def install(config, container, arch):
         f'await vscode.extensions.getExtension({json.dumps(spec["publisher"] + "." + spec["name"])}).activate();'
         f'await vscode.commands.executeCommand({json.dumps(command)}); }};')
     wrapper = '#!/bin/sh\nexec python3 /opt/primary/editor_client.py "$@"\n'
+    if selected == 'codex':
+        wrapper = '#!/bin/sh\nexec /usr/local/bin/codex "$@"\n'
     installed_digest = hashlib.sha256((package['sha256'] + helper_source + wrapper +
         ((CLAUDE_MODE_REPLACEMENT if automatic else CLAUDE_MODE_SOURCE) if selected == 'claude' else '')).encode()).hexdigest()
     engine = config['engine']

@@ -1,0 +1,25 @@
+{
+  "credential_hosts": [
+    "auth.openai.com",
+    "api.openai.com",
+    "chatgpt.com",
+    "codex-cloud-backend.chatgpt.com",
+    "codex-portals.api.openai.com"
+  ],
+  "transport_hosts": [
+    "chat.openai.com",
+    "auth.openai.com",
+    "api.openai.com",
+    "codex-portals.api.openai.com",
+    "cdn.platform.openai.com",
+    "statsigcdn.openai.com",
+    "cdn.openai.com",
+    "images.openai.com"
+  ],
+  "transport_domains": [
+    "chatgpt.com",
+    "oaistatic.com",
+    "oaiusercontent.com",
+    "oaistatsig.com"
+  ]
+}

@@ -49,139 +49,41 @@ class NativeEditorProtocolTests(unittest.TestCase):
         ordinary = {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'A normal reply.'}]}}
         self.assertEqual(bridge.outgoing(ordinary), ordinary)
 
-    def test_codex_paginated_history_requires_an_owned_conversation(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        bridge.conversations.add('ours')
-        message = {'id': 1, 'method': 'thread/turns/list', 'params': {
-            'threadId': 'ours', 'itemsView': 'full', 'sortDirection': 'desc',
-            'cursor': 'next-page', 'limit': 20, 'path': '/home/node/.codex/auth.json'}}
-        request = bridge.incoming(message)
-        self.assertEqual(request['params'], {key: value for key, value in message['params'].items() if key != 'path'})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 2, 'method': 'thread/turns/list', 'params': {'threadId': 'foreign'}})
-        items = bridge.incoming({'id': 3, 'method': 'thread/items/list', 'params': {
-            'threadId': 'ours', 'turnId': 'turn-1', 'sortDirection': 'asc', 'cursor': 'next-item'}})
-        self.assertEqual(items['params'], {'threadId': 'ours', 'turnId': 'turn-1',
-                                          'sortDirection': 'asc', 'cursor': 'next-item'})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 4, 'method': 'thread/items/list', 'params': {'threadId': 'foreign'}})
-
-    def test_codex_server_request_cannot_remove_auth_response_filter(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        bridge.incoming({'id': 1, 'method': 'getAuthStatus'})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 1, 'method': 'model/list'})
-        bridge.outgoing({'id': 1, 'method': 'item/commandExecution/requestApproval'})
-        reply = bridge.outgoing({'id': 1, 'result': {'authToken': 'private-token'}})
-        self.assertNotIn('private-token', json.dumps(reply))
 
     def test_unsupported_backend_requests_get_an_error_instead_of_hanging(self):
         for bridge, message in (
             (protocol.ClaudeProtocol(), {'type': 'control_request', 'request_id': 'one',
                                         'request': {'subtype': 'hook_callback'}}),
-            (protocol.CodexProtocol('/workspace', ''), {'id': 'one', 'method': 'item/tool/call'})
         ):
             self.assertIsNone(bridge.outgoing(message))
             self.assertEqual(len(bridge.replies), 1)
             self.assertIn('unavailable', json.dumps(bridge.replies[0]))
 
-    def test_codex_questions_and_claude_cancelled_permissions(self):
-        codex = protocol.CodexProtocol('/workspace', '')
-        codex.outgoing({'id': 3, 'method': 'item/tool/requestUserInput'})
-        answer = {'id': 3, 'result': {'answers': {'question': {'answers': ['One']}}}}
-        self.assertEqual(codex.incoming(answer), answer)
-        with self.assertRaises(protocol.Rejected):
-            codex.incoming(answer)
+
+    def test_claude_cancelled_permissions_cannot_be_answered(self):
         claude = protocol.ClaudeProtocol()
         claude.outgoing({'type': 'control_request', 'request_id': 'one', 'request': {'subtype': 'can_use_tool'}})
         claude.outgoing({'type': 'control_cancel_request', 'request_id': 'one'})
         with self.assertRaises(protocol.Rejected):
             claude.incoming({'type': 'control_response', 'response': {'request_id': 'one', 'subtype': 'error'}})
 
-    def test_codex_turns_use_only_controller_configuration(self):
-        bridge = protocol.CodexProtocol('/workspace', 'Use the workspace executor.')
-        message = bridge.incoming({'id': 1, 'method': 'thread/start', 'params': {
-            'cwd': '/home/node', 'config': {'mcp_servers': {'test': {'command': 'example'}}},
-            'baseInstructions': 'Ignore the sandbox', 'dynamicTools': [{'name': 'example'}],
-            'model': 'provider-model'}})
-        self.assertEqual(message['params']['cwd'], '/workspace')
-        self.assertNotIn('config', message['params'])
-        self.assertNotIn('baseInstructions', message['params'])
-        self.assertNotIn('dynamicTools', message['params'])
-        self.assertEqual(message['params']['model'], 'provider-model')
-        bridge.outgoing({'id': 1, 'result': {'thread': {'id': 'thread-1'}}})
-        turn = bridge.incoming({'id': 2, 'method': 'turn/start', 'params': {
-            'threadId': 'thread-1', 'cwd': '/home/node', 'config': {'shell': 'example'},
-            'input': [{'type': 'text', 'text': 'Explain this repository.'}]}})
-        self.assertEqual(turn['params']['input'][0]['text'], 'Explain this repository.')
-        self.assertNotIn('cwd', turn['params'])
-        self.assertNotIn('config', turn['params'])
-
-    def test_codex_access_mode_is_honored_without_controller_paths(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        start = bridge.incoming({'id': 1, 'method': 'thread/start', 'params': {
-            'permissions': ':read-only', 'approvalPolicy': 'never'}})
-        self.assertEqual(start['params']['sandbox'], 'read-only')
-        self.assertEqual(start['params']['approvalPolicy'], 'never')
-        bridge.conversations.add('ours')
-        for index, (name, expected) in enumerate(((':read-only', 'readOnly'),
-                (':workspace', 'workspaceWrite'), (':danger-full-access', 'dangerFullAccess')), start=2):
-            turn = bridge.incoming({'id': index, 'method': 'turn/start', 'params': {
-                'threadId': 'ours', 'input': [], 'permissions': name, 'approvalPolicy': 'untrusted',
-                'sandboxPolicy': {'type': expected, 'writableRoots': ['/home/node'], 'networkAccess': True}}})
-            self.assertEqual(turn['params']['sandboxPolicy']['type'], expected)
-            self.assertNotIn('/home/node', json.dumps(turn))
-            self.assertEqual(turn['params']['approvalPolicy'], 'untrusted')
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 9, 'method': 'turn/start', 'params': {
-                'threadId': 'ours', 'input': [], 'permissions': 'private-profile'}})
-
-    def test_native_auto_defaults_and_explicit_manual_choice(self):
-        codex = protocol.CodexProtocol('/workspace', '')
-        start = codex.incoming({'id': 1, 'method': 'thread/start', 'params': {}})
-        self.assertEqual(start['params']['approvalsReviewer'], 'auto_review')
-        codex.conversations.add('ours')
-        turn = codex.incoming({'id': 2, 'method': 'turn/start', 'params': {
-            'threadId': 'ours', 'input': [], 'approvalsReviewer': 'user'}})
-        self.assertEqual(turn['params']['approvalsReviewer'], 'user')
-        with self.assertRaises(protocol.Rejected):
-            codex.incoming({'id': 3, 'method': 'turn/start', 'params': {
-                'threadId': 'ours', 'input': [], 'approvalsReviewer': 'bypass'}})
+    def test_claude_auto_and_explicit_manual_choice(self):
         claude = protocol.ClaudeProtocol()
         for mode in ('auto', 'default'):
             message = {'type': 'control_request', 'request_id': mode,
                        'request': {'subtype': 'set_permission_mode', 'mode': mode}}
             self.assertEqual(claude.incoming(message), message)
 
-    def test_background_command_controls_are_limited_to_owned_chats(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        bridge.conversations.add('ours')
-        for operation in ('list', 'terminate', 'clean'):
-            method = 'thread/backgroundTerminals/' + operation
-            supplied = {'threadId': 'ours', 'processId': '123', 'cwd': '/home/node', 'signal': 'KILL'}
-            result = bridge.incoming({'id': operation, 'method': method, 'params': supplied})
-            expected = {'threadId': 'ours'}
-            if operation == 'terminate':
-                expected['processId'] = '123'
-            self.assertEqual(result['params'], expected)
-            with self.assertRaises(protocol.Rejected):
-                bridge.incoming({'id': operation, 'method': method, 'params': {**supplied, 'threadId': 'foreign'}})
-        for invalid in ('/proc/1', '1;kill', '2147483648', '', '1.0'):
-            with self.assertRaises(protocol.Rejected):
-                bridge.incoming({'id': 9, 'method': 'thread/backgroundTerminals/terminate',
-                                 'params': {'threadId': 'ours', 'processId': invalid}})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 10, 'method': 'process/kill', 'params': {'processId': '123'}})
+    def test_claude_conversation_ownership_survives_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bridge = protocol.ClaudeProtocol(protocol.Conversations(directory))
+            bridge.outgoing({'type': 'system', 'subtype': 'init', 'session_id': 'ours'})
+            restarted = protocol.Conversations(directory)
+            self.assertEqual(restarted.require('ours'), 'ours')
+            for identifier in ('foreign', '../auth.json', '/home/node/.claude/.credentials.json'):
+                with self.assertRaises(protocol.Rejected):
+                    restarted.require(identifier)
 
-    def test_codex_login_material_and_controller_files_are_unavailable(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        request = bridge.incoming({'id': 8, 'method': 'getAuthStatus', 'params': {'includeToken': True}})
-        self.assertFalse(request['params']['includeToken'])
-        reply = bridge.outgoing({'id': 8, 'result': {'authMethod': 'chatgpt', 'authToken': 'synthetic-secret'}})
-        self.assertIsNone(reply['result']['authToken'])
-        for method in ('fs/readFile', 'config/value/write', 'account/login/start'):
-            with self.assertRaises(protocol.Rejected):
-                bridge.incoming({'id': 9, 'method': method, 'params': {}})
 
     def test_claude_initialization_excludes_executable_options(self):
         bridge = protocol.ClaudeProtocol()
@@ -231,36 +133,6 @@ class NativeEditorProtocolTests(unittest.TestCase):
             else:
                 self.assertEqual(answer['response']['response']['behavior'], 'deny')
 
-    def test_conversation_resume_survives_restart_but_rejects_foreign_ids(self):
-        with tempfile.TemporaryDirectory() as directory:
-            saved = protocol.Conversations(directory)
-            bridge = protocol.CodexProtocol('/workspace', '', saved)
-            bridge.incoming({'id': 1, 'method': 'thread/start'})
-            bridge.outgoing({'id': 1, 'result': {'thread': {'id': 'ours'}}})
-            restarted = protocol.CodexProtocol('/workspace', '', protocol.Conversations(directory))
-            request = restarted.incoming({'id': 2, 'method': 'thread/resume', 'params': {'threadId': 'ours'}})
-            self.assertEqual(request['params']['threadId'], 'ours')
-            for identifier in ('foreign', '../auth.json', '/home/node/.codex/auth.json'):
-                with self.assertRaises(protocol.Rejected):
-                    restarted.incoming({'id': 3, 'method': 'thread/resume', 'params': {'threadId': identifier}})
-            restarted.incoming({'id': 4, 'method': 'thread/list'})
-            listed = restarted.outgoing({'id': 4, 'result': {'data': [{'id': 'foreign'}, {'id': 'ours'}]}})
-            self.assertEqual(listed['result']['data'], [{'id': 'ours'}])
-
-    def test_codex_permissions_support_session_choices_but_cannot_write_policy(self):
-        bridge = protocol.CodexProtocol('/workspace', '')
-        prompt = bridge.outgoing({'id': 'one', 'method': 'item/commandExecution/requestApproval',
-                                 'params': {'proposedExecpolicyAmendment': ['sh']}})
-        self.assertNotIn('proposedExecpolicyAmendment', prompt['params'])
-        allowed = bridge.incoming({'id': 'one', 'result': {'decision': 'acceptForSession', 'config': {'test': True}}})
-        self.assertEqual(allowed, {'id': 'one', 'result': {'decision': 'acceptForSession'}})
-        with self.assertRaises(protocol.Rejected):
-            bridge.incoming({'id': 'one', 'result': {'decision': 'accept'}})
-        bridge.outgoing({'id': 'two', 'method': 'item/commandExecution/requestApproval'})
-        rejected = bridge.incoming({'id': 'two', 'result': {'decision': {
-            'acceptWithExecpolicyAmendment': {'execpolicy_amendment': ['sh']}}}})
-        self.assertEqual(rejected, {'id': 'two', 'result': {'decision': 'cancel'}})
-        self.assertNotIn('two', bridge.permissions)
 
     def test_claude_history_excludes_api_diagnostics_and_preserves_local_titles(self):
         bridge = component('editor_bridge')
@@ -345,7 +217,7 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
             changed.start()
             self.addCleanup(changed.stop)
         self.tasks = set()
-        self.agent = 'codex'
+        self.agent = 'claude'
         async def connect(reader, writer):
             task = asyncio.current_task()
             self.tasks.add(task)
@@ -367,7 +239,7 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
         changed.start()
         self.addCleanup(changed.stop)
         reader, writer = await asyncio.open_connection('127.0.0.1', self.server.sockets[0].getsockname()[1])
-        writer.write(b'{"args": []}\n')
+        writer.write(b'{"args": ["--input-format", "stream-json"]}\n')
         await writer.drain()
         self.addCleanup(writer.close)
         return reader, writer
@@ -440,33 +312,33 @@ class NativeEditorLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages, [{'method': 'finished'}, {'type': 'factory_exit', 'code': 0}])
 
     async def test_explicit_disconnect_stops_process_and_releases_chat(self):
-        source = ('import json, sys; print(json.dumps({"method":"thread/started", "params":{"thread":{"id":"owned"}}})); '
+        source = ('import json, sys; print(json.dumps({"type":"system", "subtype":"init", "session_id":"owned"})); '
                   'sys.stdin.read()')
         reader, writer = await self.connection(source)
         await asyncio.wait_for(reader.readline(), 10)
-        self.assertIn(('codex', 'owned'), self.bridge.OWNERS)
+        self.assertIn(('claude', 'owned'), self.bridge.OWNERS)
         writer.write(b'{"type":"factory_disconnect"}\n')
         await writer.drain()
         await asyncio.wait_for(reader.read(), 10)
-        self.assertNotIn(('codex', 'owned'), self.bridge.OWNERS)
+        self.assertNotIn(('claude', 'owned'), self.bridge.OWNERS)
 
     async def test_reloaded_editor_takes_over_an_idle_chat(self):
-        source = ('import json, sys; print(json.dumps({"method":"thread/started", "params":{"thread":{"id":"owned"}}})); '
+        source = ('import json, sys; print(json.dumps({"type":"system", "subtype":"init", "session_id":"owned"})); '
                   'sys.stdin.read()')
         first, _ = await self.connection(source)
         await asyncio.wait_for(first.readline(), 10)
         second, _ = await self.connection(source)
         message = json.loads(await asyncio.wait_for(second.readline(), 10))
-        self.assertEqual(message['method'], 'thread/started')
+        self.assertEqual(message['subtype'], 'init')
         await asyncio.wait_for(first.read(), 10)
-        self.assertIn(('codex', 'owned'), self.bridge.OWNERS)
+        self.assertIn(('claude', 'owned'), self.bridge.OWNERS)
 
     async def test_reloaded_editor_cannot_take_over_an_active_chat(self):
-        source = ('import json, sys\nprint(json.dumps({"method":"thread/started", "params":{"thread":{"id":"owned"}}}))\n'
-                  'for line in sys.stdin:\n message=json.loads(line); print(json.dumps({"id":message["id"],"result":{}}))')
+        source = ('import json, sys\nprint(json.dumps({"type":"system", "subtype":"init", "session_id":"owned"}))\n'
+                  'for line in sys.stdin:\n message=json.loads(line); print(json.dumps({"type":"assistant","message":{"content":"working"}}))')
         first, writer = await self.connection(source)
         await asyncio.wait_for(first.readline(), 10)
-        writer.write(b'{"id":1,"method":"turn/start","params":{"threadId":"owned","input":[{"type":"text","text":"Work"}]}}\n')
+        writer.write(b'{"type":"user","message":{"role":"user","content":"Work"}}\n')
         await writer.drain()
         await asyncio.wait_for(first.readline(), 10)
         second, _ = await self.connection(source)

@@ -9,7 +9,7 @@ For a different setup, pick **Custom profile…** or install a profile from
 
 Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or Antigravity. A sandbox you created with Pi continues to use Pi. To work with another agent, create a separate sandbox.
 
-For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, **Copy sign-in from this computer** is selected by default where host sign-in copying is supported. Choose **Sign in inside the sandbox** for a fresh login instead. The agent reads its sign-in from a private container. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the agent’s sign-in.
+For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, **Copy sign-in from this computer** is selected by default where host sign-in copying is supported. Choose **Sign in inside the sandbox** for a fresh login instead. Account credentials stay in a private container. Codex runs its official CLI and VS Code extension inside the workspace with placeholder tokens; a separate authentication service supplies the real tokens only to OpenAI. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the account credentials.
 
 The selected workspace is trusted automatically in the coding agent and browser editor. Pi can load its project settings, skills and extensions. Existing explicit trust decisions are preserved. Command approvals, folder permissions and network rules still apply. Project permission files cannot override Factory's rules.
 
@@ -59,6 +59,10 @@ its containers, private home, saved chats, and editor settings. Your workspace
 folder stays on your computer.
 
 ## Back up and restore chats
+
+Factory's chat backup and restore actions support Pi and FrostPi. They are not
+available for Codex, Claude Code or Antigravity; deleting one of those sandboxes
+also deletes its saved chats.
 
 - **Save a backup.** Choose **Actions… → Export chat history…**. Factory saves
   the original Pi and FrostPi chats, including branches, to a ZIP file on this
@@ -130,6 +134,7 @@ new destination exist, migration stops and names both paths without overwriting 
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |
 | Approvals & sandbox, Agent tools, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Codex: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen Codex CLI or reload the VS Code window. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
@@ -274,6 +279,12 @@ Additional folders require Docker Engine 25+ when using Docker.
 Separately mounted filesystems nested inside an added host folder are excluded;
 add each filesystem as its own folder if needed.
 
+## Codex web search
+
+**Enable web search** is unchecked by default in **Network and Web Search** during
+Codex setup and under **Settings → Network and Web Search** later. Check it to let
+Codex search OpenAI’s index. Apply changes, then reopen Codex CLI or reload the VS Code window.
+
 ## Saved model keys
 
 In **Model Providers**, use **Choose key…** or **Change key…** for a managed
@@ -352,8 +363,12 @@ Every profile includes Bash, Git, SSH, Python and Node.js. Read command manuals 
 
 ## See and interact with the agent’s browser
 
-Enable **Agent browser · Betterwright** under **Agent tools**. Ask Pi or
-FrostPi to show its browser. Open the link shared in chat to access the live browser
+Betterwright is enabled by default for new Pi, Codex, Claude Code and Antigravity
+sandboxes. To turn it off, clear **Agent browser · Betterwright** under **Agent tools**
+for Pi, or **Enable the browser** under **Browser** for the other agents. Add
+`--no-browser` when creating a sandbox from the CLI. Updates preserve explicit
+saved choices.
+Ask the agent to show its browser. Open the link shared in chat to access the live browser
 window, including the tab bar and popup windows. Type, click, navigate and switch tabs
 normally. When you have finished, tell the agent to continue; it keeps the same
 browser state.

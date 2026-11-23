@@ -133,6 +133,30 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('native-web-search-') for name in args.only):
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='demo', workspace=str(workspace), primary_agent='codex',
+                                 model_providers={}, editor={'mode': 'browser'})
+                    draft['options']['codex_web_search'] = True
+                    await app.push_screen(SettingsForm(draft))
+                    await pilot.pause()
+                    form = app.screen
+                    form.query_one('#network-section', Collapsible).collapsed = False
+                    checkbox = form.query_one('#codex-web-search', Checkbox)
+                    checkbox.scroll_visible(animate=False)
+                    await shot('native-web-search-on', focus='#codex-web-search')
+                    checkbox.value = False
+                    await shot('native-web-search-off', focus='#codex-web-search')
+                    await app.pop_screen()
+                    await app.push_screen(SettingsForm(draft, editing=True, setting='network-settings'))
+                    await shot('native-web-search-edit', focus='#codex-web-search')
+                    app.screen.query_one('#codex-web-search', Checkbox).value = False
+                    with patch.object(app.service, 'update_settings', create=True,
+                                      side_effect=ValueError('Could not save web search: fixture storage is read-only.')):
+                        app.screen.query_one('#apply', Button).press()
+                        await pilot.pause()
+                        await shot('native-web-search-error')
+                    return
                 if args.only and set(args.only) <= {'home', 'home-renamed'}:
                     await shot('home-renamed' if app.startup_notice else 'home')
                     return
@@ -415,6 +439,7 @@ async def capture(size):
                     (workspace / 'old-chat.jsonl').touch()
                     await shot('chat-history-actions', MoreActions(record))
                     await shot('chat-history-delete', DeleteSandbox('demo', has_config=True))
+                    await shot('chat-history-delete-codex', DeleteSandbox('demo', has_config=True, agent='codex'))
                     await app.push_screen(DeleteSandbox('demo', has_config=True))
                     await pilot.pause()
                     app.screen.show_backup(backup_message(sample, 3))

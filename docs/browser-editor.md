@@ -24,10 +24,19 @@ on the right. The built-in VS Code chat is hidden. FrostPi's first chat shows th
 approval mode; select your model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
 
-Codex, Claude Code and Antigravity use the sandbox's existing sign-in. Their signed-in process
-runs in a separate container; the browser editor does not receive its credentials.
+Codex, Claude Code and Antigravity use the sandbox's existing sign-in. Real account
+credentials stay in a separate container; the browser editor does not receive them.
 For a fresh login, complete the terminal sign-in before the editor opens. Use
 **Settings → Sign-in** to sign in again or copy a host login.
+
+Codex opens directly to chat without its welcome walkthrough. Its native model,
+reasoning and approval controls remain available. Paste an image into the Codex
+composer to send it to the model; **Allow file uploads** controls workspace uploads
+through Explorer and is not required for chat images.
+
+For Codex, **Settings → Network and Web Search → Enable web search** is unchecked
+by default. Check it to let Codex search OpenAI’s index. Apply changes, then
+reopen Codex CLI or reload the VS Code window.
 
 Attach files or images directly in Antigravity’s chat composer to include them in a message. The attachment is sent to your selected model. This is separate from uploading files into the workspace through Explorer.
 

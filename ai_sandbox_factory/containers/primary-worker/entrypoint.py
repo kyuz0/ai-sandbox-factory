@@ -11,6 +11,8 @@ if os.environ.get("SANDBOX_NETWORK_MODE") == "allowlist":
     relays[3128] = "/run/egress/proxy.sock"
 if Path("/run/aws-access").is_dir():
     relays[19432] = "/run/aws-access/request.sock"
+if Path('/run/primary-editor/auth.sock').exists():
+    relays[3130] = '/run/primary-editor/auth.sock'
 
 
 def stop(_signal, _frame):

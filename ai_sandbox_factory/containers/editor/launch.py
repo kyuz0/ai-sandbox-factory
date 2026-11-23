@@ -103,6 +103,20 @@ existing.update(values)
 existing.setdefault('workbench.colorTheme', 'Default Dark Modern')
 existing.setdefault('workbench.secondarySideBar.defaultVisibility', 'visible')
 user_settings.write_text(json.dumps(existing))
+if settings.get('agent') == 'codex':
+    # Factory already introduces the sandbox and account setup. Mark only the
+    # pinned native extension's two welcome pages complete before it starts.
+    storage = user / 'globalStorage/state.vscdb'
+    storage.parent.mkdir(exist_ok=True)
+    with sqlite3.connect(storage) as database:
+        database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
+        row = database.execute('SELECT value FROM ItemTable WHERE key = ?', ('openai.chatgpt',)).fetchone()
+        extension_state = json.loads(row[0]) if row else {}
+        extension_state.update({'viewed2025-09-15-nux': True,
+                                'viewed2025-09-15-full-chatgpt-auth-nux': True})
+        database.execute('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)',
+                         ('openai.chatgpt', json.dumps(extension_state)))
+    database.close()
 # Seed the shipped chat view and carry its position forward when upgrading.
 if settings.get('agent', 'pi') in ('pi', 'agy'):
     storage = user / 'globalStorage/state.vscdb'
@@ -174,6 +188,13 @@ sock.unlink(missing_ok=True)
 env = dict(os.environ)
 for key in ('PASSWORD', 'HASHED_PASSWORD', 'GITHUB_TOKEN', 'VSCODE_IPC_HOOK_CLI'):
     env.pop(key, None)
+if settings.get('agent') == 'codex':
+    # Native account/features requests also originate in the extension host,
+    # not just its Codex child. Both use the same credential-free transport.
+    for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
+        env[key] = 'http://127.0.0.1:3130'
+    for key in ('NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE'):
+        env[key] = '/home/node/.codex/factory-ca.pem'
 if agent_hub_port:
     env['ANTIGRAVITY_SERVER_URL'] = 'http://127.0.0.1:' + str(agent_hub_port)
 watch_fallback = root / 'watch-fallback.cjs'

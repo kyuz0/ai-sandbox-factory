@@ -89,8 +89,9 @@ def image(config):
     source = sandbox.ROOT / 'containers/primary'
     worker_files = ['worker.sh', 'worker-tools.mjs', 'editor_client.py']
     if agent(config) == 'codex':
-        # The executor is shipped by the selected Codex controller image.
+        # The official Codex binaries are copied from the credential image.
         worker_files.append('Dockerfile')
+        worker_files.append('codex_client.py')
     digest = hashlib.sha256()
     for filename in worker_files:
         digest.update((source / filename).read_bytes())

@@ -42,29 +42,6 @@ def command(agent, action, settings, context):
         # This controller directory matches the worker's selected folder.
         # Project files, hooks and credentials are never mounted together.
         cwd = workspace_directory(settings)
-    if agent == 'codex':
-        (HOME / '.codex').mkdir(mode=0o700, exist_ok=True)
-        options = ['-c', 'cli_auth_credentials_store="file"']
-        if action == 'login':
-            return options + ['login', '--device-auth']
-        os.environ['CODEX_EXEC_SERVER_URL'] = 'ws://127.0.0.1:36781'
-        # The outer worker is already the OS boundary. Route native tools there.
-        config = ['-c', 'developer_instructions=' + json.dumps(context, ensure_ascii=False),
-                  '-c', 'approvals_reviewer=' + json.dumps('auto_review' if automatic else 'user'),
-                  '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"',
-                  '-c', 'web_search="disabled"', '-c', 'features.shell_tool=true']
-        if browser:
-            config += ['-c', 'mcp_servers.factory_workspace.command="/usr/bin/socat"',
-                       '-c', 'mcp_servers.factory_workspace.args=' + json.dumps(tool_server()['args'])]
-        # Project-provided configuration, hooks and plugins stay in the worker.
-        # -c splits its key on dots without parsing quoted TOML keys. Supply
-        # the projects table as its value so dots/quotes in paths stay literal.
-        key = json.dumps(str(cwd), ensure_ascii=False).replace('\x7f', r'\u007f')
-        config += ['-c', 'projects={' + key + '={trust_level="trusted"}}']
-        if action == 'editor':
-            return options + config + ['app-server']
-        return options + config
-
     if agent == 'claude':
         if action == 'login':
             return ['auth', 'login']

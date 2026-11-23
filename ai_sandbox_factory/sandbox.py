@@ -1005,8 +1005,8 @@ def create(args, state):
     model_ports = getattr(args, 'local_model_ports', None)
     configure_local_gateway(config, model_ports, rules)
     config['options'] = selected_options
-    if getattr(args, 'browser', False):
-        config['options'] = options({**config.get('options', {}), 'browser': True})
+    if getattr(args, 'browser', None) is not None:
+        config['options'] = options({**config.get('options', {}), 'browser': args.browser})
     if getattr(args, 'aws_access_file', None):
         config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
     if getattr(args, 'ssh_file', None):
@@ -1311,6 +1311,17 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
+    if isinstance(changes, dict) and set(changes) == {'codex_web_search'}:
+        if primary_workspace.agent(config) != 'codex':
+            raise ValueError('Enable web search is available only for Codex sandboxes.')
+        selected = options({**options(config.get('options')), 'codex_web_search': changes['codex_web_search']})
+        if updating.begin_apply(apply_gate):
+            from . import primary_agents
+            updated = {**config, 'options': selected}
+            activity.save_config(state, updated)
+            primary_agents.prepare_workspace(updated, state)
+            print('Web search saved. Restart Codex to use it.')
+        return
     if native and isinstance(changes, dict) and set(changes) == {'native_approval'}:
         selected = options({**options(config.get('options')), 'native_approval': changes['native_approval']})
         if updating.begin_apply(apply_gate):
@@ -1665,7 +1676,8 @@ def main(*, startup_notice=''):
                      help='Use keyword search (default: off) or install pi-knowledge with an embedding server')
     new.add_argument('--knowledge-embedding-url', help='OpenAI-compatible embedding API base URL, including its API path')
     new.add_argument('--knowledge-embedding-model', help='Model ID accepted by the embedding server')
-    new.add_argument('--browser', action='store_true', help='Install optional Betterwright browser tools and dependencies (default: disabled)')
+    new.add_argument('--browser', action=argparse.BooleanOptionalAction, default=None,
+                     help='Enable or disable Betterwright browser tools (default: enabled; preserves an explicit options-file choice)')
     policy = new.add_mutually_exclusive_group()
     policy.add_argument('--allowlist')
     policy.add_argument('--allow-domain', action='append', default=[], metavar='HOST:PORT',

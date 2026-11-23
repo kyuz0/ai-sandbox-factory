@@ -16,7 +16,7 @@ class SettingsEffectsTests(unittest.TestCase):
         self.assertEqual(set(settings_effects.OPTION_GROUPS),set(DEFAULTS))
 
     def test_changes_are_specific_and_never_include_credentials(self):
-        before={'options':{},'model_providers':[{'name':'local','settings':{}}], 'allowlist':'example.com:443'}
+        before={'options':{'browser':False},'model_providers':[{'name':'local','settings':{}}], 'allowlist':'example.com:443'}
         draft=copy.deepcopy(before);draft['model_providers']={'local':{}}
         self.assertEqual(settings_effects.configuration_changes(before,draft),[])
         draft['options']={'browser':True,'compaction_recall':'full'}

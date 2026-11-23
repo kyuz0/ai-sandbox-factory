@@ -9,7 +9,16 @@ import subprocess
 import tempfile
 from zipfile import BadZipFile, ZipFile
 
-from . import folders, host_platform, sandbox, session_archive
+from . import folders, host_platform, primary_workspace, sandbox, session_archive
+
+
+def require_pi(config, operation):
+    selected = primary_workspace.agent(config)
+    if selected != 'pi':
+        name = primary_workspace.AGENTS[selected]
+        raise ValueError(f'Factory cannot {operation} chat history for {name} sandboxes. '
+                         'Chat backups support Pi and FrostPi only. '
+                         'Keep this sandbox if you still need its saved chats.')
 
 
 def backup_folder():
@@ -23,6 +32,7 @@ def suggested_file(name):
 
 
 def archive_command(config, *args):
+    require_pi(config, args[0])
     engine = config['engine']
     dev, _, _, volume = sandbox.names(config)
     container = sandbox.inspect(config, dev)
@@ -70,6 +80,7 @@ def transfer(command, **streams):
 
 
 def export_chats(config, state, value):
+    require_pi(config, 'export')
     path = host_platform.local_path(value).absolute()
     if path.suffix.lower() != '.zip':
         raise ValueError('Enter a backup filename ending in .zip.')
@@ -101,6 +112,7 @@ def export_chats(config, state, value):
 
 
 def import_chats(config, value):
+    require_pi(config, 'import')
     path = host_platform.local_path(value)
     kind = path.suffix.lower().lstrip('.')
     if kind not in ('zip', 'jsonl'):

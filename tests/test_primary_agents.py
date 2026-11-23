@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import socket
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -20,6 +21,31 @@ class PrimaryAgentIsolation(unittest.TestCase):
         (Path(workspace.name) / 'src').mkdir()
         self.config = {'name': 'test', 'engine': 'podman', 'uid': 1000, 'gid': 1000,
                        'primary_agent': 'claude', 'workspace': workspace.name}
+
+    def test_saved_codex_ca_and_relay_do_not_report_ready_before_proxy_listens(self):
+        with TemporaryDirectory() as temp, patch.object(primary_agents, 'volume', return_value=True), \
+                patch.object(sandbox, 'inspect', return_value=None), \
+                patch.object(sandbox, 'image_names', return_value=('worker-image', 'proxy-image')), \
+                patch.object(sandbox, 'run'), patch.object(primary_agents, '_wait') as wait, \
+                socket.socket() as proxy, socket.socket(socket.AF_UNIX) as relay:
+            root = Path(temp)
+            primary_agents.up({**self.config, 'primary_agent': 'codex'}, root)
+            check = wait.call_args.args[2]
+            (root / 'ready').touch()
+            (root / 'ca.pem').write_text('saved public certificate')
+            relay.bind(str(root / 'relay.sock'))
+            proxy.bind(('127.0.0.1', 0))
+            for source, target in {
+                '/tmp/factory-primary-ready': str(root / 'ready'),
+                '/run/primary-egress/proxy.sock': str(root / 'relay.sock'),
+                '/run/primary-editor/auth.sock': str(root / 'relay.sock'),
+                '/run/primary-editor/codex-ca.pem': str(root / 'ca.pem'),
+                '/127.0.0.1/3130': '/127.0.0.1/' + str(proxy.getsockname()[1]),
+            }.items():
+                check = check.replace(source, target)
+            self.assertNotEqual(subprocess.run(['bash', '-c', check], capture_output=True).returncode, 0)
+            proxy.listen()
+            self.assertEqual(subprocess.run(['bash', '-c', check], capture_output=True).returncode, 0)
 
     def test_controller_and_workspace_share_only_tool_transport(self):
         with TemporaryDirectory() as temp, patch.object(primary_agents, 'volume', return_value=False), \
@@ -73,25 +99,46 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 sandbox.apply_settings(saved, state, {'native_approval': 'invalid'})
             self.assertEqual(json.loads((state / 'config.json').read_text()), saved)
 
+    def test_codex_web_search_defaults_and_validation(self):
+        from ai_sandbox_factory.sandbox_options import options
+        self.assertIs(options()['codex_web_search'], False)
+        self.assertIs(options({'codex_web_search': False})['codex_web_search'], False)
+        self.assertIs(options({'codex_web_search': True})['codex_web_search'], True)
+        for value in (0, 1, 'true', None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'codex_web_search must be a boolean'):
+                options({'codex_web_search': value})
+
+    def test_codex_web_search_is_saved_and_passed_only_to_codex_runtime(self):
+        with TemporaryDirectory() as temporary, patch.object(sandbox, 'run', side_effect=AssertionError('No runtime operation')):
+            state = Path(temporary)
+            config = {**self.config, 'primary_agent': 'codex'}
+            sandbox.apply_settings(config, state, {'codex_web_search': False})
+            saved = json.loads((state / 'config.json').read_text())
+            self.assertIs(saved['options']['codex_web_search'], False)
+            runtime = json.loads((state / 'primary-runtime/settings.json').read_text())
+            self.assertIs(runtime['codex_web_search'], False)
+            self.assertEqual(saved['workspace'], config['workspace'])
+            with self.assertRaisesRegex(ValueError, 'must be a boolean'):
+                sandbox.apply_settings(saved, state, {'codex_web_search': 'invalid'})
+            self.assertEqual(json.loads((state / 'config.json').read_text()), saved)
+        for agent in ('pi', 'claude', 'agy'):
+            with self.subTest(agent=agent), TemporaryDirectory() as temporary:
+                state = Path(temporary)
+                primary_agents.prepare_workspace({**self.config, 'primary_agent': agent,
+                                                  'options': {'codex_web_search': False}}, state)
+                self.assertFalse((state / 'primary-runtime/settings.json').exists())
+                with self.assertRaisesRegex(ValueError, 'only for Codex'):
+                    sandbox.apply_settings({**self.config, 'primary_agent': agent}, state, {'codex_web_search': False})
+
     def test_native_manual_and_automatic_cli_choices(self):
         launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
         with TemporaryDirectory() as temp, patch.dict(launcher['command'].__globals__, {'HOME': Path(temp)}), \
                 patch.dict(launcher['command'].__globals__, {'workspace_directory': lambda _: Path('/workspace')}):
-            for mode, reviewer, claude in [('automatic', 'auto_review', 'auto'), ('manual', 'user', 'default')]:
+            for mode, claude in [('automatic', 'auto'), ('manual', 'default')]:
                 settings = {'browser': False, 'native_approval': mode}
-                codex = launcher['command']('codex', 'open', settings, '')
-                self.assertIn('approvals_reviewer="' + reviewer + '"', codex)
                 command = launcher['command']('claude', 'open', settings, '')
                 self.assertEqual(command[command.index('--permission-mode') + 1], claude)
 
-    def test_native_codex_login_initializes_a_fresh_private_home(self):
-        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
-        with TemporaryDirectory() as temporary:
-            home = Path(temporary)
-            with patch.dict(launcher['command'].__globals__, {'HOME': home}):
-                args = launcher['command']('codex', 'login', {'browser': False}, '')
-            self.assertEqual(args[-2:], ['login', '--device-auth'])
-            self.assertTrue((home / '.codex').is_dir())
 
     def test_each_native_launcher_receives_only_current_connector_grants(self):
         from ai_sandbox_factory import connector_settings
@@ -104,7 +151,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
             prompt.touch()
             host = {'alias': 'build', 'hostname': 'build.example', 'user': 'tester', 'port': 22}
             self.addCleanup(os.chdir, Path.cwd())
-            for provider in ('codex', 'claude', 'agy'):
+            for provider in ('claude', 'agy'):
                 with self.subTest(provider=provider):
                     config = {**self.config, 'primary_agent': provider, 'ssh': {'hosts': [host]}}
                     connector_settings.refresh_agent_context(config, state)
@@ -115,9 +162,6 @@ class PrimaryAgentIsolation(unittest.TestCase):
                         instructions = (state / '.gemini/AGENTS.md').read_text()
                     elif provider == 'claude':
                         instructions = args[args.index('--append-system-prompt') + 1]
-                    else:
-                        instructions = json.loads(next(arg.split('=', 1)[1] for arg in args
-                                                       if arg.startswith('developer_instructions=')))
                     self.assertIn('build.example', instructions)
                     self.assertIn('/run/primary-runtime/connectors.md', instructions)
                     self.assertIn('ssh-add -l', instructions)
@@ -132,11 +176,6 @@ class PrimaryAgentIsolation(unittest.TestCase):
             settings = {'browser': False, 'working_directory': str(Path(temp) / 'workspace')}
             for action in ('open', 'editor'):
                 with self.subTest(action=action):
-                    codex = command('codex', action, settings, '')
-                    self.assertIn('approvals_reviewer="auto_review"', codex)
-                    self.assertIn('approval_policy="on-request"', codex)
-                    self.assertIn('sandbox_mode="workspace-write"', codex)
-                    self.assertNotIn('never', codex)
                     claude = command('claude', action, settings, '')
                     self.assertEqual(claude[claude.index('--permission-mode') + 1], 'auto')
                     self.assertNotIn('--allowedTools', claude)
@@ -150,18 +189,13 @@ class PrimaryAgentIsolation(unittest.TestCase):
             cwd = Path(temp) / 'workspace' / 'selected folder 🌱'
             settings = {'browser': False, 'working_directory': str(cwd)}
             for action in ('open', 'editor'):
-                for provider in ('codex', 'claude', 'agy'):
+                for provider in ('claude', 'agy'):
                     with self.subTest(provider=provider, action=action):
                         os.chdir(temp)
                         args = command(provider, action, settings, '')
                         self.assertEqual(Path.cwd(), cwd)
                         self.assertEqual(list(cwd.iterdir()), [])
-                        if provider == 'codex':
-                            table = next(value for value in args if value.startswith('projects='))
-                            self.assertEqual(table, 'projects={' + json.dumps(str(cwd), ensure_ascii=False) +
-                                             '={trust_level="trusted"}}')
-                            self.assertIn('approval_policy="on-request"', args)
-                        elif provider == 'claude':
+                        if provider == 'claude':
                             self.assertEqual(os.environ['CLAUDE_CODE_SANDBOXED'], '1')
                             self.assertIn('--restricted', args)
                             self.assertEqual(args[args.index('--tools') + 1], '')
@@ -201,7 +235,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
         with TemporaryDirectory() as temp, patch.dict(os.environ), patch('subprocess.run'), \
                 patch.dict(command.__globals__, {'HOME': Path(temp)}):
             os.environ.pop('CLAUDE_CODE_SANDBOXED', None)
-            for provider in ('codex', 'claude', 'agy'):
+            for provider in ('claude', 'agy'):
                 args = command(provider, 'login', {'browser': False}, '')
                 self.assertNotIn('CLAUDE_CODE_SANDBOXED', os.environ)
                 self.assertNotIn('trustedWorkspaces', ' '.join(args))
@@ -209,7 +243,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
 
     def test_executable_guidance_matches_active_choices(self):
         with TemporaryDirectory() as temp:
-            config = {**self.config, 'working_directory': 'src',
+            config = {**self.config, 'working_directory': 'src', 'options': {'browser': False},
                       'extra_folders': [{'source': '/tmp/documents', 'name': 'docs', 'read_only': True}]}
             text = primary_agents.guidance(config, Path(temp))
             self.assertIn('/workspace/src', text)

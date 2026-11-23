@@ -7,7 +7,10 @@ umask 077
 socat TCP-LISTEN:3128,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/primary-egress/proxy.sock &
 case "$FACTORY_PRIMARY_AGENT" in
     codex)
-        socat TCP-LISTEN:36781,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/primary-workspace/exec.sock &
+        socat TCP-LISTEN:3129,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/workspace-egress/proxy.sock &
+        /opt/codex-proxy/bin/python -u /opt/primary/codex_auth_proxy.py &
+        rm -f /run/primary-editor/auth.sock
+        socat UNIX-LISTEN:/run/primary-editor/auth.sock,fork,mode=0600 TCP:127.0.0.1:3130 &
         ;;
     agy)
         mkdir -p "$HOME/.local/share/keyrings"
@@ -17,9 +20,9 @@ case "$FACTORY_PRIMARY_AGENT" in
         ;;
     claude) ;;
 esac
-if [[ "$FACTORY_PRIMARY_AGENT" != agy ]]; then
+if [[ "$FACTORY_PRIMARY_AGENT" == claude ]]; then
     python3 /opt/primary/editor_bridge.py &
-else
+elif [[ "$FACTORY_PRIMARY_AGENT" == agy ]]; then
     python3 /opt/primary/agy_editor_bridge.py &
 fi
 touch /tmp/factory-primary-ready
