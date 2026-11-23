@@ -1,14 +1,18 @@
 """Shared host file and folder browser for Factory forms."""
 
+import os
 from pathlib import Path
 import subprocess
 
 from rich.text import Text
-from textual import on
-from textual.containers import Horizontal, Vertical
+from textual import events, on, work
+from textual.message import Message
+from textual.worker import get_current_worker
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 from textual_fspicker.parts import DirectoryNavigation
+from textual_fspicker.parts.directory_navigation import DirectoryEntry
 from textual_fspicker.icons import Icons
 from textual_fspicker.path_filters import Filter
 from textual_fspicker.safe_tests import is_dir
@@ -20,13 +24,187 @@ from .tui_widgets import Checkbox, Feedback
 Icons.set_picker(lambda path: Text('▸' if is_dir(path) else '·'))
 
 
-class FolderPicker(ModalScreen[str | None]):
-    BINDINGS = [('escape', 'cancel', 'Cancel'), ('ctrl+l', 'location', 'Go to folder')]
+class SearchEntry(DirectoryEntry):
+    """Keep an absolute result identity while displaying its relative path."""
 
-    def __init__(self, start, *, title='Choose workspace folder', mode='folder', file_extensions=None,
+    def __init__(self, location, styles, base):
+        self.base = base
+        super().__init__(location, styles)
+
+    def _name(self, location):
+        return Text.assemble(str(location.relative_to(self.base)), ' ',
+                             self.LINK_ICON if location.is_symlink() else '')
+
+
+def matching_paths(base, query, *, recursive, hidden, files, allowed, root, cancelled, errors):
+    """Walk only the requested scope; directory symlinks never expand it."""
+    pending = [base]
+    while pending:
+        directory = pending.pop()
+        if cancelled():
+            return
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if cancelled():
+                        return
+                    path = Path(entry.path)
+                    if not hidden and path.name.startswith('.'):
+                        continue
+                    try:
+                        if root and not path.resolve().is_relative_to(root):
+                            continue
+                        directory_entry = entry.is_dir()
+                        if recursive and directory_entry and not entry.is_symlink():
+                            pending.append(path)
+                        if (directory_entry or (files and entry.is_file() and allowed(path))) and query in path.name.casefold():
+                            yield path
+                    except (OSError, RuntimeError) as error:
+                        errors.append(f'{path}: {error}')
+        except OSError as error:
+            errors.append(f'{directory}: {error}')
+
+
+class FilteredNavigation(DirectoryNavigation):
+    """Small adapter for the pinned textual-fspicker list and entry renderer."""
+
+    class Updated(Message):
+        def __init__(self, navigation, *, searching=False, errors=()):
+            super().__init__()
+            self.navigation, self.searching, self.errors = navigation, searching, errors
+
+    def __init__(self, location, *, root=None):
+        self.filter_text = ''
+        self.recursive = False
+        self.root = root
+        self.generation = 0
+        self.errors = []
+        super().__init__(location)
+
+    @property
+    def is_root(self):
+        return super().is_root or self.location == self.root
+
+    def hide(self, path):
+        return (super().hide(path) or self.filter_text.casefold() not in path.name.casefold()
+                or bool(self.root and not path.resolve().is_relative_to(self.root)))
+
+    def refilter(self, query, recursive):
+        old_recursive = self.recursive and bool(self.filter_text)
+        self.filter_text, self.recursive = query, recursive
+        if old_recursive or (recursive and query):
+            self._load()
+        else:
+            self._repopulate_display()
+
+    def _repopulate_display(self):
+        previous = self.get_option_at_index(self.highlighted).location if self.highlighted is not None else None
+        super()._repopulate_display()
+        self.highlighted = next((i for i in range(self.option_count)
+                                 if self.get_option_at_index(i).location == previous), None)
+        self.post_message(self.Updated(self))
+
+    def on_mount(self):
+        super().on_mount()
+        self._load()
+
+    def _load(self):
+        self.generation += 1
+        if self.is_mounted:
+            self.errors = []
+            self._entries = []
+            self._repopulate_display()
+        self.load_entries(self.generation, self.location, self.filter_text.casefold(),
+                          self.recursive and bool(self.filter_text), self.show_hidden,
+                          self.show_files, self.file_filter, self._styles)
+
+    @work(exclusive=True, thread=True, group='picker-listing')
+    def load_entries(self, generation, base, query, recursive, hidden, files, allowed, styles):
+        worker = get_current_worker()
+        errors, batch = [], []
+        cancelled = lambda: worker.is_cancelled or not self.is_mounted
+        self.app.call_from_thread(self.receive_entries, generation, [], True, recursive, ())
+        for path in matching_paths(base, query if recursive else '', recursive=recursive,
+                                   hidden=hidden if recursive else True, files=files,
+                                   allowed=allowed or (lambda _: True), root=self.root,
+                                   cancelled=cancelled, errors=errors):
+            if cancelled():
+                return
+            try:
+                batch.append(SearchEntry(path, styles, base) if recursive else DirectoryEntry(path, styles))
+            except OSError as error:
+                errors.append(f'{path}: {error}')
+            # A viewport-sized batch keeps the UI responsive and provides backpressure.
+            if recursive and len(batch) >= max(1, self.size.height):
+                self.app.call_from_thread(self.receive_entries, generation, batch, False, recursive, ())
+                batch = []
+        if not cancelled():
+            self.app.call_from_thread(self.receive_entries, generation, batch, False, False, errors)
+
+    def receive_entries(self, generation, entries, reset, searching, errors):
+        if generation != self.generation or not self.is_mounted:
+            return
+        if reset:
+            self.errors = []
+            self._entries = []
+            self._repopulate_display()
+        self._entries.extend(entries)
+        if searching:
+            # Append streamed hits once; re-sorting the growing list per batch is quadratic.
+            self.add_options(entry for entry in entries if not self.hide(entry.location))
+        else:
+            self.errors = list(errors)
+            self._repopulate_display()
+        self.post_message(self.Updated(self, searching=searching, errors=self.errors))
+
+    def _watch__location(self):
+        self.filter_text = ''
+        super()._watch__location()
+
+    def action_navigate_up(self):
+        if not self.is_root:
+            super().action_navigate_up()
+
+    def on_unmount(self):
+        self.generation += 1
+        self.workers.cancel_group(self, 'picker-listing')
+
+
+class PickerErrors(ModalScreen):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, errors):
+        super().__init__()
+        self.errors = errors
+
+    def compose(self):
+        with Vertical(id='picker-errors-box'):
+            yield Label('Folders or files that could not be read', classes='title')
+            with VerticalScroll():
+                yield Static('\n\n'.join(self.errors), markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='picker-errors-close', variant='primary')
+
+    def on_mount(self):
+        self.query_one(Button).focus()
+
+    def action_close(self):
+        self.dismiss()
+
+    @on(Button.Pressed, '#picker-errors-close')
+    def close_pressed(self):
+        self.action_close()
+
+
+class FolderPicker(ModalScreen[str | None]):
+    BINDINGS = [('escape', 'cancel', 'Cancel'), ('ctrl+l', 'location', 'Go to folder'),
+                ('ctrl+f', 'filter', 'Name filter')]
+
+    def __init__(self, start, *, title=None, mode='folder', file_extensions=None,
                  places=None, root=None, filename=''):
         super().__init__()
-        self.title_text = title
+        self.title_text = title or {'folder': 'Choose workspace folder', 'file': 'Choose a file',
+                                    'save': 'Choose where to save the file'}[mode]
         self.mode = mode
         self.file_extensions = file_extensions
         self.file = None
@@ -38,6 +216,10 @@ class FolderPicker(ModalScreen[str | None]):
             self.start = path if path.is_dir() else path.parent if path.parent.is_dir() else self.root or home
         except (OSError, RuntimeError, subprocess.CalledProcessError):
             self.start = self.root or home
+        if self.root:
+            self.start = self.start.resolve()
+            if not self.start.is_relative_to(self.root):
+                self.start = self.root
         self.places = {'Workspace': self.root} if self.root else {'Home': home, 'Downloads': home / 'Downloads'}
         self.places.update(places or {})
         self.places = {label: path for label, path in self.places.items() if path.is_dir()}
@@ -45,10 +227,19 @@ class FolderPicker(ModalScreen[str | None]):
     def compose(self):
         with Vertical(id='folder-box'):
             yield Label(self.title_text, classes='title', markup=False)
-            yield Label('Folder', classes='folder-input-label')
-            with Horizontal(classes='path-row'):
-                yield Input(str(self.start.absolute()), id='folder-path', select_on_focus=False)
-                yield Button('Up', id='folder-up')
+            with Horizontal(id='folder-inputs'):
+                with Vertical(id='folder-location-group'):
+                    yield Label('Folder', classes='folder-input-label')
+                    with Horizontal(classes='path-row'):
+                        yield Input(str(self.start.absolute()), id='folder-path', select_on_focus=False)
+                        yield Button('Up', id='folder-up')
+                with Vertical(id='folder-filter-group'):
+                    with Horizontal(id='folder-filter-heading'):
+                        yield Label('Name filter', classes='folder-input-label')
+                        yield Checkbox('Search subfolders', id='folder-recursive')
+                    with Horizontal(classes='path-row'):
+                        yield Input(id='folder-filter', select_on_focus=False)
+                        yield Button('Clear', id='folder-clear')
             with Horizontal(id='folder-places'):
                 for index, label in enumerate(self.places):
                     yield Button(label, id=f'folder-place-{index}')
@@ -58,19 +249,21 @@ class FolderPicker(ModalScreen[str | None]):
                 yield Static('Name', id='folder-name-column')
                 yield Static('Bytes', id='folder-size-column')
                 yield Static('Modified', id='folder-modified-column')
-            yield DirectoryNavigation(self.start)
+            yield FilteredNavigation(self.start, root=self.root)
             if self.mode == 'save':
                 yield Label('File name', classes='folder-input-label', id='folder-filename-label')
                 yield Input(self.filename, id='folder-filename')
             yield Feedback(id='folder-browse-error', markup=False)
             with Horizontal(classes='dialog-actions'):
+                yield Button('View errors', id='folder-errors')
+                yield Static('', classes='action-spacer')
                 yield Button('Cancel', id='folder-cancel')
                 yield Button('Use this folder' if self.mode == 'folder' else 'Use this file',
                              id='folder-use', variant='primary', disabled=self.mode == 'file')
 
     @property
     def navigation(self):
-        return self.query_one(DirectoryNavigation)
+        return self.query_one(FilteredNavigation)
 
     def on_mount(self):
         navigation = self.navigation
@@ -87,6 +280,52 @@ class FolderPicker(ModalScreen[str | None]):
 
     def action_location(self):
         self.query_one('#folder-path', Input).focus()
+
+    def action_filter(self):
+        self.query_one('#folder-filter', Input).focus()
+
+    def on_key(self, event: events.Key):
+        if self.focused is self.navigation and event.is_printable:
+            field = self.query_one('#folder-filter', Input)
+            field.value += event.character
+            field.cursor_position = len(field.value)
+            field.focus()
+            event.stop()
+            event.prevent_default()
+        elif self.focused is self.query_one('#folder-filter', Input) and event.key == 'down':
+            self.navigation.focus()
+            if self.navigation.highlighted is None:
+                self.navigation.highlighted = next((i for i in range(self.navigation.option_count)
+                    if self.navigation.get_option_at_index(i).location.name != '..'), None)
+            event.stop()
+            event.prevent_default()
+
+    @on(Input.Changed, '#folder-filter')
+    @on(Checkbox.Changed, '#folder-recursive')
+    def filter_changed(self):
+        self.update_file()
+        self.navigation.refilter(self.query_one('#folder-filter', Input).value,
+                                 self.query_one('#folder-recursive', Checkbox).value)
+
+    @on(Input.Submitted, '#folder-filter')
+    def filter_submitted(self):
+        self.navigation.focus()
+        self.navigation.highlighted = next((i for i in range(self.navigation.option_count)
+            if self.navigation.get_option_at_index(i).location.name != '..'), None)
+
+    @on(FilteredNavigation.Updated)
+    def listing_updated(self, event):
+        nav = event.navigation
+        count = nav.option_count - int(not nav.is_root)
+        state = 'Searching…' if event.searching else 'No matches' if nav.filter_text and not count else ''
+        self.query_one('#folder-name-column', Static).update('Name' + (f' · {state}' if state else ''))
+        errors = self.query_one('#folder-errors', Button)
+        errors.display = bool(nav.errors)
+        errors.label = f'View errors ({len(nav.errors)})'
+        if nav.errors and not count and not event.searching:
+            self.query_one('#folder-name-column', Static).update('Name')
+        if nav.highlighted is None:
+            self.update_file()
 
     def allowed_file(self, path):
         return self.mode != 'folder' and (not self.file_extensions or path.suffix.lower() in self.file_extensions)
@@ -105,6 +344,9 @@ class FolderPicker(ModalScreen[str | None]):
         except (OSError, RuntimeError, ValueError):
             self.query_one('#folder-browse-error', Feedback).update('Error · Cannot open that folder.')
             return
+        if self.root and not location.is_relative_to(self.root):
+            self.query_one('#folder-browse-error', Feedback).update('Error · Choose a folder inside the workspace.')
+            return
         self.navigation.location = location
         self.navigation.focus()
 
@@ -115,18 +357,24 @@ class FolderPicker(ModalScreen[str | None]):
 
     @on(DirectoryNavigation.Changed)
     def location_changed(self, event):
+        self.query_one('#folder-filter', Input).value = ''
+        event.navigation.filter_text = ''
         self.query_one('#folder-path', Input).value = str(event.navigation.location)
+        self.query_one('#folder-up', Button).disabled = event.navigation.is_root
         self.query_one('#folder-browse-error', Feedback).update('')
         self.update_file()
 
     @on(DirectoryNavigation.Highlighted)
     def highlighted(self, event):
-        self.update_file(event.path)
+        nav = self.navigation
+        if nav.highlighted is not None and nav.get_option_at_index(nav.highlighted).location == event.path:
+            self.update_file(event.path)
 
     @on(DirectoryNavigation.Selected)
     def selected(self, event):
         if self.allowed_file(event.path) and event.path.is_file():
             if self.mode == 'save':
+                self.go_to(event.path.parent)
                 self.query_one('#folder-filename', Input).value = event.path.name
             else:
                 self.choose(event.path)
@@ -165,12 +413,19 @@ class FolderPicker(ModalScreen[str | None]):
     @on(Checkbox.Changed, '#folder-hidden')
     def hidden_changed(self, event):
         self.navigation.show_hidden = event.value
+        if self.navigation.recursive and self.navigation.filter_text:
+            self.navigation._load()
 
     @on(Button.Pressed)
     def pressed(self, event):
         action = event.button.id
         if action == 'folder-cancel':
             self.action_cancel()
+        elif action == 'folder-errors':
+            self.app.push_screen(PickerErrors(self.navigation.errors))
+        elif action == 'folder-clear':
+            self.query_one('#folder-filter', Input).value = ''
+            self.action_filter()
         elif action == 'folder-up':
             self.go_to(self.navigation.location.parent)
         elif action == 'folder-use':

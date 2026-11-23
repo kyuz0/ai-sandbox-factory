@@ -133,6 +133,41 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('picker-') for name in args.only):
+                    for relative in ('reports', 'archive', '.hidden'):
+                        (workspace / relative).mkdir()
+                    for relative in ('report.zip', 'report.txt', 'archive/report.zip', '.hidden/report.zip'):
+                        (workspace / relative).touch()
+                    await shot('picker-folder', FolderPicker(workspace))
+                    await app.push_screen(FolderPicker(workspace, title='Choose a file', mode='file', file_extensions={'.zip'}))
+                    app.screen.query_one('#folder-filter', Input).value = 'report'
+                    await shot('picker-filter', focus='#folder-filter')
+                    app.screen.query_one('#folder-recursive', Checkbox).value = True
+                    await shot('picker-subfolders', focus='#folder-recursive')
+                    app.screen.query_one('#folder-hidden', Checkbox).value = True
+                    await shot('picker-hidden', focus='#folder-hidden')
+                    app.screen.query_one('#folder-filter', Input).value = 'missing'
+                    await shot('picker-empty', focus='#folder-filter')
+                    await app.pop_screen()
+                    await app.push_screen(FolderPicker(workspace, title='Choose where to save the backup', mode='save', filename='backup.zip', file_extensions={'.zip'}))
+                    await shot('picker-save', focus='#folder-filename')
+                    app.screen.query_one('#folder-filename', Input).value = '../backup.zip'
+                    app.screen.save_path()
+                    await shot('picker-error', focus='#folder-filename')
+                    await app.pop_screen()
+                    await app.push_screen(FolderPicker(workspace, mode='file'))
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    nav = app.screen.navigation
+                    nav.receive_entries(nav.generation, [], False, False,
+                                        ['reference: Permission denied', 'archive: Permission denied'])
+                    await shot('picker-read-error', focus='#folder-errors')
+                    await pilot.pause()
+                    await pilot.click('#folder-errors')
+                    await shot('picker-read-details', focus='#picker-errors-close')
+                    await pilot.press('escape')
+                    await app.pop_screen()
+                    return
                 if not args.only or any(name.startswith('connector-settings-') for name in args.only):
                     from pi_sandbox_factory import connectors
                     from pi_sandbox_factory.connector_dialogs import ConnectorSettings, ConnectorSetup, ExternalConnectorDialog

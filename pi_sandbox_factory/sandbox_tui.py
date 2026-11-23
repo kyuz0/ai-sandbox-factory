@@ -4336,7 +4336,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
@@ -4382,6 +4382,15 @@ class Cockpit(App):
     .folder-input-label { height: 1; margin: 0 0 1 0; }
     #folder-filename-label { margin: 1 0; }
     #folder-box .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
+    #folder-errors { display: none; height: 1; padding: 0 2; }
+    #picker-errors-box { width: 98; max-width: 95%; height: 80%; max-height: 26; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    #picker-errors-box VerticalScroll { height: 1fr; }
+    #folder-filter-heading { height: 1; margin: 0 0 1 0; }
+    #folder-filter-heading Label { width: 1fr; margin: 0; }
+    #folder-inputs { height: 3; }
+    #folder-location-group { width: 1fr; height: 3; margin: 0 2 0 0; }
+    #folder-filter-group { width: 1fr; height: 3; }
+    #folder-places Checkbox { margin: 0 0 0 1; }
     #folder-places { height: 1; margin: 1 0; }
     #folder-columns { height: 1; padding: 0 3 0 6; text-style: bold; background: #31353a; }
     #folder-name-column { width: 1fr; }

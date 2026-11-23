@@ -201,6 +201,22 @@ The project you select is available at `/workspace`. In **Folders**, you can
 choose a starting subfolder, such as `apps/api`, for Pi and VS Code. Leave `.`
 to open the whole project. The rest of `/workspace` remains accessible.
 
+In any **Browse…** picker, type in **Name filter** to narrow the names in the
+current folder. Check **Search subfolders** to also find matching names below it;
+results show their relative paths. **Clear** restores the current folder listing.
+**Show hidden items** includes dotfiles and hidden folders. Searches do not follow
+folder symlinks. Unreadable locations appear under **View errors** with their full
+error messages.
+
+Press **Ctrl+F** to focus the filter, or start typing while the file list has focus.
+Press **Down** to move into the matches and **Enter** to open a folder or choose a
+file. **Ctrl+L** focuses the folder path. **Up** or **Backspace** from the list opens
+the parent folder. Opening another folder clears the filter. **Use this folder**
+confirms the folder currently shown; **Escape** cancels without changing the form.
+When saving, select the destination folder and enter **File name**.
+
+![File picker searching subfolders](file-picker.png)
+
 Use **Add folder…** to share another host directory. It appears at
 `/mnt/<folder-name>`, with a name you can edit. Folders start read-only; clear
 **Read-only** to allow changes to the host files. System folders,

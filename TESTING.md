@@ -29,6 +29,20 @@ permissions before treating it as a Factory bug. This control needs no internet.
 python3 -c 'import socket; a,b=socket.socketpair(); b.send(b"x"); print(a.recv(1))'
 ```
 
+## File and folder picker
+
+```sh
+PYTHONPATH=tests python -m unittest test_file_browser
+python tests/render_tui.py /tmp/factory-picker --only picker-folder picker-filter picker-subfolders picker-hidden picker-empty picker-save picker-error picker-read-error picker-read-details
+```
+
+The picker tests exercise current-folder filtering, recursive relative-path results,
+hidden files and extensions, nested Save destinations, workspace boundaries,
+symlink loops, stale selection, cancellation and read-error recovery. The UI check
+expands a 100-file listing to a 1,000-file search. Layout checks include the chat
+backup places and Save validation errors at 80×24, 120×40 and 220×50. Review the
+rendered images, including checked and unchecked controls and the error dialog.
+
 ## Package installation
 
 Install the wheel outside the checkout and check `--help`, `profile list` and
