@@ -12,22 +12,6 @@ import zipfile
 from . import browser_editor, primary_workspace, sandbox_extensions
 
 CATALOG = Path(__file__).parent / 'containers/editor/extensions.json'
-CLAUDE_MODE_SOURCE = 'o=n||r;if(o==="bypassPermissions"'
-CLAUDE_MODE_REPLACEMENT = 'o=n||r||"auto";if(o==="bypassPermissions"'
-
-
-def prepare_claude(extension, automatic=True):
-    """Keep explicit native choices; use the sandbox’s default in a new editor home.
-
-    Claude's process-wrapper path otherwise defaults to Manual even when the
-    private CLI starts in Auto. Its setting schema does not accept Auto. This
-    pinned adjustment changes only the fallback after the user's saved choice.
-    """
-    source = extension / 'extension.js'
-    content = source.read_text()
-    if content.count(CLAUDE_MODE_SOURCE) != 1:
-        raise ValueError('The Claude extension changed its approval settings. Update the integration before installing it.')
-    source.write_text(content.replace(CLAUDE_MODE_SOURCE, CLAUDE_MODE_REPLACEMENT if automatic else CLAUDE_MODE_SOURCE))
 
 
 def specification(agent):
@@ -41,8 +25,6 @@ def install(config, container, arch):
     from . import sandbox
     selected = primary_workspace.agent(config)
     spec = specification(selected)
-    from .sandbox_options import options
-    automatic = options(config.get('options'))['native_approval'] == 'automatic'
     platform = {'x86_64': 'linux-x64', 'aarch64': 'linux-arm64', 'arm64': 'linux-arm64'}[arch]
     package = spec['platforms'][platform]
     identity = f'{spec["publisher"]}.{spec["name"]}-{spec["version"]}'
@@ -54,11 +36,8 @@ def install(config, container, arch):
         'const vscode = require("vscode"); exports.activate = async () => {'
         f'await vscode.extensions.getExtension({json.dumps(spec["publisher"] + "." + spec["name"])}).activate();'
         f'await vscode.commands.executeCommand({json.dumps(command)}); }};')
-    wrapper = '#!/bin/sh\nexec python3 /opt/primary/editor_client.py "$@"\n'
-    if selected == 'codex':
-        wrapper = '#!/bin/sh\nexec /usr/local/bin/codex "$@"\n'
-    installed_digest = hashlib.sha256((package['sha256'] + helper_source + wrapper +
-        ((CLAUDE_MODE_REPLACEMENT if automatic else CLAUDE_MODE_SOURCE) if selected == 'claude' else '')).encode()).hexdigest()
+    wrapper = f'#!/bin/sh\nexec /usr/local/bin/{selected} "$@"\n'
+    installed_digest = hashlib.sha256((package['sha256'] + helper_source + wrapper).encode()).hexdigest()
     engine = config['engine']
     existing = sandbox.run([engine, 'exec', container, 'cat', marker], capture=True,
                            check=False, stderr=subprocess.DEVNULL)
@@ -98,8 +77,6 @@ def install(config, container, arch):
                     with bundle.open(item) as source, target.open('wb') as output:
                         shutil.copyfileobj(source, output)
                     target.chmod(((item.external_attr >> 16) & 0o777) or 0o644)
-        if selected == 'claude':
-            prepare_claude(extension, automatic)
         helper = root / 'pi-sandbox-factory.native-editor-1.0.0'
         helper.mkdir()
         (helper / 'package.json').write_text(json.dumps({
@@ -132,6 +109,7 @@ def settings(agent):
     if agent == 'codex':
         return {'chatgpt.cliExecutable': '/opt/primary/editor-cli'}
     if agent == 'claude':
-        return {'claudeCode.claudeProcessWrapper': '/opt/primary/editor-cli',
-                'claudeCode.disableLoginPrompt': True}
+        return {}
+    if agent == 'agy':
+        return {'antigravity.caCertificates': '/home/node/.gemini/factory-ca.pem'}
     return {}

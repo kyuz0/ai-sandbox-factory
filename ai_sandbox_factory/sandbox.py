@@ -1311,16 +1311,28 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
-    if isinstance(changes, dict) and set(changes) == {'codex_web_search'}:
-        if primary_workspace.agent(config) != 'codex':
-            raise ValueError('Enable web search is available only for Codex sandboxes.')
-        selected = options({**options(config.get('options')), 'codex_web_search': changes['codex_web_search']})
+    search_keys = {key: agent for agent, key in primary_workspace.WEB_SEARCH_OPTIONS.items()}
+    if isinstance(changes, dict) and len(changes) == 1 and next(iter(changes)) in search_keys:
+        key = next(iter(changes))
+        search_agent = search_keys[key]
+        if primary_workspace.agent(config) != search_agent:
+            raise ValueError(f'Enable web search is available only for {primary_workspace.AGENTS[search_agent]} sandboxes.')
+        selected = options({**options(config.get('options')), key: changes[key]})
         if updating.begin_apply(apply_gate):
             from . import primary_agents
             updated = {**config, 'options': selected}
-            activity.save_config(state, updated)
             primary_agents.prepare_workspace(updated, state)
-            print('Web search saved. Restart Codex to use it.')
+            try:
+                primary_agents.refresh_workspace_settings(updated)
+                activity.save_config(state, updated)
+            except Exception as error:
+                primary_agents.prepare_workspace(config, state)
+                try:
+                    primary_agents.refresh_workspace_settings(config)
+                except Exception as rollback:
+                    raise ValueError(f'{error} Restoring the previous native settings also failed: {rollback}') from error
+                raise
+            print(f'Web search saved. Restart {primary_workspace.AGENTS[search_agent]} to use it.')
         return
     if native and isinstance(changes, dict) and set(changes) == {'native_approval'}:
         selected = options({**options(config.get('options')), 'native_approval': changes['native_approval']})
@@ -1537,8 +1549,6 @@ def open_selected(config, state, mode=None):
         up(config, state)
         if mode == 'pi':
             return primary_agents.open_terminal(config, state)
-        if not primary_agents.has_sign_in(config):
-            raise ValueError('Sign in from Settings → Sign-in, then open the browser editor.')
         return browser_editor.open_browser_editor(config, state, background=True)
     if mode == 'frostpi':
         browser_editor.open_browser_editor(config, state, background=True, mode=mode)

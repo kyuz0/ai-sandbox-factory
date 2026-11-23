@@ -63,6 +63,16 @@ class Requests(unittest.TestCase):
             with self.subTest(request=request[:100]), self.assertRaises(ValueError):
                 editor.validate_head(request, HOST)
 
+    def test_native_forwarded_hub_keeps_editor_host_and_origin_checks(self):
+        target = '/proxy/40331/'
+        editor.validate_head(head(target, f'Origin: http://{HOST}\r\nSec-Fetch-Site: same-origin\r\n'), HOST)
+        for request in (head(target, host='another-sandbox.test'),
+                        head(target, 'Origin: http://another-sandbox.test\r\n'),
+                        head(target, 'Sec-Fetch-Site: cross-site\r\n'),
+                        head(target, 'Sec-Fetch-Site: same-site\r\n')):
+            with self.subTest(request=request), self.assertRaises(ValueError):
+                editor.validate_head(request, HOST)
+
     def test_archive_integrity(self):
         with tempfile.TemporaryDirectory() as folder:
             file = Path(folder) / 'archive'

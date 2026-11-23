@@ -2,7 +2,7 @@
 import http from 'node:http';
 import {readFileSync} from 'node:fs';
 
-const [port, socketPath, hubPort] = process.argv.slice(2);
+const [port, socketPath] = process.argv.slice(2);
 const ticket = readFileSync(0, 'utf8');
 let authority;
 let origin;
@@ -23,11 +23,6 @@ function upstream(request) {
 const server = http.createServer((request, response) => {
   if (!authorized(request)) {
     response.writeHead(403).end();
-    return;
-  }
-  const uri = new URL(request.url, origin);
-  if (hubPort && uri.pathname === '/proxy/' + hubPort + '/') {
-    response.writeHead(307, {location: 'http://127.0.0.1:' + hubPort + '/' + uri.search}).end();
     return;
   }
   const target = upstream(request);

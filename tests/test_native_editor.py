@@ -1,5 +1,6 @@
 """Pinned native editor installation must preserve existing files on failure."""
 from contextlib import ExitStack
+import ast
 import hashlib
 import io
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import zipfile
 
 from ai_sandbox_factory import native_editor
+from native_editor_environment import editor_environment
 
 
 class NativeEditorInstallTests(unittest.TestCase):
@@ -48,7 +50,7 @@ class NativeEditorInstallTests(unittest.TestCase):
             item = zipfile.ZipInfo(entry)
             item.external_attr = (0o120777 if symlink else 0o100644) << 16
             archive.writestr(item, b'{}')
-            archive.writestr('extension/extension.js', native_editor.CLAUDE_MODE_SOURCE)
+            archive.writestr('extension/extension.js', b'official native extension bytes')
         payload = buffer.getvalue()
         digest = hashlib.sha256(payload).hexdigest()
         self.stack.enter_context(patch.object(native_editor, 'specification', return_value={
@@ -66,11 +68,38 @@ class NativeEditorInstallTests(unittest.TestCase):
         self.assertIn('Anthropic.claude-code-1.2.3/package.json', self.installed)
         helper = self.installed['pi-sandbox-factory.native-editor-1.0.0/index.cjs'].decode()
         self.assertIn('claude-vscode.sidebar.open', helper)
-        self.assertIn(b'o=n||r||"auto";', self.installed['Anthropic.claude-code-1.2.3/extension.js'])
+        self.assertEqual(self.installed['Anthropic.claude-code-1.2.3/extension.js'],
+                         b'official native extension bytes')
+        wrapper = next(value for command, value in self.calls
+                       if 'tee' in command and command[-1] == '/opt/primary/editor-cli')
+        self.assertEqual(wrapper, '#!/bin/sh\nexec /usr/local/bin/claude "$@"\n')
         marker = next(i for i, (cmd, _) in enumerate(self.calls) if 'tee' in cmd and cmd[-1].endswith('.factory-sha256'))
         retire = next(i for i, (cmd, _) in enumerate(self.calls) if 'python3' in cmd)
         self.assertLess(marker, retire)
         self.assertEqual(self.calls[retire][0][-2:], ['Anthropic.claude-code-', 'Anthropic.claude-code-1.2.3'])
+
+    def test_claude_uses_official_bundled_cli_and_retires_only_factory_wrapper(self):
+        self.assertEqual(native_editor.settings('claude'), {})
+        path = Path(native_editor.__file__).parent / 'containers/editor/launch.py'
+        tree = ast.parse(path.read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'retire_claude_wrapper')
+        namespace = {'settings': {'agent': 'claude'}}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), 'exec'), namespace)
+        retire = namespace['retire_claude_wrapper']
+        self.assertEqual(retire({'claudeCode.claudeProcessWrapper': '/opt/primary/editor-cli',
+                                 'claudeCode.disableLoginPrompt': True, 'editor.fontSize': 16}), {'editor.fontSize': 16})
+        custom = {'claudeCode.claudeProcessWrapper': '/workspace/custom-wrapper',
+                  'claudeCode.disableLoginPrompt': True}
+        self.assertEqual(retire(custom.copy()), custom)
+
+    def test_bundled_claude_inherits_managed_config_and_authentication_transport(self):
+        env = editor_environment('claude', {})
+        self.assertEqual(env['CLAUDE_CONFIG_DIR'], '/home/node/.claude')
+        for key in ('HTTP_PROXY', 'HTTPS_PROXY'):
+            self.assertEqual(env[key], 'http://127.0.0.1:3130')
+        for key in ('NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'):
+            self.assertEqual(env[key], '/home/node/.claude/factory-ca.pem')
 
     def test_bad_checksum_never_mutates_container(self):
         path, _ = self.package()
@@ -78,16 +107,6 @@ class NativeEditorInstallTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             native_editor.install(self.config, 'fixture', 'x86_64')
         self.assertEqual(len(self.calls), 1)  # Read the existing installation marker only.
-
-    def test_claude_mode_change_fails_closed_when_upstream_changes(self):
-        extension = self.root / 'extension'
-        extension.mkdir()
-        source = extension / 'extension.js'
-        for content in ('unrecognized implementation', native_editor.CLAUDE_MODE_SOURCE * 2):
-            source.write_text(content)
-            with self.assertRaisesRegex(ValueError, 'approval settings'):
-                native_editor.prepare_claude(extension)
-            self.assertEqual(source.read_text(), content)
 
     def test_archive_cannot_escape_or_install_symlinks(self):
         for entry, symlink in (('extension/../../outside', False), ('extension/linked', True)):

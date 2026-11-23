@@ -24,32 +24,38 @@ on the right. The built-in VS Code chat is hidden. FrostPi's first chat shows th
 approval mode; select your model and start a conversation.
 Files in `/workspace` are your project files; additional mounts appear under `/mnt`.
 
-Codex, Claude Code and Antigravity use the sandbox's existing sign-in. Real account
-credentials stay in a separate container; the browser editor does not receive them.
-For a fresh login, complete the terminal sign-in before the editor opens. Use
-**Settings → Sign-in** to sign in again or copy a host login.
+The Codex, Claude Code and Antigravity extensions use the sandbox’s sign-in.
+To copy or sign in to an account later, open **Settings → Sign-in** in Factory.
+You can open the editor before signing in. Account credentials stay in a separate
+container. [Sign-in options](usage.md#choose-a-coding-agent)
 
 Codex opens directly to chat without its welcome walkthrough. Its native model,
-reasoning and approval controls remain available. Paste an image into the Codex
-composer to send it to the model; **Allow file uploads** controls workspace uploads
-through Explorer and is not required for chat images.
+reasoning and approval controls remain available.
 
-For Codex, **Settings → Network and Web Search → Enable web search** is unchecked
-by default. Check it to let Codex search OpenAI’s index. Apply changes, then
-reopen Codex CLI or reload the VS Code window.
+## Chat attachments
 
-Attach files or images directly in Antigravity’s chat composer to include them in a message. The attachment is sent to your selected model. This is separate from uploading files into the workspace through Explorer.
+Paste an image into Codex, or use the attachment button in Claude Code or
+Antigravity. Antigravity also accepts file attachments. The agent sends
+attachments to your selected model with the message. **Allow file uploads**
+controls Explorer uploads and can stay off when attaching something to a chat.
 
 ![Antigravity interpreting an image attached to a chat message](antigravity-attachments.png)
 
+## Approvals and web search
+
 Under **Settings → Approvals**, choose how the selected agent handles tool requests.
 Codex defaults to **Approve for me**, Claude to **Auto**, and Antigravity to
-**Allow configured tools**. Choose **Ask for approval** to approve requests yourself.
-These settings apply to the CLI and browser editor. Saving leaves running work alone.
-Restart the sandbox when you want to use the new mode.
+**Allow configured tools**. Choose **Ask for approval** to review requests that
+need permission. These settings apply to the CLI and browser editor the next
+time you start the sandbox. Saving leaves running work alone.
 Codex and Claude also offer native chat controls for changing an individual session’s mode.
 
 ![Choosing automatic or manual tool approvals during sandbox setup](native-approvals.png)
+
+The built-in search tool starts off for all three agents. Turn it on under
+**Settings → Network and Web Search**. [Web search settings](web-access.md#native-coding-agents)
+
+## Close, stop or reconnect
 
 In Codex, **Stop** ends the current reply. A command it started may keep running.
 Ask Codex to stop that command if you also want to end it.

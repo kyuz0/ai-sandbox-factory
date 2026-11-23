@@ -1,4 +1,7 @@
 """The native panel must retain the selected editor's browser boundary."""
+import asyncio
+import gzip
+import sys
 import unittest
 from urllib.parse import quote
 
@@ -44,8 +47,13 @@ class NativeHubBoundary(unittest.TestCase):
         headers = {'cookie': self.cookie}
         self.assertEqual(self.relay.redirect(self.head('/proxy/12345/?folder=x'), headers),
                          'https://127.0.0.2:9000/?folder=x')
-        for path in ('/proxy/12346/', '/proxy/12345', '/proxy/123456/'):
+        for path in ('/proxy/12345', '/proxy/not-a-port/'):
             self.assertIsNone(self.relay.redirect(self.head(path), headers))
+        self.assertEqual(self.relay.redirect(self.head('/proxy/23456/'), headers), 'https://127.0.0.2:9000/')
+        self.assertEqual(self.relay.worker_port, 23456)
+        for port in ('0', '65536'):
+            with self.assertRaisesRegex(ValueError, 'between 1 and 65535'):
+                self.relay.redirect(self.head('/proxy/' + port + '/'), headers)
         with self.assertRaises(ValueError):
             self.relay.redirect(self.head('/proxy/12345/'), {})
         with self.assertRaises(ValueError):
@@ -61,7 +69,65 @@ class NativeHubBoundary(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.relay.validate(self.head(**{'X-Factory-Editor-Origin': 'https://unrelated.example'}))
         forwarded = self.relay.request_head(self.head())
-        self.assertIn(b'\r\nX-Factory-Editor-Origin: https://127.0.0.2:8000\r\n\r\n', forwarded)
+        self.assertIn(b'Host: 127.0.0.1:12345\r\n', forwarded)
+        self.assertNotIn(self.relay.host.encode(), forwarded)
+        forwarded = self.relay.request_head(self.head(Origin='https://' + self.relay.host))
+        self.assertIn(b'Origin: http://127.0.0.1:12345\r\n', forwarded)
+
+    def test_only_native_parent_origin_check_changes_and_protocols_stay_unfiltered(self):
+        original = b'function check(a,b){if(a===b||a.startsWith("vscode-webview://"))return true;}nativeRpc();'
+        patch = self.relay.response_body_transform(self.head('/main.js'), 200, {})
+        expected = original.replace(b'if(a===b', b'if(a==="https://127.0.0.2:8000"||a===b')
+        self.assertEqual(patch(original), expected)
+        compressed = self.relay.response_body_transform(self.head('/main.js'), 200, {'content-encoding': 'gzip'})
+        self.assertEqual(gzip.decompress(compressed(gzip.compress(original))), expected)
+        for path in ('/', '/main.css', '/api/Anything', '/connect-websocket'):
+            self.assertIsNone(self.relay.response_body_transform(self.head(path), 200, {}))
+        with self.assertRaisesRegex(ValueError, 'changed its parent-origin check'):
+            patch(b'changed native frontend')
+        with self.assertRaisesRegex(ValueError, 'Cannot decode.*gzip'):
+            compressed(b'not gzip')
+        forwarded = self.relay.request_head(self.head('/main.js', **{'Accept-Encoding': 'gzip'}))
+        self.assertIn(b'Accept-Encoding: identity\r\n', forwarded)
+        self.assertNotIn(b'Accept-Encoding: gzip', forwarded)
+
+    def test_native_csp_is_narrowed_to_selected_editor(self):
+        headers = self.relay.response_headers([
+            "Content-Security-Policy: frame-ancestors 'self' http://localhost:* vscode-webview:; report-uri https://example.test/report"])
+        self.assertEqual(headers, ["Content-Security-Policy: report-uri https://example.test/report; frame-ancestors 'self' https://127.0.0.2:8000"])
+
+
+class NativeHubFraming(unittest.IsolatedAsyncioTestCase):
+    async def test_native_chunked_frontend_adaptation_preserves_http_framing(self):
+        relay = AntigravityRelay('a' * 64, '', 'http://127.0.0.2:8000')
+        source = b'if(a===b||a.startsWith("vscode-webview://"))nativeRpc();'
+        code = ('import sys; s=sys.stdin.buffer; line=s.readline(); '
+                '\nwhile s.readline()!=b"\\r\\n": pass\n'
+                'body=' + repr(source) + '\n'
+                'sys.stdout.buffer.write(b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n"+'
+                'hex(len(body))[2:].encode()+b"\\r\\n"+body+b"\\r\\n0\\r\\n\\r\\n");sys.stdout.flush()')
+        async def connect():
+            return await asyncio.create_subprocess_exec(sys.executable, '-u', '-c', code,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        relay.connector = connect
+        server = await asyncio.start_server(relay.handle, '127.0.0.1', 0)
+        relay.host = '127.0.0.1:' + str(server.sockets[0].getsockname()[1])
+        try:
+            reader, writer = await asyncio.open_connection('127.0.0.1', server.sockets[0].getsockname()[1])
+            writer.write(f'GET /main.js HTTP/1.1\r\nHost: {relay.host}\r\n\r\n'.encode())
+            await writer.drain()
+            response = await reader.read()
+            head, body = response.split(b'\r\n\r\n', 1)
+            self.assertIn(b'200 OK', head)
+            self.assertNotIn(b'Transfer-Encoding', head)
+            self.assertIn(('Content-Length: ' + str(len(body))).encode(), head)
+            self.assertEqual(body, source.replace(b'if(a===b', b'if(a==="http://127.0.0.2:8000"||a===b'))
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
+            await relay.close()
 
 
 if __name__ == '__main__':

@@ -1,15 +1,24 @@
 # Usage
 
-Use Factory to create, open, and manage your Pi sandboxes. Start with the
-**Default Developer Sandbox** for Pi, FrostPi, goal tools, and document tools.
-For a different setup, pick **Custom profile…** or install a profile from
+Use Factory to create, open, and manage sandboxes. If you choose Pi, start with
+**Default Developer Sandbox** for FrostPi, goal tools, and document tools.
+For a different Pi setup, pick **Custom profile…** or install a profile from
 **Library…**. [Create a sandbox](../README.md#create-a-sandbox)
 
 ## Choose a coding agent
 
-Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or Antigravity. A sandbox you created with Pi continues to use Pi. To work with another agent, create a separate sandbox.
+Under **New sandbox → Coding agent**, select Pi, Codex, Claude Code or
+Antigravity. To work with another agent later, create a separate sandbox.
 
-For Pi, choose a profile and connect a model. For Codex, Claude Code and Antigravity, **Copy sign-in from this computer** is selected by default where host sign-in copying is supported. Choose **Sign in inside the sandbox** for a fresh login instead. Account credentials stay in a private container. Codex runs its official CLI and VS Code extension inside the workspace with placeholder tokens; a separate authentication service supplies the real tokens only to OpenAI. Programs running in the workspace can use the tools you enable there. The workspace has no mount containing the account credentials.
+For Pi, choose a profile and connect a model. Codex, Claude Code and Antigravity
+use your subscription sign-in. Where supported, **Copy sign-in from this computer**
+is selected by default. To start a fresh login, choose **Sign in inside the sandbox**.
+For Antigravity, use personal Google OAuth. Enterprise login, Application Default
+Credentials (ADC) and API keys are outside this sign-in flow.
+
+The agent and its tools run in the workspace. A separate container keeps the
+real sign-in and uses it only for the provider’s approved endpoints.
+[How Factory protects the sign-in](architecture.md#native-agent-subscription-authentication)
 
 The selected workspace is trusted automatically in the coding agent and browser editor. Pi can load its project settings, skills and extensions. Existing explicit trust decisions are preserved. Command approvals, folder permissions and network rules still apply. Project permission files cannot override Factory's rules.
 
@@ -60,9 +69,9 @@ folder stays on your computer.
 
 ## Back up and restore chats
 
-Factory's chat backup and restore actions support Pi and FrostPi. They are not
-available for Codex, Claude Code or Antigravity; deleting one of those sandboxes
-also deletes its saved chats.
+Factory can back up and restore Pi and FrostPi chats. Deleting a Codex,
+Claude Code or Antigravity sandbox removes its saved chats. The backup and
+restore actions are currently available only for Pi sandboxes.
 
 - **Save a backup.** Choose **Actions… → Export chat history…**. Factory saves
   the original Pi and FrostPi chats, including branches, to a ZIP file on this
@@ -125,8 +134,10 @@ Python environment; with pipx, each has its own environment. You can remove the 
 launcher with `pipx uninstall pi-sandbox-factory` when you no longer need that command.
 
 For unattended migration, pass `--yes` to the old command. Otherwise, a first launch
-without a terminal reports how to confirm and exits. If both an old folder and its
-new destination exist, migration stops and names both paths without overwriting either.
+without a terminal reports how to confirm and exits. Migration can reuse an empty
+destination created by the new app. If both cache folders exist, it keeps both.
+If a destination already contains settings or other saved data, migration stops
+and shows both paths so you can resolve the conflict.
 
 ## Change approval and sandbox settings
 
@@ -134,7 +145,7 @@ new destination exist, migration stops and names both paths without overwriting 
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |
 | Approvals & sandbox, Agent tools, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
-| Codex: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen Codex CLI or reload the VS Code window. |
+| Codex, Claude Code or Antigravity: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen the selected agent’s CLI or reload the VS Code window. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
@@ -279,11 +290,10 @@ Additional folders require Docker Engine 25+ when using Docker.
 Separately mounted filesystems nested inside an added host folder are excluded;
 add each filesystem as its own folder if needed.
 
-## Codex web search
+## Native agent web search
 
-**Enable web search** is unchecked by default in **Network and Web Search** during
-Codex setup and under **Settings → Network and Web Search** later. Check it to let
-Codex search OpenAI’s index. Apply changes, then reopen Codex CLI or reload the VS Code window.
+Codex, Claude Code and Antigravity can use their built-in search tools when
+you turn on **Enable web search**. [Set up built-in search](web-access.md#native-coding-agents)
 
 ## Saved model keys
 

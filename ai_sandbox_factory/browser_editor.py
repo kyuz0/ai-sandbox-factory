@@ -136,6 +136,9 @@ class Relay:
     def request_head(self, head):
         return head
 
+    def response_body_transform(self, head, status, fields):
+        return None
+
     async def connector(self):
         return await asyncio.create_subprocess_exec(
             'podman', 'exec', '-i', '--user', 'node', self.container,
@@ -188,8 +191,39 @@ class Relay:
                             fields[key.lower()] = value.strip()
                             if key.lower() == 'set-cookie' and self.scheme == 'https':
                                 lines[i] = line + '; Secure'
+                    transform = self.response_body_transform(head, status, fields)
+                    if transform:
+                        if fields.get('transfer-encoding', '').lower() == 'chunked':
+                            chunks = []
+                            while True:
+                                chunk = await process.stdout.readuntil(b'\r\n')
+                                count = int(chunk.split(b';', 1)[0].strip(), 16)
+                                if not count:
+                                    while await process.stdout.readuntil(b'\r\n') != b'\r\n':
+                                        pass
+                                    break
+                                chunks.append(await process.stdout.readexactly(count))
+                                await process.stdout.readexactly(2)
+                            body = b''.join(chunks)
+                        elif 'content-length' in fields:
+                            body = await process.stdout.readexactly(int(fields['content-length']))
+                        else:
+                            body = await process.stdout.read()
+                        try:
+                            body = transform(body)
+                        except ValueError as error:
+                            detail = str(error).encode()
+                            writer.write(b'HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: ' + str(len(detail)).encode() + b'\r\n\r\n' + detail)
+                            await writer.drain()
+                            return
+                        lines = [line for line in lines if line and not line.lower().startswith(
+                            ('content-length:', 'transfer-encoding:', 'etag:'))]
+                        lines += ['Content-Length: ' + str(len(body)), '', '']
                     writer.write('\r\n'.join(self.response_headers(lines)).encode('latin1'))
                     await writer.drain()
+                    if transform:
+                        writer.write(body)
+                        await writer.drain()
                     if status == 101 or status >= 200:
                         break
                 if status == 101:
@@ -199,7 +233,7 @@ class Relay:
                              asyncio.create_task(pump(process.stdout, writer))]
                     await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
                     break
-                if head.startswith(b'HEAD ') or status in (204, 304):
+                if transform or head.startswith(b'HEAD ') or status in (204, 304):
                     pass
                 elif fields.get('transfer-encoding', '').lower() == 'chunked':
                     while True:
@@ -350,17 +384,12 @@ async def serve(container, cwd, preferences, state, ready=None):
                                                          0, ssl=context, limit=16384)
                 agent_hub.host = editor_settings.authority(address, agent_server.sockets[0].getsockname()[1])
                 relay.redirector = agent_hub.redirect
-                settings['agy_hub_client'] = (source / 'agy-hub-client.mjs').read_text()
         editor = await asyncio.create_subprocess_exec('podman', 'exec', '-i', '--user', 'node',
             container, *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, start_new_session=True)
         editor.stdin.write((json.dumps(settings) + '\n').encode())
         await editor.stdin.drain()
         status = await asyncio.wait_for(editor.stdout.readline(), 60)
-        if agent_hub and re.fullmatch(rb'ready [0-9]+\n', status):
-            agent_hub.worker_port = int(status.split()[1])
-            if not 0 < agent_hub.worker_port < 65536:
-                raise ValueError('Antigravity did not open its editor connection')
-        elif status != b'ready\n' or agent_hub:
+        if status != b'ready\n':
             raise ValueError('Browser editor did not start; see the error above')
         url = relay.scheme + '://' + relay.host
         if standalone:

@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import runpy
 import socket
 import subprocess
 from tempfile import TemporaryDirectory
@@ -78,6 +77,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
         fake_credential = 'opaque-private-token'
         for provider in ('codex', 'claude', 'agy'):
             with self.subTest(provider=provider), patch.object(primary_agents, 'up'), \
+                    patch.object(primary_agents, 'refresh_workspace_settings') as refresh, \
                     patch.object(primary_agents.host_platform, 'is_mac', return_value=False), \
                     patch.object(primary_agents.advisor_credentials, 'read_host', return_value=fake_credential), \
                     patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
@@ -87,6 +87,43 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 self.assertEqual(command[:4], ['podman', 'exec', '-i', primary_agents.names(config)[0]])
                 self.assertEqual(run.call_args.kwargs['input'], fake_credential)
                 self.assertNotIn(fake_credential, ' '.join(command))
+                refresh.assert_called_once_with(config, refresh_auth=True)
+
+    def test_native_terminal_and_login_run_client_in_workspace(self):
+        for provider, login in (('claude', ['auth', 'login']), ('agy', ['--factory-login'])):
+            for action, suffix in (('open', []), ('login', login)):
+                with self.subTest(provider=provider, action=action), patch('sys.stdin.isatty', return_value=True), \
+                        patch.object(sandbox, 'run') as run:
+                    config = {**self.config, 'primary_agent': provider, 'working_directory': 'src'}
+                    primary_agents._terminal(config, action)
+                    self.assertEqual(run.call_args.args[0], [
+                        'podman', 'exec', '-it', '-w', '/workspace/src', sandbox.names(config)[0],
+                        '/usr/local/bin/' + provider, *suffix])
+
+    def test_native_editor_opens_before_account_sign_in(self):
+        from ai_sandbox_factory import browser_editor
+        for provider in ('codex', 'claude', 'agy'):
+            with self.subTest(provider=provider), patch.object(sandbox, 'up') as up, \
+                    patch.object(primary_agents, 'has_sign_in', side_effect=AssertionError('Native editor owns sign-in')), \
+                    patch.object(browser_editor, 'open_browser_editor') as editor:
+                config = {**self.config, 'primary_agent': provider}
+                sandbox.open_selected(config, Path('/private-state'), mode='browser')
+                up.assert_called_once_with(config, Path('/private-state'))
+                editor.assert_called_once_with(config, Path('/private-state'), background=True)
+
+    def test_claude_workspace_prepares_masked_auth_and_only_optional_browser_transport(self):
+        for browser in (False, True):
+            with self.subTest(browser=browser), patch.object(sandbox, 'run') as run, \
+                    patch.object(primary_agents, '_wait') as wait, \
+                    patch('ai_sandbox_factory.codex_history.migrate'):
+                config = {**self.config, 'options': {'browser': browser}}
+                primary_agents.worker_start(config, 'worker')
+                self.assertIn(['podman', 'exec', 'worker', 'python3',
+                               '/opt/primary/claude_client.py', '--factory-prepare'],
+                              [call.args[0] for call in run.call_args_list])
+                starts = [call.args[0] for call in run.call_args_list if '-d' in call.args[0]]
+                self.assertEqual(bool(starts), browser)
+                self.assertIn('/dev/tcp/127.0.0.1/3130', wait.call_args_list[0].args[2])
 
     def test_saving_native_approval_never_operates_on_containers(self):
         with TemporaryDirectory() as temp, patch.object(sandbox, 'run', side_effect=AssertionError('No runtime operation')):
@@ -101,12 +138,50 @@ class PrimaryAgentIsolation(unittest.TestCase):
 
     def test_codex_web_search_defaults_and_validation(self):
         from ai_sandbox_factory.sandbox_options import options
-        self.assertIs(options()['codex_web_search'], False)
-        self.assertIs(options({'codex_web_search': False})['codex_web_search'], False)
-        self.assertIs(options({'codex_web_search': True})['codex_web_search'], True)
-        for value in (0, 1, 'true', None):
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'codex_web_search must be a boolean'):
-                options({'codex_web_search': value})
+        for key in ('codex_web_search', 'claude_web_search', 'agy_web_search'):
+            self.assertIs(options()[key], False)
+            for value in (False, True):
+                self.assertIs(options({key: value})[key], value)
+            for value in (0, 1, 'true', None):
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, key + ' must be a boolean'):
+                    options({key: value})
+
+    def test_native_web_search_saves_runtime_choice_without_recreation(self):
+        for provider in ('claude', 'agy'):
+            key = provider + '_web_search'
+            for enabled in (False, True):
+                with self.subTest(provider=provider, enabled=enabled), TemporaryDirectory() as temporary, \
+                        patch.object(sandbox, 'run', side_effect=AssertionError('No container mutation')), \
+                        patch.object(sandbox, 'inspect', return_value=None):
+                    state = Path(temporary)
+                    sandbox.apply_settings({**self.config, 'primary_agent': provider}, state, {key: enabled})
+                    saved = json.loads((state / 'config.json').read_text())
+                    self.assertIs(saved['options'][key], enabled)
+                    runtime = json.loads((state / 'primary-runtime/settings.json').read_text())
+                    self.assertIs(runtime[key], enabled)
+                    for other in ('codex', 'claude', 'agy'):
+                        if other != provider:
+                            self.assertNotIn(other + '_web_search', runtime)
+
+    def test_running_claude_preferences_refresh_without_restart_and_failure_keeps_saved_choice(self):
+        with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
+                patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as run:
+            primary_agents.refresh_workspace_settings(self.config)
+            self.assertEqual(run.call_args.args[0], ['podman', 'exec', sandbox.names(self.config)[0],
+                                                    'python3', '/opt/primary/claude_client.py', '--factory-prepare'])
+        with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
+                patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 7, '', 'Permission denied: /home/node/.claude/settings.json')):
+            with self.assertRaisesRegex(ValueError, r'Cannot update Claude Code.*exit 7.*Permission denied.*settings.json'):
+                primary_agents.refresh_workspace_settings(self.config)
+        with TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            original = {**self.config, 'options': {'claude_web_search': False}}
+            (state / 'config.json').write_text(json.dumps(original))
+            with patch.object(primary_agents, 'refresh_workspace_settings', side_effect=ValueError('Native settings file is read-only')):
+                with self.assertRaisesRegex(ValueError, 'read-only'):
+                    sandbox.apply_settings(original, state, {'claude_web_search': True})
+            self.assertEqual(json.loads((state / 'config.json').read_text()), original)
+            self.assertIs(json.loads((state / 'primary-runtime/settings.json').read_text())['claude_web_search'], False)
 
     def test_codex_web_search_is_saved_and_passed_only_to_codex_runtime(self):
         with TemporaryDirectory() as temporary, patch.object(sandbox, 'run', side_effect=AssertionError('No runtime operation')):
@@ -126,120 +201,52 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 state = Path(temporary)
                 primary_agents.prepare_workspace({**self.config, 'primary_agent': agent,
                                                   'options': {'codex_web_search': False}}, state)
-                self.assertFalse((state / 'primary-runtime/settings.json').exists())
+                runtime = state / 'primary-runtime/settings.json'
+                if agent in ('claude', 'agy'):
+                    self.assertNotIn('codex_web_search', json.loads(runtime.read_text()))
+                else:
+                    self.assertFalse(runtime.exists())
                 with self.assertRaisesRegex(ValueError, 'only for Codex'):
                     sandbox.apply_settings({**self.config, 'primary_agent': agent}, state, {'codex_web_search': False})
 
-    def test_native_manual_and_automatic_cli_choices(self):
-        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
-        with TemporaryDirectory() as temp, patch.dict(launcher['command'].__globals__, {'HOME': Path(temp)}), \
-                patch.dict(launcher['command'].__globals__, {'workspace_directory': lambda _: Path('/workspace')}):
-            for mode, claude in [('automatic', 'auto'), ('manual', 'default')]:
-                settings = {'browser': False, 'native_approval': mode}
-                command = launcher['command']('claude', 'open', settings, '')
-                self.assertEqual(command[command.index('--permission-mode') + 1], claude)
-
-
-    def test_each_native_launcher_receives_only_current_connector_grants(self):
+    def test_native_context_and_settings_keep_workspace_grants(self):
         from ai_sandbox_factory import connector_settings
-        launcher = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))
-        command = launcher['command']
-        with TemporaryDirectory() as temp:
-            state = Path(temp)
-            (state / 'primary-agent').mkdir()
-            prompt = state / 'primary-agent/context.md'
-            prompt.touch()
-            host = {'alias': 'build', 'hostname': 'build.example', 'user': 'tester', 'port': 22}
-            self.addCleanup(os.chdir, Path.cwd())
-            for provider in ('claude', 'agy'):
-                with self.subTest(provider=provider):
-                    config = {**self.config, 'primary_agent': provider, 'ssh': {'hosts': [host]}}
-                    connector_settings.refresh_agent_context(config, state)
-                    settings = {'browser': False, 'working_directory': str(state / 'shadow')}
-                    with patch.dict(command.__globals__, {'HOME': state, 'WORKSPACE': state / 'shadow'}), patch('subprocess.run'):
-                        args = command(provider, 'chat', settings, prompt.read_text())
-                    if provider == 'agy':
-                        instructions = (state / '.gemini/AGENTS.md').read_text()
-                    elif provider == 'claude':
-                        instructions = args[args.index('--append-system-prompt') + 1]
-                    self.assertIn('build.example', instructions)
-                    self.assertIn('/run/primary-runtime/connectors.md', instructions)
-                    self.assertIn('ssh-add -l', instructions)
-                    connector_settings.refresh_agent_context({**config, 'ssh': {'hosts': []}}, state)
-                    self.assertNotIn('build.example', prompt.read_text())
-                    self.assertFalse((state / 'primary-runtime/connectors.md').exists())
+        for provider in ('codex', 'claude', 'agy'):
+            with self.subTest(provider=provider), TemporaryDirectory() as temp:
+                state = Path(temp)
+                host = {'alias': 'build', 'hostname': 'build.example', 'user': 'tester', 'port': 22}
+                config = {**self.config, 'primary_agent': provider, 'ssh': {'hosts': [host]},
+                          'working_directory': 'src', 'options': {'native_approval': 'manual', 'browser': False}}
+                primary_agents.prepare_workspace(config, state)
+                primary_agents.write_context(config, state)
+                runtime = state / 'primary-runtime'
+                settings = json.loads((runtime / 'settings.json').read_text())
+                self.assertEqual(settings['native_approval'], 'manual')
+                self.assertEqual(settings['working_directory'], '/workspace/src')
+                self.assertFalse(settings['browser'])
+                instructions = (runtime / 'context.md').read_text()
+                self.assertIn('native tools', instructions)
+                self.assertNotIn('workspace_shell', instructions)
+                connector_settings.refresh_agent_context(config, state)
+                self.assertIn('build.example', (runtime / 'context.md').read_text())
+                connector_settings.refresh_agent_context({**config, 'ssh': {'hosts': []}}, state)
+                self.assertNotIn('build.example', (runtime / 'context.md').read_text())
 
-    def test_native_review_defaults_apply_to_terminal_and_editor(self):
-        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
-        self.addCleanup(os.chdir, Path.cwd())
-        with TemporaryDirectory() as temp, patch.dict(command.__globals__, {'HOME': Path(temp), 'WORKSPACE': Path(temp) / 'workspace'}):
-            settings = {'browser': False, 'working_directory': str(Path(temp) / 'workspace')}
-            for action in ('open', 'editor'):
-                with self.subTest(action=action):
-                    claude = command('claude', action, settings, '')
-                    self.assertEqual(claude[claude.index('--permission-mode') + 1], 'auto')
-                    self.assertNotIn('--allowedTools', claude)
-                    self.assertNotIn('--dangerously-skip-permissions', claude)
-
-    def test_workspace_trust_uses_selected_folder_without_disabling_approvals(self):
-        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
-        self.addCleanup(os.chdir, Path.cwd())
-        with TemporaryDirectory() as temp, patch.dict(os.environ), \
-                patch.dict(command.__globals__, {'HOME': Path(temp), 'WORKSPACE': Path(temp) / 'workspace'}), patch('subprocess.run'):
-            cwd = Path(temp) / 'workspace' / 'selected folder 🌱'
-            settings = {'browser': False, 'working_directory': str(cwd)}
-            for action in ('open', 'editor'):
-                for provider in ('claude', 'agy'):
-                    with self.subTest(provider=provider, action=action):
-                        os.chdir(temp)
-                        args = command(provider, action, settings, '')
-                        self.assertEqual(Path.cwd(), cwd)
-                        self.assertEqual(list(cwd.iterdir()), [])
-                        if provider == 'claude':
-                            self.assertEqual(os.environ['CLAUDE_CODE_SANDBOXED'], '1')
-                            self.assertIn('--restricted', args)
-                            self.assertEqual(args[args.index('--tools') + 1], '')
-                            self.assertEqual(args[args.index('--permission-mode') + 1], 'auto')
-                        else:
-                            configured = json.loads(args[args.index('--settings') + 1])
-                            self.assertEqual(configured['trustedWorkspaces'], [str(cwd)])
-                            self.assertIn('command(*)', configured['permissions']['deny'])
-                        self.assertNotIn('--dangerously-skip-permissions', args)
-
-    def test_workspace_trust_preserves_native_state_and_rejects_path_escape(self):
-        prepare = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['workspace_directory']
-        self.addCleanup(os.chdir, Path.cwd())
-        with TemporaryDirectory() as temp:
-            root = Path(temp) / 'workspace'
-            root.mkdir()
-            with patch.dict(prepare.__globals__, {'WORKSPACE': root}):
-                settings = {'working_directory': str(root / 'src')}
-                prepare(settings)
-                prepare({'working_directory': str(root)})  # Existing empty child folders are allowed.
-                marker = root / 'client-state.json'
-                marker.write_text('native client state')
-                prepare(settings)
-                self.assertEqual(marker.read_text(), 'native client state')
-                marker.unlink()
-                link = root / 'outside'
-                link.symlink_to(temp, target_is_directory=True)
-                with self.assertRaisesRegex(ValueError, 'symbolic link'):
-                    prepare({'working_directory': str(link)})
-                link.unlink()
-                for path in (str(Path(temp)), str(root / '..' / 'outside')):
-                    with self.assertRaisesRegex(ValueError, 'configured workspace'):
-                        prepare({'working_directory': path})
-
-    def test_login_does_not_grant_workspace_trust(self):
-        command = runpy.run_path(str(primary_agents.SOURCE / 'launch.py'))['command']
-        with TemporaryDirectory() as temp, patch.dict(os.environ), patch('subprocess.run'), \
-                patch.dict(command.__globals__, {'HOME': Path(temp)}):
-            os.environ.pop('CLAUDE_CODE_SANDBOXED', None)
-            for provider in ('claude', 'agy'):
-                args = command(provider, 'login', {'browser': False}, '')
-                self.assertNotIn('CLAUDE_CODE_SANDBOXED', os.environ)
-                self.assertNotIn('trustedWorkspaces', ' '.join(args))
-                self.assertNotIn('trust_level', ' '.join(args))
+    def test_browser_mcp_does_not_remap_native_file_and_shell_tools(self):
+        for provider in ('codex', 'claude', 'agy'):
+            with self.subTest(provider=provider):
+                messages = '\n'.join(json.dumps(message) for message in (
+                    {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'},
+                    {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+                     'params': {'name': 'workspace_shell', 'arguments': {'command': 'echo unexpected'}}},
+                )) + '\n'
+                result = subprocess.run(['node', str(primary_agents.SOURCE / 'worker-tools.mjs')],
+                    input=messages, text=True, capture_output=True, check=True,
+                    env={**os.environ, 'FACTORY_PRIMARY_AGENT': provider})
+                responses = {item['id']: item for item in map(json.loads, result.stdout.splitlines())}
+                self.assertNotIn('workspace_shell', [tool['name'] for tool in responses[1]['result']['tools']])
+                self.assertTrue(responses[2]['result']['isError'])
+                self.assertIn('Unknown workspace tool', str(responses[2]))
 
     def test_executable_guidance_matches_active_choices(self):
         with TemporaryDirectory() as temp:
@@ -248,7 +255,8 @@ class PrimaryAgentIsolation(unittest.TestCase):
             text = primary_agents.guidance(config, Path(temp))
             self.assertIn('/workspace/src', text)
             self.assertIn('/mnt/docs" (read-only)', text)
-            self.assertIn('workspace_shell', text)
+            self.assertIn('native tools', text)
+            self.assertNotIn('workspace_shell', text)
             self.assertIn('configured allowlist', text)
             self.assertNotIn('browser tool', text)
             self.assertNotIn('AWS CLI', text)

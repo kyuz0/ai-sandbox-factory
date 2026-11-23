@@ -18,6 +18,7 @@ AGENTS = {
     'agy': 'Antigravity',
 }
 DEFAULT_AUTH = 'copy'
+WEB_SEARCH_OPTIONS = {'codex': 'codex_web_search', 'claude': 'claude_web_search', 'agy': 'agy_web_search'}
 
 
 def agent(config):
@@ -87,11 +88,13 @@ def prepare_git(config, state):
 def image(config):
     from . import sandbox
     source = sandbox.ROOT / 'containers/primary'
-    worker_files = ['worker.sh', 'worker-tools.mjs', 'editor_client.py']
+    worker_files = ['worker.sh', 'worker-tools.mjs']
     if agent(config) == 'codex':
         # The official Codex binaries are copied from the credential image.
         worker_files.append('Dockerfile')
         worker_files.append('codex_client.py')
+    elif agent(config) in ('claude', 'agy'):
+        worker_files.extend(['Dockerfile', agent(config) + '_client.py'])
     digest = hashlib.sha256()
     for filename in worker_files:
         digest.update((source / filename).read_bytes())
@@ -130,11 +133,11 @@ def build(config, target):
                  '--build-arg', f'USER_GID={config["gid"]}',
                  '--build-context', f'primary-files={sandbox.ROOT / "containers/primary"}',
                  '--build-context', f'primary-dev={sandbox.ROOT / "containers/dev"}', root])
-    if agent(config) == 'codex':
-        codex = sandbox.stage_image(target, '-codex')
-        sandbox.run([engine, 'build', '-t', codex, '--build-arg', f'BASE_IMAGE={worker}',
-                     *primary_agents.worker_context(config), '-f', root / 'Dockerfile.codex', root])
-        worker = codex
+    if agent(config) in ('codex', 'claude', 'agy'):
+        native = sandbox.stage_image(target, '-' + agent(config))
+        sandbox.run([engine, 'build', '-t', native, '--build-arg', f'BASE_IMAGE={worker}',
+                     *primary_agents.worker_context(config), '-f', root / ('Dockerfile.' + agent(config)), root])
+        worker = native
     if options(config.get('options'))['browser']:
         with_sources = sandbox.stage_image(target, '-browser-source')
         sandbox.run([engine, 'build', '-t', with_sources, '--build-arg', f'BASE_IMAGE={worker}',

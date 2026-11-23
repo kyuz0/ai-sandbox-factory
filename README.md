@@ -54,13 +54,14 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
   connection. HTTP and HTTPS go through a gateway that checks the destination
   hostname and port. Approved shell commands still follow those network rules.
   **Unrestricted** gives the container ordinary network access. [Isolation and approvals](docs/architecture.md#restricted-networking)
-- **Allowed destinations:** Open **Settings → Network and Web Search → Network** for Pi, or **Settings → Network** for the other coding agents. Then
+- **Allowed destinations:** Open **Settings → Network and Web Search → Network**. Then
   select **Website categories** such as **Python**, **npm**, or **GitHub**, or
   add an exact host and port such as `docs.python.org:443`. If a package
   downloads a binary from another host, allow that host too. Editing rules keeps
   the sandbox running, though active connections may drop. [Network settings](docs/web-access.md#network-access)
-- **Web search:** Enabling a search provider lets Pi query that service.
-  For Pi to open a result in **Restricted** mode, allow the site separately. [Web search setup](docs/web-access.md#web-search)
+- **Web search:** Search is off by default. Set up a [search provider for Pi](docs/web-access.md#web-search)
+  or turn on [built-in search for Codex, Claude Code or Antigravity](docs/web-access.md#native-coding-agents).
+  To open a result in **Restricted** mode, allow the site separately.
 - **Connectors:** Give a sandbox access to SSH hosts, Git repositories, AWS or a service your team connects. Set this up under **Review sandbox → Connectors** or **Settings → Connectors**. [Choose or build a connector](docs/connectors.md)
 
 ## Use and update sandboxes

@@ -1,6 +1,7 @@
 """Check workspace trust with the pinned Codex binary, offline and without credentials."""
 import argparse
 import json
+import os
 from pathlib import Path
 import runpy
 import select
@@ -9,14 +10,17 @@ import time
 
 
 def inside():
-    command = runpy.run_path('/tmp/factory-launch.py')['command']
+    configure = runpy.run_path('/tmp/factory-client.py')['configure']
     saved = Path.home() / '.codex' / 'config.toml'
     saved.parent.mkdir(exist_ok=True)
     saved.write_text('[projects."/unrelated"]\ntrust_level = "untrusted"\n')
     for cwd in ('/workspace', '/workspace/v1.2', '/workspace/🌱', '/workspace/quoted "name"',
                 '/workspace/back\\slash', '/workspace/control\x7f'):
-        args = command('codex', 'editor', {'browser': False, 'working_directory': cwd}, '')
-        process = subprocess.Popen(['/usr/local/bin/factory-agent', *args], stdin=subprocess.PIPE,
+        Path(cwd).mkdir(parents=True, exist_ok=True)
+        os.chdir(cwd)
+        configure(saved.parent, {'browser': False, 'working_directory': cwd,
+                               'native_approval': 'automatic', 'write_roots': [cwd]})
+        process = subprocess.Popen(['/usr/local/bin/factory-agent', 'app-server'], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
         try:
             requests = [
@@ -40,9 +44,8 @@ def inside():
                     continue
                 assert 'error' not in message, message.get('error')
                 config = message['result']['config']
-                assert config['projects'] == {
-                    cwd: {'trust_level': 'trusted'}, '/unrelated': {'trust_level': 'untrusted'}
-                }, config['projects']
+                assert config['projects'][cwd]['trust_level'] == 'trusted', config['projects']
+                assert config['projects']['/unrelated']['trust_level'] == 'untrusted', config['projects']
                 assert config['approval_policy'] == 'on-request'
                 assert config['approvals_reviewer'] == 'auto_review'
                 assert config['sandbox_mode'] == 'workspace-write'
@@ -57,7 +60,7 @@ def inside():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--image', help='Locally built Codex controller image')
+    parser.add_argument('--image', help='Locally built Codex workspace image')
     parser.add_argument('--inside', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.inside:
@@ -67,7 +70,7 @@ if __name__ == '__main__':
         subprocess.run(['podman', 'run', '--rm', '--network=none', '--security-opt=label=disable',
                         '--entrypoint', 'python3',
                         '-v', f'{Path(__file__).resolve()}:/tmp/check.py:ro',
-                        '-v', f'{root / "ai_sandbox_factory/containers/primary/launch.py"}:/tmp/factory-launch.py:ro',
+                        '-v', f'{root / "ai_sandbox_factory/containers/primary/codex_client.py"}:/tmp/factory-client.py:ro',
                         args.image, '/tmp/check.py', '--inside'], check=True)
     else:
         parser.error('--image is required')

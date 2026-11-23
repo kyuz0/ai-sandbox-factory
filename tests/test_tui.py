@@ -765,6 +765,9 @@ class TUITests(unittest.TestCase):
                 await pilot.pause()
                 protection = app.screen.query_one('#protect-browser-credentials', Checkbox)
                 self.assertTrue(protection.value)
+                self.assertFalse(protection.disabled)
+                app.screen.query_one('#browser', Checkbox).value = False
+                await pilot.pause()
                 self.assertTrue(protection.disabled)
                 app.screen.query_one('#browser', Checkbox).value = True
                 await pilot.pause()

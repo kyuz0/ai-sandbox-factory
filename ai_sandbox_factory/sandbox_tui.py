@@ -46,7 +46,7 @@ from .aws_ui import AWSProfileChoices, AWSProfilePicker
 from .document_search_ui import CUSTOM, DocumentSearchDialog, DocumentSearchHelp, search_description, search_summary
 from . import embedding_models
 from . import sandbox_skills
-from .primary_workspace import AGENTS as PRIMARY_AGENTS, DEFAULT_AUTH, agent as coding_agent
+from .primary_workspace import AGENTS as PRIMARY_AGENTS, DEFAULT_AUTH, WEB_SEARCH_OPTIONS, agent as coding_agent
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from .reviewer_ui import ReviewerFields
@@ -99,8 +99,8 @@ PRIMARY_CATEGORIES = {
 def primary_categories(agent):
     categories = {key: category for key, category in PRIMARY_CATEGORIES.items()
                   if key != 'editor-settings' or len(editor_settings.modes(agent)) > 1}
-    if agent == 'codex':
-        categories['network-settings'] = Category(CATEGORIES['network-settings'].label, 'network-section', 'codex-web-search')
+    if agent in WEB_SEARCH_OPTIONS:
+        categories['network-settings'] = Category(CATEGORIES['network-settings'].label, 'network-section', agent + '-web-search')
     return categories
 
 def can_copy_primary_sign_in(agent):
@@ -1109,7 +1109,7 @@ class NetworkRulesFields(Vertical):
         yield WebsiteGroups(self.groups, assigned=self.assigned)
         with Vertical(classes='setting'):
             yield Label('Additional allowed destinations · hostname:port')
-            yield TextArea(self.rules, id='allowlist')
+            yield TextArea(self.rules, id='allowlist', soft_wrap=False)
             yield Feedback('', id='network-error', markup=False)
         with Collapsible(title='Import or export rules', collapsed=True):
             with Vertical(classes='setting'):
@@ -1408,7 +1408,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
             except ValueError:
                 return
             self.summaries.update({
-                'network-settings': (network_search_summary(network, selected['codex_web_search']) if agent == 'codex' else
+                'network-settings': (network_search_summary(network, selected[WEB_SEARCH_OPTIONS[agent]]) if agent in WEB_SEARCH_OPTIONS else
                                      network_mode_label(network) if agent != 'pi' else
                                      network_search_summary(network, selected['web_access']['enabled'])),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
@@ -3232,12 +3232,14 @@ class SettingsForm(Screen):
     def compose_network_settings(self, category, value, selected):
         if self.native:
             with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
-                if self.primary == 'codex':
+                if key := WEB_SEARCH_OPTIONS.get(self.primary):
                     with Vertical(classes='setting'):
-                        yield Checkbox('Enable web search', id='codex-web-search', value=selected['codex_web_search'])
-                        yield Static('Lets Codex search OpenAI’s index.' +
-                                     (' Reopen Codex CLI or reload the VS Code window to apply changes.' if self.editing else ''),
-                                     id='codex-web-search-help', classes='setting-help checkbox-help')
+                        yield Checkbox('Enable web search', id=self.primary + '-web-search', value=selected[key])
+                        help_text = ('Allows Codex to search OpenAI’s index.' if self.primary == 'codex' else
+                                     f'Allows {PRIMARY_AGENTS[self.primary]} to search the web.')
+                        if self.editing:
+                            help_text += ' Reopen the CLI or reload the VS\u00a0Code window to apply changes.'
+                        yield Static(help_text, id=self.primary + '-web-search-help', classes='setting-help checkbox-help')
                 yield from self.compose_network_fields(value, selected)
             return
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
@@ -3409,6 +3411,8 @@ class SettingsForm(Screen):
                 self.set_focus(self.query_one('#primary-auth', Select), scroll_visible=False)
             if self.setting in (None, 'primary-browser'):
                 self.primary_browser_changed()
+            if self.setting in (None, 'primary-approvals'):
+                self.native_approval_changed()
             if self.setting in (None, 'network-settings'):
                 self.network_changed()
             return
@@ -3560,14 +3564,16 @@ class SettingsForm(Screen):
 
     @on(Select.Changed, '#network')
     @on(Checkbox.Changed, '#codex-web-search')
+    @on(Checkbox.Changed, '#claude-web-search')
+    @on(Checkbox.Changed, '#agy-web-search')
     @on(Checkbox.Changed, '#web-enabled')
     def network_changed(self):
         mode = self.query_one('#network', Select).value
         self.update_curlie_download_notice()
         if self.native:
             category = self.categories['network-settings']
-            summary = (network_search_summary(mode, self.query_one('#codex-web-search', Checkbox).value)
-                       if self.primary == 'codex' else network_mode_label(mode))
+            summary = (network_search_summary(mode, self.query_one('#' + self.primary + '-web-search', Checkbox).value)
+                       if self.primary in WEB_SEARCH_OPTIONS else network_mode_label(mode))
             self.query_one('#network-section', Collapsible).title = category.label + ' · ' + summary
             self.query_one('#network-rules-setting').display = mode == 'allowlist'
             return
@@ -3612,7 +3618,7 @@ class SettingsForm(Screen):
         websites = self.query_one(WebsiteGroups)
         groups, curlie_list = websites.selected(), websites.curlie_revision()
         service = self.app.service
-        search_change = self.codex_web_search_change()
+        search_change = self.native_web_search_change()
         def apply(log):
             with tempfile.TemporaryDirectory(prefix='sandbox-network-') as tmp:
                 path = Path(tmp) / 'allowlist.txt'
@@ -3630,18 +3636,17 @@ class SettingsForm(Screen):
         if self.native:
             effects = ['Rules apply to new connections.', 'Retry interrupted connections.']
             if search_change:
-                effects.append('Reopen Codex CLI or reload the VS Code window to apply web-search changes.')
+                effects.append(f'Reopen {PRIMARY_AGENTS[self.primary]} CLI or reload the VS Code window to apply web-search changes.')
             message = settings_effects.bullets(effects)
         self.app.push_screen(Operation('Updating network rules · ' + name, apply,
             success_message=message, done_on_success=True,
             on_success=(lambda: self.app.launch_client(name, mode)) if reopen else None))
 
-    def codex_web_search_change(self):
-        if self.primary != 'codex':
+    def native_web_search_change(self):
+        if not (key := WEB_SEARCH_OPTIONS.get(self.primary)):
             return {}
-        enabled = self.query_one('#codex-web-search', Checkbox).value
-        return ({'codex_web_search': enabled}
-                if enabled != options(self.draft.get('options'))['codex_web_search'] else {})
+        enabled = self.query_one('#' + self.primary + '-web-search', Checkbox).value
+        return ({key: enabled} if enabled != options(self.draft.get('options'))[key] else {})
 
     def network_rules_changed(self):
         rules = self.network_rules(self.query_one('#allowlist', TextArea).text)
@@ -3658,8 +3663,8 @@ class SettingsForm(Screen):
         draft['open_editor'] = self.query_one('#open-editor', Checkbox).value
         draft['skill_repo'] = draft['skill_path'] = ''
         if self.setting in (None, 'network-settings'):
-            if self.primary == 'codex':
-                selected['codex_web_search'] = self.query_one('#codex-web-search', Checkbox).value
+            if key := WEB_SEARCH_OPTIONS.get(self.primary):
+                selected[key] = self.query_one('#' + self.primary + '-web-search', Checkbox).value
             draft['network'] = self.query_one('#network', Select).value
             draft['allowlist'] = self.query_one('#allowlist', TextArea).text if draft['network'] == 'allowlist' else ''
             self.network_rules(draft['allowlist'])
@@ -3873,12 +3878,12 @@ class SettingsForm(Screen):
                     mode = self.query_one('#network', Select).value
                     search = options(self.draft.get('options'))['web_access']
                     if mode == self.draft['network'] and (self.native or not self.query_one(WebAccessForm).has_changes(search)):
-                        if mode == 'allowlist' and (self.primary != 'codex' or self.network_rules_changed()):
+                        if mode == 'allowlist' and (self.primary not in WEB_SEARCH_OPTIONS or self.network_rules_changed()):
                             self.apply_network_rules()
-                        elif change := self.codex_web_search_change():
+                        elif change := self.native_web_search_change():
                             await asyncio.to_thread(self.app.service.update_settings, self.draft['name'], change, lambda _: None)
                             self.app.pop_screen()
-                            self.notify('Web search saved. Reopen Codex CLI or reload the VS Code window to apply it.')
+                            self.notify(f'Web search saved. Reopen {PRIMARY_AGENTS[self.primary]} CLI or reload the VS Code window to apply it.')
                         else:
                             self.notify('No changes to apply.')
                         return
@@ -4155,7 +4160,9 @@ class Cockpit(App):
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
     #model-ports-error, #network-error, #curlie-error, #new-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
-    #allowlist.-invalid, #allowlist.-invalid:focus { border: double $error; }
+    #allowlist { border: solid #454a51; }
+    #allowlist:focus { border: solid $primary; }
+    #allowlist.-invalid, #allowlist.-invalid:focus { border: solid $error; }
     .compact-terminal .native-primary-form #allowlist { height: 6; }
     Screen:nocolor #model-ports-error, Screen:nocolor #network-error,
     Screen:nocolor #curlie-error, Screen:nocolor #new-error,

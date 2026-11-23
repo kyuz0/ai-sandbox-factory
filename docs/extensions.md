@@ -4,7 +4,7 @@ AI Sandbox Factory installs extensions from their repositories:
 
 | Extension | Repository |
 | --- | --- |
-| FrostPi editor | [Factory fork, `pi-sandbox-factory` branch](https://github.com/kyuz0/pi-vscode-ui/tree/pi-sandbox-factory) |
+| FrostPi editor | [Factory fork, kyuz0/pi-vscode-ui](https://github.com/kyuz0/pi-vscode-ui) |
 | Goals | [@ethanthoma/pi-goal](https://github.com/ethanthoma/pi-goal) |
 | Local model discovery | [pi-local-model-manager](https://github.com/kyuz0/pi-local-model-manager) |
 | Questions and answer forms | [rpiv-ask-user-question, Factory fork](https://github.com/kyuz0/rpiv-mono/tree/main/packages/rpiv-ask-user-question) |

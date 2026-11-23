@@ -20,6 +20,8 @@ from urllib.error import HTTPError
 from playwright.sync_api import Error as BrowserError, sync_playwright, expect
 from ai_sandbox_factory import advisor_credentials, primary_agents, primary_workspace, sandbox
 FILE_TASK = 'Read /workspace/input.txt, copy its contents to /workspace/output.txt and reply with the contents.'
+COMPOSER = ('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
+            'input[type=text]:visible, [role=textbox]:visible')
 
 ROOT = Path(__file__).resolve().parents[1]
 HERE = Path(__file__).resolve().parent
@@ -34,10 +36,8 @@ def podman(*args, payload=None):
     subprocess.run(['podman', *args], check=True, input=payload, text=True, stdout=subprocess.DEVNULL)
 
 
-def listen(stack, socket_path, ticket, hub=None):
+def listen(stack, socket_path, ticket):
     args = ['node', str(HERE / 'native_editor_relay.mjs'), '0', str(socket_path)]
-    if hub:
-        args.append(str(hub))
     process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     stack.callback(process.wait)
     stack.callback(process.terminate)
@@ -60,7 +60,18 @@ def stop_controls(frame):
         frame.locator('button:has(svg[class*="stopIcon"])'))
 
 
-def verify_reply(page, prompt, expected, timeout, output=None):
+def open_claude_chat_here(frame, output):
+    handoff = frame.get_by_role('button', name='Open here anyway', exact=True)
+    if handoff.count() != 1 or not handoff.is_visible():
+        return False
+    if output:
+        frame.page.screenshot(path=str(output / 'claude-session-handoff.png'))
+    handoff.click()
+    print('Used Claude’s native ownership handoff for the idle test chat.', flush=True)
+    return True
+
+
+def verify_reply(page, prompt, expected, timeout, output=None, *, claude_handoff=False):
     deadline = time.monotonic() + timeout
     submitted = False
     submitted_frame = None
@@ -79,12 +90,10 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                 if submitted:
                     if frame != submitted_frame:
                         continue
+                    if claude_handoff and open_claude_chat_here(frame, output):
+                        continue
                     one_time = frame.get_by_text('Yes, allow this time', exact=True)
                     if one_time.count() == 1 and one_time.is_visible() and not getattr(page, 'factory_automatic', False):
-                        # Native MCP approval must display the actual arguments,
-                        # not just the tool name and a generic permission prompt.
-                        if not frame.get_by_text('command', exact=True).count() and '"command"' not in visible:
-                            raise AssertionError('Workspace command is missing from the approval display')
                         if output:
                             page.screenshot(path=str(output / 'permission-request.png'))
                         one_time.click()
@@ -99,13 +108,12 @@ def verify_reply(page, prompt, expected, timeout, output=None):
                     # Do not mistake the submitted prompt's own receipt for
                     # the model's reply while the next command is still running.
                     if (visible.count(expected) > previous_matches + prompt.count(expected)
-                            and 'Claude is working' not in visible
+                            and 'Claude is working' not in visible and 'Agent working' not in visible
                             and not any(stopping.nth(i).is_visible() for i in range(stopping.count()))
                             and not any(busy.nth(i).is_visible() for i in range(busy.count()))):
                         return
                     continue
-                inputs = frame.locator('textarea:visible, [contenteditable]:not([contenteditable=false]):visible, '
-                                       'input[type=text]:visible, [role=textbox]:visible')
+                inputs = frame.locator(COMPOSER)
                 if inputs.count():
                     previous_matches = visible.count(expected)
                     inputs.last.fill(prompt, timeout=1500)
@@ -140,7 +148,7 @@ def verify_reply(page, prompt, expected, timeout, output=None):
     raise RuntimeError(f'Expected reply missing. Prompt submitted: {submitted}. Panel notices: {sorted(observations)}')
 
 
-def resume_chat(page, output, timeout, expected):
+def resume_chat(page, output, timeout, expected, agent=None):
     deadline = time.monotonic() + timeout
     opened = set()
     while time.monotonic() < deadline:
@@ -149,6 +157,16 @@ def resume_chat(page, output, timeout, expected):
                 continue
             try:
                 buttons = frame.get_by_role('button')
+                # Official clients can restore the active chat themselves.
+                # Opening its history row again creates a second owner.
+                composer = frame.locator(COMPOSER)
+                if expected in frame.locator('body').inner_text(timeout=900) and composer.count():
+                    print('Native client restored the saved conversation after reload.', flush=True)
+                    return
+                if agent == 'claude' and open_claude_chat_here(frame, output):
+                    continue
+                if not composer.count():
+                    continue
                 history = frame.get_by_role('button', name=re.compile('history|past conversations|recent chats|resume', re.I))
                 if frame not in opened and history.count() and history.first.is_visible():
                     history.first.click()
@@ -167,6 +185,8 @@ def resume_chat(page, output, timeout, expected):
                             previous.inner_text().strip(), re.I,
                         ):
                             previous.click()
+                            if agent == 'claude':
+                                break
                             expect(frame.locator('body')).to_contain_text(expected, timeout=timeout * 1000)
                             print('Opened the saved conversation and verified its previous reply.', flush=True)
                             return
@@ -177,7 +197,7 @@ def resume_chat(page, output, timeout, expected):
                 continue
         page.wait_for_timeout(250)
     page.screenshot(path=str(output / 'reload.png'))
-    raise RuntimeError('Could not find the native conversation history control')
+    raise RuntimeError(f'{agent} did not reopen the saved test conversation after reload')
 
 
 def check_cancellation(page, agent, editor, output, timeout):
@@ -347,14 +367,15 @@ def check_denial(page, editor, output, timeout, agent='pi'):
                     choice.fill('Do not run this command. Report that permission was denied.')
                     frame.get_by_role('button', name=re.compile(r'^Submit')).click()
                     denied = True
-            for index in range(no.count() if agent != 'agy' else 0):
+            for index in range(no.count() if not denied else 0):
                 if no.nth(index).is_visible() and no.nth(index).is_enabled():
                     page.screenshot(path=str(output / 'permission-request.png'))
                     no.nth(index).click()
                     denied = True
                     break
             stop = stop_controls(frame)
-            if denied and inputs.count() and not any(stop.nth(i).is_visible() for i in range(stop.count())):
+            if (denied and inputs.count() and not any(stop.nth(i).is_visible() for i in range(stop.count()))
+                    and 'Claude is working' not in frame.locator('body').inner_text()):
                 podman('exec', editor, 'test', '!', '-e', '/workspace/denied-check')
                 page.screenshot(path=str(output / 'permission-denied.png'))
                 print('Denied the native permission request; its workspace command did not run.', flush=True)
@@ -406,15 +427,14 @@ print('capacity-job-'+name+'-complete')
 
         prompt = (f'Run {count} separate shell tool calls concurrently, one for each index from 0 to {count - 1}. '
                   f'Each command is: python3 /workspace/capacity-job.py {batch} INDEX . '
-                  'Use independent native shell tool calls (or parallel Factory workspace shell calls). '
+                  'Use independent native shell tool calls. '
                   'Do not combine them in a shell loop or launch background jobs yourself. '
                   'The test releases the commands after they have all started. Wait for all to finish, '
                   f'then reply {receipt}.')
         if agent in ('claude', 'agy') and count > 1:
-            # Native Claude serializes mutating MCP tools. Do not label that
-            # scheduling policy a bridge defect or mark a shell read-only.
-            # Exercise ten concurrent workspace processes in its normal tool.
-            prompt = (f'Run python3 /workspace/capacity-job.py {batch} all using the Factory workspace shell. '
+            # Exercise concurrent workspace processes without assuming the
+            # model schedules separate native tool calls concurrently.
+            prompt = (f'Run python3 /workspace/capacity-job.py {batch} all using your native shell tool. '
                       'This test command runs ten child jobs and waits for them. '
                       f'Wait for completion, then reply {receipt}.')
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -436,13 +456,13 @@ print('capacity-job-'+name+'-complete')
 
 def run(args, root, stack):
     agent = args.agent
-    api_error = getattr(args, 'api_error', False)
     fixture = 'factory-editor-test-' + secrets.token_hex(6)
     options = {'options': {'native_approval': getattr(args, 'approval', 'automatic'),
                           'browser': getattr(args, 'browser', False)},
                'common': {'path': str(sandbox.ROOT / 'containers/dev')},
                'primary_agent': agent, 'uid': os.getuid(), 'gid': os.getgid()}
-    primary_agents.build({**options, 'engine': 'podman'})
+    options['engine'] = 'podman'
+    primary_workspace.build(options, primary_workspace.image(options))
     editor = fixture + '-editor'
     client = root / 'client'
     client.mkdir()
@@ -471,19 +491,14 @@ def run(args, root, stack):
     trusted.mkdir()
     (trusted/'settings.json').write_text(json.dumps({'agent':agent,'browser':getattr(args, 'browser', False),
         'write_roots':['/workspace'],'working_directory':'/workspace', 'native_approval':getattr(args, 'approval', 'automatic')}))
-    (trusted/'context.md').write_text('Perform file and shell operations only in the workspace with the configured remote tools.')
+    (trusted/'context.md').write_text('Work in /workspace using your native tools.')
     from ai_sandbox_factory import browser_editor
     editor_path = browser_editor.INSTALL if agent == 'agy' else '/opt/editor'
     editor_mounts = ['-v', f'{args.code_server}:{editor_path}:ro', '-v', f'{client}:/qa:rw']
     controller_env = [arg for key, value in sandbox.RUNTIME_ENV.items() for arg in ('-e', f'{key}={value}')]
-    if api_error:
-        from primary_claude_errors import FIXTURE_CREDENTIAL, RECOVERY_REPLY
-        controller_env += ['-e', 'ANTHROPIC_API_KEY=' + FIXTURE_CREDENTIAL,
-                           '-e', 'ANTHROPIC_BASE_URL=http://127.0.0.1:18782',
-                           '-e', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1']
     start(fixture, *isolated, *controller_env, '-e', 'FACTORY_PRIMARY_AGENT=' + agent,
           '-v', egress + ':/run/primary-egress:ro', '-v', wire + ':/run/primary-workspace:ro,z',
-          *(['-v', egress + ':/run/workspace-egress:ro'] if agent == 'codex' else []),
+          '-v', egress + ':/run/workspace-egress:ro',
           '-v', f'{private}:/run/primary-editor', '-v', f'{trusted}:/run/primary-input:ro',
           primary_agents.image(options))
     for _ in range(120):
@@ -498,15 +513,9 @@ def run(args, root, stack):
     else:
         target = {'codex': '.codex/auth.json', 'claude': '.claude/.credentials.json'}[agent]
         store = ['python3', '-c', advisor_credentials._WRITE_FILE, '/home/node/' + target]
-    if api_error:
-        podman('exec', '-i', fixture, 'tee', '/tmp/fixture-api.py',
-               payload=(ROOT / 'tests/primary_claude_errors.py').read_text())
-        podman('exec', '-d', fixture, 'python3', '/tmp/fixture-api.py', '--serve-browser-fixture')
-    else:
-        podman('exec', '-i', fixture, *store, payload=advisor_credentials.read_host(agent))
+    podman('exec', '-i', fixture, *store, payload=advisor_credentials.read_host(agent))
 
     ticket = secrets.token_urlsafe(32)
-    hub = None
     first = secrets.choice(('cedar', 'maple', 'aspen'))
     last = secrets.choice(('violet', 'amber', 'coral'))
     prompt = (f'Your first word is {first}. Your second word is {last}. '
@@ -522,35 +531,36 @@ def run(args, root, stack):
         podman('exec', '-i', editor, 'tee', '/run/primary-runtime/cwd.json', payload=json.dumps('/workspace'))
         prompt, expected = FILE_TASK, 'proof-' + secrets.token_hex(16)
         podman('exec', '-i', editor, 'tee', '/workspace/input.txt', payload=expected)
-        if agent == 'codex':
-            podman('exec', '-i', editor, 'tee', '/run/primary-runtime/settings.json',
-                payload=(trusted / 'settings.json').read_text())
-            podman('exec', '-i', editor, 'tee', '/run/primary-runtime/context.md',
-                payload='Work in /workspace. Use the native shell and file tools.')
-            podman('exec', '-d', editor, 'python3', '/opt/primary/entrypoint.py')
-            for _ in range(120):
-                ready = subprocess.run(['podman', 'exec', editor, 'bash', '-c', 'true </dev/tcp/127.0.0.1/3130'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if ready.returncode == 0:
-                    break
-                time.sleep(.25)
-            else:
-                raise RuntimeError('Codex authentication relay failed to start')
-            podman('exec', editor, 'python3', '/opt/primary/codex_client.py', '--factory-prepare')
-            if getattr(args, 'browser', False):
-                podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
-            print('Prepared native Codex with subscription placeholders.', flush=True)
+        podman('exec', '-i', editor, 'tee', '/run/primary-runtime/settings.json',
+            payload=(trusted / 'settings.json').read_text())
+        podman('exec', '-i', editor, 'tee', '/run/primary-runtime/context.md',
+            payload='Work in /workspace. Use the native shell and file tools.')
+        podman('exec', '-d', editor, 'python3', '/opt/primary/entrypoint.py')
+        for _ in range(120):
+            ready = subprocess.run(['podman', 'exec', editor, 'bash', '-c', 'true </dev/tcp/127.0.0.1/3130'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if ready.returncode == 0:
+                break
+            time.sleep(.25)
         else:
+            raise RuntimeError(f'{agent} authentication relay failed to start')
+        podman('exec', editor, 'python3', f'/opt/primary/{agent}_client.py', '--factory-prepare')
+        if getattr(args, 'browser', False):
             podman('exec', '-d', editor, 'bash', '/opt/primary/worker.sh', agent)
+        print(f'Prepared native {agent} with subscription placeholders.', flush=True)
     from ai_sandbox_factory import native_editor
     if args.background_controls:
         from native_codex_background import check
         check(editor, args.output, args.timeout)
         return
     native_editor.install({'engine':'podman','primary_agent':agent}, editor, 'x86_64')
-    if agent == 'codex' and getattr(args, 'credential_attack', False):
-        from native_codex_credentials import install_attack_extension
-        credential_snapshot = install_attack_extension(editor, fixture)
+    if getattr(args, 'credential_attack', False):
+        if agent == 'codex':
+            from native_codex_credentials import install_attack_extension
+            credential_snapshot = install_attack_extension(editor, fixture)
+        else:
+            from native_agent_credentials import install_attack_extension
+            credential_snapshot = install_attack_extension(editor, fixture, agent)
     if agent == 'agy':
         state = root / 'state'
         state.mkdir()
@@ -568,7 +578,7 @@ def run(args, root, stack):
         if not url.startswith('http://'):
             raise RuntimeError('Production browser editor did not start: ' + (args.output / 'editor.log').read_text()[-4000:])
     else:
-        port = listen(stack, client / 'editor.sock', ticket, hub)
+        port = listen(stack, client / 'editor.sock', ticket)
         launch = SOURCE.parent/'editor'
         launch_settings = {'agent':agent, 'native_settings':native_editor.settings(agent),
             'binary':'/opt/editor/bin/code-server','authority':'127.0.0.1:' + str(port),'cwd':'/workspace',
@@ -611,31 +621,30 @@ def run(args, root, stack):
             page.on('console', lambda message: (args.output / 'console.log').open('a').write(message.type + ': ' + message.text + '\n') if message.type in ('error', 'warning') else None)
         page.goto(url + '/?folder=/workspace')
         expect(page).to_have_title(re.compile('workspace', re.I), timeout=args.timeout * 1000)
-        if api_error:
-            verify_reply(page, 'Reply hello.', 'Claude could not complete the request (HTTP 400).', args.timeout, args.output)
-            page.screenshot(path=str(args.output / 'filtered-error.png'))
-            for frame in page.frames:
-                assert FIXTURE_CREDENTIAL not in frame.locator('body').inner_text()
-                assert FIXTURE_CREDENTIAL not in frame.content()
-            podman('exec', fixture, 'touch', '/tmp/fixture-api-recover')
-            verify_reply(page, 'Reply hello again.', RECOVERY_REPLY, args.timeout, args.output)
-            page.screenshot(path=str(args.output / 'recovered.png'))
-            (args.output / 'browser-errors.json').write_text(json.dumps(errors, indent=2))
-            assert not errors, errors
-            assert not trust_warnings, trust_warnings
-            browser.close()
-            print('Native error displayed without credentials; next turn recovered.', flush=True)
-            return
         verify_reply(page, prompt, expected, args.timeout, args.output)
-        if agent == 'codex' and getattr(args, 'credential_attack', False):
-            from native_codex_credentials import verify_attack_extension
-            verify_attack_extension(editor, fixture, credential_snapshot)
-        if agent == 'codex' and getattr(args, 'controls', False):
-            from native_codex_controls import check as check_controls
+        if getattr(args, 'credential_attack', False):
+            if agent == 'codex':
+                from native_codex_credentials import verify_attack_extension
+                verify_attack_extension(editor, fixture, credential_snapshot)
+            else:
+                from native_agent_credentials import verify_attack_extension
+                verify_attack_extension(editor, fixture, agent, credential_snapshot)
+        if getattr(args, 'controls', False):
+            if agent == 'claude':
+                from native_claude_controls import check as check_controls
+            elif agent == 'agy':
+                from native_agy_controls import check as check_controls
+            else:
+                from native_codex_controls import check as check_controls
             check_controls(page, editor, args.output, args.timeout)
+        if args.browser and agent == 'claude':
+            from native_claude_controls import check_browser
+            check_browser(page, editor, args.output, args.timeout)
         if args.attachments:
             if agent == 'codex':
                 from native_codex_controls import check_attachments
+            elif agent == 'claude':
+                from native_claude_controls import check_attachments
             else:
                 from native_agy_attachments import check as check_attachments
             check_attachments(page, args.output, args.timeout)
@@ -655,18 +664,31 @@ def run(args, root, stack):
         if args.capacity:
             check_capacity(page, agent, editor, args.output, args.timeout)
         if args.reload:
-            page.reload()
+            if agent == 'claude':
+                from native_claude_controls import reload_window
+                reload_window(page, args.timeout, wait_for_composer=False)
+            else:
+                page.reload()
             if agent != 'agy':
-                resume_chat(page, args.output, args.timeout, second)
-            verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.', second, args.timeout, args.output)
+                resume_chat(page, args.output, args.timeout, second, agent)
+            verify_reply(page, 'What were the contents of second.txt that you read earlier? Reply from this chat without using tools.',
+                         second, args.timeout, args.output, claude_handoff=agent == 'claude')
             if args.attachments:
-                assert any(f.locator('img[src^="data:image/"], img[src^="blob:"]').count()
-                           for f in page.frames if f.parent_frame), 'Uploaded image missing after chat reload'
-            print('Continued the saved chat after a page reload.', flush=True)
+                if agent == 'claude':
+                    from native_claude_controls import composer_frame
+                    # Claude restores the image as a named attachment pill.
+                    expect(composer_frame(page, args.timeout).get_by_text('image.png', exact=True)).to_be_visible()
+                else:
+                    assert any(f.locator('img[src^="data:image/"], img[src^="blob:"]').count()
+                               for f in page.frames if f.parent_frame), 'Uploaded image missing after chat reload'
+            print('Continued the saved chat after reloading the editor.', flush=True)
         if args.deny and args.reload:
             check_denial(page, editor, args.output, args.timeout, agent)
         if args.cancel:
             check_cancellation(page, agent, editor, args.output, args.timeout)
+        if args.web_search:
+            from native_claude_controls import check_web_search
+            check_web_search(page, editor, args.output, args.timeout)
         page.screenshot(path=str(args.output / 'working.png'))
         assert 'Build with Agent' not in page.locator('body').inner_text()
         (args.output / 'browser-errors.json').write_text(json.dumps(errors, indent=2))
@@ -689,29 +711,27 @@ if __name__ == '__main__':
     parser.set_defaults(separate=True)
     parser.add_argument('--approval', choices=('automatic', 'manual'), default='automatic')
     parser.add_argument('--attachments', action='store_true')
-    parser.add_argument('--controls', action='store_true', help='Codex only: change model, reasoning power and native approval modes')
+    parser.add_argument('--controls', action='store_true', help='Change the native model; also exercise effort and approval controls in Codex and Claude')
+    parser.add_argument('--web-search', action='store_true', help='Claude only: check both saved web search settings in the native editor')
     parser.add_argument('--output', type=Path, required=True, help='Directory for screenshots and browser diagnostics')
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
-    parser.add_argument('--api-error', action='store_true', help='Claude only: use a local fake API to test error filtering and recovery without host credentials')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')
     parser.add_argument('--capacity', action='store_true', help='Exercise one then ten concurrent workspace processes through the native panel')
-    parser.add_argument('--browser', action='store_true', help='Enable the Factory browser tool in the Codex test workspace')
-    parser.add_argument('--credential-attack', action='store_true', help='Codex: exercise credential reads and writes from a real VS Code extension')
+    parser.add_argument('--browser', action='store_true', help='Enable the Factory browser tools in the native test workspace')
+    parser.add_argument('--credential-attack', action='store_true', help='Exercise credential reads and writes from a real VS Code extension')
     parser.add_argument('--background-controls', action='store_true', help='Codex only: verify native background-terminal list, terminate and clean with real workspace jobs')
     parser.add_argument('--timeout', type=int, default=180, help='Seconds to wait for the live reply')
     args = parser.parse_args()
-    if args.api_error and args.agent != 'claude':
-        parser.error('--api-error requires claude')
     if args.isolation and args.agent != 'codex':
         parser.error('--isolation requires codex')
     if args.background_controls and args.agent != 'codex':
         parser.error('--background-controls requires codex')
-    if args.controls and args.agent != 'codex':
-        parser.error('--controls requires codex')
+    if args.web_search and args.agent != 'claude':
+        parser.error('--web-search requires claude')
     args.code_server = args.code_server.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='factory-ide-') as directory, ExitStack() as cleanup:
         run(args, Path(directory), cleanup)
-    print(f'{args.agent}: {"synthetic error and recovery" if args.api_error else "authenticated reply"} verified; disposable resources removed.')
+    print(f'{args.agent}: authenticated reply verified; disposable resources removed.')

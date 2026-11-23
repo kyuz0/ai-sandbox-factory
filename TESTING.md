@@ -1,5 +1,10 @@
 # Development and tests
 
+Start with the local suites below. For a focused check, go to
+[native agents](#native-agent-regression-checks), [Pi and FrostPi](#frostpi-editor-and-shared-pi-goals),
+[the file picker](#file-and-folder-picker), [connectors](#service-connectors),
+or [platform checks](#platform-checks).
+
 From the checkout, install the package into a virtual environment:
 
 ```sh
@@ -45,33 +50,37 @@ rendered images, including checked and unchecked controls and the error dialog.
 
 ## Package installation
 
-Install the wheel outside the checkout and check `--help`, `profile list` and
-`provider list`. Create a sandbox from that installation to verify bundled assets.
+Build the wheel from a clean copy of the revision you plan to ship. Build output
+left by older runs can contain files that have since been deleted. Install the
+wheel outside the checkout and create a sandbox to verify its bundled assets.
 Check Python 3.10 syntax compatibility when changing Python code.
 The wheel installs the `ai-sandbox-factory` command and `ai_sandbox_factory`
-module. The separate `kyuz0/pi-sandbox-factory` repository owns the legacy launcher
-and migration tests. Its suite covers rollback, interruption recovery, destination
-conflicts, existing absolute references and live editor-control sockets.
+module. See [migration tests](#ai-sandbox-factory-migration) for the old command.
 
 ```sh
-.venv/bin/pip wheel --no-deps . -w dist
-python3 -m venv /tmp/pi-sandbox-package-check
-/tmp/pi-sandbox-package-check/bin/pip install dist/ai_sandbox_factory-*.whl
-(cd /tmp && /tmp/pi-sandbox-package-check/bin/ai-sandbox-factory profile list)
-(cd /tmp && /tmp/pi-sandbox-package-check/bin/ai-sandbox-factory provider list)
+package_test=$(mktemp -d)
+mkdir "$package_test/source"
+git archive HEAD | tar -x -C "$package_test/source"
+.venv/bin/pip wheel --no-deps "$package_test/source" -w "$package_test/wheels"
+python3 -m venv "$package_test/venv"
+"$package_test/venv/bin/pip" install "$package_test"/wheels/ai_sandbox_factory-*.whl
+(
+  cd "$package_test"
+  venv/bin/ai-sandbox-factory --help
+  venv/bin/ai-sandbox-factory profile list
+  venv/bin/ai-sandbox-factory provider list
+)
 ```
-
-For the cross-package migration, use the migration repository's integration test
-with a clean checkout of the preceding application release and this application.
-Use separate `PIPX_HOME`, `PIPX_BIN_DIR`, `PIPX_MAN_DIR` and home directories. Check
-plain upgrade, the old manager's module relaunch, `upgrade-all`, pip installation,
-redirected output, argument forwarding and repeated runs. Keep real user state out
-of these fixtures. Test running and restarted container mounts separately.
 
 ## AI Sandbox Factory migration
 
 The legacy launcher and its reusable migration tests live in
 [`kyuz0/pi-sandbox-factory`](https://github.com/kyuz0/pi-sandbox-factory).
+Run its integration test with clean copies of the preceding release and the
+revision under test. Use disposable home, `PIPX_HOME`, `PIPX_BIN_DIR` and
+`PIPX_MAN_DIR` directories. Include redirected output, argument forwarding,
+and both running and restarted container mounts.
+
 Linux validation covers:
 
 | Check | Result |
@@ -161,91 +170,118 @@ podman run --rm --network=none --user 1000:1000 --cap-drop=ALL \
 Network tools remain subject to the sandbox's network policy; installation does
 not grant external ICMP or DNS access.
 
-## Native Codex, Claude and Antigravity browser editors
+## Native agent regression checks
 
-These checks use the host's existing subscription sign-in in a disposable private
-controller. The separate workspace container has no real account credentials.
-Codex runs its official CLI and extension in the workspace and authenticates
-through the credential companion; Claude and Antigravity use their protected
-controllers. They require rootless Podman, Python Playwright, Chromium and the
-extracted code-server version pinned by Factory. Build the selected agent's
-controller and workspace images from the checkout first.
+Codex, Claude Code and Antigravity run their official CLI and extension in the
+workspace. A separate credential companion holds the real subscription tokens.
+Run the offline checks first; authenticated checks explicitly use a disposable
+copy of the selected agent's host sign-in. Keep screenshots, transcripts and
+account details outside this repository. Never use an existing working sandbox
+for these fixtures.
 
-```sh
-PYTHONPATH=. .venv/bin/python tests/native_browser_editor.py claude \
-  --code-server /path/to/code-server-4.145.2-linux-amd64 \
-  --chromium /path/to/chromium --output /tmp/factory-claude-editor --reload
-```
+### Offline checks
 
-Use `--approval manual --deny` to verify the configured manual mode. For Antigravity, `--attachments` uploads a file through the native composer and verifies the model receives its unique contents. Attachment protocol tests also reject private file URIs, opaque blob references and malformed data.
-
-Repeat with `codex` and `agy`. The test installs the pinned official extension through the
-production installer, runs the production editor launcher, completes two different
-workspace edits, and checks that the built-in VS Code chat is hidden. With
-`--reload`, it reopens the saved conversation from the native history control and
-asks about the previous turn without reading the workspace again. The test saves
-screenshots and browser errors and removes its containers and volumes afterward.
-
-Use `--cancel` to stop a reply and check that a subsequent command succeeds.
-For Claude, the test verifies that Stop also terminates the running command.
-Codex can retain resumable commands after Stop; the test asks it to terminate
-the remaining test process in the next turn and verifies that the process exits.
-Use `--deny` to select manual approvals, deny a command and verify that it did
-not run. With `--reload`, the test repeats the denial in the reopened chat.
-The test also records workspace-trust warnings, including warnings that disappear
-before the final screenshot. On a fresh editor home, verify Codex uses its automatic reviewer and Claude
-starts with **Auto**. The pinned Claude extension needs a checked fallback adjustment for its process-wrapper mode; an explicit
-saved approval choice takes precedence. The installer refuses an extension
-whose fallback code no longer matches.
-When updating a native client, test its CLI and extension versions together.
-
-For Codex, add `--isolation` to test native image viewing and patching. The test
-puts different images at the same path in the companion and workspace, checks
-that Codex sees the workspace image, and verifies that a patch changes only the
-workspace file. It also checks that the workspace shell cannot see a private
-companion marker and confirms the requested native tools ran.
-Add `--credential-attack --browser` to install a real VS Code extension that
-reads and overwrites the workspace authentication file. The check compares
-workspace tokens with the private sign-in, verifies that only placeholders are
-visible, and confirms that workspace writes leave the private sign-in unchanged.
-The browser option enables the Factory browser tools in the test workspace.
-
-Run the synthetic Codex authentication and native configuration checks separately:
+Run the relevant unit suites with local socket IPC available:
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -p 'test_codex_auth.py'
-.venv/bin/python -m unittest discover -s tests -p 'test_codex_history.py'
-PYTHONPATH=tests:. .venv/bin/python -m unittest test_native_codex_features
-.venv/bin/python tests/codex_client_tests.py
-.venv/bin/python tests/codex_auth_proxy_tests.py
-PYTHONPATH=tests:. .venv/bin/python tests/codex_network_tests.py
-.venv/bin/python tests/codex_auth_transport.py
+PYTHONPATH=tests:. .venv/bin/python -m unittest \
+  test_primary_agents test_primary_agents_ui test_primary_workspace \
+  test_native_editor test_native_browser_hub test_native_auth_fixture \
+  test_codex_auth test_codex_history test_native_codex_features \
+  test_claude_auth test_claude_history test_agy_auth test_agy_client
 ```
 
-The client checks require `tomlkit`; the proxy, network and TLS transport checks
-require `mitmproxy==12.3.1` (the version installed in the credential image). The checks cover placeholder
-storage, OAuth and refresh handling, token substitution and redaction, trusted
-upstream destinations, and preservation of native model, MCP and approval
-settings. History checks cover selective transfer, committed SQLite WAL data,
-conflict handling, rollback and retry without copying account credentials. These
-checks use synthetic data and do not submit model requests.
-Set `FACTORY_CODEX_HISTORY_BINARY` to the pinned native executable to include the
-offline history check. It verifies native thread listing, metadata reads and
-paginated retrieval of an earlier answer stored only in SQLite after restoration.
-Run it in the workspace image with networking disabled; no account sign-in is needed.
+| Check | What it verifies |
+| --- | --- |
+| Authentication storage and proxy fixtures | Placeholder-only workspace credentials; exact HTTPS destinations; OAuth capture and refresh; response and streaming redaction; preserved upstream status and diagnostics |
+| Native configuration | Model, effort and unrelated settings survive launches; selected approval and web-search settings apply through native configuration |
+| Editor installation and startup | Official extension bytes remain unchanged; Claude uses its bundled CLI with the correct configuration directory and proxy CA; only Factory's obsolete wrapper setting is removed |
+| History transfer | Selective chat transfer, SQLite WAL data, conflict preservation, rollback and retry without copying credentials; Claude API diagnostics are sanitized |
+| Editor transport | Host/Origin validation, authenticated workspace hub forwarding, streaming and cleanup |
 
-`test_primary_agents_ui` checks that Codex alone offers **Enable web search**
-under **Network and Web Search**, that it defaults off and preserves explicit saved
-choices, and that its label and help stay unchanged when toggled. It also checks collection, saving without recreation,
-and visible errors and actions at 80×24, 120×40 and 220×50. Capture the selected,
-cleared, saved-settings and error states with:
+Proxy checks use `mitmproxy==12.3.1`, already installed in each credential image.
+Run them inside that image with networking disabled; choose one agent and its
+current image tag:
 
 ```sh
-.venv/bin/python tests/render_tui.py /tmp/factory-native-web-search \
-  --only native-web-search-on native-web-search-off native-web-search-edit native-web-search-error
+native_agent=claude
+native_controller_image=CLAUDE_CONTROLLER_IMAGE
+podman run --rm --pull=never --network=none --security-opt=label=disable \
+  -v "$PWD:/source:ro" -w /source -e PYTHONPATH=/source:/source/tests \
+  --entrypoint "/opt/${native_agent}-proxy/bin/python" "$native_controller_image" \
+  "tests/${native_agent}_auth_proxy_tests.py"
 ```
 
-For authenticated native Codex checks, use a disposable signed-in sandbox:
+Use `native_agent=codex` or `native_agent=agy` with the corresponding image.
+Additional offline native checks run in the indicated image:
+
+| Image/runtime | Command inside the image | What it verifies |
+| --- | --- | --- |
+| Claude credential image, `/opt/claude-proxy/bin/python` | `tests/native_claude_login.py --binary /usr/local/bin/factory-agent` | Official authorization-code login against local fake services; only placeholders reach native files; Auto/Manual/Plan defaults; native rejection of disabled WebSearch |
+| Antigravity credential image, `/opt/agy-proxy/bin/python` | `tests/agy_native_auth.py`, then `tests/agy_native_auth.py --fresh` | Official refresh and fresh OAuth exchange against fake services; masked Secret Service storage; HTTP 418 and its diagnostic remain visible |
+| Codex workspace image, `python3` | `tests/codex_client_tests.py` | Native configuration using the workspace's installed `tomlkit` |
+| Codex credential image, `/opt/codex-proxy/bin/python` | `tests/codex_network_tests.py` and `tests/codex_auth_transport.py` | Gateway catalogue, inherited editor environment, TLS/HTTP2, WebSockets and CONNECT transport |
+
+Use the same read-only checkout mount and `/source` working directory as above.
+The OAuth fixtures issue synthetic credentials; they do not complete a real
+provider consent screen. Set `FACTORY_CODEX_HISTORY_BINARY` or
+`FACTORY_CLAUDE_HISTORY_BINARY` to the pinned executable when running its history
+suite inside a network-disabled image. Without that variable, unittest reports
+the native parser/resume case as skipped. The Codex case reads an earlier answer
+stored only in SQLite; the Claude case checks the restored conversation in the
+native model request.
+
+Check the production settings path without a sign-in:
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/native_claude_copy.py \
+  --controller-image CLAUDE_CONTROLLER_IMAGE --workspace-image CLAUDE_WORKSPACE_IMAGE
+PYTHONPATH=. .venv/bin/python tests/native_web_search_settings.py \
+  --image CLAUDE_WORKSPACE_IMAGE
+.venv/bin/python tests/primary_workspace_trust.py --image CODEX_WORKSPACE_IMAGE
+```
+
+- Claude sign-in copy checks first launch and account replacement with synthetic
+  accounts. Only placeholders reach the running workspace.
+- Claude search settings checks off → on → off with the same running workspace,
+  preserving WebFetch and unrelated settings.
+- Codex trust uses the real parser for ordinary, dotted, Unicode, quoted and
+  escaped paths. It preserves other trust choices and the automatic reviewer.
+  The [Claude and Antigravity CLI checks](#authenticated-cli-checks) cover Unicode
+  starting folders inside Git projects.
+
+For the shared **Enable web search** control, render the checked, unchecked,
+saved-settings and error states:
+
+```sh
+.venv/bin/python tests/render_primary_agents.py /tmp/factory-native-web-search \
+  --web-search-only
+```
+
+Review 80×24, 120×40 and 220×50 captures. `test_primary_agents_ui` checks the
+default-off value, saving, stable checkbox copy and visible actions and errors.
+
+### Authenticated CLI checks
+
+These use current, locally built production images and the selected host
+subscription. Each Claude/Antigravity command creates and removes its own
+containers and volumes:
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/native_claude_features.py \
+  --controller-image CLAUDE_CONTROLLER_IMAGE --workspace-image CLAUDE_WORKSPACE_IMAGE \
+  --output /tmp/factory-claude-cli --web --compact
+PYTHONPATH=. .venv/bin/python tests/native_agy_cli.py \
+  --controller-image AGY_CONTROLLER_IMAGE --workspace-image AGY_WORKSPACE_IMAGE \
+  --search --browser --migrate-history --git-subfolder
+```
+
+| Check | What it exercises |
+| --- | --- |
+| Claude | Native Read/Edit/Bash, image understanding, effort selection, manual compaction, saved-session resume, WebSearch, workspace file/process credential isolation and sandbox-local CLI logout |
+| Antigravity | Native file/shell/edit tools, saved-chat resume, search off/on, managed Chromium use, placeholder-only keyring and restoring conversations into an empty native home |
+
+For Codex, supply an explicitly disposable, signed-in workspace and companion:
 
 ```sh
 .venv/bin/python tests/native_codex_features.py \
@@ -254,65 +290,73 @@ For authenticated native Codex checks, use a disposable signed-in sandbox:
   --browser --output /tmp/factory-native-codex-features.json
 ```
 
-This exercises native file tools, web search, compaction and continued work,
-CLI execution, and credential isolation. `--browser` also checks the managed
-browser MCP tool; start the sandbox's browser viewer first. The check creates
-`/workspace/codex-native-feature.txt` and an isolated Codex home, leaving the
-sandbox's existing chats in place. `--codex-home` selects another fixture home
-under `/home/node/.codex-*`; `--timeout` sets the allowance per native operation.
-The `test_native_codex_features` unit suite checks useful failure diagnostics and
-credential redaction without inference.
+This exercises native files, CLI execution, web search, compaction, continued work
+and credential isolation. Start that sandbox's browser viewer before `--browser`.
+It creates `/workspace/codex-native-feature.txt` and an isolated home;
+`--codex-home` selects another `/home/node/.codex-*` fixture home. `--timeout`
+sets the allowance per native operation. Existing chats stay in place.
 
-To check the saved web-search choice in both native Codex clients:
+To check Codex's saved search choice in both CLI and VS Code:
 
 ```sh
 .venv/bin/python tests/native_codex_web_search.py \
   --state /path/to/disposable-state/SANDBOX \
-  --workspace-container DISPOSABLE_WORKSPACE_CONTAINER \
-  --chromium /path/to/chromium \
-  --output /tmp/factory-native-web-search
+  --workspace-container DISPOSABLE_WORKSPACE_CONTAINER --chromium /path/to/chromium \
+  --output /tmp/factory-codex-web-search
 ```
 
-This runs four short turns: search enabled and disabled in the CLI and VS Code.
-It checks native configuration and search-tool records, uses **Developer: Reload
-Window** when applying the choice, then restores the original saved choice and
-checks it after reopening. The browser runs headlessly in a separate temporary
-profile. `--url` overrides the editor address saved in the sandbox state.
+It runs one enabled and one disabled turn in each client, inspects native tool
+records, reloads VS Code through **Developer: Reload Window**, and restores the
+original choice. `--url` overrides the editor address in the saved state.
 
-Use `--capacity --reload --cancel` to exercise one workspace process, then ten
-concurrent processes through the native browser panel, followed by chat recovery.
-Codex starts ten independent native shell calls. For Claude and Antigravity,
-one workspace shell call starts ten child processes. The test checks that all ten
-are running before releasing them, verifies their completion, and saves the
-measured process intervals in `capacity.json`. This exercises the shipped editor
-and its inherited environment; it does not claim ten concurrent Claude or Antigravity tool calls.
+### Authenticated browser editors
 
-For Codex, `--background-controls` starts two resumable workspace commands and
-checks the native list, terminate and clean operations. It verifies both process
-IDs are gone and the final list is empty.
+The common harness builds the selected images, installs the pinned official
+extension through the production installer and starts the production editor
+launcher. It needs rootless Podman, Python Playwright, Chromium and the extracted
+code-server version pinned by Factory. Select only the agent being checked:
 
-Check fresh terminal launches as well: the selected workspace should not require
-a trust confirmation. Claude must retain Auto mode and its restricted tools;
-Antigravity must retain its tool policy. Test a starting subfolder, including a
-non-ASCII name. Trust must not import project settings into the private controller.
-Run `.venv/bin/python tests/primary_workspace_trust.py --image CODEX_CONTROLLER_IMAGE`
-to check the real Codex parser with ordinary, dotted, Unicode, quoted and escaped
-paths. Existing trust choices for other folders must stay unchanged.
-This check uses no credentials or network connection and also verifies that the
-automatic reviewer remains enabled.
+```sh
+PYTHONPATH=. .venv/bin/python tests/native_browser_editor.py claude \
+  --code-server /path/to/code-server-4.145.2-linux-amd64 --chromium /path/to/chromium \
+  --output /tmp/factory-claude-editor \
+  --controls --attachments --browser --credential-attack --deny --reload --cancel --web-search
+```
 
-Run `PYTHONPATH=tests:. .venv/bin/python -m unittest test_native_editor_protocol`
-for protocol validation, credential-response filtering, idle chat handoff,
-concurrent writer rejection and process cleanup. Run
-`.venv/bin/python tests/primary_worker_tools.py --image WORKSPACE_IMAGE` for the
-offline worker check: one baseline command, ten concurrent commands, five
-cancellations, a subsequent command and child-process cleanup.
+Use `codex` or `agy` for the other agents. The baseline performs two different
+workspace edits and checks that VS Code's unrelated built-in chat is hidden.
+All fixtures use a separate Chromium profile and remove their containers and
+volumes. Diagnostics and screenshots go to `--output`.
 
-`tests/primary_claude_errors.py --image CLAUDE_CONTROLLER_IMAGE` checks diagnostic
-filtering with a local fake API server and a synthetic credential. It checks
-native streaming events and saved history without contacting Anthropic. This is
-a defensive filter regression, not a test of subscription sign-in. The browser
-test's `--api-error` option checks the same error display and next-turn recovery.
+| Option | Required observation |
+| --- | --- |
+| `--controls` | Native model selection; Codex/Claude effort and approval controls complete real workspace tools |
+| `--attachments` | Codex/Claude receive a PNG; Antigravity receives a file and image, with Explorer uploads disabled; uploaded images remain in the reopened chat |
+| `--browser` | Enables Factory’s browser tool. Claude uses it to control Chromium from the editor. Codex and Antigravity exercise Chromium in the CLI checks above. |
+| Claude `--web-search` | Checks native WebSearch off and on after a window reload, then restores the saved choice. |
+| `--credential-attack` | A real VS Code extension reads and writes through Node, VS Code APIs or Antigravity Secret Service; only placeholders are visible and private auth is unchanged |
+| `--deny` | Deny a command and confirm its file is absent. Claude and Codex switch to manual in the editor. For Antigravity, add `--approval manual` at launch. |
+| `--reload` | Saved context answers the next turn without rereading workspace files; denial is checked again when selected |
+| `--cancel` | Stop interrupts a confirmed running command and the next turn succeeds; Claude's process exits, while Codex may require native cleanup of a resumable command |
+| `--capacity` | One baseline process, then ten concurrent processes finish and recover; intervals are saved in `capacity.json` |
+| Codex `--isolation` | Native image/patch tools use workspace files rather than companion files, confirmed by native tool records |
+| Codex `--background-controls` | Two resumable commands can be listed, terminated and cleaned; both process IDs disappear and the final list is empty |
+
+Capacity uses ten independent native shell calls for Codex. Claude/Antigravity
+use one native shell call that starts ten children; this does not establish ten
+concurrent native tool calls. Run `--capacity --reload --cancel` for recovery.
+
+Use the default approval mode with Claude's `--controls` to check that a fresh
+sandbox opens in Auto.
+
+On fresh homes, require automatic trust for the selected project and starting
+folder, Codex **Approve for me**, Claude **Auto**, and Antigravity's selected
+approval mode. Collect transient trust warnings as well as final screenshots.
+Test each CLI and extension version together. Claude's standard extension uses
+its bundled CLI; setting `claudeProcessWrapper` changes upstream defaults and
+is not Factory's native path. After reload, wait for native restoration before
+opening history again. A native conversation-ownership notice is separate from
+folder trust. Use the official handoff for the idle test chat if Claude asks.
 
 ## FrostPi editor and shared Pi goals
 
@@ -1101,19 +1145,17 @@ use Textual's `App.export_screenshot()` for SVG captures with fixture data.
 
 ## Primary coding agents
 
-Run `PYTHONPATH=tests .venv/bin/python -m unittest test_primary_workspace test_primary_agents test_primary_agents_ui`
-for saved metadata, protected mount validation, sign-in selection, and the terminal
-forms. Render the first creation screen, review, sign-in and Settings with
+Use the [native agent regressions](#native-agent-regression-checks) to test sign-in,
+trust, approval and search settings, the CLI and the browser editor. Render the
+first creation screen, review, sign-in and Settings with
 `PYTHONPATH=tests .venv/bin/python tests/render_primary_agents.py /tmp/factory-primary-ui`.
 
-Use a disposable workspace and a separate Factory state directory for runtime
-checks. Create one sandbox per coding agent. Exercise **Sign in** and **Copy sign-in
-from this computer** from Settings, then open the agent and read and write a file in
-the workspace. Inspect the workspace mount list and the separate sign-in container.
-The workspace should contain no private sign-in volume, keyring bus, or container
-engine socket. Repeat with restricted network, a read-only folder, a skill from
-the library and the optional browser. Stop and reopen the sandboxes and delete the
-disposable state when finished.
+For a manual TUI check, use a disposable workspace and a separate Factory
+state directory. Select **Copy sign-in from this computer** or choose **Sign in**
+for a fresh login. Open the client, read and write a workspace file, then stop
+and reopen the sandbox. If your change affects folder grants or skill setup,
+include a read-only mount and a library skill. Delete the disposable state
+when finished.
 
 ## Communications
 
@@ -1443,6 +1485,15 @@ Run `PYTHONPATH=tests .venv/bin/python -m unittest test_connectors test_connecto
 
 With local rootless Podman, run `PYTHONPATH=. .venv/bin/python tests/connector_live_settings.py`. The fixture uses a temporary workspace, a synthetic keyring token and the shipped connector container. It checks that permissions change while the workspace and connector keep running, disconnect revokes access and a stopped sandbox stays stopped.
 
+With the current native images built locally, run
+`PYTHONPATH=. .venv/bin/python tests/connector_native_clients.py`. This starts
+Codex, Claude Code and Antigravity with synthetic sign-ins. It checks the launch
+instructions and tests allowed, denied and revoked operations from each workspace.
+
+The `--system-prompt` case in `tests/frostpi_editor.py` checks actual model requests
+in the same Pi CLI and FrostPi chats. It enables a connector, adds a custom prompt,
+changes the SSH destination, then removes both.
+
 ## AWS access
 
 The Python suite checks the compiled STS policy, host profile selection, independent profile copies, selective updates, session renewal and the shell network grant. Run the signing tests in the service image with synthetic credentials and networking disabled.
@@ -1454,9 +1505,3 @@ podman run --rm -i --network=none --read-only --cap-drop=ALL \
 ```
 
 For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.
-
-The `--system-prompt` case in `tests/frostpi_editor.py` checks the actual model requests in the same Pi CLI and FrostPi chats. It enables a connector, adds a custom prompt, changes the SSH destination, then removes both.
-
-For live subscription checks in the official native VS Code extensions, follow the [native editor checks](#native-codex-claude-and-antigravity-browser-editors). They exercise workspace file edits through the production protected controllers.
-
-With the current native controller and worker images built locally, run `PYTHONPATH=. .venv/bin/python tests/connector_native_clients.py`. It launches the installed Codex, Claude Code and Antigravity binaries offline, checks their launch instructions, exercises granted and denied operations from each workspace and revokes access. It uses synthetic credentials and never submits a model prompt.

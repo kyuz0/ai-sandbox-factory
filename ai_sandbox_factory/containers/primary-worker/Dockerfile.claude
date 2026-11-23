@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --from=primary-controller /usr/local/bin/factory-agent /usr/local/bin/factory-agent
+COPY --from=primary-files claude_client.py /opt/primary/claude_client.py
+USER root
+RUN printf '#!/bin/sh\nexec python3 /opt/primary/claude_client.py "$@"\n' > /usr/local/bin/claude && chmod 755 /usr/local/bin/claude
+USER node

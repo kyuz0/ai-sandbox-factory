@@ -24,9 +24,9 @@ def enabled(config):
 
 def network_rules(selected):
     from . import sandbox as core
-    if selected != 'codex':
+    if selected == 'claude':
         return core.parse_rules('\n'.join(PRIMARY_HOSTS[selected]))
-    catalog = json.loads((SOURCE / 'codex_network.json').read_text())
+    catalog = json.loads((SOURCE / (selected + '_network.json')).read_text())
     # Only the shipped service catalog supports domain suffixes. User workspace
     # allowlists retain their existing exact-host validation.
     return [(host, 443) for host in catalog['transport_hosts']] + [
@@ -64,7 +64,7 @@ def image(config):
 
 def worker_context(config):
     args = ['--build-context', f'primary-files={SOURCE}']
-    if agent(config) == 'codex':
+    if agent(config) in ('codex', 'claude', 'agy'):
         args += ['--build-context', f'primary-controller=docker-image://{image(config)}']
     return args
 
@@ -116,9 +116,7 @@ def guidance(config, state):
         'You are working in a AI Sandbox Factory workspace.',
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
-        'Run shell commands and access files only through ' +
-        ('the native tools, which run inside this workspace.' if current == 'codex'
-         else 'the Factory workspace_shell tool, which runs in the workspace container.'),
+        'Run shell commands and access files through the native tools, which run inside this workspace.',
         'The workspace has the following mounts:',
     ]
     lines.extend(f'- {json.dumps(path)} ({"read-only" if read_only else "read and write"})'
@@ -153,20 +151,47 @@ def guidance(config, state):
 def write_context(config, state):
     from .connectors.context import write_text
     write_text(Path(state) / 'primary-agent/context.md', guidance(config, state))
-    if agent(config) == 'codex':
+    if agent(config) in ('codex', 'claude', 'agy'):
         write_text(Path(state) / 'primary-runtime/context.md', guidance(config, state))
 
 
 def prepare_workspace(config, state):
     write_json(Path(state) / 'primary-runtime' / 'cwd.json', folders.container_cwd(config))
-    if agent(config) == 'codex':
-        write_json(Path(state) / 'primary-runtime/settings.json', {
+    if agent(config) in ('codex', 'claude', 'agy'):
+        settings = {
             'working_directory': folders.container_cwd(config),
             'native_approval': options(config.get('options'))['native_approval'],
             'browser': options(config.get('options'))['browser'],
-            'codex_web_search': options(config.get('options'))['codex_web_search'],
             'write_roots': [path for path, read_only in folders.roots(config) if not read_only],
-        })
+        }
+        key = agent(config) + '_web_search'
+        settings[key] = options(config.get('options'))[key]
+        write_json(Path(state) / 'primary-runtime/settings.json', settings)
+
+
+def refresh_workspace_settings(config, *, refresh_auth=False):
+    """Apply Claude's native preferences without restarting its editor or tasks."""
+    if agent(config) != 'claude':
+        return
+    from . import sandbox as core
+    container = core.names(config)[0]
+    current = core.inspect(config, container)
+    if current and current.get('State', {}).get('Running'):
+        commands = [['python3', '/opt/primary/claude_client.py', '--factory-prepare']]
+        if refresh_auth:
+            # Copied native credentials do not always carry an account UUID.
+            # Their service generation may remain stable while subscription
+            # metadata changes. Invalidate only Factory's public-state marker
+            # so an explicit copy refreshes the complete masked native record.
+            commands.insert(0, ['rm', '-f', '/home/node/.claude/.factory-auth-generation'])
+        for command in commands:
+            result = core.run([config['engine'], 'exec', container, *command],
+                              capture=True, stderr=subprocess.PIPE, check=False)
+            if result.returncode:
+                diagnostic = (result.stderr or result.stdout or 'No diagnostic output was returned.').strip()
+                raise ValueError(f'Cannot update Claude Code preferences or copied sign-in in {container} '
+                                 f'(exit {result.returncode}): {diagnostic} '
+                                 'Check the reported file or authentication connection and retry.')
 
 
 def up(config, state):
@@ -207,7 +232,7 @@ def up(config, state):
                      '-v', f'{proxy_conf}:/etc/squid/sandbox.conf:{host_platform.bind_mode()}',
                      '-v', f'{egress}:/run/egress:z', core.image_names(config)[1]]
         else:
-            network = 'bridge' if selected == 'codex' and core.network_mode(config) != 'allowlist' else 'none'
+            network = 'bridge' if selected in ('codex', 'claude', 'agy') and core.network_mode(config) != 'allowlist' else 'none'
             args += ['--network=' + network, '--security-opt=label=disable',
                      '--user', f'{config["uid"]}:{config["gid"]}',
                      '-v', f'{home}:/home/node', '-v', f'{socket}:/run/primary-workspace:ro',
@@ -215,7 +240,7 @@ def up(config, state):
                      '-v', f'{egress}:/run/primary-egress:ro',
                      '-v', f'{directory}:/run/primary-input:ro',
                      '--env', f'FACTORY_PRIMARY_AGENT={selected}']
-            if selected == 'codex' and core.network_mode(config) == 'allowlist':
+            if selected in ('codex', 'claude', 'agy') and core.network_mode(config) == 'allowlist':
                 args += ['-v', f'{core.names(config)[2]}:/run/workspace-egress:ro']
             if engine == 'podman':
                 args += ['--userns=keep-id:uid=1000,gid=1000']
@@ -223,11 +248,11 @@ def up(config, state):
                 args += ['--env', f'{key}={value}']
             args.append(image(config))
         core.run(args)
-    editor_ready = ' && test -S /run/primary-editor/editor.sock' if selected == 'claude' else ''
-    if selected == 'codex':
+    editor_ready = ''
+    if selected in ('codex', 'claude', 'agy'):
         # A saved CA and the socket relay can exist before the HTTPS proxy has
         # bound its listener. Do not launch a client into that startup window.
-        editor_ready = (' && test -S /run/primary-editor/auth.sock && test -s /run/primary-editor/codex-ca.pem'
+        editor_ready = (f' && test -S /run/primary-editor/auth.sock && test -s /run/primary-editor/{selected}-ca.pem'
                         " && bash -c 'true </dev/tcp/127.0.0.1/3130'")
     _wait(config, controller, 'test -f /tmp/factory-primary-ready && test -S /run/primary-egress/proxy.sock' + editor_ready,
           'The coding agent did not start')
@@ -261,15 +286,16 @@ def worker_start(config, container):
     current = agent(config)
     engine = config['engine']
     cwd = folders.container_cwd(config)
-    if current == 'codex':
+    if current in ('codex', 'claude', 'agy'):
         from . import codex_history
-        codex_history.migrate(config, container)
-        _wait(config, container, "bash -c 'true </dev/tcp/127.0.0.1/3130'", 'The Codex authentication connection did not start')
-        core.run([engine, 'exec', container, 'python3', '/opt/primary/codex_client.py', '--factory-prepare'])
-    if current != 'codex' or options(config.get('options'))['browser']:
+        codex_history.migrate(config, container, current)
+    if current in ('codex', 'claude', 'agy'):
+        _wait(config, container, "bash -c 'true </dev/tcp/127.0.0.1/3130'", f'The {AGENTS[current]} authentication connection did not start')
+        core.run([engine, 'exec', container, 'python3', f'/opt/primary/{current}_client.py', '--factory-prepare'])
+    if current not in ('codex', 'claude', 'agy') or options(config.get('options'))['browser']:
         core.run([engine, 'exec', '-d', '-w', cwd, container, 'bash', '/opt/primary/worker.sh', current])
     sockets = []
-    if current != 'codex' or options(config.get('options'))['browser']:
+    if current not in ('codex', 'claude', 'agy') or options(config.get('options'))['browser']:
         sockets.append('tools')
     ready = ' && '.join(f'socat -u /dev/null UNIX-CONNECT:/run/primary-workspace/{socket}.sock'
                         for socket in sockets)
@@ -303,12 +329,20 @@ def _terminal(config, action):
         raise ValueError('Choose Codex, Claude or Antigravity to use this sign-in')
     if not sys.stdin.isatty():
         raise ValueError('Opening the coding agent requires an interactive terminal')
-    if agent(config) == 'codex':
+    if agent(config) == 'claude':
+        args = ['auth', 'login'] if action == 'login' else []
+        core.run([config['engine'], 'exec', '-it', '-w', folders.container_cwd(config), core.names(config)[0],
+                  '/usr/local/bin/claude', *args])
+    elif agent(config) == 'agy':
+        args = ['--factory-login'] if action == 'login' else []
+        core.run([config['engine'], 'exec', '-it', '-w', folders.container_cwd(config), core.names(config)[0],
+                  '/usr/local/bin/agy', *args])
+    elif agent(config) == 'codex':
         args = ['login', '--device-auth'] if action == 'login' else []
         core.run([config['engine'], 'exec', '-it', '-w', folders.container_cwd(config), core.names(config)[0],
                   '/usr/local/bin/codex', *args])
     else:
-        core.run([config['engine'], 'exec', '-it', names(config)[0], 'python3', '/opt/primary/launch.py', action])
+        raise ValueError('Choose Codex, Claude Code or Antigravity to open a native coding agent.')
 
 
 def open_terminal(config, state):
@@ -349,3 +383,7 @@ def copy_host(config, state):
     result = core.run(command, input=payload, capture=True, stderr=subprocess.DEVNULL, check=False)
     if result.returncode:
         raise ValueError('Could not save the host sign-in. Choose Sign in to connect the coding agent.')
+    # Initial startup prepares the worker before copying the host sign-in. The
+    # official Claude editor runs its bundled CLI directly, so seed its public
+    # placeholders now rather than waiting for a terminal-wrapper invocation.
+    refresh_workspace_settings(config, refresh_auth=True)

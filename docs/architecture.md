@@ -85,23 +85,26 @@ different protocol into it.
 Read inference diagnostics with `podman logs --timestamps pi-sandbox-factory-NAME-inference`,
 replacing `NAME` with the sandbox name. Use `docker logs` for a Docker sandbox.
 
-## Codex subscription authentication
+## Native agent subscription authentication
 
-The official Codex CLI and VS Code extension run inside the development container.
-Their native tools operate on the workspace directly. Their configuration and chat
-history live in its persistent home at `/home/node/.codex`.
+The official Codex, Claude Code and Antigravity clients run inside the development
+container. Their native tools operate on the workspace directly. Configuration and
+chat history stay in its persistent home. The clients handle their own chat and
+tool protocols.
 
-A separate credential companion stores the ChatGPT subscription sign-in in its
-private home volume. Codex receives placeholder tokens and sends HTTPS traffic
-through the companion over a shared Unix socket. The companion terminates TLS,
+A separate credential companion stores the selected agent’s subscription sign-in
+in its private home volume. The native client receives placeholder tokens and
+sends HTTPS traffic through the companion over a shared Unix socket. The companion terminates TLS,
 substitutes real tokens only for HTTPS requests on port 443 to the exact
-credential destinations in `containers/primary/codex_network.json`, and masks
-tokens in HTTP responses before returning them to the workspace. It handles both a copied host sign-in
-and OAuth sign-in started inside Codex, including token refresh.
+credential destinations for that agent, and masks tokens in HTTP responses before
+returning them to the workspace. Codex and Antigravity list these destinations in
+`containers/primary/codex_network.json` and `agy_network.json`. Claude’s API and OAuth
+routes are defined in `claude_auth_proxy.py`. The companions handle copied host
+sign-ins, OAuth started through Factory and token refresh.
 
-That catalog also allows native service traffic, including feature settings and
-OpenAI assets. Allowing transport to a domain does not grant it account tokens.
-The cloud portal uses a separate HTTP/2 CONNECT relay inside the companion;
+The destination lists also allow native service traffic, including feature settings
+and provider assets. Allowing transport to a domain does not grant it account tokens.
+Codex’s cloud portal uses a separate HTTP/2 CONNECT relay inside the companion;
 it replaces recognized authorization placeholders and forwards tunnel data
 without interpreting SSH or Codex messages.
 
@@ -110,6 +113,16 @@ Only its public CA certificate and proxy socket are shared. Workspace processes
 can use the subscription through this connection; protecting the tokens does
 not prevent permitted requests from consuming quota. Other destinations follow
 the sandbox's configured network mode and gateway rules.
+
+Claude stores its workspace placeholders in its normal credentials file.
+Antigravity uses a separate workspace Secret Service containing placeholders;
+the companion’s keyring and D-Bus socket are not mounted into the workspace.
+A compromised extension can use the permitted subscription service but cannot
+read or overwrite the real sign-in through these workspace stores.
+
+Antigravity’s native chat runs on a separate authenticated browser origin.
+Factory lets the owning VS Code window embed it and forwards the native
+chat APIs, attachments and tool messages unchanged.
 
 ## Commands, approval and skills
 

@@ -11,7 +11,11 @@ from ai_sandbox_factory.sandbox_options import write_json
 
 
 def podman(*args, **kwargs):
-    return subprocess.run(['podman', *args], text=True, capture_output=True, check=True, **kwargs).stdout.strip()
+    try:
+        return subprocess.run(['podman', *args], text=True, capture_output=True, check=True, **kwargs).stdout.strip()
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or 'No diagnostic output was returned.').strip()
+        raise RuntimeError(f'podman {args[0]} exited {error.returncode}: {detail}') from None
 
 
 def main():

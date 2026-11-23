@@ -19,10 +19,12 @@ from ai_sandbox_factory.sandbox_tui import (
 )
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
+from ai_sandbox_factory.primary_workspace import WEB_SEARCH_OPTIONS
+from ai_sandbox_factory.tui_widgets import Checkbox
 from textual.widgets import Button, Collapsible, Input, Select, TextArea
 
 
-async def capture(root, size, approvals_only=False):
+async def capture(root, size, approvals_only=False, web_search_only=False, initial_only=False):
     with tempfile.TemporaryDirectory(prefix='factory-ui-primary-') as tmp:
         state = Path(tmp)
         project = state / 'projects' / ('transit-service' * 5)
@@ -53,6 +55,53 @@ async def capture(root, size, approvals_only=False):
                     path = root / f'{name}-{size[0]}x{size[1]}.svg'
                     path.write_text(app.export_screenshot())
                     print(path.name, flush=True)
+
+                if web_search_only:
+                    for agent, key in WEB_SEARCH_OPTIONS.items():
+                        for editing in ((False,) if initial_only else (False, True)):
+                            draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                            draft.update(name='transit', workspace=str(project), primary_agent=agent,
+                                         primary_auth='copy', editor={'mode': 'browser'}, model_providers={})
+                            form = SettingsForm(draft, editing=editing,
+                                                setting='network-settings' if editing else None)
+                            await app.push_screen(form)
+                            prefix = 'search-' + agent + ('-saved-' if editing else '-create-')
+                            section = form.query_one('#network-section', Collapsible)
+                            if not editing:
+                                section.collapsed = True
+                                await pilot.pause()
+                                section.scroll_visible(top=True, animate=False)
+                            await shot(prefix + ('initial' if editing else 'collapsed'))
+                            if initial_only:
+                                await app.pop_screen()
+                                continue
+                            section.collapsed = False
+                            choice = form.query_one('#' + agent + '-web-search', Checkbox)
+                            for enabled in (False, True):
+                                choice.value = enabled
+                                choice.focus()
+                                await pilot.pause()
+                                choice.scroll_visible(top=True, animate=False)
+                                await shot(prefix + ('on' if enabled else 'off'))
+                            allowlist = form.query_one('#allowlist', TextArea)
+                            allowlist.load_text('packages.example.test:443\n' + 'long-path-' * 14 + '.example.test:80\n' +
+                                                '\n'.join(f'service-{index}.example.test:443' for index in range(12)))
+                            allowlist.focus()
+                            await shot(prefix + 'populated')
+                            allowlist.load_text('invalid.host:not-a-port')
+                            form.query_one('#apply', Button).press()
+                            await shot(prefix + 'error')
+                            await app.pop_screen()
+                        for enabled in (() if initial_only else (False, True)):
+                            menu = {**config, 'primary_agent': agent, 'options': {**options(), key: enabled}}
+                            app.service.records[0]['config'] = menu
+                            app.refresh_inventory()
+                            await pilot.pause()
+                            await app.workers.wait_for_complete()
+                            await app.push_screen(SettingsMenu('transit', menu, 'browser'))
+                            await shot('search-' + agent + '-menu-' + ('on' if enabled else 'off'))
+                            await app.pop_screen()
+                    return
 
                 if approvals_only:
                     for agent in ('codex', 'claude', 'agy'):
@@ -193,6 +242,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--approvals-only', action='store_true')
+    parser.add_argument('--web-search-only', action='store_true')
+    parser.add_argument('--initial-only', action='store_true')
     parser.add_argument('--size', action='append')
     parser.add_argument('--monochrome', action='store_true')
     args = parser.parse_args()
@@ -204,7 +255,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     async def all_sizes():
         for size in args.size or ['80x24', '120x40', '220x50']:
-            await capture(args.output, tuple(map(int, size.split('x'))), args.approvals_only)
+            await capture(args.output, tuple(map(int, size.split('x'))), args.approvals_only, args.web_search_only, args.initial_only)
     asyncio.run(all_sizes())
 
 

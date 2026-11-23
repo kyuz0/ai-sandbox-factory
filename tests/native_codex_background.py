@@ -1,4 +1,4 @@
-"""Exercise the native background-command controls through Factory's bridge."""
+"""Exercise the native background-command controls through Factory's native workspace client."""
 import json
 import queue
 import subprocess
@@ -15,7 +15,7 @@ signal.pause()
     subprocess.run(['podman', 'exec', '-i', editor, 'tee', '/workspace/background-fixture.py'],
                    input=fixture, text=True, stdout=subprocess.DEVNULL, check=True)
     messages = queue.Queue()
-    process = subprocess.Popen(['podman', 'exec', '-i', editor, 'python3', '/opt/primary/editor_client.py', 'app-server'],
+    process = subprocess.Popen(['podman', 'exec', '-i', editor, '/usr/local/bin/codex', 'app-server'],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=(output / 'background.log').open('w'), text=True)
 
     def read():
@@ -53,7 +53,8 @@ signal.pause()
         raise RuntimeError('Native Codex request did not complete: ' + method)
 
     try:
-        call('initialize', {})
+        call('initialize', {'clientInfo': {'name': 'factory-background-check', 'version': '1'},
+                            'capabilities': {'experimentalApi': True}})
         send({'method': 'initialized'})
         thread = call('thread/start', {})['thread']['id']
         call('turn/start', {'threadId': thread, 'input': [{'type': 'text', 'text':

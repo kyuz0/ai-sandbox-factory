@@ -1,0 +1,10 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --from=primary-controller /usr/local/bin/factory-agent /usr/local/bin/factory-agent
+COPY --from=primary-files agy_client.py /opt/primary/agy_client.py
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends dbus-daemon gnome-keyring libsecret-tools \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '#!/bin/sh\nexec python3 /opt/primary/agy_client.py "$@"\n' > /usr/local/bin/agy \
+    && chmod 755 /usr/local/bin/agy
+USER node

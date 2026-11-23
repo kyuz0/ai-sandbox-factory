@@ -36,6 +36,8 @@ def editor_migration(config):
 # Keep every options key explicit so new settings require an effect assessment.
 OPTION_GROUPS = {
     'codex_web_search': WEB_SEARCH_LABEL,
+    'claude_web_search': WEB_SEARCH_LABEL,
+    'agy_web_search': WEB_SEARCH_LABEL,
     'native_approval': 'Approvals',
     'approval': APPROVALS_LABEL, 'approval_model': APPROVALS_LABEL, 'inner_sandbox': APPROVALS_LABEL,
     'protect_credentials': APPROVALS_LABEL,

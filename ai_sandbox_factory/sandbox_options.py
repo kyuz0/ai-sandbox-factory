@@ -39,6 +39,7 @@ APPROVAL_MODES = {
 }
 DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'native_approval': 'automatic', 'inner_sandbox': True, 'goals': True,
             'scheduling': True, 'question_forms': True, 'browser': True, 'codex_web_search': False,
+            'claude_web_search': False, 'agy_web_search': False,
             'protect_credentials': True, 'protect_browser_credentials': True, 'compaction_recall': 'lite',
             'knowledge_embedding': 'off', 'knowledge_embedding_provider': '', 'knowledge_embedding_url': '', 'knowledge_embedding_model': '',
             'disabled_skills': [], 'web_access': None, 'website_groups': [], 'communications': None,
@@ -102,7 +103,7 @@ def options(value=None):
     if ref != 'current' and (not isinstance(ref, str) or not re.fullmatch(r'[^/\s]+(?:/[^/\s]+)+', ref)
                              or not ref.isprintable()):
         raise ValueError('Select a provider and model for approvals.')
-    for key in ('inner_sandbox', 'goals', 'scheduling', 'question_forms', 'browser', 'codex_web_search', 'protect_credentials', 'protect_browser_credentials'):
+    for key in ('inner_sandbox', 'goals', 'scheduling', 'question_forms', 'browser', 'codex_web_search', 'claude_web_search', 'agy_web_search', 'protect_credentials', 'protect_browser_credentials'):
         if type(result[key]) is not bool:
             raise ValueError(key + ' must be a boolean')
     if result['compaction_recall'] not in ('lite', 'full', 'off'):

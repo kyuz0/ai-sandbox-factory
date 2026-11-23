@@ -311,7 +311,7 @@ class TUILayoutTests(unittest.TestCase):
                 index = list(CATEGORIES).index(action)
                 self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
             self.assertIn('Model Providers · Local models on · 1 enabled', prompts)
-            self.assertIn('Agent tools · Recall Lite · Browser off · Goals on', prompts)
+            self.assertIn('Agent tools · Recall Lite · Browser on · Goals on', prompts)
             self.assertIn('Skills · 0 saved', prompts)
 
     async def test_settings_menu_reads_updated_saved_options(self):

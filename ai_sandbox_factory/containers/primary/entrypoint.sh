@@ -17,13 +17,21 @@ case "$FACTORY_PRIMARY_AGENT" in
         rm -f /run/primary-bus/bus
         dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --nofork --nopidfile &
         printf '\n' | gnome-keyring-daemon --unlock --components=secrets --control-directory=/run/primary-bus/keyring
+        if [[ -S /run/workspace-egress/proxy.sock ]]; then
+            socat TCP-LISTEN:3129,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/workspace-egress/proxy.sock &
+        fi
+        /opt/agy-proxy/bin/python -u /opt/primary/agy_auth_proxy.py &
+        rm -f /run/primary-editor/auth.sock
+        socat UNIX-LISTEN:/run/primary-editor/auth.sock,fork,mode=0600 TCP:127.0.0.1:3130 &
         ;;
-    claude) ;;
+    claude)
+        if [[ -S /run/workspace-egress/proxy.sock ]]; then
+            socat TCP-LISTEN:3129,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/run/workspace-egress/proxy.sock &
+        fi
+        /opt/claude-proxy/bin/python -u /opt/primary/claude_auth_proxy.py &
+        rm -f /run/primary-editor/auth.sock
+        socat UNIX-LISTEN:/run/primary-editor/auth.sock,fork,mode=0600 TCP:127.0.0.1:3130 &
+        ;;
 esac
-if [[ "$FACTORY_PRIMARY_AGENT" == claude ]]; then
-    python3 /opt/primary/editor_bridge.py &
-elif [[ "$FACTORY_PRIMARY_AGENT" == agy ]]; then
-    python3 /opt/primary/agy_editor_bridge.py &
-fi
 touch /tmp/factory-primary-ready
 wait -n

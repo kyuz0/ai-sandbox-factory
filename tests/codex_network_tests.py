@@ -1,13 +1,11 @@
 """Native vendor transport remains distinct from credential substitution."""
-import ast
 import json
-import os
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
 
 from ai_sandbox_factory import primary_agents, sandbox
+from native_editor_environment import editor_environment
 
 SOURCE = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers'
 sys.path.insert(0, str(SOURCE / 'primary'))
@@ -54,41 +52,38 @@ class CodexNetworkTests(unittest.TestCase):
                     proxy.requestheaders(flow)
                     self.assertEqual(flow.server_conn.via, ('http', ('127.0.0.1', 3129)))
 
-    def test_non_codex_gateway_rules_are_unchanged_and_exact(self):
-        for agent in ('claude', 'agy'):
-            self.assertEqual(primary_agents.network_rules(agent),
-                sandbox.parse_rules('\n'.join(primary_agents.PRIMARY_HOSTS[agent])))
+    def test_other_native_gateways_keep_exact_official_destinations(self):
+        self.assertEqual(primary_agents.network_rules('claude'),
+            sandbox.parse_rules('\n'.join(primary_agents.PRIMARY_HOSTS['claude'])))
+        agy = json.loads((SOURCE / 'primary/agy_network.json').read_text())
+        expected = [(host, 443) for host in agy['transport_hosts']]
+        self.assertEqual(primary_agents.network_rules('agy'), expected)
+        self.assertFalse(agy['transport_domains'], 'Antigravity package transport uses exact hosts, not Google-wide suffixes')
+        self.assertTrue(set(sandbox.parse_rules('\n'.join(primary_agents.PRIMARY_HOSTS['agy']))).issubset(expected))
         for domain in NETWORK['transport_domains']:
             with self.assertRaises(ValueError):
                 sandbox.parse_rules('.' + domain + ':443')
 
-    def test_editor_transport_environment_is_codex_only(self):
-        # Execute the shipped environment setup without starting editor processes
-        # or creating homes. Its dependencies here are settings and os.environ.
-        tree = ast.parse((SOURCE / 'editor/launch.py').read_text())
-        start = next(i for i, node in enumerate(tree.body)
-                     if isinstance(node, ast.Assign) and any(
-                         isinstance(target, ast.Name) and target.id == 'env' for target in node.targets))
-        end = next(i for i in range(start + 1, len(tree.body))
-                   if isinstance(tree.body[i], ast.If)
-                   and isinstance(tree.body[i].test, ast.Name)
-                   and tree.body[i].test.id == 'agent_hub_port')
-        code = compile(ast.Module(body=tree.body[start:end], type_ignores=[]), 'editor-environment', 'exec')
+    def test_editor_transport_environment_covers_each_native_client(self):
         inherited = {'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
                      'NODE_EXTRA_CA_CERTS': '/custom/public-ca.pem', 'NODE_OPTIONS': '--require=/existing/preload.cjs',
                      'PASSWORD': 'synthetic-private-value'}
         for agent in ('codex', 'pi', 'claude', 'agy'):
-            with self.subTest(agent=agent), patch.dict(os.environ, inherited, clear=True):
-                namespace = {'os': os, 'settings': {'agent': agent}}
-                exec(code, namespace)
-                environment = namespace['env']
+            with self.subTest(agent=agent):
+                environment = editor_environment(agent, inherited)
                 self.assertNotIn('PASSWORD', environment)
                 self.assertEqual(environment['NODE_OPTIONS'], inherited['NODE_OPTIONS'])
-                if agent == 'codex':
+                if agent != 'pi':
                     for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
                         self.assertEqual(environment[key], 'http://127.0.0.1:3130')
+                    home = {'codex': '.codex', 'claude': '.claude', 'agy': '.gemini'}[agent]
                     for key in ('NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE'):
-                        self.assertEqual(environment[key], '/home/node/.codex/factory-ca.pem')
+                        self.assertEqual(environment[key], '/home/node/' + home + '/factory-ca.pem')
+                    if agent == 'claude':
+                        self.assertEqual(environment['CLAUDE_CONFIG_DIR'], '/home/node/.claude')
+                    if agent == 'agy':
+                        self.assertEqual(environment['AGY_CA_CERT'], '/home/node/.gemini/factory-ca.pem')
+                        self.assertEqual(environment['DBUS_SESSION_BUS_ADDRESS'], 'unix:path=/tmp/factory-agy-session/bus')
                 else:
                     self.assertEqual(environment, {key: value for key, value in inherited.items() if key != 'PASSWORD'})
 

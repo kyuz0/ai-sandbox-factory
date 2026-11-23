@@ -21,7 +21,20 @@ through **Connectors → SSH & Git**. [Managed SSH](ssh.md)
 
 Choose **Apply** to save. Changing only hosts or categories restarts the gateway
 and may disconnect active requests. The sandbox and its terminals keep running.
-Changing **Network mode** or **Web Search** prompts you to recreate the sandbox.
+Changing **Network mode** prompts you to recreate the sandbox. In Pi and FrostPi,
+changing **Web Search** also prompts recreation.
+
+## Native coding agents
+
+For Codex, Claude Code and Antigravity, **Network and Web Search → Enable web search**
+controls the agent’s built-in search. It is off in new sandboxes. Changing this
+setting preserves the sandbox, active terminals and saved chats. Reopen the agent’s
+CLI or reload the VS Code window to apply the choice.
+
+Turning search off in Claude Code and Antigravity leaves ordinary web fetching
+available under the current network rules.
+
+![Native coding-agent network and web-search settings](native-web-search.png)
 
 ## Web search
 
@@ -150,7 +163,7 @@ In an existing target sandbox, leaving this unchecked keeps that target's keys
 for matching providers and endpoints. In a new sandbox, it copies no keys.
 
 Reusable keys are stored separately in
-`~/.config/pi-sandbox-factory/web-access-keys.json` with owner-only permissions
+`~/.config/ai-sandbox-factory/web-access-keys.json` with owner-only permissions
 (or under `XDG_CONFIG_HOME`). Each new sandbox receives its own copy. Keys are
 matched to the provider and endpoint and are never included in `cockpit.json`,
 profile packages or exported options. Removing a key and saving defaults again

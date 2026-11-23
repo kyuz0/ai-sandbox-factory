@@ -1,0 +1,5 @@
+{
+  "credential_hosts": ["oauth2.googleapis.com", "www.googleapis.com", "daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com", "aicode.googleapis.com", "play.googleapis.com"],
+  "transport_hosts": ["accounts.google.com", "oauth2.googleapis.com", "www.googleapis.com", "daily-cloudcode-pa.googleapis.com", "cloudcode-pa.googleapis.com", "aicode.googleapis.com", "play.googleapis.com", "antigravity.google", "antigravity.google.com", "auth.cloud.google", "lh3.googleusercontent.com", "www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com", "storage.googleapis.com", "safebrowsing.googleapis.com"],
+  "transport_domains": []
+}
