@@ -423,7 +423,7 @@ def check_streaming_metrics(frame, send, output):
 
 
 
-def check_pi_nonblocking_questions(inside, output):
+def check_pi_question_workflows(inside, output):
     def tmux(*args):
         return inside('tmux', '-S', '/tmp/factory-question-test.sock', *args)
 
@@ -444,6 +444,17 @@ def check_pi_nonblocking_questions(inside, output):
     tmux('new-session', '-d', '-s', 'pi', '-c', '/workspace', '-x', '110', '-y', '36', command)
     try:
         wait_for_text('rpiv-ask-user-question')
+        enter('Factory terminal blocking question fixture')
+        wait_for_text('Choose a fruit now?')
+        tmux('send-keys', '-t', 'pi', 'Down', 'Enter')
+        transcript = wait_for_text('FACTORY BLOCKING ANSWER RECEIVED')
+        (output / 'pi-blocking-answer.txt').write_text(transcript)
+        enter('Factory terminal blocking question fixture again')
+        wait_for_text('Choose another fruit now?')
+        tmux('send-keys', '-t', 'pi', 'Escape')
+        transcript = wait_for_text('FACTORY BLOCKING QUESTION DISMISSED')
+        (output / 'pi-blocking-cancel.txt').write_text(transcript)
+        print('PASS Pi terminal blocking questions accept an answer and cancellation.')
         enter('Factory deferred question fixture terminal')
         wait_for_text('FACTORY WORK CONTINUED')
         wait_for_text('Questions (1) · /questions')
@@ -1233,7 +1244,7 @@ p.write_text(json.dumps(v))
                     assert not errors, errors
                     browser.close()
                     print('PASS FrostPi deferred questions deliver answers and survive Stop and a Pi process restart.')
-                    check_pi_nonblocking_questions(inside, output)
+                    check_pi_question_workflows(inside, output)
                     return
                 send('/auto-review-settings')
                 frame.get_by_role('button', name='Reviewer model', exact=True).wait_for(timeout=15000)

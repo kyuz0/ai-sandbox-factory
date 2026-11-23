@@ -1,4 +1,4 @@
-"""Check question-form toggles in installed Pi and the shipped Pendant worker, offline."""
+"""Check question-form toggles and model guidance in installed Pi, offline."""
 import argparse
 import json
 from pathlib import Path
@@ -21,8 +21,7 @@ def main():
             '--userns=keep-id:uid=1000,gid=1000', '--user', '1000:1000',
             '--entrypoint', 'sleep', args.image, 'infinity', capture_output=True)
         for source, target in [('pi_sandbox_factory/containers/dev/bootstrap.py', 'bootstrap.py'),
-                               ('tests/check_question_forms.mjs', 'check.mjs'),
-                               ('tests/check_pendant_worker.cjs', 'pendant.cjs')]:
+                               ('tests/check_question_forms.mjs', 'check.mjs')]:
             run('cp', str(root / source), name + ':/tmp/' + target)
         baseline = None
         for enabled in (None, False, False, True):
@@ -39,7 +38,6 @@ def main():
             assert any('/pi-auto-review/' in p for p in security), 'Automatic reviewer missing'
             assert any('/pi-permission-system/' in p for p in security), 'Permission system missing'
             run('exec', name, 'node', '/tmp/check.mjs')
-            run('exec', name, 'node', '/tmp/pendant.cjs', '--question-forms-only')
         print('PASS default, disable, repeated disable, re-enable; security extensions unchanged')
     finally:
         subprocess.run(['podman', 'rm', '-f', '-v', name], check=False, capture_output=True)

@@ -217,7 +217,10 @@ It pauses and revises a goal in FrostPi, checks its objective and usage in stand
 then resumes and completes it in the same session.
 Use `--nonblocking-questions` to verify a deferred answer reaches Pi while
 work continues. The FrostPi check stops and restarts the session with a question
-pending. The terminal check answers through `/questions`.
+pending. The terminal check answers and cancels blocking questions, then answers
+a deferred question through `/questions`.
+The installed-Pi question-form toggle check also verifies that both the plain-text
+form guidance and the `waitForAnswer` option reach Pi from the pinned extension.
 
 Use `--reviewed-file-access automatic`, `assisted` and `manual` in separate runs
 to check one-time access to Pi resources. The fixture verifies the exact file
@@ -577,15 +580,16 @@ interact with its form and save screenshots. The model/reviewer replies are synt
 
 ## Question forms
 
-Test the enabled default, disabling forms and enabling them again in both installed
-Pi and the actual Pendant worker, without inference or network access:
+Test the enabled default, disabling forms and enabling them again in installed
+Pi, without inference or network access:
 
 ```sh
 .venv/bin/python tests/question_forms_container.py --image YOUR_FACTORY_DEV_IMAGE
 ```
 
 The check uses a disposable container and verifies that permission and automatic
-review extensions remain registered throughout.
+review extensions remain registered throughout. The FrostPi browser check above
+exercises the shipped webview, including answers and cancellation.
 
 ## Hosted model connections
 

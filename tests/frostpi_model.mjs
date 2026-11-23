@@ -307,6 +307,19 @@ http.createServer((request, response) => {
       const required = ['bash_escalate', 'ask_user_question'];
       if (!required.every(name => tools.includes(name))) throw new Error('Managed tools missing: ' + tools);
       delta = { content: 'FACTORY TOOLS READY' };
+    } else if (userText.startsWith('Factory terminal blocking question fixture')) {
+      delta = choice('ask_user_question', { waitForAnswer: true, questions: [{
+        header: 'Blocking', question: userText.endsWith(' again') ? 'Choose another fruit now?' : 'Choose a fruit now?',
+        options: [{ label: 'Apple (Recommended)', description: 'First choice' },
+          { label: 'Pear', description: 'Second choice' }],
+      }] });
+      delta.tool_calls[0].id = 'factory-terminal-question-' + Date.now();
+    } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-terminal-question-')) {
+      const answer = String(last.content);
+      delta = { content: answer.includes('User declined to answer questions')
+        ? 'FACTORY BLOCKING QUESTION DISMISSED'
+        : answer.includes('"Choose a fruit now?"="Pear"')
+          ? 'FACTORY BLOCKING ANSWER RECEIVED' : 'FACTORY UNEXPECTED BLOCKING ANSWER' };
     } else if (userText.startsWith('Factory deferred question fixture')) {
       delta = choice('ask_user_question', { waitForAnswer: false, questions: [{
         header: 'Preference', question: 'Which fruit should I use later?',
