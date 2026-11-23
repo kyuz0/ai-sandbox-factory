@@ -270,9 +270,9 @@ class TUILayoutTests(unittest.TestCase):
 
     async def test_create_and_edit_share_category_names_and_order(self):
         from pi_sandbox_factory.settings_catalog import CATEGORIES
-        expected_order = ['Model Providers', 'Editor', 'Folders', 'Document search', 'Network and Web Search', 'Approvals & sandbox',
+        expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
                           'Agent tools', 'Custom system prompt add-on', 'Advisors (Codex/Claude/Antigravity)', 'Communications',
-                          'Skills', 'Connectors', 'Resources & environment']
+                          'Skills', 'Connectors', 'Document search', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
@@ -280,7 +280,7 @@ class TUILayoutTests(unittest.TestCase):
             draft['local_model_ports'] = self.record['config']['local_model_ports']
             await app.push_screen(SettingsForm(draft))
             await pilot.pause()
-            sections = {v.section for k, v in CATEGORIES.items() if k != 'document-search'}
+            sections = {v.section for v in CATEGORIES.values()}
             category_widgets = [section for section in app.screen.query('*') if section.id in sections]
             titles = {section.id: (section.title if isinstance(section, Collapsible) else
                                    str(section.query_one('#document-search-summary').render())) for section in category_widgets}
@@ -304,7 +304,7 @@ class TUILayoutTests(unittest.TestCase):
             menu = app.screen.query_one('#settings-actions', OptionList)
             prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
             editing = [prompt.split(' · ', 1)[0] for prompt in prompts]
-            self.assertEqual(creation, [label for label in expected_order if label != 'Document search'])
+            self.assertEqual(creation, expected_order)
             self.assertEqual(editing, expected_order)
             for action in ('models', 'editor-settings', 'connectors', 'network-settings', 'approval-settings',
                            'agent-tools', 'advisors', 'communications'):
@@ -432,6 +432,49 @@ class TUILayoutTests(unittest.TestCase):
             self.assertIn('Goals off', section.title)
             self.assertFalse(form.query('#knowledge-embedding, #embedding-url, #embedding-model'))
 
+    async def test_local_knowledge_has_visible_document_search_and_contextual_help_at_each_size(self):
+        for size in ((80, 24), (120, 40), (220, 50)):
+            app = self.app()
+            async with app.run_test(size=size) as pilot:
+                await self.ready(app, pilot)
+                draft = preset('local-knowledge', copy.deepcopy(DEFAULT_SETTINGS))
+                draft.update(name='demo', workspace=str(self.workspace))
+                form = SettingsForm(draft)
+                await app.push_screen(form)
+                await pilot.pause()
+                section = form.query_one('#document-search-section', Collapsible)
+                configure = form.query_one('#configure-document-search', Button)
+                self.assertTrue(section.collapsed)
+                self.assertFalse(form.query_one('#hosted-section', Collapsible).collapsed)
+                self.assertNotIn(form.query_one('#skills-section'), section.ancestors)
+                section.collapsed = False
+                await pilot.pause()
+                configure.focus()
+                await pilot.pause()
+                self.assertEqual(section.title, 'Document search · Keyword search')
+                effect = str(form.query_one('#document-search-effect', Static).render())
+                self.assertIn('Keyword search is selected', effect)
+                self.assertIn('Configure', effect)
+                self.assertIs(app.focused, configure)
+                self.assertTrue(form.query_one('.form').region.contains_region(configure.region))
+                self.assertLess(form.query_one('#apply').region.bottom, form.query_one('Footer').region.y)
+                form.query_one('#document-search-help', Button).focus()
+                await pilot.press('enter')
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, 'DocumentSearchHelp')
+                close = app.screen.query_one('#close-document-search-help', Button)
+                self.assertTrue(app.screen.query_one('#confirm-box').region.contains_region(close.region))
+                viewport = app.screen.query_one('#document-search-help-fields')
+                self.assertEqual(viewport.vertical_scrollbar.region.x, close.region.right)
+                if size == (220, 50):
+                    self.assertEqual(viewport.max_scroll_y, 0)
+                content = ' '.join(str(item.render()) for item in app.screen.query(Static))
+                for phrase in ('Folders', 'Read-only', 'Keyword search', 'Semantic search', 'Index the documents', 'refresh', 'private home', 'embedding provider', 'chat model'):
+                    self.assertIn(phrase, content)
+                await pilot.press('escape')
+                self.assertIs(app.screen, form)
+                self.assertEqual(form.document_search['knowledge_embedding'], 'off')
+
     async def test_document_search_dialog_cancel_validation_and_save_draft(self):
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -440,10 +483,9 @@ class TUILayoutTests(unittest.TestCase):
             form = SettingsForm(draft)
             await app.push_screen(form)
             await pilot.pause()
-            form.query_one('#skills-section', Collapsible).collapsed = False
+            form.query_one('#document-search-section', Collapsible).collapsed = False
             await pilot.pause()
             configure = form.query_one('#configure-document-search', Button)
-            self.assertEqual(form.query_one('#document-search-section').region.height, 1)
             configure.focus()
             await pilot.pause()
             await pilot.press('enter')
@@ -459,7 +501,9 @@ class TUILayoutTests(unittest.TestCase):
             self.assertTrue(dialog.query_one('#embedding-url-error').display)
             dialog.query_one('#embedding-url', Input).value = 'https://vectors.example/v1'
             await pilot.pause()
-            dialog.query_one('#embedding-model', Input).value = 'invalid model'
+            dialog.query_one('#embedding-model', Input).focus()
+            dialog.query_one('#embedding-model', Input).value = ''
+            await pilot.press('tab')
             await pilot.pause()
             self.assertTrue(dialog.query_one('#embedding-model-error').display)
             dialog.query_one('#embedding-model', Input).value = 'test-embedding'
@@ -477,7 +521,11 @@ class TUILayoutTests(unittest.TestCase):
             await pilot.click('#save-document-search')
             await pilot.pause()
             self.assertIs(app.screen, form)
-            self.assertIn('Semantic search', str(form.query_one('#document-search-summary').render()))
+            self.assertIn('Semantic search', form.query_one('#document-search-section', Collapsible).title)
+            effect = str(form.query_one('#document-search-effect', Static).render())
+            self.assertIn('Selected embedding model', effect)
+            self.assertIn('test-embedding', effect)
+            self.assertIn('Configure', effect)
             self.assertEqual(form.collect()[0]['options']['knowledge_embedding_model'], 'test-embedding')
             self.assertEqual(draft['options'].get('knowledge_embedding', 'off'), 'off')
 
@@ -492,7 +540,7 @@ class TUILayoutTests(unittest.TestCase):
                 await app.push_screen(form)
                 await pilot.pause()
                 if not editing:
-                    form.query_one('#skills-section', Collapsible).collapsed = False
+                    form.query_one('#document-search-section', Collapsible).collapsed = False
                     await pilot.pause()
                 form.query_one('#configure-document-search').focus()
                 await pilot.press('enter')
@@ -509,7 +557,7 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertEqual(form.document_search['knowledge_embedding'], 'local' if editing else 'off')
                 await app.pop_screen()
 
-    async def test_agent_tools_contains_document_search_and_menu_shortcut_opens_it(self):
+    async def test_document_search_is_independent_of_agent_tools_and_menu_shortcut_opens_it(self):
         self.record['config']['options'] = {'knowledge_embedding': 'endpoint',
             'knowledge_embedding_url': 'https://vectors.example/v1', 'knowledge_embedding_model': 'test-embedding'}
         app = self.app()
@@ -527,7 +575,8 @@ class TUILayoutTests(unittest.TestCase):
                 form = app.screen
                 self.assertFalse(form.query('#embedding-url, #embedding-model, #knowledge-embedding'))
                 if action == 'agent-tools':
-                    self.assertIn(form.query_one('#skills-section'), form.query_one('#document-search-section').ancestors)
+                    self.assertNotIn(form.query_one('#skills-section'), form.query_one('#document-search-section').ancestors)
+                    self.assertFalse(form.query_one('#document-search-section').display)
                     self.assertNotIn('search', prompt.lower())
                     self.assertNotIn('search', form.query_one('#skills-section', Collapsible).title.lower())
                 else:

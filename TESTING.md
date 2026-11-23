@@ -19,6 +19,16 @@ mkdir -p "$TMPDIR"
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
+Async tests and the TUI screenshot renderer require local socket IPC. In a
+restricted agent shell, blocked socket writes can leave Python waiting in
+`shutdown_default_executor()` after the checks finish. Run this control if a
+shutdown hangs; if socket writes are denied, rerun with elevated local execution
+permissions before treating it as a Factory bug. This control needs no internet.
+
+```sh
+python3 -c 'import socket; a,b=socket.socketpair(); b.send(b"x"); print(a.recv(1))'
+```
+
 ## Package installation
 
 Install the wheel outside the checkout and check `--help`, `profile list` and
@@ -154,6 +164,14 @@ test's `--api-error` option checks the same error display and next-turn recovery
 
 ## FrostPi editor and shared Pi goals
 
+`python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox` is a required
+release gate. It builds the current base profile and exercises both shipped
+clients with a fresh private home and existing project settings. It checks that
+project instructions load without a trust warning, workspace and mounted-folder
+operations work, private files stay protected, and project permission overrides
+cannot bypass Factory's rules. The test does not seed trust itself. GitHub
+releases require this job to pass alongside the Python and package checks.
+
 Use `--standalone` in place of `--code-server` and its directory to exercise **FrostPi in browser**. It opens a new chat, sends a prompt to the local test model, reloads the page and resumes the saved conversation. The test also checks workspace browsing on desktop and phone, Markdown links and images, keyboard navigation, draft preservation, and the workspace and browser access rules. It checks that transfers start disabled, uploads and downloads a binary file, checks both copies byte for byte and verifies that duplicate names and interrupted uploads preserve existing files.
 
 Build the Factory image from the current checkout in a disposable sandbox.
@@ -229,8 +247,9 @@ Run `--local-knowledge off` with the Local Knowledge profile image to check that
 both clients can find text without an embedding request. Run `--local-knowledge endpoint`
 with the optional pi-knowledge layer to ask the agent to index PDF and DOCX files
 in a read-only mount, search both formats and refresh the index in both clients.
-It also checks that source files are unchanged, a link outside the allowed folders
-is rejected, slash commands still work, and disabling and re-enabling embeddings
+It also verifies PDF extraction to scratch storage, rejection of conversion output
+to the read-only source folder, unchanged source files, rejection of a link outside
+the allowed folders, working slash commands, and disabling and re-enabling embeddings
 preserves the saved index. The
 embedding server is a loopback fixture. The test container has no outbound network access. Use
 `--profile-prompt pi_sandbox_factory/profiles/deep-research` with the Deep Web

@@ -102,6 +102,8 @@ function knowledgeReply(messages, tools) {
     ['knowledge_add', {source: '/mnt/reference', name}, /2 files/],
     ['knowledge_search', {query: 'DOCX_SOURCE_842', kb_id: name, mode: 'semantic'}, /DOCX_SOURCE_842/],
     ['knowledge_search', {query: 'PDF_SOURCE_842', kb_id: name, mode: 'semantic'}, /PDF_SOURCE_842/],
+    ['bash', {command: 'cd /tmp && pdfinfo /mnt/reference/maintenance.pdf >/tmp/factory-pdf-info.txt && pdftotext -layout /mnt/reference/maintenance.pdf factory-doc-verify.txt && grep PDF_SOURCE_842 factory-doc-verify.txt | head -3'}, /PDF_SOURCE_842/],
+    ['bash', {command: 'pdftotext -layout /mnt/reference/maintenance.pdf /mnt/reference/denied.txt'}, /Denied by policy|Read-only file system|Permission denied|Couldn.t open text file/i],
   ];
   for (const [index, result] of results.entries()) {
     if (!steps[index]?.[2].test(String(result.content)))
@@ -228,6 +230,9 @@ http.createServer((request, response) => {
       await streamOutputBurst(response);
       return;
     } else if (context.includes('RUN_FACTORY_FOLDER_ACCESS')) {
+      if (!JSON.stringify(messages.filter(message => message.role === 'system')).includes('FACTORY FRESH PROJECT CONTEXT MARKER')) {
+        throw new Error('Fresh project instructions were skipped');
+      }
       const cases = JSON.parse(readFileSync('/tmp/folder-access-cases.json', 'utf8'));
       const step = messages.filter(message => message.role === 'tool').length;
       if (step < cases.length) {

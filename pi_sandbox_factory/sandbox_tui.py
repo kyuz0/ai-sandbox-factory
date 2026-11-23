@@ -43,7 +43,7 @@ from .connector_fields import ConnectorFields, connector_summary
 from . import hosted_models, inference, provider_credentials
 from .tui_widgets import EntryDialog, Checkbox, Feedback
 from .aws_ui import AWSProfileChoices, AWSProfilePicker
-from .document_search_ui import CUSTOM, DocumentSearchDialog, search_summary
+from .document_search_ui import CUSTOM, DocumentSearchDialog, DocumentSearchHelp, search_description, search_summary
 from . import embedding_models
 from . import sandbox_skills
 from .primary_workspace import AGENTS as PRIMARY_AGENTS, DEFAULT_AUTH, agent as coding_agent
@@ -2969,8 +2969,6 @@ class SettingsForm(Screen):
             for action, category in self.categories.items():
                 if self.native and self.editing and action != self.setting:
                     continue
-                if action == 'document-search' and self.setting != action:
-                    continue
                 compose_category = getattr(self, 'compose_' + action.replace('-', '_'))
                 yield from compose_category(category, value, selected)
             yield Feedback('', id='form-error', classes='error', markup=False)
@@ -3264,13 +3262,24 @@ class SettingsForm(Screen):
         yield CommunicationsForm(selected['communications'], self.defaults_mode, value.get('_communication_keys'))
 
     def compose_document_search(self, category, value, selected):
-        with Horizontal(id=category.section):
-            yield Static(self.document_search_summary(), id='document-search-summary')
-            yield Button('Configure…', id='configure-document-search')
+        with Collapsible(title=category.label + ' · ' + self.document_search_summary(),
+                         collapsed=True, id=category.section):
+            if self.setting == 'document-search':
+                yield Static('Search mode: ' + self.document_search_summary(), id='document-search-summary')
+            with Horizontal(id='document-search-actions'):
+                yield Button('Configure…', id='configure-document-search')
+                yield Button('How to search documents…', id='document-search-help')
+            yield Static(search_description(self.document_search, self.document_search_sources),
+                         id='document-search-effect', classes='setting-help', markup=False)
 
     def document_search_summary(self):
         mode = search_summary(self.document_search, self.document_search_sources)
-        return mode if self.setting == 'document-search' else f'{CATEGORIES["document-search"].label} · {mode}'
+        return mode
+
+    @on(Button.Pressed, '#document-search-help')
+    def document_search_help(self, event):
+        event.stop()
+        self.app.push_screen(DocumentSearchHelp())
 
     @on(Button.Pressed, '#configure-document-search')
     def configure_document_search(self, event):
@@ -3292,12 +3301,14 @@ class SettingsForm(Screen):
     def document_search_saved(self, values):
         if values is not None:
             self.document_search = values
-            self.query_one('#document-search-summary', Static).update(self.document_search_summary())
+            self.query_one('#document-search-effect', Static).update(search_description(values, self.document_search_sources))
+            mode = self.document_search_summary()
+            self.query_one('#document-search-section', Collapsible).title = CATEGORIES['document-search'].label + ' · ' + mode
+            if self.query('#document-search-summary'):
+                self.query_one('#document-search-summary', Static).update('Search mode: ' + mode)
 
     def compose_agent_tools(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
-            if self.setting != 'document-search':
-                yield from self.compose_document_search(CATEGORIES['document-search'], value, selected)
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
@@ -4237,20 +4248,30 @@ class Cockpit(App):
         display: none; height: auto; margin: 1 3 0 3; padding: 0 1;
         background: #30291d; border-left: solid $warning;
     }
-    #document-search-section { height: auto; min-height: 1; padding: 0; margin: 0 0 1 0; }
+    #document-search-section { height: auto; margin: 0 0 1 0; }
     #skills-section.focused-setting > Contents { padding: 0 2 0 0; }
     #document-search-section.focused-setting { padding: 0; background: transparent; }
-    #document-search-summary { width: auto; height: auto; }
-    #configure-document-search { width: auto; margin: 0 0 0 2; padding: 0 2; }
-    #document-search-fields { height: auto; max-height: 68vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
+    #document-search-summary { width: auto; height: auto; margin: 0 0 1 0; }
+    #document-search-actions { height: auto; }
+    #configure-document-search { width: auto; padding: 0 2; }
+    #document-search-help { width: auto; margin: 0 0 0 2; padding: 0 2; }
+    #document-search-fields { height: auto; max-height: 50vh; padding: 0 1 0 0; scrollbar-size-vertical: 1; scrollbar-gutter: auto; overflow: hidden scroll; }
     #document-search-fields .setting { margin: 0; }
-    DocumentSearchDialog.-simple-mode #document-search-fields { padding-bottom: 1; }
-    #document-search-fields Feedback.error { margin-bottom: 1; }
+    #document-search-fields Feedback.error { margin: 1 0 0 0; }
+    #document-search-fields .setting > Select, #document-search-fields .setting > Input { margin: 1 0 0 0; }
+    #knowledge-model-help { margin: 1 0 0 0; }
+    #document-search-fields #embedding-provider-setting, #document-search-fields #embedding-url-setting { margin: 0 0 1 0; }
     #embedding-catalogue-status { height: auto; margin: 0 0 1 0; }
-    .tall-terminal DocumentSearchDialog .dialog-actions { margin: 0; }
+    DocumentSearchDialog .dialog-actions { margin: 1 2 0 0; }
+    DocumentSearchHelp #confirm-box { height: auto; overflow: hidden; }
+    #document-search-help-fields { width: 100%; height: auto; padding: 0 1 0 0; scrollbar-size-vertical: 1; scrollbar-gutter: auto; overflow: hidden scroll; }
+    DocumentSearchHelp .dialog-actions { margin: 1 2 0 0; }
+    DocumentSearchHelp .setting { height: auto; margin: 0 0 1 0; padding: 0 1 0 0; }
+    DocumentSearchHelp .setting:last-child { margin: 0; }
+    DocumentSearchHelp .setting > Label { text-style: bold; }
     #embedding-catalogue-message { height: auto; width: 1fr; }
     #retry-embedding-catalogue { width: auto; margin: 0 0 0 2; padding: 0 2; }
-    #embedding-server-fields { height: auto; padding: 1 1 0 2; }
+    #embedding-server-fields { height: auto; padding: 1 0 0 2; }
     #embedding-mode-setting { margin: 0; }
     .spaced-form-fields .setting > Select, .spaced-form-fields .setting > Input { margin: 1 0; }
     .spaced-form-fields .setting > .path-row { margin: 1 0; }
@@ -4260,13 +4281,7 @@ class Cockpit(App):
     .form .spaced-form-fields Button, .form.spaced-form-fields Button,
     CommunicationsForm Button, SkillSelection Button { padding: 0 2; }
     DocumentSearchDialog #embedding-catalogue SelectOverlay { max-height: 6; offset: 0 -7; }
-    .compact-terminal DocumentSearchDialog #confirm-box { height: auto; max-height: 96%; padding: 0 2; }
-    .compact-terminal DocumentSearchDialog #document-search-fields { height: auto; max-height: 78vh; }
-    .compact-terminal DocumentSearchDialog.-custom-server #confirm-box { padding: 1 2 0 2; border-title-color: #f2b544; }
-    .compact-terminal DocumentSearchDialog.-custom-server #document-search-fields { max-height: 80vh; }
-    .compact-terminal DocumentSearchDialog .dialog-actions { margin: 0; }
-    .compact-terminal DocumentSearchDialog.-field-error #document-search-fields { max-height: 74vh; }
-    .compact-terminal DocumentSearchDialog.-field-error .dialog-actions { margin: 1 0 0 0; }
+    .compact-terminal DocumentSearchDialog #confirm-box { height: auto; max-height: 90%; padding: 1 2; }
     DocumentSearchDialog Feedback.error { color: #ff9184; text-style: bold; }
     DocumentSearchDialog:nocolor Feedback.error { color: white; text-style: bold reverse; }
     #application-update-row { height: auto; }
@@ -4321,7 +4336,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }

@@ -4,6 +4,8 @@
   {"name": "native workspace parent write", "tool": "write", "args": {"path": "/workspace/parent-native.txt", "content": "NATIVE_WORKSPACE_OK"}},
   {"name": "native read-only mount read", "tool": "read", "args": {"path": "/mnt/reference/nested/readme.txt"}, "text": "REFERENCE_OK"},
   {"name": "Bash read-only mount read", "tool": "bash", "args": {"command": "cd /mnt/reference && cat nested/readme.txt"}, "text": "REFERENCE_OK"},
+  {"name": "script reads a read-only mount", "tool": "bash", "args": {"command": "python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())' /mnt/reference/nested/readme.txt"}, "text": "REFERENCE_OK"},
+  {"name": "compound copy reads a read-only mount", "tool": "bash", "args": {"command": "mkdir -p /tmp/document-copy && cp /mnt/reference/nested/readme.txt /tmp/document-copy/readme.txt && cat /tmp/document-copy/readme.txt"}, "text": "REFERENCE_OK"},
   {"name": "native writable mount write", "tool": "write", "args": {"path": "/mnt/output/nested/native.txt", "content": "NATIVE_OK"}},
   {"name": "native writable mount edit", "tool": "edit", "args": {"path": "/mnt/output/nested/native.txt", "edits": [{"oldText": "NATIVE_OK", "newText": "NATIVE_EDIT_OK"}]}},
   {"name": "Bash writable mount read and write", "tool": "bash", "args": {"command": "cat /mnt/output/nested/native.txt && printf BASH_OK > /mnt/output/nested/shell.txt"}, "text": "NATIVE_EDIT_OK"},
@@ -19,5 +21,6 @@
   {"name": "native read-only mount edit denied", "tool": "edit", "args": {"path": "/mnt/reference/nested/readme.txt", "edits": [{"oldText": "REFERENCE_OK", "newText": "NO"}]}, "denied": true},
   {"name": "reverse Bash copy denied", "tool": "bash", "args": {"command": "cp /mnt/output/nested/native.txt /mnt/reference/nested/copy-denied.txt"}, "denied": true},
   {"name": "native credential file read denied", "tool": "read", "args": {"path": "/mnt/output/nested/.env"}, "denied": true},
-  {"name": "Bash copy through credential link denied", "tool": "bash", "args": {"command": "cp /mnt/reference/nested/private-link /mnt/output/nested/denied-secret.txt"}, "denied": true}
+  {"name": "Bash copy through credential link denied", "tool": "bash", "args": {"command": "cp /mnt/reference/nested/private-link /mnt/output/nested/denied-secret.txt"}, "denied": true},
+  {"name": "compound write to a read-only mount is rejected", "tool": "bash", "args": {"command": "printf copy-check; cp /mnt/output/nested/native.txt /mnt/reference/nested/compound-denied.txt"}, "denied": true}
 ]

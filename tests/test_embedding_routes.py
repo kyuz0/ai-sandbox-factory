@@ -112,6 +112,18 @@ class EmbeddingRoutesTests(unittest.TestCase):
         for name in ('knowledge_add', 'knowledge_update', 'knowledge_search'):
             self.assertNotIn(name, off)
 
+    def test_model_ids_keep_valid_spaces_and_errors_explain_the_failing_field(self):
+        from pi_sandbox_factory.sandbox_options import embedding_model, embedding_url
+        self.assertEqual(embedding_model('local embedding model'), 'local embedding model')
+        for invalid in ('', ' ', 'model\nname', 'model\x7fname'):
+            with self.assertRaises(ValueError):
+                embedding_model(invalid)
+        for url, message in [('models.example/v1', 'Start'),
+                             ('https://user:secret@models.example/v1', 'username'),
+                             ('https://models.example/v1?token=secret', 'query')]:
+            with self.assertRaisesRegex(ValueError, message):
+                embedding_url(url)
+
     def test_manifest_validates_batch_limits(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

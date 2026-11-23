@@ -88,7 +88,7 @@ start of each new turn, including in open chats. [System prompt add-ons](docs/us
 
 ### Optional research profiles
 
-- **Local Knowledge** searches a folder of documents and cites the files it uses. [Setup guide](docs/local-knowledge.md) · [Enable embeddings](docs/local-knowledge.md#turn-embeddings-on) · [Disable embeddings](docs/local-knowledge.md#turn-embeddings-off)
+- **Local Knowledge** searches a folder of documents and cites the files it uses. [Setup guide](docs/local-knowledge.md) · [Enable semantic search](docs/local-knowledge.md#turn-embeddings-on) · [Return to keyword search](docs/local-knowledge.md#turn-embeddings-off)
 - **Deep Web Research** searches the web and writes a report with sources. [Setup guide](docs/deep-web-research.md)
 
 For a walkthrough, choose **Getting started…** beside either profile or type

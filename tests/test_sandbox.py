@@ -860,6 +860,25 @@ class EditorTests(unittest.TestCase):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_workspace_trust_is_scoped_and_preserves_explicit_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'shared').mkdir()
+            self.bootstrap(root)
+            trust = root / 'home/.pi/agent/trust.json'
+            self.assertEqual(json.loads(trust.read_text()), {'/workspace': True})
+            self.assertEqual(trust.stat().st_mode & 0o777, 0o600)
+            decisions = {'/workspace': False, '/workspace/app': True, '/other': False}
+            trust.write_text('\ufeff' + json.dumps(decisions))
+            self.bootstrap(root)
+            self.assertEqual(trust.read_text(), '\ufeff' + json.dumps(decisions))
+            trust.write_text('{"/":false}')
+            self.bootstrap(root)
+            self.assertEqual(json.loads(trust.read_text()), {'/': False})
+            trust.write_text('{"/other":true}')
+            self.bootstrap(root)
+            self.assertEqual(json.loads(trust.read_text()), {'/other': True, '/workspace': True})
+
     def test_git_identity_applies_to_new_commits_and_preserves_local_overrides(self):
         from pi_sandbox_factory import git_settings
         with tempfile.TemporaryDirectory() as tmp:

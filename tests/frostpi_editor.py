@@ -317,7 +317,7 @@ def check_folder_access(frame, send, inside, container):
 
     pi_results = []
     command = ['podman', 'exec', '-i', '--workdir', '/workspace/app', container, 'pi', '--mode', 'rpc',
-               '--no-session', '--approve', '--provider', 'fixture', '--model', 'fixture']
+               '--no-session', '--provider', 'fixture', '--model', 'fixture']
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as pi:
         lines = Queue()
 
@@ -338,6 +338,7 @@ def check_folder_access(frame, send, inside, container):
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                assert 'project is not trusted' not in line, line
                 assert not (event.get('type') == 'extension_ui_request'
                             and event.get('method') in ('select', 'confirm', 'input')), event
                 if event.get('type') == 'tool_execution_end':
@@ -363,6 +364,13 @@ def check_folder_access(frame, send, inside, container):
                 failures.append(f'{client} · {step["name"]}\n{text}')
     assert not failures, '\n\n'.join(failures)
     assert inside('cat', '/workspace/parent-native.txt') == 'NATIVE_WORKSPACE_OK'
+    # Both clients must load project resources on first launch, and the actual
+    # managed permission resolver must ignore the project's permissive rules.
+    inside('node', '--input-type=module', '-e', '''
+import assert from 'node:assert/strict';
+import {ProjectTrustStore} from '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/trust-manager.js';
+assert.equal(new ProjectTrustStore('/home/node/.pi/agent').get('/workspace/app'), true);
+''')
     assert inside('cat', '/mnt/output/nested/.env') == 'FOLDER_TEST_TOKEN=synthetic'
     assert inside('find', '/mnt/reference/nested', '-type', 'f') == '/mnt/reference/nested/readme.txt'
     assert inside('cat', '/mnt/reference/nested/readme.txt') == 'REFERENCE_OK'
@@ -829,6 +837,10 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         root = Path(tmp)
         for directory in ('workspace', 'editor', 'code-server-data'):
             (root / directory).mkdir()
+        if startup_only:
+            project = root / 'workspace/.pi'
+            project.mkdir()
+            (project / 'settings.json').write_text('{}')
         if tool_images:
             fixture = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nO3NQQkAAAgEsCtpODsZyhQ+hMH+S/WcikAgEAgEAoFAIPgSLCQx6Fu1gaoXAAAAAElFTkSuQmCC'
             (root / 'workspace/image-fixture.png').write_bytes(base64.b64decode(fixture))
@@ -906,6 +918,16 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if folder_access:
             cwd = '/workspace/app'
             (root / 'workspace/app').mkdir()
+            # Reproduce an existing project in a fresh sandbox, without manually
+            # granting trust in the fixture. Project settings must load, while
+            # project permission overrides must not weaken managed policy.
+            project = root / 'workspace/app/.pi'
+            project.mkdir()
+            (project / 'settings.json').write_text('{"defaultTools":["read","write","edit","bash"]}')
+            (project / 'APPEND_SYSTEM.md').write_text('FACTORY FRESH PROJECT CONTEXT MARKER\n')
+            policy = project / 'extensions/pi-permission-system'
+            policy.mkdir(parents=True)
+            (policy / 'config.json').write_text('{"permission":{"*":"allow"},"yoloMode":true}')
             for directory in ('reference', 'output'):
                 (root / directory / 'nested').mkdir(parents=True)
             (root / 'reference/nested/readme.txt').write_text('REFERENCE_OK')
@@ -991,7 +1013,6 @@ fixture.mkdir(parents=True)
 from pathlib import Path
 file = Path('/home/node/.pi/agent/AGENTS.md')
 file.write_text('FACTORY USER CONTEXT MARKER\\n' + file.read_text())
-file.with_name('trust.json').write_text('{"/workspace":true}')
 ''')
                 inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
             inside('test', '!', '-d', '/opt/pendant')
@@ -1080,6 +1101,7 @@ p.write_text(json.dumps(v))
                 notice = frame.get_by_text(re.compile(re.escape('Approval mode is ' + APPROVAL_LABELS[mode]) + r'\.'))
                 notice.wait_for(timeout=15000)
                 assert notice.count() == 1
+                assert not frame.get_by_text(re.compile(r'project is not trusted|Grant project trust')).count(), 'A fresh workspace was not trusted'
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
                 if provider_connection_check:

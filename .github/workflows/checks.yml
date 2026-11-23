@@ -78,13 +78,34 @@ jobs:
           /tmp/factory-package/bin/pi-sandbox-factory --version
           /tmp/factory-package/bin/pi-sandbox-factory profile list
           /tmp/factory-package/bin/pi-sandbox-factory provider list
+  fresh-sandbox:
+    name: Fresh Pi and FrostPi sandbox
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install browser test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman socat
+          python -m pip install -e . playwright
+          python -m playwright install --with-deps chromium
+      - name: Check fresh project startup and mounted-folder permissions
+        run: python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fresh-sandbox
+          path: /tmp/factory-fresh-sandbox
   test:
-    needs: [python, package]
+    needs: [python, package, fresh-sandbox]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require all checks to pass
-        run: test "${{ needs.python.result }}" = success && test "${{ needs.package.result }}" = success
+        run: test "${{ needs.python.result }}" = success && test "${{ needs.package.result }}" = success && test "${{ needs.fresh-sandbox.result }}" = success
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.package.outputs.package_changed == 'true'
     needs: [test, package]

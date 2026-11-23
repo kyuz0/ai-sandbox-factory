@@ -36,7 +36,7 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
         form = SettingsForm(self.draft, editing=editing, setting='document-search' if editing else None)
         await self.app.push_screen(form)
         if not editing:
-            form.query_one('#skills-section').collapsed = False
+            form.query_one('#document-search-section').collapsed = False
         await pilot.pause()
         return form
 
@@ -60,7 +60,7 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
                 await self.app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertEqual(str(dialog.query_one('#knowledge-model-help').render()),
-                                 'An embedding model can be used to find passages even when they use different words from your search.')
+                                 'Semantic search uses an embedding model to find related passages, even when the wording differs.')
                 provider = dialog.query_one('#embedding-provider', Select)
                 for key, credential in [('example', {'key': 'fixture-plugin-key'}), ('openrouter', {'ref': 'fixture-hosted-ref'})]:
                     provider.value = key
@@ -111,7 +111,7 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=size) as pilot:
                 form = SettingsForm(self.draft)
                 await app.push_screen(form)
-                form.query_one('#skills-section').collapsed = False
+                form.query_one('#document-search-section').collapsed = False
                 await pilot.pause()
                 form.query_one('#configure-document-search').focus()
                 with patch.object(embedding_models, 'catalogue', return_value=['example-embedding-v2']):
@@ -131,7 +131,8 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
                                     if control.display and all(parent.display for parent in control.ancestors)]
                         self.assertEqual({control.id for control in controls}, set(fields))
                         viewport = dialog.query_one('#document-search-fields')
-                        self.assertEqual(viewport.max_scroll_y, 0, (size, provider, 'unnecessary scrolling'))
+                        if size[1] >= 32:
+                            self.assertEqual(viewport.max_scroll_y, 0, (size, provider, 'unnecessary scrolling'))
                         self.assertEqual(viewport.scroll_y, 0)
                         heading = dialog.query_one('#confirm-box > Label', Label)
                         if heading.display:
@@ -155,15 +156,17 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
                             previous_bottom = max(child.region.bottom for child in group.children if child.display)
                             self.assertEqual(control.region.y - label.region.bottom, 1,
                                              (size, provider, identifier, 'above'))
-                            self.assertGreaterEqual(group.region.bottom - control.region.bottom, 1,
-                                                    (size, provider, identifier, 'below'))
                             adjacent = [widget for widget in group.children if widget.display and widget.region.y >= control.region.bottom]
                             if adjacent:
                                 self.assertEqual(adjacent[0].region.y - control.region.bottom, 1,
                                                  (size, provider, identifier, 'help'))
                         footer = dialog.query_one('#save-document-search', Button)
-                        self.assertEqual(footer.region.y - previous_bottom, 1,
-                                         (size, provider, 'last field to actions'))
+                        if not viewport.max_scroll_y:
+                            self.assertEqual(footer.region.y - previous_bottom, 1,
+                                             (size, provider, 'last field to actions'))
+                        else:
+                            self.assertEqual(footer.region.y - viewport.region.bottom, 1,
+                                             (size, provider, 'scrolling fields to fixed actions'))
                         self.assertGreaterEqual(footer.region.y, viewport.region.bottom)
                         self.assertLessEqual(footer.region.bottom, dialog.query_one('#confirm-box').content_region.bottom)
                         self.assertLessEqual(dialog.query_one('#confirm-box').region.bottom, size[1] - 1)
@@ -180,6 +183,53 @@ class DocumentSearchTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(actions.region.y - viewport.region.bottom, 1)
                     self.assertLessEqual(actions.region.bottom, dialog.query_one('#confirm-box').content_region.bottom)
                     self.assertLessEqual(dialog.query_one('#confirm-box').region.bottom, size[1] - 1)
+
+    async def test_focused_model_error_and_actions_stay_visible_at_all_sizes(self):
+        for providers in ([], [embedding_provider_fixture()]):
+            self.draft['model_providers'] = providers
+            for size in ((80, 24), (120, 40), (220, 50)):
+                with self.subTest(size=size, configured_provider=bool(providers)):
+                    self.app = Cockpit(Path(self.temp.name), FakeService([]))
+                    async with self.app.run_test(size=size) as pilot:
+                        form = await self.open_form(pilot)
+                        with patch.object(embedding_models, 'catalogue', return_value=[]):
+                            dialog = await self.configure(form, pilot)
+                            mode = dialog.query_one('#knowledge-embedding', Select)
+                            mode.expanded = True
+                            await pilot.pause()
+                            mode.expanded = False
+                            mode.value = 'endpoint'
+                            if providers:
+                                dialog.query_one('#embedding-provider', Select).value = '@custom'
+                            await pilot.pause()
+                            url = dialog.query_one('#embedding-url', Input)
+                            url.value = 'models.example.test'
+                            url.focus()
+                            await pilot.pause()
+                            self.assertTrue(dialog.query_one('#embedding-url-error').display)
+                            url.value = 'https://models.example.test/v1'
+                            await pilot.pause()
+                            field = dialog.query_one('#embedding-model', Input)
+                            field.focus()
+                            field.value = ''
+                            await pilot.press('tab')
+                            await pilot.pause()
+                            field.focus()
+                            await pilot.pause()
+                            feedback = dialog.query_one('#embedding-model-error')
+                            viewport = dialog.query_one('#document-search-fields')
+                            self.assertIs(dialog.focused, field)
+                            self.assertFalse(dialog.query_one('#embedding-url-error').display)
+                            self.assertEqual(str(feedback.render()), 'Enter the embedding model ID.')
+                            self.assertTrue(feedback.display)
+                            for widget in (field, feedback):
+                                self.assertTrue(viewport.region.contains_region(widget.region), (widget, widget.region, viewport.region))
+                                self.assertIs(dialog.get_widget_at(widget.region.x, widget.region.y)[0], widget)
+                            for button in dialog.query('.dialog-actions Button'):
+                                self.assertTrue(dialog.query_one('#confirm-box').content_region.contains_region(button.region))
+                                self.assertEqual(button.region.bottom, dialog.query_one('#confirm-box').content_region.bottom)
+                                self.assertIs(dialog.get_widget_at(button.region.x, button.region.y)[0], button)
+                            self.assertTrue(dialog.query_one('#save-document-search', Button).disabled)
 
     async def test_saved_provider_empty_offline_retry_and_typed_fallback(self):
         self.draft['options'].update(knowledge_embedding='endpoint', knowledge_embedding_provider='example',

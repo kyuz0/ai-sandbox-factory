@@ -38,6 +38,25 @@ for filename, contents in (('models.json', {'providers': {}}), ('settings.json',
         target.write_text(json.dumps(contents, indent=2) + '\n')
         target.chmod(0o600)
 
+# Selecting a workspace authorizes its Pi resources, as with the native agents.
+# Existing decisions, including refusals, take precedence. Bootstrap runs before
+# Pi starts; replace the native trust store atomically to preserve valid JSON.
+trust_file = agent / 'trust.json'
+trust = json.loads(trust_file.read_text(encoding='utf-8-sig')) if trust_file.exists() else {}
+if not isinstance(trust, dict) or any(value is not None and type(value) is not bool for value in trust.values()):
+    raise ValueError('Invalid Pi trust store: expected folder paths with true, false or null decisions')
+workspace = Path('/workspace').resolve()
+if not any(type(trust.get(str(path))) is bool for path in (workspace, *workspace.parents)):
+    trust[str(workspace)] = True
+    with tempfile.NamedTemporaryFile(mode='w', dir=agent, prefix='.trust-', delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(json.dumps(trust, indent=2) + '\n')
+            stream.flush()
+            temporary.replace(trust_file)
+        finally:
+            temporary.unlink(missing_ok=True)
+
 # Launcher-managed feature selections are read-only runtime inputs.
 selection_file = Path('/opt/sandbox/options.json')
 selection = json.loads(selection_file.read_text()) if selection_file.exists() else {}

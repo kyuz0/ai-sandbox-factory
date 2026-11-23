@@ -563,12 +563,23 @@ async def capture(size):
                     draft.update(name='research', workspace='/home/user/projects/research')
                     await app.push_screen(SettingsForm(draft))
                     await shot('research-local-review')
-                    app.screen.query_one('#skills-section', Collapsible).collapsed = False
+                    app.screen.query_one('#document-search-section CollapsibleTitle').focus()
+                    await shot('research-document-search-collapsed')
+                    app.screen.query_one('#document-search-section', Collapsible).collapsed = False
                     await pilot.pause()
                     configure = app.screen.query_one('#configure-document-search', Button)
                     configure.focus()
                     await pilot.pause()
                     await shot('research-document-search-entry')
+                    app.screen.query_one('#document-search-help', Button).focus()
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    await shot('research-document-search-help')
+                    app.screen.query_one(VerticalScroll).scroll_end(animate=False)
+                    await pilot.pause()
+                    await shot('research-document-search-help-bottom')
+                    await pilot.press('escape')
+                    configure.focus()
                     await pilot.press('enter')
                     await pilot.pause()
                     await shot('research-pi-knowledge-off', focus='#knowledge-embedding')
@@ -583,7 +594,9 @@ async def capture(size):
                     await shot('research-pi-knowledge-error', focus='#embedding-url')
                     app.screen.query_one('#embedding-url', Input).value = 'https://models.example.org/v1'
                     await pilot.pause()
-                    app.screen.query_one('#embedding-model', Input).value = 'invalid model'
+                    app.screen.query_one('#embedding-model', Input).focus()
+                    app.screen.query_one('#embedding-model', Input).value = ''
+                    await pilot.press('tab')
                     await pilot.pause()
                     await shot('research-pi-knowledge-model-error', focus='#embedding-model')
                     app.screen.query_one('#embedding-model', Input).value = 'text-embedding'

@@ -16,15 +16,67 @@ from .tui_widgets import Feedback
 DOCUMENT_SEARCH_MODES = {'off': 'Keyword search', 'endpoint': 'Semantic search', 'local': 'Existing offline model'}
 CUSTOM = '@custom'
 TYPED = object()
+KEYWORD_HELP = 'Keyword search matches file names and text without an embedding model (used for semantic search).'
+SEMANTIC_HELP = 'Semantic search uses an embedding model to find related passages, even when the wording differs.'
+
+
+def fit_dialog_fields(dialog):
+    box = dialog.query_one('#confirm-box', Vertical)
+    fields = box.query_one(VerticalScroll)
+    available = int(box.styles.max_height.resolve(dialog.size, dialog.app.size))
+    reserved = box.styles.gutter.height + sum(
+        child.outer_size.height + child.styles.margin.height for child in box.children if child is not fields
+    )
+    fields.styles.max_height = max(0, available - reserved)
+
+
+class DocumentSearchHelp(ModalScreen):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('How to search documents')
+            with VerticalScroll(id='document-search-help-fields'):
+                for title, text in (
+                    ('1. Add your documents', 'Open Folders and add the document folder. Leave Read-only checked to protect the originals. For example, a folder named reference appears at /mnt/reference.'),
+                    ('2. Choose how to search', KEYWORD_HELP + '\n\n' + SEMANTIC_HELP),
+                    ('3. Ask Pi', 'For Keyword search, ask your question directly. For Semantic search, ask “Index the documents in /mnt/reference so we can search them.” Then ask your question and request source citations. To update the index after files change, ask Pi to refresh it.'),
+                    ('Which profile should I use?', 'Document search works with every Pi profile. For document research, Local Knowledge adds a skill and instructions that guide Pi to index, search and cite your documents.'),
+                    ('Where is the index saved?', 'The index and document excerpts are saved in this sandbox’s private home. Switching to Keyword search keeps the index. The source folder can remain read-only.'),
+                    ('Which providers receive document content?', 'Your chosen embedding provider receives passages during indexing and queries during search. Your chat model receives your conversation and the document content Pi uses to answer.'),
+                ):
+                    with Vertical(classes='setting'):
+                        yield Label(title)
+                        yield Static(text, markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-document-search-help', variant='primary')
+
+    def on_mount(self):
+        self.call_after_refresh(fit_dialog_fields, self)
+
+    def on_resize(self):
+        self.call_after_refresh(fit_dialog_fields, self)
+
+    @on(Button.Pressed, '#close-document-search-help')
+    def action_close(self):
+        self.dismiss()
 
 
 def search_summary(selected, sources):
-    mode = DOCUMENT_SEARCH_MODES[selected['knowledge_embedding']]
+    return DOCUMENT_SEARCH_MODES[selected['knowledge_embedding']]
+
+
+def search_description(selected, sources):
+    mode = selected['knowledge_embedding']
+    if mode == 'off':
+        return 'Keyword search is selected. Choose Configure… to change the search mode.'
+    if mode == 'local':
+        return 'An existing offline model is selected. Choose Configure… to change the search mode.'
+    model = selected['knowledge_embedding_model']
     provider = selected.get('knowledge_embedding_provider')
-    if selected['knowledge_embedding'] != 'endpoint' or not provider:
-        return mode
-    label = sources.get(provider, {}).get('label', 'Custom server' if provider == CUSTOM else provider)
-    return f'{mode} · {label}'
+    source = sources.get(provider)
+    location = source['label'] if source else selected['knowledge_embedding_url']
+    return f'Selected embedding model: “{model}” from {location}. Choose Configure… to change the model or search mode.'
 
 
 class DocumentSearchDialog(ModalScreen[Optional[dict]]):
@@ -52,7 +104,7 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
         self.missing_provider = self.initial_provider != CUSTOM and self.initial_provider not in self.sources
 
     def compose(self):
-        modes = [('Semantic search with pi-knowledge' if mode == 'endpoint' else label, mode)
+        modes = [(label, mode)
                  for mode, label in DOCUMENT_SEARCH_MODES.items() if mode != 'local' or self.allow_offline]
         providers = [(value['label'], key) for key, value in self.sources.items()]
         if self.missing_provider:
@@ -85,7 +137,7 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
                         yield Button('Retry', id='retry-embedding-catalogue')
                     with Vertical(classes='setting', id='embedding-model-setting'):
                         yield Label('Embedding model ID')
-                        yield Input(self.current['knowledge_embedding_model'], placeholder='Model ID from your provider', id='embedding-model')
+                        yield Input(self.current['knowledge_embedding_model'], id='embedding-model')
                         yield Feedback('', id='embedding-model-error', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel-document-search')
@@ -94,6 +146,7 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
     def on_mount(self):
         self.configure_mode()
         self.query_one('#knowledge-embedding').focus()
+        self.call_after_refresh(fit_dialog_fields, self)
 
     @on(Button.Pressed, '#cancel-document-search')
     def action_cancel(self):
@@ -107,14 +160,13 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
         self.query_one('#embedding-server-fields').display = mode == 'endpoint'
         provider = self.query_one('#embedding-provider', Select).value
         self.set_class(mode == 'endpoint' and provider == CUSTOM, '-custom-server')
-        self.update_heading()
         self.query_one('#embedding-provider-setting').display = bool(self.sources or self.missing_provider)
         self.query_one('#embedding-url-setting').display = provider == CUSTOM
         source = self.sources.get(provider)
         help_text = {
-            'off': 'Pi searches file names and text. No embedding model is needed.',
+            'off': KEYWORD_HELP,
             'local': 'This sandbox already has an offline embedding model.',
-            'endpoint': 'An embedding model can be used to find passages even when they use different words from your search.',
+            'endpoint': SEMANTIC_HELP,
         }[mode]
         if mode == 'endpoint' and self.unlisted_plugins:
             for plugin in self.unlisted_plugins:
@@ -142,14 +194,8 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
                     self.load_catalogue(active)
         self.validate_save()
 
-    def update_heading(self):
-        compact_custom = self.app.size.height < 32 and self.has_class('-custom-server')
-        box = self.query_one('#confirm-box', Vertical)
-        box.border_title = CATEGORIES['document-search'].label if compact_custom else ''
-        box.query_one(Label).display = not compact_custom
-
     def on_resize(self):
-        self.update_heading()
+        self.call_after_refresh(fit_dialog_fields, self)
 
     def model_id(self):
         picker = self.query_one('#embedding-catalogue', Select)
@@ -223,6 +269,22 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
     def field_blurred(self, event):
         self.validate_save(field=event.widget)
 
+    def set_focus(self, widget, scroll_visible=True, from_app_focus=False):
+        # Textual centers the input on a later frame. Keep its label and
+        # validation message in view together when the dialog scrolls.
+        field = isinstance(widget, Input) and widget.id in ('embedding-url', 'embedding-model')
+        super().set_focus(widget, scroll_visible=scroll_visible and not field, from_app_focus=from_app_focus)
+        if field and scroll_visible:
+            self.call_after_refresh(self.reveal_field, widget)
+
+    def reveal_field(self, field):
+        viewport = self.query_one('#document-search-fields', VerticalScroll)
+        # The model is the final field. Anchor to its end so the validation
+        # message remains visible when adding it changes the scroll range.
+        viewport.anchor(field.id == 'embedding-model')
+        if field.id != 'embedding-model':
+            field.parent.scroll_visible(animate=False, immediate=True)
+
     def validate_save(self, field=None):
         mode = self.query_one('#knowledge-embedding', Select).value
         provider = self.query_one('#embedding-provider', Select).value
@@ -243,8 +305,8 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
                     feedback = self.query_one('#embedding-' + name + '-error', Feedback)
                     newly_invalid = bool(error) and not feedback.display
                     feedback.update(error)
-                    if newly_invalid and field.has_focus:
-                        self.call_after_refresh(field.parent.scroll_visible, animate=False)
+                    if newly_invalid:
+                        self.call_after_refresh(self.reveal_field, field)
         self.set_class(any(feedback.display and all(parent.display for parent in feedback.ancestors)
                            for feedback in self.query(Feedback)), '-field-error')
         self.query_one('#save-document-search', Button).disabled = not valid

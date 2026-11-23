@@ -4,16 +4,21 @@ Use **Local Knowledge** to ask Pi questions about your documents. Its
 `local-knowledge` skill searches by file name and text and cites the sources.
 You can start with a folder. Keyword search needs no index or embedding model.
 
+Document search works with every Pi profile. Local Knowledge adds research
+instructions and a skill that guide Pi to index, search and cite your documents.
+
 ## Search a document folder
 
 1. Choose **New sandbox**, keep **Pi** as the coding agent, and select the **Local Knowledge** profile. Pick a writable **Workspace** for
    reports and notes, then choose **Continue**.
 2. Under **Folders → Add folder…**, select your documents. Name the mount
    `reference` and leave **Read-only** checked. Pi will see it at `/mnt/reference`.
-3. Under **Network and Web Search**, leave **Web Search** off. Choose **Restricted**
+3. Open **Document search**, near the end of **Review sandbox**, before **Resources & environment**. Keep **Keyword search** to start without an embedding model.
+   Choose **Configure…** to turn on semantic search, or **How to search documents…** for setup help.
+4. Under **Network and Web Search**, leave **Web Search** off. Choose **Restricted**
    networking and leave website categories and additional destinations empty.
    [Network rules](web-access.md#network-access)
-4. Choose **Create and start sandbox**.
+5. Choose **Create and start sandbox**.
 
 Try asking “Which files in `/mnt/reference` explain how to onboard a new team
 member? Cite the file and section.” Type `/profile-guide` for the profile’s
@@ -23,14 +28,14 @@ instructions in chat.
 
 ## Turn embeddings on
 
-Semantic search finds related passages even when the wording differs. Factory
-installs `pi-knowledge`. When you index files, Pi sends passages to the embedding
+Semantic search uses an embedding model to find related passages even when the
+wording differs. Factory installs `pi-knowledge`. When you index files, Pi sends passages to the embedding
 provider you choose. When you search the index, Pi sends your query to the same
 provider. Factory downloads no embedding model. [pi-knowledge package](https://pi.dev/packages/pi-knowledge)
 
-1. On **Review sandbox**, expand **Agent tools** and choose **Configure…** beside **Document search**. For an
-   existing sandbox, open **Settings → Document search → Configure…**.
-2. Set **Search mode** to **Semantic search with pi-knowledge**, then choose where to run it.
+1. Open **Document search → Configure…** in **Review sandbox**. For an existing sandbox, open
+   **Settings → Document search → Configure…**.
+2. Set **Search mode** to **Semantic search**, then choose where to run it.
    - **Connected provider.** Pick OpenRouter or a supported provider plugin under
      **Embedding provider**, then choose an **Embedding model**. Factory reuses
      the connection. If the list is unavailable, enter a model ID from the provider.
@@ -40,7 +45,7 @@ provider. Factory downloads no embedding model. [pi-knowledge package](https://p
 3. Choose **Save**, then **Create and start sandbox** for a new sandbox or **Apply and
    recreate** for an existing one. Applying restarts the sandbox.
 
-![The Document search row and its Configure button in sandbox setup](research-document-search.png)
+![Document search near the end of sandbox setup](research-document-search.png)
 
 ![Semantic search settings in the Document search dialog](research-pi-knowledge.png)
 

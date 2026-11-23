@@ -157,6 +157,16 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   it gives the reader information they need. Apply this rule to all UI copy,
   documentation, progress messages and errors.
 
+- Explain unfamiliar terms briefly when they help a choice; for example, connect
+  “embedding model” with semantic search. Keep longer explanations in contextual help.
+
+- HARD GATE — changeable configuration: identify summaries of selected behavior as
+  current or selected settings and make the existing control for changing them clear.
+  Do not describe a selected option as a permanent capability or limitation of Pi.
+  Explain a mode by naming it or using “With this mode selected…”. Keep permanent
+  security guarantees distinct from configurable defaults. Preserve stable checkbox
+  labels and help; their descriptions still explain what checking the box does.
+
 - HARD GATE — stable checkbox copy: the label and help describe what checking
   the box does. Keep both unchanged when the box is toggled. Explain the
   unchecked behavior only when the checked behavior leaves a genuine ambiguity.
@@ -285,6 +295,15 @@ clear the other margins. Verify the rendered gap, not just the stylesheet.
 
 ## Changes and docs
 
+- HARD GATE — fresh sandboxes: release checks must exercise first launch with
+  existing project settings in both Pi CLI and FrostPi, without manually seeding
+  trust in the test. Project resources must load, ordinary workspace operations
+  must work, and project configuration must not override managed permission rules.
+  A failing fresh-sandbox check blocks release.
+
+Identify repositories as `owner/repository`, with a link when available. Name fork
+parents and upstream repositories separately. Never use an unqualified repository name.
+
 Keep a checklist of outstanding implementation, verification and Git work for
 each affected repository. Recheck it before reporting completion. Commit the
 required source, tests, assets and dependency pins on the authorized branch.
@@ -322,6 +341,11 @@ Do not add migrations or legacy fallbacks for disposable local test sandboxes.
 
 Run the relevant suites in `TESTING.md`. Extension implementation and unit tests
 belong in the extension repository; this project pins and integrates them.
+Async, thread-pool, browser and proxy checks require local socket IPC. A restricted
+shell can allow creating a socket pair but block writes, leaving Python waiting
+at thread-pool shutdown. Use execution permissions that allow local sockets;
+verify a minimal control before diagnosing a codebase hang. Never count an
+interrupted check as passed or add a product workaround for a shell restriction.
 Update pins in `pi_sandbox_factory/containers/dev/extensions.lock.json` or the
 security directory’s `sources.json`.
 FrostPi uses the standalone Pi already installed in the container. Factory pins

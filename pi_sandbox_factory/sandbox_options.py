@@ -51,12 +51,24 @@ BROWSER_VAULT_PATTERNS = ('/home/node/.betterwright/vault', '/home/node/.betterw
 def embedding_url(url):
     if not isinstance(url, str) or not url:
         raise ValueError('Enter the embedding server URL.')
-    parsed = urlsplit(url)
-    if (parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username is not None
-            or parsed.password is not None or any(c in url for c in '?#\\%')
-            or any(ord(c) < 33 or ord(c) == 127 for c in url)
-            or any(part in ('.', '..') for part in parsed.path.split('/')) or '//' in parsed.path):
-        raise ValueError('Use an HTTP or HTTPS embedding server URL without credentials, a query or a fragment.')
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        raise ValueError('Enter a valid embedding server URL.') from None
+    if parsed.scheme not in ('https', 'http'):
+        raise ValueError('Start the embedding server URL with http:// or https://.')
+    if not parsed.hostname:
+        raise ValueError('Enter the server address after http:// or https://.')
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError('Remove the username and password from the embedding server URL.')
+    if parsed.query or parsed.fragment or '?' in url or '#' in url:
+        raise ValueError('Remove the query and fragment from the embedding server URL.')
+    if any(ord(c) < 33 or ord(c) == 127 for c in url):
+        raise ValueError('Remove spaces and control characters from the embedding server URL.')
+    if any(c in url for c in '\\%'):
+        raise ValueError('Use an embedding server URL without backslashes or encoded characters.')
+    if any(part in ('.', '..') for part in parsed.path.split('/')) or '//' in parsed.path:
+        raise ValueError('Remove repeated slashes and dot segments from the API path.')
     try:
         port = parsed.port
     except ValueError:
@@ -70,8 +82,10 @@ def embedding_url(url):
 
 
 def embedding_model(model):
-    if not isinstance(model, str) or not model or any(ord(c) < 33 or ord(c) == 127 for c in model):
-        raise ValueError('Enter the embedding model ID supplied by your server.')
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError('Enter the embedding model ID.')
+    if any(ord(c) < 32 or ord(c) == 127 for c in model):
+        raise ValueError('Use a model ID without line breaks or control characters.')
     return model
 
 
