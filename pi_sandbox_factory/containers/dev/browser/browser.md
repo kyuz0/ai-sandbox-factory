@@ -29,10 +29,12 @@ Betterwright CLI uses its own launch settings; use the native Pi tools here so
 network configuration and lifecycle are managed correctly.
 
 When the user wants to see or interact with this browser, call `browser_viewer`
-and share its link. The link opens the live browser window. The user can type, click, resize the
-window and complete popup sign-ins directly. When a manual action is needed, include the link and the action
-in `ask_user_question` if available, or ask in chat. Wait for the reply, then
-continue with the same browser tool.
+and share its link in a normal chat message. The link opens the live browser window.
+The user can type, click, resize the window and complete popup sign-ins directly. When a manual action is needed, use
+`ask_user_question` if available to ask for it in plain text, referring to the
+browser link already shared in chat. Do not put the URL in the question form.
+Links there are not reliably clickable. If the question tool is unavailable,
+ask in chat. Wait for the reply, then continue with the same browser tool.
 For a user-authorized local script login, call `browser_session_export` with the
 exact service API URL after the user signs in. This handoff receives its own
 permission review; ordinary browser interaction stays allowed. It saves only

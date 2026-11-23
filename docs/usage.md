@@ -332,8 +332,8 @@ Every profile includes Bash, Git, SSH, Python and Node.js. Read command manuals 
 ## See and interact with the agent’s browser
 
 Enable **Agent browser · Betterwright** under **Agent tools**. Ask Pi or
-FrostPi to show its browser. Its local link opens the live browser window,
-including the tab bar and popup windows. Type, click, navigate and switch tabs
+FrostPi to show its browser. Open the link shared in chat to access the live browser
+window, including the tab bar and popup windows. Type, click, navigate and switch tabs
 normally. When you have finished, tell the agent to continue; it keeps the same
 browser state.
 

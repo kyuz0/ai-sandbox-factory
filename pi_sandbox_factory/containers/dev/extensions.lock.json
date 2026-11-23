@@ -11,7 +11,7 @@
     },
     "rpiv-ask-user-question": {
       "repository": "https://github.com/kyuz0/rpiv-mono.git",
-      "commit": "c786918e8f3443106b158b1d52b77c030202f9c7",
+      "commit": "27680ef53272984d529ec0d2df20ac8243d97f38",
       "paths": ["packages/rpiv-ask-user-question", "packages/rpiv-config"]
     },
     "pi-session-naming": {
