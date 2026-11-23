@@ -41,5 +41,18 @@ def start_auth_fixture(agent, port=3130):
 
 def public_ca_source(agent):
     """Seed the same public-only CA path expected by the shipped client."""
-    return ("Path('/run/primary-editor/" + agent + "-ca.pem').write_bytes("
+    return ('Path(' + repr('/run/primary-editor/' + agent + '-ca.pem') + ').write_bytes('
             "Path('/etc/ssl/certs/ca-certificates.crt').read_bytes())\n")
+
+
+def auth_fixture_source(agent):
+    """Keep the shared fixture alive until its caller closes standard input."""
+    return AUTH_SERVICE + public_ca_source(agent) + f'''
+import sys
+server, thread = start_auth_fixture({agent!r})
+print('ready', flush=True)
+sys.stdin.read()
+server.shutdown()
+server.server_close()
+thread.join()
+'''

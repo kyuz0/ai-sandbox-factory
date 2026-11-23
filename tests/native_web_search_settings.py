@@ -8,18 +8,10 @@ import uuid
 
 from ai_sandbox_factory import primary_agents, sandbox
 from ai_sandbox_factory.sandbox_options import write_json
-from native_auth_fixture import AUTH_SERVICE, public_ca_source
+from native_auth_fixture import auth_fixture_source
 
 
-AUTH_FIXTURE = AUTH_SERVICE + public_ca_source('claude') + """
-import sys
-server, thread = start_auth_fixture('claude')
-print('ready',flush=True)
-sys.stdin.read()
-server.shutdown()
-server.server_close()
-thread.join()
-"""
+AUTH_FIXTURE = auth_fixture_source('claude')
 
 
 def check(image):

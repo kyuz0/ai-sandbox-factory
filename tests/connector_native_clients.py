@@ -2,14 +2,17 @@
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import tempfile
+import time
 from unittest.mock import patch
 from uuid import uuid4
 
 from connector_live_settings import podman
 from ai_sandbox_factory import connectors, primary_agents, primary_workspace, sandbox
 from ai_sandbox_factory.sandbox_options import write_json
-from native_auth_fixture import AUTH_SERVICE
+from native_auth_fixture import AUTH_SERVICE, auth_fixture_source
+from native_codex_features import AppServer
 
 
 # Capture the actual native process at launch, before it asks the user to sign in.
@@ -31,11 +34,8 @@ try:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and proc.poll() is None:
         if Path(f'/proc/{proc.pid}/exe').resolve() == Path('/usr/local/bin/factory-agent'):
-            # Read argv after observing exec. Reading it first can capture the
-            # Python wrapper just before /proc/exe changes to the native CLI.
-            args = Path(f'/proc/{proc.pid}/cmdline').read_bytes().split(b'\\0')
-            context_path = {'agy': '.gemini/AGENTS.md', 'claude': '.claude/CLAUDE.md'}.get(agent)
-            context = (Path.home() / context_path).read_text() if context_path else str(args)
+            context_path = {'agy': '.gemini/AGENTS.md', 'claude': '.claude/CLAUDE.md'}[agent]
+            context = (Path.home() / context_path).read_text()
             assert 'fixture connector instructions' in context, agent + ': native instructions are missing the connector guide'
             assert 'localhost/report' in context, agent + ': native instructions omitted the granted report operation'
             assert 'localhost/private' not in context, agent + ': native instructions exposed an ungranted operation'
@@ -57,6 +57,32 @@ finally:
     server.server_close()
     thread.join()
 """
+
+
+def observe_codex(workspace):
+    """Read effective native instructions instead of racing /proc argv."""
+    auth = subprocess.Popen(['podman', 'exec', '-i', workspace, 'python3', '-c', auth_fixture_source('codex')],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    server = None
+    try:
+        if auth.stdout.readline().strip() != 'ready':
+            _, diagnostic = auth.communicate()
+            raise AssertionError(f'Synthetic Codex authentication fixture exited {auth.returncode}: {diagnostic}')
+        server = AppServer(workspace, '/home/node/.codex')
+        deadline = time.monotonic() + 30
+        server.call('initialize', {'clientInfo': {'name': 'factory-connector-check', 'version': '1'},
+                                  'capabilities': {'experimentalApi': True}}, deadline)
+        context = server.call('config/read', {'cwd': '/workspace', 'includeLayers': False}, deadline)['config'].get('developer_instructions', '')
+        assert 'fixture connector instructions' in context, 'Codex effective instructions omitted the connector guide'
+        assert 'localhost/report' in context, 'Codex effective instructions omitted the granted report operation'
+        assert 'localhost/private' not in context, 'Codex effective instructions exposed an ungranted operation'
+        assert 'fixture-only-token' not in context, 'Codex effective instructions exposed a connector credential'
+    finally:
+        if server is not None:
+            server.close()
+        _, diagnostic = auth.communicate()
+        if auth.returncode:
+            raise AssertionError(f'Synthetic Codex authentication fixture exited {auth.returncode}: {diagnostic}')
 
 
 def check(agent, root, image=None):
@@ -85,7 +111,10 @@ def check(agent, root, image=None):
         status = ['exec', workspace, 'curl', '-so', '/dev/null', '-w', '%{http_code}', '--unix-socket', sock]
         assert podman(*status, 'http://localhost/report') == '502'  # The granted upstream is deliberately offline.
         assert podman(*status, 'http://localhost/private') == '404'
-        podman('exec', workspace, 'python3', '-c', OBSERVE_LAUNCH, agent)
+        if agent == 'codex':
+            observe_codex(workspace)
+        else:
+            podman('exec', workspace, 'python3', '-c', OBSERVE_LAUNCH, agent)
         saved = json.loads((state / 'config.json').read_text())
         sandbox.apply_settings(saved, state, {'connector_ids': [], 'connector_operations': {}})
         assert 'fixture connector instructions' not in (controller_inputs / 'context.md').read_text()
