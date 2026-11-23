@@ -11,3 +11,6 @@ dist/
 *.egg-info/
 
 .ruff_cache/
+
+# Internal experiments belong outside this public checkout.
+/research/

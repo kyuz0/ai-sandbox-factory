@@ -22,7 +22,7 @@ from pi_sandbox_factory import advisor_credentials, primary_agents, primary_work
 FILE_TASK = 'Read /workspace/input.txt, copy its contents to /workspace/output.txt and reply with the contents.'
 
 ROOT = Path(__file__).resolve().parents[1]
-HERE = ROOT / 'research/primary-agents/native-editor'
+HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / 'pi_sandbox_factory/containers/primary'
 PANELS = {'codex': ('openai.chatgpt', 'chatgpt.openSidebar'),
           'claude': ('anthropic.claude-code', 'claude-vscode.sidebar.open'),
@@ -35,7 +35,7 @@ def podman(*args, payload=None):
 
 
 def listen(stack, socket_path, ticket, hub=None):
-    args = ['node', str(HERE / 'relay.mjs'), '0', str(socket_path)]
+    args = ['node', str(HERE / 'native_editor_relay.mjs'), '0', str(socket_path)]
     if hub:
         args.append(str(hub))
     process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)

@@ -4,6 +4,21 @@ Pi Sandbox Factory manages Pi, Codex, Claude Code and Antigravity sandboxes with
 Read `README.md` and `TESTING.md`. For package work, use `docs/profiles.md`,
 `docs/providers.md` and the runnable `examples/`.
 
+## Public repository
+
+HARD GATE — this repository is public. Review every staged file and commit message
+as material that will be published. Permission to research or experiment does not
+authorize publishing internal notes.
+
+Commit maintained product code, reusable tests and documentation needed by users
+or future maintainers. Put test helpers under `tests/` and use synthetic data.
+Keep private research notes, advisor discussions, experiment chronology, raw logs,
+conversation transcripts, account details and credentials outside this checkout.
+Retain a design explanation only when it is necessary for maintenance and has been
+written for public readers. Remove obsolete experiments instead of publishing
+them as an archive. Check new and generated files explicitly before every push;
+a folder called `research/` or a temporary branch does not make publication private.
+
 ## Code map
 
 Implementation and shipped assets live in `pi_sandbox_factory/`:
