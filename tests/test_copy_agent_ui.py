@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import tempfile
 import unittest
@@ -68,7 +69,12 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         await pilot.pause()
                         form = app.screen
                         self.assertIsInstance(form, SettingsForm)
+                        ready = asyncio.Event()
+                        form.call_after_refresh(ready.set)
+                        await asyncio.wait_for(ready.wait(), timeout=30)
                         self.assertEqual(form.primary, target_agent)
+                        if target_agent == 'pi':
+                            self.assertEqual(form.query_one('#web-mode', Select).value, 'auto')
                         selected, _ = form.collect()
                         self.assertEqual(selected['primary_agent'], target_agent)
                         self.assertEqual(selected['workspace'], str(workspace))
