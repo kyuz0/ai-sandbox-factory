@@ -9,9 +9,8 @@ from pathlib import Path
 from .sandbox_options import write_json
 from . import host_platform, activity
 
-MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host', 'frostpi': 'FrostPi in browser'}
-DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': '', 'allow_uploads': False,
-            'frostpi_uploads': False, 'frostpi_downloads': False}
+MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host'}
+DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': '', 'allow_uploads': False}
 
 
 def modes(agent='pi'):
@@ -32,9 +31,8 @@ def validate(value=None):
     if not isinstance(value, dict) or set(value) - DEFAULTS.keys():
         raise ValueError('Unknown editor settings')
     result = {**DEFAULTS, **value}
-    for key, label in (('allow_uploads', 'uploads'), ('frostpi_uploads', 'uploads'), ('frostpi_downloads', 'downloads')):
-        if not isinstance(result[key], bool):
-            raise ValueError(f'Allow file {label} must be true or false')
+    if not isinstance(result['allow_uploads'], bool):
+        raise ValueError('Allow file uploads must be true or false')
     if result['mode'] not in MODES:
         raise ValueError('Choose a client from the Editor menu')
     try:
@@ -79,10 +77,21 @@ def tls_context(value):
     return context
 
 
+def saved_choice(value):
+    """Read editor preferences saved before standalone FrostPi was retired."""
+    if isinstance(value, dict):
+        value = dict(value)
+        value.pop('frostpi_uploads', None)
+        value.pop('frostpi_downloads', None)
+        if value.get('mode') == 'frostpi':
+            value['mode'] = 'browser'
+    return validate(value)
+
+
 def load(state):
     path = Path(state) / 'editor.json'
     if path.exists():
-        return validate(json.loads(path.read_text()))
+        return saved_choice(json.loads(path.read_text()))
     return validate()
 
 
@@ -99,9 +108,8 @@ def save(state, value, *, record_edit=True):
 
 
 def copy_choice(value):
-    value = validate(value)
-    return {**DEFAULTS, 'mode': value['mode'], 'allow_uploads': value['allow_uploads'],
-            'frostpi_uploads': value['frostpi_uploads'], 'frostpi_downloads': value['frostpi_downloads']}
+    value = saved_choice(value)
+    return {**DEFAULTS, 'mode': value['mode'], 'allow_uploads': value['allow_uploads']}
 
 
 def password_hash(password):

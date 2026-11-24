@@ -82,6 +82,24 @@ class Requests(unittest.TestCase):
             with patch.object(editor, 'SHA256', hashlib.sha256(b'fixture').hexdigest()):
                 self.assertEqual(editor.checked_archive(Path(folder), str(file)), file)
 
+    def test_running_retired_client_requires_explicit_stop(self):
+        from ai_sandbox_factory import sandbox
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            current = {'Id': 'a' * 64, 'State': {'Running': True}}
+            info = {'container': current['Id'], 'preferences': {'mode': 'frostpi'}}
+            with patch.object(editor.host_platform, 'check_engine'), \
+                    patch.object(sandbox, 'inspect', return_value=current), \
+                    patch.object(sandbox, 'names', return_value=('fixture', 'gateway')), \
+                    patch.object(editor.fcntl, 'flock', side_effect=BlockingIOError), \
+                    patch.object(editor, 'runtime', return_value=info), \
+                    patch.object(editor, 'stop') as stop, \
+                    patch.object(editor, 'show_url') as show:
+                with self.assertRaisesRegex(ValueError, 'Stop browser editor, then Open'):
+                    editor.open_browser_editor({'engine': 'podman'}, state)
+                stop.assert_not_called()
+                show.assert_not_called()
+
     def test_host_session_lock(self):
         import fcntl
         with tempfile.TemporaryDirectory() as folder:

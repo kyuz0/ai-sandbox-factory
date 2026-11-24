@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -62,7 +63,8 @@ class PastaCompatibilityTests(unittest.TestCase):
 
     def test_failure_precedes_gateway_mutation_and_companion_start(self):
         config = {**self.config, 'name':'compat-check', 'network':'allowlist'}
-        with patch.object(sandbox.folders, 'validate_config'), \
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(sandbox.folders, 'validate_config'), \
                 patch.object(sandbox.sandbox_advisors, 'check_ownership'), \
                 patch.object(sandbox.sandbox_ssh, 'check_ownership'), \
                 patch.object(sandbox.inference, 'check_ownership'), \
@@ -72,7 +74,7 @@ class PastaCompatibilityTests(unittest.TestCase):
                 patch.object(sandbox.inference, 'up') as start, \
                 patch.object(sandbox, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'unsupported pasta'):
-                sandbox.up(config, Path('/unused'))
+                sandbox.up(config, Path(temporary))
             mutate.assert_not_called()
             start.assert_not_called()
             run.assert_not_called()

@@ -83,10 +83,11 @@ def transfer(command, **streams):
     try:
         result = subprocess.run(command, stderr=subprocess.PIPE, **streams)
     except OSError as error:
-        raise ValueError('Could not run the container engine to transfer chats.') from error
+        raise ValueError(f'Could not run {command[0]} to transfer chats: {error}') from error
     if result.returncode:
         message = result.stderr.decode(errors='replace').strip()
-        raise ValueError(message or 'The container engine could not transfer chats.')
+        raise ValueError(f'{command[0]} exited with status {result.returncode} while transferring chats.'
+                         + ('\n' + message if message else ' No diagnostic output was returned.'))
     return result.stdout
 
 
@@ -157,14 +158,14 @@ def export_chats(config, state, value):
             os.link(temporary.name, path)
     except FileExistsError:
         raise ValueError('A file already exists there. Choose another name.') from None
-    except FileNotFoundError:
-        raise ValueError('That host folder does not exist. Choose an existing folder.') from None
-    except BadZipFile:
-        raise ValueError('Factory could not create a complete chat backup.') from None
+    except FileNotFoundError as error:
+        raise ValueError(f'Could not export the chat backup to {path}: {error}') from error
+    except BadZipFile as error:
+        raise ValueError(f'Factory could not create a complete chat backup: {error}') from error
     except OSError as error:
         if error.errno == errno.ENOSPC:
-            raise ValueError('The host disk is full. Choose a folder with more space.') from error
-        raise ValueError('Could not save the backup in that host folder. Choose another folder.') from error
+            raise ValueError(f'The host disk is full. Could not save {path}: {error}') from error
+        raise ValueError(f'Could not save the chat backup to {path}: {error}') from error
     return path, count
 
 
@@ -183,7 +184,7 @@ def import_chats(config, value, *, state=None):
         # seek could leave the child reading from the end of the Python buffer.
         source = path.open('rb', buffering=0)
     except OSError as error:
-        raise ValueError('Could not read that file. Check its permissions or choose another file.') from error
+        raise ValueError(f'Could not read {path}: {error}') from error
     with source:
         if native:
             try:
@@ -204,8 +205,8 @@ def import_chats(config, value, *, state=None):
                     if archive.comment == NATIVE_FORMAT:
                         native_backup_member(archive, config)
                     session_archive.archive_members(archive)
-            except BadZipFile:
-                raise ValueError('The chat backup is incomplete or damaged.') from None
+            except BadZipFile as error:
+                raise ValueError(f'The chat backup is incomplete or damaged: {error}') from error
             source.seek(0)
         else:
             session_archive.header(source)

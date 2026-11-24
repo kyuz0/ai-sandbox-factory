@@ -32,7 +32,8 @@ def main():
             subprocess.run(['tar', '-xzf', str(archive), '-C', str(root)], check=True)
             code_server = root / archive.name.removesuffix('.tar.gz')
         check(image, code_server.resolve(), output / 'automatic-startup', args.chromium,
-              'automatic', False, False, False)
+              'automatic', False, False, False, full_width=True)
+        print('PASS FrostPi maximizes to the available editor width and restores its panel.')
         check(image, code_server.resolve(), output / 'project-and-folders', args.chromium, None, False, False, False,
               folder_access=True)
 

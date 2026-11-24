@@ -774,6 +774,9 @@ def run(args, root, stack, *, backup=None, restored=None):
     if backup:
         podman('stop', editor)
         chat_history.export_chats(chat_config, chat_state, backup)
+        if args.backup_output:
+            import shutil
+            shutil.copyfile(backup, args.backup_output)
         return expected
 
 
@@ -791,6 +794,7 @@ if __name__ == '__main__':
     parser.add_argument('--reload', action='store_true', help='Reload the editor and continue the same chat')
     parser.add_argument('--chat-backup', action='store_true',
                         help='Back up a native chat, then import and continue it in a fresh editor')
+    parser.add_argument('--backup-output', type=Path, help='Keep the synthetic chat backup for converter validation')
     parser.add_argument('--cancel', action='store_true', help='Stop a running workspace command and verify the next turn works')
     parser.add_argument('--deny', action='store_true', help='Deny a native tool request and verify it did not run')
     parser.add_argument('--isolation', action='store_true', help='Codex only: verify native image and patch tools use the separate workspace')

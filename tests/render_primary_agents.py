@@ -185,14 +185,6 @@ async def capture(root, size, approvals_only=False, web_search_only=False, initi
                 await app.push_screen(SettingsMenu('transit', config, 'pi'))
                 await shot('settings')
                 await app.pop_screen()
-                (state / 'transit' / 'config.json').write_text(json.dumps({'primary_agent': 'pi'}))
-                await app.push_screen(EditorScreen('transit'))
-                app.screen.query_one('#editor-mode', Select).value = 'frostpi'
-                await shot('editor-frostpi')
-                app.screen.query_one('#frostpi-uploads').value = True
-                app.screen.query_one('#frostpi-downloads').value = True
-                await shot('editor-frostpi-transfers')
-                await app.pop_screen()
                 for agent in ('codex', 'claude', 'agy'):
                     (state / 'transit' / 'config.json').write_text(json.dumps({'primary_agent': agent}))
                     await app.push_screen(EditorScreen('transit'))

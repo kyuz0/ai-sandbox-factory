@@ -30,7 +30,7 @@ Choose **Open** on the dashboard. All four agents use the browser editor by defa
 
 Use **Open with…** to pick a different client for this launch. During creation,
 expand **Editor** to choose the browser editor or the selected agent's CLI.
-Pi also offers **FrostPi in browser** and **VS Code on host**. Clear the checkbox for
+Pi also offers **VS Code on host**. Clear the checkbox for
 opening your selected client if you want to open it yourself later. For an existing sandbox,
 **Settings → Editor** lets you change the default client, address, port, or password.
 
@@ -89,6 +89,29 @@ Use the same project checkout if you want the restored chat to find the files it
 worked on. The ZIP contains chat history, including any text or file contents
 recorded in the conversation. Store it privately. Workspace files, sandbox
 settings and stored sign-ins stay outside the backup.
+
+### Continue a chat with another agent
+
+Stop the source and destination sandboxes. On the source sandbox, choose
+**Actions… → Continue in another sandbox…**. Select the chat and destination,
+then choose **Preview copy**. Review any content the destination cannot keep
+before choosing **Create copy**. Open the destination and select the new chat
+from its history.
+
+This uses the local [`session-migrate`](https://github.com/xhluca/session-migrate) converter. The preview lists conversion
+warnings and omitted content. The destination uses its own agent settings,
+tools and sign-in. If it uses another project folder, earlier file paths and
+edits may be absent.
+
+The first copy builds the converter image and needs an internet connection to
+download its software. Conversion runs locally without network access.
+
+![Previewing a chat copy from Claude Code to Pi](chat-copy.png)
+
+Pi, Codex and Claude Code can receive copied conversations. Antigravity's
+current version cannot receive converted chats through `session-migrate`.
+Its source chats are offered when the converter can read them. If it rejects
+a chat's format, Factory shows the reason alongside the list of chats.
 
 ## Recover from a failed creation
 

@@ -826,7 +826,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
-          reviewed_file_access=None, provider_connection_check=None, standalone=False):
+          reviewed_file_access=None, provider_connection_check=None, full_width=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if subagent_compaction:
@@ -975,7 +975,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
         if folder_access:
             mounts.append((Path(__file__).with_name('folder_access_cases.json').resolve(),
                            '/tmp/folder-access-cases.json', 'ro'))
-        args = ['run', '-d', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
+        args = ['run', '-d', '--pull=never', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
                 '--user', '1000:1000', '--security-opt', 'label=disable',
                 '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
         if subagents or deep_research:
@@ -1053,10 +1053,6 @@ if len(sys.argv) > 1:
 p.write_text(json.dumps(v))
 """, *(['high'] if streaming_metrics else []))
                 podman('exec', '-d', name, 'sh', '-c', 'node /tmp/frostpi_model.mjs > /tmp/fixture.log 2>&1')
-                if standalone:
-                    from frostpi_standalone import check as check_standalone
-                    check_standalone(podman('inspect', '--format', '{{.Id}}', name), cwd, root, chromium, output)
-                    return
                 if subagent_compaction and subagent_client == 'pi':
                     compact_fixture.check_pi(inside, output, subagent_compaction)
                     return
@@ -1104,6 +1100,16 @@ p.write_text(json.dumps(v))
                 else:
                     raise AssertionError('Factory did not open a fresh FrostPi session')
                 composer = frame.get_by_label('Message Pi', exact=True)
+                if full_width:
+                    page.locator('[aria-label="Maximize Secondary Side Bar"]').click()
+                    frame.wait_for_function('window.innerWidth > 1100')
+                    dimensions = frame.locator('.composer-shell').evaluate(
+                        '(element) => ({width:element.getBoundingClientRect().width, available:window.innerWidth})')
+                    assert dimensions['width'] > dimensions['available'] - 60, dimensions
+                    assert dimensions['width'] > 960, dimensions
+                    page.screenshot(path=str(output / 'maximized-frostpi.png'))
+                    (output / 'maximized-frostpi.json').write_text(json.dumps(dimensions))
+                    page.get_by_role('button', name=re.compile(r'^Restore Secondary Side Bar')).click()
 
                 def send(prompt):
                     composer.fill(prompt)
@@ -1376,7 +1382,6 @@ if __name__ == '__main__':
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
-    scope.add_argument('--standalone', action='store_true', help='Check browser chat, history and access to the private link.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
     scope.add_argument('--session-naming', action='store_true', help='Check generated and fallback names shared with Pi.')
@@ -1407,11 +1412,11 @@ if __name__ == '__main__':
         parser.error('--subagent-case requires --subagents')
     if args.subagent_client and not (args.subagents or args.subagent_compaction):
         parser.error('--subagent-client requires --subagents or --subagent-compaction')
-    if not args.standalone and not args.code_server:
+    if not args.code_server:
         parser.error('--code-server is required for VS Code browser checks')
     check(args.image, args.code_server.resolve() if args.code_server else None, args.output.resolve(), args.chromium,
           args.startup_only, args.chat_workflows, args.session_naming, args.tool_images, args.folder_access,
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
-          provider_connection_check=args.provider_connection_check, standalone=args.standalone)
+          provider_connection_check=args.provider_connection_check)

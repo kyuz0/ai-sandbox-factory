@@ -55,9 +55,9 @@ try:
   result=core.run(['podman','exec',*env,dev,'pi','--print','--provider','fixture','--model','fixture-model','--no-session','--approve','Attach advisor-image.png to the advisor and describe it.'],capture=True)
   assert 'ADVISOR_IMAGES_DONE' in result.stdout,result.stdout
   print('PASS actual Pi CLI: image tool schema, file read, companion byte transfer and reply')
-  from advisor_frostpi import check_image
-  for mode in (['frostpi','browser'] if args.code_server else ['frostpi']):
-   check_image(dev,root,mode,args.chromium)
+  if args.code_server:
+   from advisor_frostpi import check_image
+   check_image(dev,root,args.chromium)
 
 
  finally:core.run(['podman','rm','-f',dev])

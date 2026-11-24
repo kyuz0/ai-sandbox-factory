@@ -1434,14 +1434,6 @@ async def capture(size):
                 await shot('install-provider', InstallPackage('provider'))
                 await shot('editor', EditorScreen('demo'))
                 await shot('editor-connection', EditorScreen('demo'), '#editor-connection')
-                if not args.only or any(name.startswith('frostpi-transfer') for name in args.only):
-                    await app.push_screen(EditorScreen('demo'))
-                    app.screen.query_one('#editor-mode', Select).value = 'frostpi'
-                    await shot('frostpi-transfers', focus='#frostpi-uploads')
-                    for key in ('uploads', 'downloads'):
-                        app.screen.query_one('#frostpi-' + key, Checkbox).value = True
-                    await shot('frostpi-transfers-enabled', focus='#frostpi-downloads')
-                    await app.pop_screen()
                 await shot('open-with', OpenWith())
                 await shot('provider-openrouter', ProviderDialog())
                 await shot('provider-together', ProviderDialog({'provider': 'together'}))

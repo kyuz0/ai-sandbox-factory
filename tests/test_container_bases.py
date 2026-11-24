@@ -23,6 +23,13 @@ class ContainerBaseTests(unittest.TestCase):
                     stages.add(alias[1])
                 if image == '${BASE_IMAGE}' or previous_stage:
                     continue
+                if image == '${CODEX_IMAGE}':
+                    # Only the pinned native binary is copied from Factory's Codex image.
+                    self.assertEqual(dockerfile.relative_to(ROOT), Path('containers/session-transfer/Dockerfile'))
+                    self.assertEqual(line, 'FROM ${CODEX_IMAGE} AS native-codex')
+                    self.assertIn('COPY --from=native-codex /usr/local/bin/factory-agent /usr/local/bin/factory-codex',
+                                  dockerfile.read_text())
+                    continue
                 if image.startswith('public.ecr.aws/aws-cli/aws-cli:'):
                     # Vendor tooling is copied into our own Debian runtime.
                     self.assertIn(' AS awscli', line)

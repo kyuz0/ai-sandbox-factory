@@ -46,6 +46,27 @@ class ChatHistoryTests(unittest.TestCase):
                                           'backup' if operation == 'export' else 'import',
                                           config['primary_agent'], str(home)]
 
+    def test_export_errors_keep_the_operation_path_and_original_diagnostic(self):
+        import errno
+        for error in (FileNotFoundError(errno.ENOENT, 'engine executable missing', 'fixture-engine'),
+                      OSError(errno.ENOSPC, 'filesystem metadata exhausted'),
+                      PermissionError(errno.EACCES, 'access denied by fixture policy')):
+            with self.subTest(error=error), patch.object(chat_history, 'archive_command', side_effect=error):
+                with self.assertRaises(ValueError) as raised:
+                    chat_history.export_chats({}, self.source, self.archive)
+                self.assertIn(str(self.archive), str(raised.exception))
+                self.assertIn(str(error), str(raised.exception))
+                self.assertFalse(self.archive.exists())
+
+    def test_engine_failure_preserves_exit_status_and_diagnostic(self):
+        import subprocess
+        with patch.object(chat_history.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                ['fixture-engine'], 125, stderr=b'cannot mount history: filesystem metadata exhausted')):
+            with self.assertRaises(ValueError) as raised:
+                chat_history.transfer(['fixture-engine'])
+            self.assertIn('fixture-engine exited with status 125', str(raised.exception))
+            self.assertIn('cannot mount history: filesystem metadata exhausted', str(raised.exception))
+
     def test_native_roundtrip_requires_new_same_agent_and_keeps_sign_in_out(self):
         files = {
             'codex': 'sessions/2026/11/23/rollout.jsonl',

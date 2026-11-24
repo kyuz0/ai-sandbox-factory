@@ -636,8 +636,6 @@ def native_chat_lock(state):
 
 
 def up(config, state, *, prepare_sign_in=True):
-    if primary_workspace.agent(config) == 'pi':
-        return _up(config, state, prepare_sign_in=prepare_sign_in)
     with native_chat_lock(state):
         return _up(config, state, prepare_sign_in=prepare_sign_in)
 
@@ -863,8 +861,6 @@ def down(config, remove=False):
 
 
 def delete(config, state):
-    if primary_workspace.agent(config) == 'pi':
-        return _delete(config, state)
     with native_chat_lock(state):
         return _delete(config, state)
 
@@ -1573,9 +1569,7 @@ def open_selected(config, state, mode=None):
         if mode == 'pi':
             return primary_agents.open_terminal(config, state)
         return browser_editor.open_browser_editor(config, state, background=True)
-    if mode == 'frostpi':
-        browser_editor.open_browser_editor(config, state, background=True, mode=mode)
-    elif mode == 'browser':
+    if mode == 'browser':
         browser_editor.open_browser_editor(config, state, background=True)
     elif mode == 'pi':
         up(config, state)
@@ -1734,7 +1728,7 @@ def main(*, startup_notice=''):
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
-    new.add_argument('--editor', choices=['browser', 'pi', 'desktop', 'frostpi'], help='Client to open (default: browser on supported hosts)')
+    new.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Client to open (default: browser on supported hosts)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
         'browser-editor': 'Open the browser editor (rootless Podman)',
@@ -1757,7 +1751,7 @@ def main(*, startup_notice=''):
             cmd.add_argument('--no-open', action='store_true', help='Print the address without opening a browser tab')
             cmd.add_argument('--stop', action='store_true', help='Stop only the browser editor')
         if command == 'open':
-            cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop', 'frostpi'], help='Open with a different client this time')
+            cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Open with a different client this time')
         if command == 'ssh-import-key':
             cmd.add_argument('--key-file', required=True)
         if command in ('ssh-import-key', 'ssh-unlock'):

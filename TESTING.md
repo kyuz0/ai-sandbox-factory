@@ -111,7 +111,6 @@ include Linux amd64 and ARM64 images; manifest availability is not an ARM64 test
 | Browser runtime | All three native workspace images passed DOM interaction, persistent state, screenshots, download denial and blocking through the production gateway |
 | Live browser viewer | Desktop/mobile input, resize, clipboard, popups, tabs and reconnect passed with no browser console errors; Chromium/VNC recovery, private display isolation, owner cleanup, authenticated WebSockets, viewer restart and token rotation passed |
 | Pi and FrostPi | Both passed 21 folder-access cases, browser image delivery and saved-image reload; Pi also passed the localhost/API/popup workflow with the editor's Node preload |
-| Standalone FrostPi | Desktop and mobile chat, history, file viewing, upload, download, collision handling and cancellation passed |
 | Document tools | Python 3.13 PDF readers, encryption, OCR, Office formats, LibreOffice conversion and Pandoc checks passed |
 | Research profiles | Pi and FrostPi passed embedding/keyword search and index reuse, plus delegated web search and cited report creation |
 | Credentials and connectors | Inference isolation and key rotation, four hosted-provider fixtures, advisor credential storage, SSH/Git permissions, HTTPS grant/revoke/rollback and three AWS signer checks passed; AWS CLI and Boto3 loaded in the native client image |
@@ -171,6 +170,33 @@ Network tools remain subject to the sandbox's network policy; installation does
 not grant external ICMP or DNS access.
 
 ## Native agent regression checks
+
+Cross-agent copies use the pinned `session-migrate` helper in
+`containers/session-transfer/`. The unit suite checks confirmation, changed
+destinations and the narrow TUI. The integration fixture exercises all six
+Pi/Codex/Claude routes through actual named volumes and the production snapshot,
+preview and install code.
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python -m unittest test_session_transfer
+PYTHONPATH=. .venv/bin/python tests/session_transfer_integration.py --image CACHED_FACTORY_IMAGE
+PYTHONPATH=tests:. .venv/bin/python tests/session_migrate_native.py \
+  --source /path/to/session-migrate/src --pi-image CACHED_PI_IMAGE
+```
+
+The native fixture exercises all six routes against local synthetic providers.
+It checks full Codex database history, tool ordering, cursor pagination and
+unchanged source data. The helper installs
+`session-migrate==0.13.0`. The fixture requires native Codex 0.171.0 and Claude
+Code 2.1.330 executables on PATH. These checks make no external model requests.
+
+Capture the copy dialog with:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python tests/render_session_transfer.py /tmp/factory-copy-chat
+```
+
+Use `--monochrome` for the narrow monochrome states.
 
 Codex, Claude Code and Antigravity run their official CLI and extension in the
 workspace. A separate credential companion holds the real subscription tokens.
@@ -368,7 +394,9 @@ operations work, private files stay protected, and project permission overrides
 cannot bypass Factory's rules. The test does not seed trust itself. GitHub
 releases require this job to pass alongside the Python and package checks.
 
-Use `--standalone` in place of `--code-server` and its directory to exercise **FrostPi in browser**. It opens a new chat, sends a prompt to the local test model, reloads the page and resumes the saved conversation. The test also checks workspace browsing on desktop and phone, Markdown links and images, keyboard navigation, draft preservation, and the workspace and browser access rules. It checks that transfers start disabled, uploads and downloads a binary file, checks both copies byte for byte and verifies that duplicate names and interrupted uploads preserve existing files.
+It also maximizes FrostPi's secondary sidebar in VS Code, checks that the composer
+fills the available width, then restores the panel. The screenshot and measured
+widths are saved under `automatic-startup/maximized-frostpi.*`.
 
 Build the Factory image from the current checkout in a disposable sandbox.
 Use the code-server archive pinned in `ai_sandbox_factory/browser_editor.py`.
@@ -816,9 +844,9 @@ For advisor or SSH changes, run their unit suites and:
 .venv/bin/python tests/advisor_credentials_container.py
 ```
 
-The advisor check also sends a synthetic image through `advisor_ask` in both Pi
-and standalone FrostPi, using a fixture companion without account access. Pass
-`--code-server /path/to/code-server` to check the VS Code extension as well.
+The advisor check also sends a synthetic image through `advisor_ask` in Pi, using
+a fixture companion without account access. Pass
+`--code-server /path/to/code-server` to check FrostPi in VS Code as well.
 Use the Playwright setup documented under FrostPi editor.
 
 Use a development image with the local model provider enabled. These check

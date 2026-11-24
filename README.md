@@ -4,7 +4,7 @@ Run Pi, Codex, Claude Code or Antigravity in a sandbox with your project folder,
 
 The recommended way to use Pi is **VS Code in your browser with the [FrostPi](https://github.com/kyuz0/pi-vscode-ui) extension**. This is the most feature-rich Pi experience, with chat, files and terminals together. Choose **Browser editor** in Factory. For Codex, Claude Code and Antigravity, this option opens VS Code in your browser with the selected agent’s extension.
 
-You can also use the selected agent’s CLI. For Pi, **FrostPi in browser** provides a standalone chat interface with a file viewer. FrostPi and Pi CLI use the same Pi executable and saved chats.
+You can also use the selected agent’s CLI. FrostPi and Pi CLI use the same Pi executable and saved chats.
 
 If you have VS Code installed on your computer, choose **VS Code on host** for a Pi sandbox. This gives less isolation from editor extensions because host-side extensions can access your computer. Choose this when creating a separate sandbox; a sandbox already used with the browser editor cannot switch to host VS Code. [Editor options and security](docs/browser-editor.md#choose-a-client)
 
@@ -71,6 +71,9 @@ client, choose **Open with…** and pick one, such as Pi CLI. [Using a sandbox](
 
 Save a sandbox’s chats to a ZIP with **Actions… → Export chat history…**.
 [Back up and restore chats](docs/usage.md#back-up-and-restore-chats)
+
+Use **Continue in another sandbox…** to copy a conversation to another coding
+agent. [Copy a chat between agents](docs/usage.md#continue-a-chat-with-another-agent)
 
 ![FrostPi beside the updated Python route planner, with edits and a passing test run visible](docs/frostpi.png)
 

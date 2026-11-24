@@ -780,11 +780,12 @@ class RecoveryTests(LifecycleTestCase):
             self.assertEqual(len(run.call_args_list), 1)
 
     def test_up_checks_both_ownership_labels_before_any_recovery(self):
-        with patch.object(sandbox, 'inspect', side_effect=[self.container(False), ValueError('unrelated')]), \
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(sandbox, 'inspect', side_effect=[self.container(False), ValueError('unrelated')]), \
                 patch.object(sandbox, 'upgrade_gateway_config') as upgrade, \
                 patch.object(sandbox, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'unrelated'):
-                sandbox.up(self.config, Path('/unused'))
+                sandbox.up(self.config, Path(temporary))
             run.assert_not_called()
             upgrade.assert_not_called()
 

@@ -42,14 +42,29 @@ class Preferences(unittest.TestCase):
             self.assertFalse(settings.load(state)['allow_uploads'])
             settings.save(state, {'allow_uploads': True})
             self.assertTrue(settings.copy_choice(settings.load(state))['allow_uploads'])
-            self.assertFalse(settings.load(state)['frostpi_uploads'])
-            selected = settings.save(state, {'mode': 'frostpi', 'frostpi_uploads': True, 'frostpi_downloads': True})
-            self.assertEqual(settings.copy_choice(selected), selected)
-            self.assertFalse(selected['allow_uploads'])
             settings.save(state, {'allow_uploads': False})
             self.assertFalse(settings.load(state)['allow_uploads'])
         with self.assertRaisesRegex(ValueError, 'file uploads'):
             settings.validate({'allow_uploads': 'false'})
+
+    def test_retired_standalone_choice_keeps_chats_and_connection_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            chat = state / 'saved-chat.jsonl'
+            chat.write_text('synthetic saved conversation')
+            previous = {'mode': 'frostpi', 'frostpi_uploads': True,
+                        'frostpi_downloads': True, 'allow_uploads': False, 'port': 43210}
+            (state / 'editor.json').write_text(json.dumps(previous))
+            current = settings.load(state)
+            self.assertEqual(settings.copy_choice(previous), settings.DEFAULTS)
+            self.assertEqual(settings.saved_choice({**previous, 'mode': 'browser'}), current)
+            self.assertEqual(current, {**settings.DEFAULTS, 'port': 43210})
+            self.assertEqual(chat.read_text(), 'synthetic saved conversation')
+            settings.save(state, current)
+            self.assertEqual(json.loads((state / 'editor.json').read_text()), current)
+            self.assertEqual(set(settings.modes()), {'browser', 'pi', 'desktop'})
+            with self.assertRaisesRegex(ValueError, 'Editor menu'):
+                settings.validate({'mode': 'frostpi'})
 
     def test_address_port_and_remote_authentication(self):
         for value in ({'address': '0.0.0.0'}, {'address': '::'}, {'address': 'example.com'},

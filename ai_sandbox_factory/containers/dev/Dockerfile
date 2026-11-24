@@ -12,8 +12,6 @@ RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
     && npm exec --yes --package=pnpm@10.13.1 -- pnpm package:vsix \
     && /bin/sh -c 'set -- artifacts/FrostPi-*.vsix; test "$#" = 1 && cp "$1" /frostpi.vsix'
 
-RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm build:browser
-
 FROM cli-tools
 ARG PI_VERSION=1.4.0
 ARG USER_UID=1000
@@ -43,7 +41,6 @@ RUN install -d -o node -g node -m 700 /var/tmp/pi
 ENV TMPDIR=/var/tmp/pi TMUX_TMPDIR=/var/tmp/pi
 COPY security/security.md /opt/sandbox/security.md
 # Build the pinned source before opening the sandbox editor.
-COPY --from=frostpi-build /src/apps/desktop/dist/web /opt/frostpi-web
 COPY --from=frostpi-build /frostpi.vsix /tmp/frostpi.vsix
 COPY --from=frostpi-build /src/source-commit /opt/sandbox/frostpi-source-commit
 RUN mkdir -p /opt/editor-extensions \

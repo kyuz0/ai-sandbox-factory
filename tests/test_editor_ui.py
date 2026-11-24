@@ -160,17 +160,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             uploads = screen.query_one('#editor-uploads', Checkbox)
             uploads.value = True
             self.assertTrue(fields.collect()['allow_uploads'])
-            screen.query_one('#editor-mode', Select).value = 'frostpi'
-            await pilot.pause()
-            self.assertFalse(screen.query_one('#editor-upload-fields').display)
-            self.assertEqual(fields.collect()['mode'], 'frostpi')
-            for key in ('uploads', 'downloads'):
-                check = screen.query_one('#frostpi-' + key, Checkbox)
-                self.assertTrue(screen.query_one('#frostpi-' + key[:-1] + '-fields').display)
-                self.assertFalse(check.value)
-                check.value = True
-                self.assertTrue(fields.collect()['frostpi_' + key])
-                check.value = False
+            self.assertFalse(screen.query('#frostpi-upload-fields, #frostpi-download-fields'))
             screen.query_one('#editor-mode', Select).value = 'browser'
             await pilot.pause()
             self.assertTrue(screen.query_one('#editor-upload-fields').display)

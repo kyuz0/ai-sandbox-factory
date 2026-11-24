@@ -1313,6 +1313,7 @@ class MoreActions(ModalScreen[Optional[str]]):
             self.actions.append(('Getting started…', 'profile-guide'))
         if record.get('config', {}).get('engine'):
             self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
+            self.actions.append(('Continue in another sandbox…', 'copy-chat'))
         self.actions.append(('Delete sandbox…', 'delete'))
 
     def compose(self):
@@ -2993,7 +2994,7 @@ class SettingsForm(Screen):
 
     def open_client_label(self, mode):
         client = (('the browser editor' if mode == 'browser' else PRIMARY_AGENTS[self.primary] + ' CLI') if self.native else {
-            'frostpi': 'FrostPi in your browser', 'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
+            'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
         }[mode])
         return 'Open ' + client + (' after applying' if self.editing else ' when ready')
 
@@ -3772,7 +3773,7 @@ class SettingsForm(Screen):
             or (s not in PROFILE_SKILLS.get(self.profile_name, []) and s in selected['disabled_skills'])]
         if not self.editing:
             draft['editor'] = self.query_one(EditorFields).collect()
-            if draft['editor']['mode'] in ('browser', 'frostpi') and editor_settings.default_mode(self.query_one('#engine', Select).value) != 'browser':
+            if draft['editor']['mode'] == 'browser' and editor_settings.default_mode(self.query_one('#engine', Select).value) != 'browser':
                 raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose Pi CLI or VS Code on host.')
         draft.update(network=self.query_one('#network', Select).value, memory=memory_limit(inp('memory')),
                      subagents=check('subagents'), options=options(selected), engine=self.query_one('#engine', Select).value,
@@ -4281,6 +4282,12 @@ class Cockpit(App):
     .path-row Input { width: 1fr; margin: 0; }
     .path-row Button { height: 1; padding: 0 2; margin: 0 0 0 1; }
     .chat-success { color: #91caa6; }
+    ContinueChat #confirm-box { width: 100; max-width: 95%; height: auto; max-height: 90%; }
+    ContinueChat #copy-fields { height: auto; max-height: 55vh; padding: 0 1 0 0; }
+    ContinueChat Button:disabled { background: #44484e; color: #a1a7af; opacity: 55%; }
+    ContinueChat Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold underline; }
+    ContinueChat Feedback.error { color: #ffb3a7; background: #452f30; text-style: bold; }
+    ContinueChat:nocolor Feedback.error { color: black; background: white; text-style: bold; }
     .tall-terminal ChatTransfer #confirm-box { width: 114; }
     ChatTransfer .path-row { margin: 1 0 0 0; }
     ChatTransfer Input:focus { background: #4a5360; }
@@ -4929,6 +4936,9 @@ class Cockpit(App):
             self.push_screen(Operation('Local models · ' + name, lambda log: self.service.models(name, mode, log)))
         elif action in ('export-chats', 'import-chats'):
             self.push_screen(ChatTransfer(name, importing=(action == 'import-chats'), agent=coding_agent(config)))
+        elif action == 'copy-chat':
+            from .session_transfer_ui import ContinueChat
+            self.push_screen(ContinueChat(name))
         elif action == 'delete':
             self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)

@@ -306,12 +306,7 @@ async def serve(container, cwd, preferences, state, ready=None):
     for signum in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(signum, task.cancel)
     relay = Relay(container)
-    standalone = preferences['mode'] == 'frostpi'
-    if standalone:
-        relay.socket = '/home/node/.pi/frostpi-web/chat-' + secrets.token_hex(12) + '.sock'
-        address, port = host_platform.automatic_address(), 0
-    else:
-        address, port = editor_settings.connection(state, preferences)
+    address, port = editor_settings.connection(state, preferences)
     context = editor_settings.tls_context(preferences)
     relay.scheme = 'https' if context else 'http'
     try:
@@ -359,31 +354,25 @@ async def serve(container, cwd, preferences, state, ready=None):
         control = await asyncio.start_unix_server(request_stop, str(control_path))
         control_path.chmod(0o600)
         heartbeat = asyncio.create_task(keep_control_socket())
-        link = secrets.token_urlsafe(32) if standalone else ''
         settings = {'cwd': cwd, 'authority': relay.host}
-        if standalone:
-            command = ['node', '/opt/frostpi-web/server.cjs']
-            settings.update(socket=relay.socket, link=link, uploads=preferences['frostpi_uploads'],
-                            downloads=preferences['frostpi_downloads'])
-        else:
-            source = Path(__file__).parent / 'containers/editor'
-            command = ['python3', '-u', '-c', (source / 'launch.py').read_text()]
-            config_path = state / 'config.json'
-            config = json.loads(config_path.read_text()) if config_path.exists() else {}
-            from . import primary_workspace, native_editor
-            selected = primary_workspace.agent(config)
-            settings.update(agent=selected, native_settings=native_editor.settings(selected))
-            settings.update(binary=INSTALL + '/bin/code-server', password_hash=preferences['password_hash'],
-                            allow_uploads=preferences.get('allow_uploads', False),
-                            watch_fallback=(source / 'watch-fallback.cjs').read_text())
-            if selected == 'agy':
-                from .native_browser_hub import AntigravityRelay
-                agent_hub = AntigravityRelay(container, preferences['password_hash'], relay.scheme + '://' + relay.host)
-                agent_hub.scheme = relay.scheme
-                agent_server = await asyncio.start_server(agent_hub.handle, host_platform.listen_address(address),
-                                                         0, ssl=context, limit=16384)
-                agent_hub.host = editor_settings.authority(address, agent_server.sockets[0].getsockname()[1])
-                relay.redirector = agent_hub.redirect
+        source = Path(__file__).parent / 'containers/editor'
+        command = ['python3', '-u', '-c', (source / 'launch.py').read_text()]
+        config_path = state / 'config.json'
+        config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        from . import primary_workspace, native_editor
+        selected = primary_workspace.agent(config)
+        settings.update(agent=selected, native_settings=native_editor.settings(selected))
+        settings.update(binary=INSTALL + '/bin/code-server', password_hash=preferences['password_hash'],
+                        allow_uploads=preferences.get('allow_uploads', False),
+                        watch_fallback=(source / 'watch-fallback.cjs').read_text())
+        if selected == 'agy':
+            from .native_browser_hub import AntigravityRelay
+            agent_hub = AntigravityRelay(container, preferences['password_hash'], relay.scheme + '://' + relay.host)
+            agent_hub.scheme = relay.scheme
+            agent_server = await asyncio.start_server(agent_hub.handle, host_platform.listen_address(address),
+                                                     0, ssl=context, limit=16384)
+            agent_hub.host = editor_settings.authority(address, agent_server.sockets[0].getsockname()[1])
+            relay.redirector = agent_hub.redirect
         editor = await asyncio.create_subprocess_exec('podman', 'exec', '-i', '--user', 'node',
             container, *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, start_new_session=True)
         editor.stdin.write((json.dumps(settings) + '\n').encode())
@@ -392,11 +381,8 @@ async def serve(container, cwd, preferences, state, ready=None):
         if status != b'ready\n':
             raise ValueError('Browser editor did not start; see the error above')
         url = relay.scheme + '://' + relay.host
-        if standalone:
-            url += '/' + link + '/'
-        else:
-            (state / 'browser-editor.enabled').touch(mode=0o600)
-            editor_settings.remember_connection(state, preferences, address, port)
+        (state / 'browser-editor.enabled').touch(mode=0o600)
+        editor_settings.remember_connection(state, preferences, address, port)
         write_json(state / 'browser-editor-runtime.json', {
             'pid': os.getpid(), 'token': token, 'url': url,
             'container': container, 'preferences': preferences,
@@ -434,7 +420,7 @@ async def serve(container, cwd, preferences, state, ready=None):
                 await editor.wait()
 
 
-def open_browser_editor(config, state, archive=None, background=False, open_tab=True, *, mode='browser'):
+def open_browser_editor(config, state, archive=None, background=False, open_tab=True):
     from . import sandbox, folders
     if config['engine'] != 'podman':
         raise ValueError('The browser editor requires rootless Podman')
@@ -443,53 +429,43 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
     if not current or not current['State']['Running']:
         raise ValueError('Start the sandbox before opening its browser editor')
     container = current['Id']
-    if mode == 'frostpi':
-        saved = editor_settings.load(state)
-        preferences = editor_settings.validate({'mode': mode, 'frostpi_uploads': saved['frostpi_uploads'],
-                                                'frostpi_downloads': saved['frostpi_downloads']})
-    else:
-        preferences = editor_settings.validate({**editor_settings.load(state), 'mode': 'browser'})
+    preferences = editor_settings.validate({**editor_settings.load(state), 'mode': 'browser'})
     with (state / 'browser-editor.lock').open('a+') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             info = runtime(state)
-            if info and info['container'] == container and editor_settings.validate(info['preferences']) == preferences:
+            if info and info['preferences'].get('mode') == 'frostpi':
+                raise ValueError('Standalone FrostPi is no longer supported. Choose Actions → Stop browser editor, then Open to use VS Code with your saved chats.')
+            if info and info['container'] == container and editor_settings.saved_choice(info['preferences']) == preferences:
                 show_url(info['url'], open_tab)
                 return
             if not info:
                 raise ValueError('The browser editor is already starting; wait for it to finish.') from None
-            if info['preferences']['mode'] != mode:
-                current_client = editor_settings.MODES[info['preferences']['mode']]
-                raise ValueError(f'{current_client} is running. To switch clients, choose Actions → Stop browser editor, then Open with…')
             raise ValueError('Browser editor settings changed. Stop it from Actions and reopen it.') from None
         rootless = subprocess.check_output(['podman', 'info', '--format', '{{.Host.Security.Rootless}}'], text=True).strip()
         if rootless != 'true':
             raise ValueError('The browser editor requires rootless Podman')
-        if mode == 'frostpi':
-            if subprocess.run(['podman', 'exec', container, 'test', '-r', '/opt/frostpi-web/server.cjs']).returncode:
-                raise ValueError('This sandbox image does not include standalone FrostPi. Choose Browser editor to open its existing chats.')
-        else:
-            arch = subprocess.check_output(['podman', 'exec', container, 'uname', '-m'], text=True).strip()
-            release(arch)
-            binary = INSTALL + '/bin/code-server'
-            if subprocess.run(['podman', 'exec', container, 'test', '-x', binary]).returncode:
-                path = checked_archive(state.parent / '.browser-editor-downloads', archive, arch)
-                staging = INSTALL + '.install-' + secrets.token_hex(8)
+        arch = subprocess.check_output(['podman', 'exec', container, 'uname', '-m'], text=True).strip()
+        release(arch)
+        binary = INSTALL + '/bin/code-server'
+        if subprocess.run(['podman', 'exec', container, 'test', '-x', binary]).returncode:
+            path = checked_archive(state.parent / '.browser-editor-downloads', archive, arch)
+            staging = INSTALL + '.install-' + secrets.token_hex(8)
+            subprocess.run(['podman', 'exec', '--user', '0', container,
+                            'mkdir', '-m', '755', staging], check=True)
+            try:
+                with path.open('rb') as source:
+                    subprocess.run(['podman', 'exec', '-i', '--user', '0', container,
+                        'tar', '-xz', '--no-same-owner', '--strip-components=1', '-C', staging],
+                        stdin=source, check=True)
                 subprocess.run(['podman', 'exec', '--user', '0', container,
-                                'mkdir', '-m', '755', staging], check=True)
-                try:
-                    with path.open('rb') as source:
-                        subprocess.run(['podman', 'exec', '-i', '--user', '0', container,
-                            'tar', '-xz', '--no-same-owner', '--strip-components=1', '-C', staging],
-                            stdin=source, check=True)
-                    subprocess.run(['podman', 'exec', '--user', '0', container,
-                                    'mv', '-T', staging, INSTALL], check=True)
-                finally:
-                    subprocess.run(['podman', 'exec', '--user', '0', container, 'rm', '-rf', staging],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                'mv', '-T', staging, INSTALL], check=True)
+            finally:
+                subprocess.run(['podman', 'exec', '--user', '0', container, 'rm', '-rf', staging],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         from . import primary_workspace, native_editor
-        if mode == 'browser' and primary_workspace.agent(config) != 'pi':
+        if primary_workspace.agent(config) != 'pi':
             native_editor.install(config, container, arch)
         if config.get('local_model_ports') or config.get('model_providers'):
             sandbox.initialize_models(config, state)

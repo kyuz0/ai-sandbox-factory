@@ -49,10 +49,6 @@ class EditorFields(Vertical):
                 yield Static('VS Code on host requires a separate sandbox after browser-editor use.', classes='setting-help')
         with Vertical(classes='setting', id='editor-upload-fields'):
             yield Checkbox('Allow file uploads', value=self.value['allow_uploads'], id='editor-uploads')
-        with Vertical(classes='setting', id='frostpi-upload-fields'):
-            yield Checkbox('Allow file uploads', value=self.value['frostpi_uploads'], id='frostpi-uploads')
-        with Vertical(classes='setting', id='frostpi-download-fields'):
-            yield Checkbox('Allow file downloads', value=self.value['frostpi_downloads'], id='frostpi-downloads')
         if not self.connection_settings:
             return
         with Collapsible(title='Browser connection', collapsed=True, id='editor-connection'):
@@ -97,15 +93,12 @@ class EditorFields(Vertical):
         self.query_one('#editor-description', Static).update({
             'browser': ('Open VS Code and FrostPi in your browser.' if self.agent == 'pi' else
                         f'Open VS Code with {name} in your browser.'),
-            'frostpi': 'Open FrostPi chat in a browser on this computer.',
             'pi': f'Run {name} in this terminal. Exit {name} to return here.',
             'desktop': 'Open VS Code on this computer. Host-side extensions have host access.',
         }[mode])
         for section in self.screen.query('#editor-section'):
             section.title = CATEGORIES['editor-settings'].label + ' · ' + self.modes[mode]
         self.query_one('#editor-upload-fields').display = mode == 'browser'
-        self.query_one('#frostpi-upload-fields').display = mode == 'frostpi'
-        self.query_one('#frostpi-download-fields').display = mode == 'frostpi'
         if not self.connection_settings:
             self.space_fields()
             return
@@ -148,9 +141,7 @@ class EditorFields(Vertical):
 
     def collect(self):
         mode = self.query_one('#editor-mode', Select).value
-        choices = dict(mode=mode, allow_uploads=self.query_one('#editor-uploads', Checkbox).value,
-                       frostpi_uploads=self.query_one('#frostpi-uploads', Checkbox).value,
-                       frostpi_downloads=self.query_one('#frostpi-downloads', Checkbox).value)
+        choices = dict(mode=mode, allow_uploads=self.query_one('#editor-uploads', Checkbox).value)
         if not self.connection_settings:
             return editor_settings.validate(choices)
         if mode != 'browser':
@@ -258,7 +249,11 @@ class EditorScreen(Screen):
 
 class OpenWith(ModalScreen):
     BINDINGS = [('escape', 'back', 'Back')]
-    DEFAULT_CSS = 'OpenWith { align: center middle; background: #000000 70%; }'
+    DEFAULT_CSS = '''
+    OpenWith { align: center middle; background: #000000 70%; }
+    OpenWith #editor-choices { border: none; padding: 0; margin: 1 0 0 0; }
+    OpenWith #editor-choices > .option-list--option { padding: 0; }
+    '''
 
     def __init__(self, *, desktop_allowed=True, agent='pi'):
         super().__init__()
