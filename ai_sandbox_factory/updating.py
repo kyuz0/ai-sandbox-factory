@@ -58,7 +58,7 @@ class Update:
             self._requested.set()
             return True
 
-    def run(self, command, log):
+    def run(self, command, log, *, env=None, pass_fds=()):
         with self._lock:
             if self._requested.is_set():
                 raise UpdateCancelled()
@@ -69,7 +69,7 @@ class Update:
         retain_gate = False
         self._progress_channel = job_progress.Channel(self.progress)
         try:
-            self._run(command + ['--apply-gate', str(self._gate)], log)
+            self._run(command + ['--apply-gate', str(self._gate)], log, env, pass_fds)
         except StopFailed:
             # Even if the worker keeps running, it must never enter the apply phase.
             retain_gate = True
@@ -83,9 +83,10 @@ class Update:
             if not retain_gate:
                 shutil.rmtree(directory)
 
-    def _run(self, command, log):
-        environment = dict(os.environ, **{job_progress.ENVIRONMENT: str(self._progress_channel.path)})
-        process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    def _run(self, command, log, env, pass_fds):
+        environment = dict(os.environ if env is None else env,
+                           **{job_progress.ENVIRONMENT: str(self._progress_channel.path)})
+        process = subprocess.Popen(command, env=environment, pass_fds=pass_fds, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, errors='replace',
                                    start_new_session=True)
         lines = queue.Queue()

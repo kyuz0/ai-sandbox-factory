@@ -45,6 +45,14 @@ class Job:
         return 'Complete · Model not connected' if self.result == 'Complete' and self.model_disconnected else phase
 
     @property
+    def view_label(self):
+        step = self._step
+        if step and self.result is None and not self._cancelled:
+            number, total, _ = step
+            return f'View job ({number}/{total})'
+        return 'View job'
+
+    @property
     def can_cancel(self):
         return False
 

@@ -3,12 +3,24 @@
 import json
 from pathlib import Path
 import shutil
+from subprocess import PIPE
+from urllib.parse import quote
 from . import registry
 from .settings_catalog import LOCAL_MODELS_PATH, MODEL_PROVIDERS_PATH
 
 
 def selections(config):
     return config.get("model_providers", [])
+
+
+def diagnostic(text, secret=None):
+    text = text or ''
+    if secret:
+        key = secret.strip()
+        variants = {secret, key, json.dumps(key)[1:-1], quote(key, safe='')}
+        for value in sorted(variants - {''}, key=len, reverse=True):
+            text = text.replace(value, '[redacted]')
+    return ''.join(c for c in text if c.isprintable() or c in '\n\t').strip()
 
 
 def prepare(values, state, *, saved=(), refresh=False):
@@ -157,21 +169,23 @@ def configure(config, state, action="refresh", provider=None, secret=None):
             input=json.dumps(request),
             capture=True,
             check=False,
-            stderr=__import__("subprocess").PIPE,
+            stderr=PIPE,
         )
         if result.returncode:
-            raise ValueError(
-                "Provider operation failed: "
-                + row["name"]
-                + "; check the provider configuration"
-            )
-        response = json.loads(result.stdout)
+            details = diagnostic(result.stderr, secret) or diagnostic(result.stdout, secret)
+            raise ValueError(f'{row["name"]}: {action} exited with status {result.returncode}. '
+                             + (details or 'The provider process returned no diagnostic output.'))
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'{row["name"]}: {action} returned invalid JSON at line {error.lineno}, '
+                             f'column {error.colno} ({error.msg}).') from None
         message = (
             row["name"]
             + ": "
             + response.get("state", "unknown")
             + " — "
-            + response.get("message", "")
+            + diagnostic(response.get("message", ""), secret)
         )
         if response.get("state") == "error":
             raise ValueError(message)

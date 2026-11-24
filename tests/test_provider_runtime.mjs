@@ -36,10 +36,15 @@ test('dispatch supplies settings and credential through stdin; unknown actions f
 });
 
 test('provider exceptions and invalid responses cannot leak a key', async t => {
-  for(const code of [`throw Error('fixture-key')`, `return {state:'invalid',message:'fixture-key'}`]){
+  for(const [code, diagnostic] of [
+    [`throw Error('Catalogue request failed for fixture-key', {cause: Error('HTTP 503')})`,
+     /Catalogue request failed for \[redacted\].*HTTP 503/],
+    [`return {state:'invalid',message:'fixture-key'}`, /Invalid provider result/],
+  ]){
     const f=await fixture(t, `export async function run(){${code}}`);
     const result=await f.run({id:'test',action:'refresh',secret:'fixture-key'});
     assert.equal(result.code,1);assert.ok(!(result.stdout+result.stderr).includes('fixture-key'));
+    assert.match(result.stderr, diagnostic);
     await assert.rejects(access(join(f.root,'agent/models.refresh.lock')));
   }
 });

@@ -75,6 +75,8 @@ async def capture(size):
         research_only = args.only and all(name.startswith('research-') for name in args.only)
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
         aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
+        if aws_only:
+            record['workspace'] = '/home/example/projects/demo'
         variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only else {}
         with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
             app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
@@ -211,14 +213,15 @@ async def capture(size):
                     return
                 if args.only and all(name.startswith('native-docs-') for name in args.only):
                     record['config']['primary_agent'] = 'agy'
-                    app.service.records = [record]
+                    (state / 'config.json').write_text(json.dumps(record['config']))
                     await app.push_screen(EditorScreen('demo'))
                     await pilot.pause()
-                    app.screen.query_one('#editor-mode', Select).expanded = True
-                    await shot('native-docs-editor', focus='#editor-mode')
+                    app.screen.query_one('#editor-mode', Select).focus()
+                    await pilot.press('enter')
+                    await shot('native-docs-editor')
                     await app.pop_screen()
                     draft = preset('base', DEFAULT_SETTINGS)
-                    draft.update(name='demo', workspace=str(workspace), primary_agent='codex')
+                    draft.update(name='demo', workspace='/home/example/projects/demo', primary_agent='codex')
                     await app.push_screen(SettingsForm(draft))
                     await pilot.pause()
                     app.screen.query_one('#primary-approvals-section', Collapsible).collapsed = False
@@ -1244,7 +1247,7 @@ async def capture(size):
                     if any(name.startswith('settings-ux-reviewer-') for name in args.only):
                         from ai_sandbox_factory.reviewer_ui import ReviewerPicker
                         catalogue = [
-                            dict(provider='chaucer', id='global-deepseek-v4-1-flash', name='DeepSeek'),
+                            dict(provider='example', id='example-model', name='Example model'),
                             dict(provider='openrouter', id='openai/gpt-4o-mini', name='GPT-4o mini'),
                         ]
                         app.service.approval_models = lambda name: catalogue
@@ -1259,9 +1262,9 @@ async def capture(size):
                         await shot('settings-ux-reviewer-search-empty')
                         await app.pop_screen()
                         app.service.plugin_model = lambda name, action, **values: {'models': [
-                            dict(id='global-deepseek-v4-1-flash', name='DeepSeek', contextWindow=1000000)]}
+                            dict(id='example-model', name='Example model', contextWindow=1000000)]}
                         await shot('settings-ux-reviewer-first-plugin', ModelDialog(
-                            'demo', 'chaucer', plugin_label='Chaucer', optional=True, approval_model='current'),
+                            'demo', 'example', plugin_label='Example Models', optional=True, approval_model='current'),
                             focus='#review-current')
                         await shot('settings-ux-reviewer-first-providers', ModelsScreen(record, finished=lambda: None),
                                    focus='#review-current')

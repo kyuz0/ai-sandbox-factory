@@ -54,6 +54,7 @@ from .reviewer_ui import ReviewerFields
 from . import settings_effects
 from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
+from . import operation_locks
 from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
                               endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
                               SANDBOX_NAME_ERROR, SANDBOX_NAME_LIMIT)
@@ -222,8 +223,11 @@ class Service:
         result = subprocess.run(self.command('list', '--json'), capture_output=True, text=True, check=True)
         return json.loads(result.stdout)
 
+    def capture(self, command, name, *args, payload=None):
+        return subprocess.run(self.command(command, name, *args), input=payload, capture_output=True, text=True,
+                              **operation_locks.factory_child(name))
+
     def run(self, args, log):
-        from . import operation_locks
         visible = list(args)
         for index, value in enumerate(visible):
             if value == '--creation-token' and index + 1 < len(visible):
@@ -250,20 +254,21 @@ class Service:
             self.run(args, log)
         else:
             log('› ' + ' '.join(args))
-            update.run(self.command(*args), log)
+            update.run(self.command(*args), log, **operation_locks.factory_child(args[1]))
 
     def start(self, name, log):
-        config = self.config(name)
-        dev, proxy = sandbox.names(config)[:2]
-        required = [dev, proxy] if sandbox.network_mode(config) == 'allowlist' else [dev]
-        # Existing containers can resume even after their original image tags are removed.
-        if any(sandbox.inspect(config, container) is None for container in required):
-            images = sandbox.image_names(config)
-            needed = images if sandbox.network_mode(config) == 'allowlist' else images[:1]
-            if any(subprocess.run([config['engine'], 'image', 'inspect', image],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode for image in needed):
-                self.run(['build', name], log)
-        self.run(['up', name], log)
+        with operation_locks.sandbox(name, 'start'):
+            config = self.config(name)
+            dev, proxy = sandbox.names(config)[:2]
+            required = [dev, proxy] if sandbox.network_mode(config) == 'allowlist' else [dev]
+            # Existing containers can resume even after their original image tags are removed.
+            if any(sandbox.inspect(config, container) is None for container in required):
+                images = sandbox.image_names(config)
+                needed = images if sandbox.network_mode(config) == 'allowlist' else images[:1]
+                if any(subprocess.run([config['engine'], 'image', 'inspect', image],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode for image in needed):
+                    self.run(['build', name], log)
+            self.run(['up', name], log)
 
     def config(self, name):
         return json.loads((self.state / name / 'config.json').read_text())
@@ -457,8 +462,7 @@ class Service:
 
     def save_communication_keys(self, name, changes, log):
         if changes:
-            result = subprocess.run(self.command('communication-key', name, '--keys-stdin'),
-                                    input=json.dumps(changes), text=True, capture_output=True)
+            result = self.capture('communication-key', name, '--keys-stdin', payload=json.dumps(changes))
             if result.returncode:
                 raise ValueError('Could not save Slack tokens. Open Settings → Communications to try again.')
             log('Slack credentials saved in the sandbox.')
@@ -477,19 +481,31 @@ class Service:
             self.assign_provider_key(name, provider, choice, log)
         self.save_communication_keys(name, draft.get('_communication_keys'), log)
         if key:
-            result = subprocess.run(self.command('web-key', name, '--keys-stdin'), input=json.dumps(key), text=True, capture_output=True)
+            result = self.capture('web-key', name, '--keys-stdin', payload=json.dumps(key))
             if result.returncode:
                 raise ValueError('Could not save the search API key. Configure it with the web-key command.')
             log('Search API keys saved in the sandbox.')
         if (draft.get('local_model_ports') or draft.get('model_providers')) and not draft['open_editor']:
             self.run(['configure', name], log)
     def provider(self, name, provider, action, key, log):
-        args=['configure', name, '--provider', provider]
-        if action in ('status','preview'):args+=['--'+action]
-        if key is not None:args+=['--key-stdin']
-        result=subprocess.run(self.command(*args),input=key or '',capture_output=True,text=True)
-        if result.returncode:raise ValueError('Provider operation failed. Check its settings and network access.')
-        log(safe_text(result.stdout))
+        args = ['configure', name, '--provider', provider]
+        if action in ('status', 'preview'):
+            args += ['--' + action]
+        if key is not None:
+            args += ['--key-stdin']
+        result = self.capture(*args, payload=key or '')
+        output = model_providers.diagnostic(result.stdout, key)
+        if output:
+            log(output)
+        error = model_providers.diagnostic(result.stderr, key)
+        if error:
+            log(error)
+        if result.returncode:
+            # The full diagnostic is in the job output; keep the summary actionable.
+            lines = (error or output).splitlines()
+            cause = lines[-1] if lines else 'The configure command returned no diagnostic output.'
+            raise ValueError(f'Could not {action} provider {provider} for {name} '
+                             f'(exit {result.returncode}): {cause}')
         if action not in ('status','preview'):
             log('Reload an open Pi/FrostPi session before selecting newly discovered models.')
 
@@ -535,11 +551,12 @@ class Service:
         changes['allowlist'] = draft['allowlist'] if draft['network'] == 'allowlist' else ''
         if draft.get('_curlie_list'):
             changes['curlie_list'] = draft['_curlie_list']
-        with tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
+        with operation_locks.sandbox(name, 'apply settings to'), \
+                tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, changes)
             self.run_update(['update', name, '--settings-file', str(path)], log, update)
-        self.setup(name, draft, key, log)
+            self.setup(name, draft, key, log)
 
     def update_settings(self, name, settings, log, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-settings-') as temp:
@@ -574,8 +591,9 @@ class Service:
     def models(self, name, mode, log):
         if mode not in ('preview', 'refresh'):
             raise ValueError('Unknown discovery action')
-        self.start(name, log)
-        self.run(['configure', name] + (['--preview'] if mode == 'preview' else []), log)
+        with operation_locks.sandbox(name, f'{mode} models for'):
+            self.start(name, log)
+            self.run(['configure', name] + (['--preview'] if mode == 'preview' else []), log)
         if mode == 'refresh':
             log('In an already open Pi/FrostPi session, refresh there too before selecting a model with /model.')
 
@@ -4476,7 +4494,7 @@ class Cockpit(App):
             if self.size.width < 100 and len(name) > 32:
                 name = name[:31] + '…'
             active = self.active_job(record['name'])
-            action = 'View job' if active else '' if record.get('creation') else 'Open'
+            action = active.view_label if active else '' if record.get('creation') else 'Open'
             alert_count = len(sandbox_alerts(record))
             cells = (
                 name,
@@ -4625,6 +4643,14 @@ class Cockpit(App):
         if rows != self._dashboard_jobs:
             self._dashboard_jobs = rows
             self.render_records()
+        elif rows:
+            table = self.query_one(SandboxTable)
+            for job in rows:
+                label = job.view_label
+                for name in job.targets:
+                    if name in table.rows and str(table.get_cell(name, 'open')).strip() != label:
+                        table.update_cell(name, 'open', SandboxTable.action_cell(label, primary=True),
+                                          update_width=True)
         finished = [job for job in self.job_completions if job.result is not None]
         if finished:
             self.refresh_inventory()
@@ -5094,11 +5120,12 @@ class Cockpit(App):
             self.start_task(name, 'Open editor · ' + name, lambda log: self.open_ready(name, log, mode), working='Opening editor')
 
     def open_ready(self, name, log, mode=None):
-        self.service.start(name, log)
-        args = ['open', name]
-        if mode:
-            args += ['--editor', mode]
-        self.service.run(args, log)
+        with operation_locks.sandbox(name, 'open the editor for'):
+            self.service.start(name, log)
+            args = ['open', name]
+            if mode:
+                args += ['--editor', mode]
+            self.service.run(args, log)
 
     def operation(self, title, args, *, success_message=''):
         command, name, *_ = args

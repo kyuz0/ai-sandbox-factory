@@ -131,10 +131,13 @@ the build cache.
 
 Creation, rebuilds, settings updates, chat transfers, and other long operations
 run as jobs. Press **Esc** or choose **Hide details** to leave the output view and
-work on another sandbox. A new sandbox shows **Creating** in the list. Choose
-**View job** in its row to reopen the details. The **Jobs…** button counts running
-jobs. Choose it or press **J** to see running and finished jobs and their output.
+work on another sandbox. A new sandbox shows **Creating** in the list. Its
+**View job** button shows the current step and total when available, such as
+**View job (4/6)**. Choose it to reopen the details. The **Jobs…** button counts
+running jobs. Choose it or press **J** to see running and finished jobs and their output.
 Builds that share image layers take turns.
+
+![A creating sandbox with the View job button showing step 4 of 6](jobs.png)
 
 Factory keeps running while jobs are active. Wait for them or cancel the jobs that
 offer cancellation before quitting. Closing the terminal can interrupt a job, and

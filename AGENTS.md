@@ -322,6 +322,15 @@ clear the other margins. Verify the rendered gap, not just the stylesheet.
   must work, and project configuration must not override managed permission rules.
   A failing fresh-sandbox check blocks release.
 
+- HARD GATE — lifecycle jobs: test the real creation worker with a provider
+  selected. The fixture must exercise startup, provider setup, a diagnostic
+  failure, rollback, and retry with the same name. For lock changes, test both
+  the Factory child that must reuse the lock and an independent command that
+  must be refused. Route subprocesses that call Factory from a job through
+  the lock handoff, including commands whose output is captured. Mocked calls
+  and a successful build do not establish that creation or an update works.
+  The fresh-sandbox CI job runs this check before any release.
+
 Identify repositories as `owner/repository`, with a link when available. Name fork
 parents and upstream repositories separately. Never use an unqualified repository name.
 

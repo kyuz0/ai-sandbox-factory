@@ -80,7 +80,7 @@ jobs:
           /tmp/factory-package/bin/ai-sandbox-factory profile list
           /tmp/factory-package/bin/ai-sandbox-factory provider list
   fresh-sandbox:
-    name: Fresh Pi and FrostPi sandbox
+    name: Fresh Pi and FrostPi sandbox and lifecycle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +95,11 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Check fresh project startup and mounted-folder permissions
         run: python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox
+      - name: Require fresh creation with a model provider and verify lifecycle locks
+        shell: bash
+        run: |
+          mkdir -p /tmp/factory-fresh-sandbox
+          python tests/creation_provider.py 2>&1 | tee /tmp/factory-fresh-sandbox/provider-creation.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

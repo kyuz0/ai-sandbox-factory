@@ -348,15 +348,24 @@ class PrimaryAgentsUI(unittest.TestCase):
         app = Cockpit(self.state, FakeService([]))
         with patch('ai_sandbox_factory.connectors.directory', return_value=package.parent):
             async with app.run_test(size=(80, 24)) as pilot:
+                async def open_review():
+                    await pilot.click('#continue')
+                    async with asyncio.timeout(12):
+                        while True:
+                            screen = app.screen
+                            if isinstance(screen, SettingsForm):
+                                search_mode = next(iter(screen.query('#web-mode').results(Select)), None)
+                                if search_mode is not None and search_mode.value is not Select.NULL:
+                                    return screen
+                            await pilot.pause(0.05)
+
                 await app.workers.wait_for_complete()
                 app.action_new()
                 await pilot.pause()
                 first = app.screen
                 first.query_one('#workspace', Input).value = str(self.state)
                 first.query_one('#name', Input).value = 'example'
-                first.query_one('#continue', Button).press()
-                await pilot.pause()
-                review = app.screen
+                review = await open_review()
                 review.query_one('#connector-build-status', Button).press()
                 await pilot.pause()
                 await pilot.press('escape')
@@ -375,9 +384,7 @@ class PrimaryAgentsUI(unittest.TestCase):
                 review.query_one('#back', Button).press()
                 await pilot.pause()
                 self.assertIs(app.screen, first)
-                first.query_one('#continue', Button).press()
-                await pilot.pause()
-                resumed = app.screen
+                resumed = await open_review()
                 self.assertEqual(resumed.collect()[0]['_connector_routes'], {'build-status': routes})
                 self.assertEqual(resumed.collect()[0]['_connector_instructions'],
                                  {'build-status': {'service': 'Use the latest request to check the current build.', 'operations': {}}})

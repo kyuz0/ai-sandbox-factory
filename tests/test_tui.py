@@ -136,7 +136,7 @@ class TUITests(unittest.TestCase):
         from ai_sandbox_factory.reviewer_ui import ReviewerPicker
         service = FakeService(self.records)
         service.approval_models = lambda name: [
-            {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
+            {'provider': 'example', 'id': 'main', 'name': 'Main'},
             {'provider': 'openrouter', 'id': 'openai/gpt-4o-mini', 'name': 'GPT-4o mini'},
         ]
         app = Cockpit(self.root, service)
@@ -177,7 +177,7 @@ class TUITests(unittest.TestCase):
     async def test_reviewer_controls_without_alternative_and_in_manual_mode(self):
         from textual.widgets import Select
         service = FakeService(self.records)
-        service.approval_models = lambda name: [{'provider': 'chaucer', 'id': 'only', 'name': 'Only'}]
+        service.approval_models = lambda name: [{'provider': 'example', 'id': 'only', 'name': 'Only'}]
         app = Cockpit(self.root, service)
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)

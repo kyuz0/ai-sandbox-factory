@@ -1,4 +1,4 @@
-"""Exercise two real Chaucer/DeepSeek workers in each Factory client.
+"""Exercise two real subagent workers in each Factory client.
 
 Run against a fresh, disposable Factory sandbox with subagents enabled and the
 browser editor already running. No provider credentials are read by this script.
@@ -18,15 +18,15 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_sandbox_factory import browser_editor, sandbox
 
-MODEL = 'eu-deepseek-v4-flash'
 WORKER_ROLE = 'fixture-arithmetic'
 
 
-def probe_workspace(state, name):
+def probe_workspace(state, name, provider):
     config = json.loads((state / name / 'config.json').read_text())
     assert config['subagents'] and config['engine'] == 'podman'
     assert config['network'] == 'allowlist'
-    assert [row['name'] for row in config['model_providers']] == ['chaucer']
+    if [row['name'] for row in config['model_providers']] != [provider]:
+        raise ValueError(f'Enable only the {provider!r} model provider in the disposable sandbox.')
     return Path(config['workspace']), sandbox.names(config)[0]
 
 
@@ -68,9 +68,14 @@ def main():
     parser.add_argument('--state-dir', type=Path, required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--provider', required=True, help='Installed Pi model provider ID')
+    parser.add_argument('--model', required=True, help='Tool-capable model ID set as the sandbox default')
     parser.add_argument('--chromium')
     args = parser.parse_args()
-    workspace, container = probe_workspace(args.state_dir, args.name)
+    try:
+        workspace, container = probe_workspace(args.state_dir, args.name, args.provider)
+    except ValueError as error:
+        parser.error(str(error))
     runtime = browser_editor.runtime(args.state_dir / args.name)
     if not runtime:
         parser.error('Start the browser editor for this disposable sandbox first.')
@@ -92,7 +97,7 @@ def main():
 
     terminal = '/tmp/' + run + '.sock'
     inside('tmux', '-S', terminal, 'new-session', '-d', '-x', '135', '-y', '35',
-           'pi', '--approve', '--provider', 'chaucer', '--model', MODEL, '--thinking', 'off')
+           'pi', '--approve', '--provider', args.provider, '--model', args.model, '--thinking', 'off')
     try:
         terminal_prefix = run + '-pi'
         prompt = prompt_for(workspace, terminal_prefix)
@@ -116,7 +121,7 @@ def main():
             time.sleep(0.2)
         (output / 'pi-terminal.txt').write_text(text)
         assert 'subagent' in text.lower(), 'Pi terminal did not render delegation'
-        print('PASS live Chaucer/DeepSeek Pi terminal: both workers produced their own correct results', flush=True)
+        print('PASS Pi terminal: both workers produced their own correct results', flush=True)
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, executable_path=args.chromium)
@@ -131,7 +136,7 @@ def main():
                 page.wait_for_timeout(100)
             else:
                 raise AssertionError('FrostPi did not open')
-            frame.get_by_text(re.compile(re.escape(MODEL))).first.wait_for(timeout=30_000)
+            frame.get_by_text(re.compile(re.escape(args.model))).first.wait_for(timeout=30_000)
             editor_prefix = run + '-frostpi'
             frame.get_by_label('Message Pi', exact=True).fill(prompt_for(workspace, editor_prefix))
             frame.get_by_role('button', name='Send to Pi', exact=True).click()
@@ -146,7 +151,7 @@ def main():
             page.wait_for_timeout(500)
             page.screenshot(path=str(output / 'frostpi-results.png'))
             browser.close()
-            print('PASS live Chaucer/DeepSeek FrostPi: both workers produced their own correct results', flush=True)
+            print('PASS FrostPi: both workers produced their own correct results', flush=True)
 
         # The files alone could have been written by the parent. Check that two
         # distinct saved child sessions in each client received the named tasks.

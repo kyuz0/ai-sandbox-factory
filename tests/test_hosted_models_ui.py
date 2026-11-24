@@ -36,13 +36,13 @@ class HostedUITests(unittest.TestCase):
         service = ModelService([])
         service.plugin_model = Mock(side_effect=service.hosted_request)
         service.approval_models = lambda name: [
-            {'provider': 'chaucer', 'id': 'main', 'name': 'Main'},
+            {'provider': 'example', 'id': 'main', 'name': 'Main'},
             {'provider': 'openrouter', 'id': 'other/model', 'name': 'Other'},
         ]
         with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(Path(temp), service)
             async with app.run_test(size=(80, 24)) as pilot:
-                dialog = ModelDialog('test', 'chaucer', plugin_label='Chaucer', optional=True, approval_model='current')
+                dialog = ModelDialog('test', 'example', plugin_label='Example Models', optional=True, approval_model='current')
                 await app.push_screen(dialog)
                 await app.workers.wait_for_complete()
                 dialog.query_one('#review-current').focus()

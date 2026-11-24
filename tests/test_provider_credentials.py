@@ -101,6 +101,20 @@ class ProviderCredentialsTests(unittest.TestCase):
                 self.assertEqual(run.call_count, 1)
             self.assertEqual(config, before)
 
+    def test_provider_failure_keeps_diagnostics_and_masks_key(self):
+        log = []
+        with patch('ai_sandbox_factory.sandbox_tui.subprocess.run', return_value=subprocess.CompletedProcess(
+                [], 17, 'Workspace ready', 'Catalogue request failed with HTTP 503\nKey: synthetic-secret')):
+            with self.assertRaisesRegex(ValueError, r'provider company for demo \(exit 17\)'):
+                Service('/tmp/fixture').provider('demo', 'company', 'refresh', 'synthetic-secret', log.append)
+        self.assertEqual(log, ['Workspace ready', 'Catalogue request failed with HTTP 503\nKey: [redacted]'])
+
+        with patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess(
+                [], 9, '', 'Load the provider adapter: MODULE_NOT_FOUND')):
+            config = {**self.config(), 'model_providers': [{'name': 'company', 'manifest': {}}]}
+            with self.assertRaisesRegex(ValueError, r'company: refresh exited with status 9.*MODULE_NOT_FOUND'):
+                model_providers.configure(config, Path('/tmp/fixture'), provider='company')
+
     def test_creation_keeps_keys_out_of_files_and_imports_before_discovery(self):
         for open_editor in (False, True):
             with self.subTest(open_editor=open_editor), tempfile.TemporaryDirectory() as tmp:

@@ -598,15 +598,16 @@ search results and a Chromium test page. It checks foreground and nested tool
 access, concurrent background search and navigation, independent page storage,
 and the read-only specialist's tool list.
 
-For the live check, create a fresh restricted sandbox with `--subagents`,
-select only your installed Chaucer provider and configure its key through
-Factory. Give the test a disposable workspace and select
-`chaucer/eu-deepseek-v4-flash` as the default model. Start its browser editor
-with `browser-editor NAME --background --no-open`.
+For the live check, create a fresh restricted sandbox with `--subagents` and a
+disposable workspace. Enable one installed Pi provider plugin, configure its key
+through Factory, and set a tool-capable model as the default. Start the browser
+editor with `browser-editor NAME --background --no-open`. Pass the same provider
+and model IDs to the fixture.
 
 ```sh
 .venv/bin/python tests/subagents_live.py \
-  --state-dir /path/to/disposable/state --name NAME --output /tmp/factory-subagents-live
+  --state-dir /path/to/disposable/state --name NAME \
+  --provider PROVIDER_ID --model MODEL_ID --output /tmp/factory-subagents-live
 ```
 
 The live check uses a real Pi terminal and the shipped FrostPi webview. Each
@@ -694,6 +695,14 @@ runtime cleanup, preserved workspace files and build images, and unchanged
 existing containers. The fixture removes its own disposable build storage after
 testing; production cancellation preserves build cache. Unit and UI tests also
 cover ownership collisions, cleanup failures, repeated clicks and late cancellation.
+
+Run `.venv/bin/python tests/creation_provider.py` to check provider setup through
+the actual creation worker. It makes two disposable Podman creation attempts with a
+synthetic managed provider. A fixture HTTP 503 must appear in the job output
+and the failed attempt must roll back. Retrying the same name must succeed.
+An independent stop command is refused while a trusted settings worker can
+reuse the lock. Model refresh keeps the same container running. This is part
+of the release gate and uses a synthetic key without an inference endpoint.
 
 Use a disposable workspace and an unused port. This fixture serves synthetic
 replies; it does not evaluate a real inference model.
@@ -821,7 +830,7 @@ deployments and Bedrock profiles. The editor check opens the saved default model
 then uses the model picker to check the remaining routes. The lifecycle test covers
 key replacement without restart, recovery and credential-volume deletion.
 
-For live verification, connect an account in **Settings → Models**, choose a model
+For live verification, connect an account in **Settings → Model Providers**, choose a model
 and use **Test selected model**. Check each supported authentication method,
 including temporary AWS credentials and expired-session recovery.
 
