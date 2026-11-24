@@ -82,7 +82,7 @@ agent. [Copy a chat between agents](docs/usage.md#continue-a-chat-with-another-a
 Update Factory with **Upgrade now** or `pipx upgrade ai-sandbox-factory`.
 To update a sandbox, use **Actions… → Update sources and recreate…**. This
 builds the replacement first, then restarts the sandbox with its workspace
-and saved chats intact. **Show Alerts** offers **Update to FrostPi…** for older
+and saved chats intact. **Alerts** offers **Update to FrostPi…** for older
 Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes) · [Archived Pendant branch](https://github.com/kyuz0/ai-sandbox-factory/tree/pendant)
 
 ## Profiles and providers

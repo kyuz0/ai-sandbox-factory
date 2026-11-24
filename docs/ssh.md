@@ -58,7 +58,7 @@ key file and choose **Import and unlock**.
 
 Keys unlock for eight hours by default. Set **Keep SSH key unlocked for** before
 importing or unlocking a key to use a different duration. When the dashboard shows
-a locked-key alert, open **Show Alerts → Unlock existing key**. Restarting the SSH
+a locked-key alert, open **Alerts → Unlock existing key**. Restarting the SSH
 companion can lock an encrypted key early. Unencrypted keys load automatically
 when the companion starts.
 

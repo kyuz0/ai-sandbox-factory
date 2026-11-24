@@ -1451,9 +1451,11 @@ instructions for other clients. Render those states with
 times, no-op saves, successful starts, stale-runtime recovery, sorting, missing
 dates, filtering and selection preservation. Each sandbox and its actions occupy
 one line. One blank line follows the header and separates adjacent entries.
-Clicking a gap must leave the
-selection unchanged. Check that every sandbox is reachable by keyboard. Render `tests/render_dashboard.py`
-at its three built-in sizes, in colour and with `--mono`.
+Clicking a gap must leave the selection unchanged. Check that the underline
+marks the focused data or action cell during keyboard navigation.
+Render `tests/render_dashboard.py` at its three built-in sizes, in colour and
+with `--mono`. The snapshots cover selection while the table is unfocused,
+keyboard focus, and mouse hover.
 
 `test_tui.py` covers access to row actions, submenu navigation, creation retry,
 and cancellation. `test_sandbox_jobs.py`, `test_chat_jobs.py`,

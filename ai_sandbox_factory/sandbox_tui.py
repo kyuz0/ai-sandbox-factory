@@ -4194,7 +4194,9 @@ class Cockpit(App):
     #sandboxes > .datatable--even-row, #sandboxes > .datatable--odd-row {
         background: $surface-darken-1 40%;
     }
-    #sandboxes:focus > .datatable--cursor { background: $primary 35%; color: $foreground; }
+    #sandboxes > .datatable--hover { background: $panel; }
+    #sandboxes > .datatable--cursor { background: transparent; color: $foreground; text-style: bold; }
+    #sandboxes:focus > .datatable--cursor { background: transparent; text-style: bold underline; }
     #details { height: auto; min-height: 3; padding: 1 0; text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
     #ssh-duration-error, #ssh-key-feedback.error, SSHDestinationFields Feedback, CreateSSHFields Feedback { color: #ef9a91; }

@@ -34,7 +34,7 @@ GitHub requires a different deploy key for each repository.
 
 If you already have a repository key, use **Import and unlock** instead of
 Generate. Keep the source key outside every folder mounted into the sandbox.
-If the dashboard shows an alert, choose **Show Alerts** in the sandbox row. Choose
+If the dashboard shows an alert, choose **Alerts** in the sandbox row. Choose
 **Unlock existing key** when the key is locked. **Keep SSH key unlocked for**
 defaults to `8h`. Enter a different duration, such as `2d`, before importing or
 unlocking. The key is available immediately. Restarting the SSH service can lock

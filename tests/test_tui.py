@@ -2156,6 +2156,46 @@ class DashboardActivityTests(unittest.TestCase):
     tearDown = TUITests.tearDown
     ready = TUITests.ready
 
+    async def test_dashboard_focus_cues_are_distinct_from_action_fill(self):
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one(SandboxTable)
+
+            def cell_style(name, column, label):
+                region = table._get_cell_region(table.get_cell_coordinate(name, column))
+                line = table.render_line(region.y).crop(region.x, region.right)
+                return next(segment.style for segment in line if segment.text.strip() == label)
+
+            selected = app.selected_name()
+            unfocused_name = cell_style(selected, 'name', selected)
+            self.assertTrue(unfocused_name.bold)
+            self.assertFalse(unfocused_name.underline)
+
+            table.focus()
+            await pilot.pause()
+            name = cell_style(selected, 'name', selected)
+            action = cell_style(selected, 'open', 'Open')
+            self.assertNotEqual(name.bgcolor, action.bgcolor)
+            self.assertNotEqual(unfocused_name.bgcolor, action.bgcolor)
+            self.assertTrue(name.underline)
+            self.assertFalse(action.underline)
+
+            await pilot.press('right')
+            focused_action = cell_style(selected, 'open', 'Open')
+            self.assertEqual(focused_action.bgcolor, action.bgcolor)
+            self.assertTrue(focused_action.underline)
+            self.assertTrue(focused_action.meta['sandbox_action'])
+
+            other = 'beta' if selected == 'alpha' else 'alpha'
+            resting = cell_style(other, 'name', other)
+            region = table._get_cell_region(table.get_cell_coordinate(other, 'name'))
+            await pilot.hover(table, offset=(region.x + 2, region.y))
+            hovered = cell_style(other, 'name', other)
+            self.assertNotEqual(hovered.bgcolor, resting.bgcolor)
+            self.assertFalse(hovered.underline)
+            self.assertEqual(app.selected_name(), selected)
+
     async def test_dashboard_filters_share_a_single_control_row(self):
         from textual.widgets import Select
         for size in ((80, 24), (120, 40), (220, 50)):

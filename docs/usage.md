@@ -168,7 +168,7 @@ Updated images use Debian 13 and Python 3.13. If your project contains a virtual
 environment created with Python 3.11, recreate that environment from your project's
 dependency files after updating the sandbox. Your project files and saved chats remain.
 
-For a sandbox that still uses Pendant, open **Show Alerts → Update to FrostPi…**
+For a sandbox that still uses Pendant, open **Alerts → Update to FrostPi…**
 when you’re ready to switch.
 
 ### Upgrade from Pi Sandbox Factory
