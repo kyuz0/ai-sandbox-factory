@@ -81,7 +81,9 @@ jobs:
           /tmp/factory-package/bin/ai-sandbox-factory provider list
   fresh-sandbox:
     name: Fresh Pi and FrostPi sandbox and lifecycle
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04's pasta profile can block rootless Podman network cleanup.
+    # https://github.com/actions/runner-images/issues/15182
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -91,6 +93,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y podman socat
+          podman version
           python -m pip install -e . playwright
           python -m playwright install --with-deps chromium
       - name: Check fresh project startup and mounted-folder permissions

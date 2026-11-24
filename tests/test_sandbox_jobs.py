@@ -3,12 +3,12 @@ from pathlib import Path
 import tempfile
 from threading import Event
 import unittest
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 from textual.widgets import Button, Input, OptionList, RichLog, Static
 
 from ai_sandbox_factory.models_ui import ModelDialog
-from ai_sandbox_factory.sandbox_jobs import Job
+from ai_sandbox_factory.sandbox_jobs import Job, RebuildJob
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails, JobsMenu
 from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, InstallSystemPackages, MoreActions, SandboxTable
 from ai_sandbox_factory.updating import UpdateCancelled
@@ -39,11 +39,11 @@ class JobsService(FakeService):
         log(f'{name}: finished building')
 
 
-async def wait_for(pilot, condition):
+async def wait_for(pilot, condition, *, timeout=12):
     async def until_ready():
         while not condition():
             await pilot.pause(0.05)
-    await asyncio.wait_for(until_ready(), timeout=12)
+    await asyncio.wait_for(until_ready(), timeout=timeout)
 
 
 async def begin(pilot, app, name):
@@ -63,7 +63,8 @@ async def begin(pilot, app, name):
 
 
 def output(screen):
-    return '\n'.join(line.text for line in screen.query_one(RichLog).lines)
+    log = screen.query_one_optional(RichLog)
+    return '\n'.join(line.text for line in log.lines) if log is not None else ''
 
 
 class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
@@ -189,6 +190,67 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     await app.workers.wait_for_complete()
+
+    async def test_followup_badge_changes_without_the_dashboard_timer(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(tmp), JobsService())
+            release = Event()
+            schedule = app.set_interval
+
+            def schedule_without_job_poll(interval, callback, *args, **kwargs):
+                timer = schedule(interval, callback, *args, **kwargs)
+                if callback == app.poll_jobs:
+                    timer.pause()
+                return timer
+
+            with patch.object(app, 'set_interval', side_effect=schedule_without_job_poll):
+                async with app.run_test(size=(80, 24)) as pilot:
+                    try:
+                        await wait_for(pilot, lambda: len(app.records) == 2)
+                        badge = app.query_one('#jobs', Button)
+                        reviewed = []
+                        job = app.start_task('alpha', 'Sandbox task', lambda log: release.wait(10),
+                                             on_success=reviewed.append, followup_label='Review result')
+                        await pilot.press('escape')
+                        self.assertEqual(str(badge.label), 'Jobs… (1)')
+                        release.set()
+                        await app.workers.wait_for_complete()
+                        self.assertEqual(str(badge.label), 'Jobs… (0) · To review')
+                        app.show_job(job)
+                        await pilot.pause()
+                        await pilot.click('#job-continue')
+                        await wait_for(pilot, lambda: reviewed == [True])
+                        self.assertEqual(str(badge.label), 'Jobs… (0)')
+                    finally:
+                        release.set()
+                        await app.workers.wait_for_complete()
+
+    async def test_cancellation_refused_after_apply_starts_refreshes_details(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(tmp), JobsService())
+            release = Event()
+            async with app.run_test(size=(80, 24)) as pilot:
+                try:
+                    await wait_for(pilot, lambda: len(app.records) == 2)
+                    job = app.start_job(RebuildJob('alpha'), lambda log, update: release.wait(10))
+                    await pilot.pause()
+                    details = app.screen
+                    details.timer.pause()
+                    button = details.query_one('#job-cancel', Button)
+                    self.assertFalse(button.disabled)
+                    await pilot.click('#job-cancel')
+                    with patch.object(type(job.update), 'applying', new_callable=PropertyMock, return_value=True), \
+                         patch.object(details, 'notify', wraps=details.notify) as notify:
+                        await pilot.click('#yes')
+                        self.assertTrue(button.disabled)
+                        self.assertIn('Applying changes', str(details.query_one('#operation-status', Static).render()))
+                        notify.assert_called_once_with('This job can no longer be cancelled. See its current step above.')
+                    self.assertTrue(job.update.can_cancel)
+                finally:
+                    release.set()
+                    await app.workers.wait_for_complete()
+                self.assertEqual(job.result, 'Complete')
+                self.assertFalse(button.display)
 
     async def test_hide_open_another_job_reopen_output_and_confirm_cancellation(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):

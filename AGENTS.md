@@ -116,6 +116,13 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   replacement or application exit as applicable, plus failure and retry.
   Use a gate or event to force the ordering and assert which screen, data and
   feedback remain after both callbacks finish.
+- Acknowledge accepted actions in their handler. Update buttons and status when
+  the action changes their state. Deliver known worker results to any open
+  details view. Polling can read ongoing progress. Tests for these transitions
+  should pause the poll and assert the visible state. When a test expects a
+  genuinely asynchronous change, wait for that specific result instead of
+  assuming a timer ran during `pilot.pause()`. For real subprocesses, wait for
+  a worker milestone and include its status and recent output on timeout.
 - Give tests that mock lifecycle work a private lock directory and pass the same
   directory to their subprocesses. Real-engine tests use production lock paths
   and unique sandbox names. Arrange contention explicitly when testing it.

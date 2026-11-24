@@ -692,8 +692,13 @@ class WebsiteGroups(Vertical):
     @on(Button.Pressed, '#refresh-curlie')
     def check_curlie(self, event):
         event.stop()
+        button = event.button
+        if button.disabled or self.screen is not self.app.screen:
+            return
         self.query_one('#curlie-error', Feedback).update('')
         if self.available_list:
+            button.disabled = True
+            button.label = 'Checking…'
             self.find_curlie_update()
         else:
             self.confirm_curlie_download()
@@ -701,20 +706,21 @@ class WebsiteGroups(Vertical):
     @work(exit_on_error=False)
     async def find_curlie_update(self):
         button = self.query_one('#refresh-curlie', Button)
-        button.disabled = True
-        button.label = 'Checking…'
         try:
             update = await asyncio.to_thread(curlie_catalog.check)
-            if update and self.is_mounted:
+            if not self.is_attached:
+                return
+            if update and self.screen is self.app.screen:
                 size = update.get('size') or ''
                 self.confirm_curlie_download(f'about {int(size) / 1_000_000:.0f} MB' if size.isdecimal()
                                             else curlie_catalog.DOWNLOAD_SIZE)
-            elif self.is_mounted:
+            elif not update:
                 self.notify('You have the latest Curlie list.')
         except ValueError as error:
-            self.query_one('#curlie-error', Feedback).update(str(error))
+            if self.is_attached:
+                self.query_one('#curlie-error', Feedback).update(str(error))
         finally:
-            if self.is_mounted:
+            if self.is_attached:
                 button.disabled = False
                 self.show_curlie_status()
 
@@ -4713,23 +4719,29 @@ class Cockpit(App):
     def jobs_active(self):
         return any(job.result is None for job in self.jobs)
 
-    def poll_jobs(self):
+    def update_jobs_badge(self):
         if not self.screen_stack:
             return
-        button = next(iter(self.screen_stack[0].query('#jobs').results(Button)), None)
-        if button is None:
+        button = self.screen_stack[0].query_one_optional('#jobs', Button)
+        if button is None or not button.is_attached:
             return
         active = sum(job.result is None for job in self.jobs)
         label = f'Jobs… ({active})' + (' · To review' if any(job.followup for job in self.jobs) else '')
         if str(button.label) != label:
             button.label = label
             button.refresh(layout=True)
+
+    def poll_jobs(self):
+        if not self.screen_stack:
+            return
+        table = self.screen_stack[0].query_one_optional(SandboxTable)
+        if table is None or not table.is_attached:
+            return
         rows = tuple(job for job in self.jobs if job.result is None and job.targets)
         if rows != self._dashboard_jobs:
             self._dashboard_jobs = rows
             self.render_records()
         elif rows:
-            table = self.query_one(SandboxTable)
             for job in rows:
                 label = job.view_label
                 for name in job.targets:
@@ -4744,22 +4756,28 @@ class Cockpit(App):
             visible = self.screen is original_view
             if completed_callback:
                 completed_callback(job)
+            for view in self.screen_stack:
+                if isinstance(view, JobDetails) and view.job is job and view.timer is not None and view.is_attached:
+                    view.refresh_job()
             if visible and job.followup:
                 self.resume_job(job)
             elif not visible:
                 self.notify(f'{job.title} · {job.followup[0] if job.followup else job.status}',
                             severity='error' if job.result == 'Failed' else 'information')
+        self.update_jobs_badge()
 
     def resume_job(self, job):
         if job.followup:
             label, resume = job.followup
             job.followup = None
+            self.update_jobs_badge()
             if isinstance(self.screen, JobDetails) and self.screen.job is job:
                 self.pop_screen()
             context = self.screen
             async def dispatch():
                 if self.screen is not context:
                     job.followup = (label, resume)
+                    self.update_jobs_badge()
                     return
                 try:
                     result = resume()
@@ -4769,6 +4787,7 @@ class Cockpit(App):
                     job.notice = f'Could not continue with {label.lower()}: {error}'
                     job.write(job.notice)
                     job.followup = (label, resume)
+                    self.update_jobs_badge()
                     self.show_job(job)
             self.call_later(dispatch)
 
@@ -4901,6 +4920,7 @@ class Cockpit(App):
         def after_models(choice=None):
             if choice is ModelDialog.LATER:
                 job.followup = ('Choose a model', choose_model)
+                self.update_jobs_badge()
             elif open_requested:
                 open_client()
 

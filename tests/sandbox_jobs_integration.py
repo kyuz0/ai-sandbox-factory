@@ -14,6 +14,17 @@ from ai_sandbox_factory.sandbox_tui import Cockpit, CreationRequest, DEFAULT_SET
 from test_sandbox_jobs import begin, output, wait_for
 
 
+async def wait_for_build(pilot, job):
+    # A real worker has to snapshot sources and start Podman before it blocks.
+    try:
+        await wait_for(pilot, lambda: any('Waiting for another build' in line for line in job.read(0)[0])
+                       or job.result is not None, timeout=90)
+    except asyncio.TimeoutError as error:
+        raise AssertionError(f'{job.title} did not reach the build lock ({job.status}):\n'
+                             + '\n'.join(job.read(0)[0][-30:])) from error
+    assert job.result is None, (job.status, job.read(0)[0][-30:])
+
+
 async def exercise(state, service, names):
     first_config = service.config(names[0])
     first_container = sandbox.inspect(first_config, sandbox.names(first_config)[0])['Id']
@@ -36,7 +47,7 @@ async def verify_rebuilds(pilot, app, service, names, first_config, first_contai
     # we exercise the TUI, a second CLI and cancellation deterministically.
     with sandbox.image_graph(first_config):
         first = await begin(pilot, app, alpha)
-        await wait_for(pilot, lambda: 'Waiting for another build' in output(app.screen))
+        await wait_for_build(pilot, first)
         await pilot.press('escape')
         conflict = await asyncio.to_thread(subprocess.run, service.command('down', alpha),
                                            capture_output=True, text=True)
@@ -46,7 +57,7 @@ async def verify_rebuilds(pilot, app, service, names, first_config, first_contai
         assert app.screen.succeeded
         await pilot.press('escape')
         second = await begin(pilot, app, beta)
-        await wait_for(pilot, lambda: 'Waiting for another build' in output(app.screen))
+        await wait_for_build(pilot, second)
         await pilot.press('escape', 'j')
         assert isinstance(app.screen, JobsMenu)
         assert len(app.screen.labels) == 3
@@ -79,8 +90,7 @@ async def verify_rebuilds(pilot, app, service, names, first_config, first_contai
           'cancelled A preserved, rebuilt B started from the intended image and isolated logs reopened.', flush=True)
 
 
-async def verify_creation(app, service, root, existing):
-    name = root.name + '-creation'
+async def verify_creation(app, service, root, existing, name):
     workspace = root / name
     workspace.mkdir()
     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
@@ -94,8 +104,8 @@ async def verify_creation(app, service, root, existing):
                 await wait_for(pilot, lambda: len(app.records) == 2)
                 with sandbox.image_graph(service.config(existing)):
                     job = app.start_creation(CreationRequest(draft, {}, None, False))
-                    await wait_for(pilot, lambda: 'Build sandbox images' in job.status)
-                    assert 'Step ' in job.status, job.status
+                    await wait_for_build(pilot, job)
+                    assert 'Step ' in job.status and 'Build sandbox images' in job.status, job.status
                     await pilot.press('escape')
                     assert app.screen is app.screen_stack[0]
                     table = app.query_one(SandboxTable)
@@ -152,9 +162,9 @@ def main():
             subprocess.run(service.command('build', names[0]), check=True)
             subprocess.run(service.command('up', names[0]), check=True)
             asyncio.run(exercise(state, service, names))
-            creation = root.name + '-creation'
+            creation = f'jobs-{identifier}-creation'
             try:
-                asyncio.run(verify_creation(Cockpit(state, service), service, root, names[0]))
+                asyncio.run(verify_creation(Cockpit(state, service), service, root, names[0], creation))
             finally:
                 if (state / creation).exists():
                     subprocess.run(service.command('delete', creation), check=True)

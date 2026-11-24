@@ -261,7 +261,7 @@ class TUITests(unittest.TestCase):
                 run.assert_not_called()
                 await pilot.press('enter');await pilot.pause()
                 await app.workers.wait_for_complete()
-                await pilot.pause(0.2)
+                await pilot.pause()
                 run.assert_called_once()
                 self.assertEqual(app.screen.job.title, 'Upgrade Factory')
                 self.assertEqual(app.screen.job.result, 'Failed')
@@ -1385,8 +1385,8 @@ class TUITests(unittest.TestCase):
                         self.assertLessEqual(button.region.bottom, details.query_one(Footer).region.y)
                         await pilot.click('#job-cancel')
                         self.assertEqual(str(app.focused.label), 'Keep creating')
+                        details.timer.pause()
                         await pilot.click('#yes')
-                        await pilot.pause()
                         self.assertTrue(job.creation.requested.is_set())
                         self.assertTrue(button.disabled)
                         self.assertIn('Cancelling', str(details.query_one('#operation-status', Static).render()))
@@ -2054,8 +2054,15 @@ class WebAccessUITests(unittest.TestCase):
         self.records[0]['config']['options'] = {'website_groups': ['ut1-press']}
         self.records[0]['config']['website_groups'] = {'ut1-press': {'curlie_download': old}}
         app = Cockpit(self.root, FakeService(self.records))
+        started, release = Event(), Event()
+
+        def check():
+            started.set()
+            release.wait(10)
+            return {'size': '179000000'}
+
         with patch('ai_sandbox_factory.curlie_catalog.metadata', return_value=old), \
-             patch('ai_sandbox_factory.curlie_catalog.check', return_value={'size': '179000000'}), \
+             patch('ai_sandbox_factory.curlie_catalog.check', side_effect=check) as lookup, \
              patch('ai_sandbox_factory.curlie_catalog.refresh', return_value=latest) as refresh:
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
@@ -2063,10 +2070,20 @@ class WebAccessUITests(unittest.TestCase):
                 await pilot.pause()
                 form = app.screen.query_one(WebsiteGroups)
                 self.assertIsNone(form.curlie_revision())
-                form.query_one('#refresh-curlie', Button).press()
-                await pilot.pause()
+                button = form.query_one('#refresh-curlie', Button)
+                button.post_message(Button.Pressed(button))
+                button.post_message(Button.Pressed(button))
+                try:
+                    self.assertTrue(await asyncio.to_thread(started.wait, 10))
+                    await pilot.pause()
+                    self.assertTrue(button.disabled)
+                    self.assertEqual(str(button.label), 'Checking…')
+                    lookup.assert_called_once_with()
+                finally:
+                    release.set()
                 await app.workers.wait_for_complete()
                 self.assertIsInstance(app.screen, Confirm)
+                lookup.assert_called_once_with()
                 self.assertIn('179 MB', app.screen.message)
                 refresh.assert_not_called()
                 app.screen.query_one('#yes', Button).press()

@@ -184,5 +184,9 @@ class JobDetails(Screen):
                 confirm_by_default=False, cancel_label=keep_label), self.confirm_cancel)
 
     def confirm_cancel(self, confirmed):
-        if confirmed and not self.job.cancel():
+        if not confirmed:
+            return
+        if not self.job.cancel():
             self.notify('This job can no longer be cancelled. See its current step above.')
+        if self.is_attached:
+            self.refresh_job()
