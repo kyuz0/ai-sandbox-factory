@@ -54,6 +54,8 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(selector.disabled)
                         selector.value = target_agent
                         await pilot.pause()
+                        self.assertLessEqual(new.query_one('#name', Input).region.bottom,
+                                             new.query_one('.form').content_region.bottom)
                         workspace = root / f'{source_agent}-{target_agent}'
                         workspace.mkdir()
                         new.query_one('#workspace', Input).value = str(workspace)

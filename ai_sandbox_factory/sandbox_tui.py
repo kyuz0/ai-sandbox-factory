@@ -4267,6 +4267,7 @@ class Cockpit(App):
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
+    .compact-terminal NewSandbox > #new-title { padding: 0 3; }
     NewSandbox #primary-agent { max-width: 32; }
     SettingsForm #primary-auth, SettingsForm #native-approval { max-width: 40; }
     NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }
