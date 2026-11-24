@@ -28,7 +28,7 @@ Under **Review sandbox → Connectors**, choose a service to give the workspace 
 
 Choose **Open** on the dashboard. All four agents use the browser editor by default on supported hosts. Each opens its own chat panel beside your files.
 
-Use **Open with…** to pick a different client for this launch. During creation,
+Use **Actions… → Open with…** to pick a different client for this launch. During creation,
 expand **Editor** to choose the browser editor or the selected agent's CLI.
 Pi also offers **VS Code on host**. Clear the checkbox for
 opening your selected client if you want to open it yourself later. For an existing sandbox,
@@ -59,9 +59,12 @@ environment file or Pi configuration folder you want to use again.
 
 ## Stop, inspect, or delete a sandbox
 
-Use **Actions…** to start, stop, inspect, or delete a sandbox. **Containers…**
-shows what each container does and whether it’s running. Press **D** on the
-dashboard to change the defaults for new sandboxes.
+Right-click a sandbox row to open its actions. You can also select the row and
+press **A**, press **Shift+F10**, or choose **Actions…**. The menu includes
+opening, settings, and controls to start, stop, update, or delete the sandbox.
+Choose **Troubleshooting… → Containers…** to see what each container does
+and whether it’s running. **Esc** returns from a submenu to Actions.
+Press **D** on the dashboard to change the defaults for new sandboxes.
 
 Closing Factory or the editor leaves the sandbox running. Deleting it removes
 its containers, private home, saved chats, and editor settings. Your workspace
@@ -69,14 +72,14 @@ folder stays on your computer.
 
 ## Back up and restore chats
 
-Choose **Actions… → Export chat history…** to save all chats from a sandbox
+Choose **Actions… → Chat history… → Export chat history…** to save all chats from a sandbox
 to a ZIP file on this computer. You can also export from the delete dialog
 before deciding whether to delete the sandbox.
 
 - **Codex, Claude Code and Antigravity.** Stop the source sandbox before
   exporting. To restore, create a sandbox with the same agent and starting
   folder. Turn off the option to open the agent when the sandbox is ready.
-  Once it has started, stop it and choose **Actions… → Import chat history…**.
+  Once it has started, stop it and choose **Actions… → Chat history… → Import chat history…**.
   Select the ZIP, then open the sandbox and choose a chat from the agent’s
   history. Antigravity keeps its terminal and browser histories in separate
   stores, and the backup includes both.
@@ -93,7 +96,7 @@ settings and stored sign-ins stay outside the backup.
 ### Continue a chat with another agent
 
 Stop the source and destination sandboxes. On the source sandbox, choose
-**Actions… → Continue in another sandbox…**. Select the chat and destination,
+**Actions… → Chat history… → Continue in another sandbox…**. Select the chat and destination,
 then choose **Preview copy**. Review any content the destination cannot keep
 before choosing **Create copy**. Open the destination and select the new chat
 from its history.
@@ -180,7 +183,7 @@ and shows both paths so you can resolve the conflict.
 | Connectors → AWS | Connecting AWS for the first time can require replacing the workspace container. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
 | Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
-| Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open with… to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
+| Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
 | Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
 | Model Providers: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |

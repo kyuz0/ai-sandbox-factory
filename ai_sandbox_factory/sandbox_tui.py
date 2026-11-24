@@ -63,6 +63,7 @@ try:
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.coordinate import Coordinate
+    from textual.message import Message
     from textual.screen import ModalScreen, Screen
     from textual.strip import Strip
     from textual.theme import Theme
@@ -1298,43 +1299,78 @@ class MoreActions(ModalScreen[Optional[str]]):
         super().__init__()
         running = record['dev'] == 'running'
         self.sandbox_name = record['name']
-        self.actions = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
-                        ('Container shell', 'shell'),
-                        ('Test MCP connections', 'connections'), ('Container logs', 'logs'), ('Containers…', 'containers'),
-                        ('Update sources and recreate…', 'rebuild')]
-        if browser_running:
-            self.actions.append(('Stop browser editor', 'stop-editor'))
         native = coding_agent(record.get('config', {})) != 'pi'
-        if native:
-            self.actions = [('Rebuild sandbox…' if action == 'rebuild' else label, action)
-                            for label, action in self.actions if action != 'connections']
+        opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
+        lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
+                     ('Rebuild sandbox…' if native else 'Update sources and recreate…', 'rebuild')]
+        if browser_running:
+            lifecycle.append(('Stop browser editor', 'stop-editor'))
+        related = [('Troubleshooting…', 'diagnostics')]
+        diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
+        if not native:
+            diagnostics.append(('Test MCP connections', 'connections'))
+        self.pages = {'diagnostics': ('Troubleshooting', diagnostics)}
+        if record.get('config', {}).get('engine'):
+            related.append(('Chat history…', 'chats'))
+            self.pages['chats'] = ('Chat history', [(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats'),
+                                                   ('Continue in another sandbox…', 'copy-chat')])
         profile = record.get('config', {}).get('profile') or {}
         if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
-            self.actions.append(('Getting started…', 'profile-guide'))
-        if record.get('config', {}).get('engine'):
-            self.actions.extend([(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats')])
-            self.actions.append(('Continue in another sandbox…', 'copy-chat'))
-        self.actions.append(('Delete sandbox…', 'delete'))
+            related.append(('Getting started…', 'profile-guide'))
+        if count := len(sandbox_alerts(record)):
+            related.append((f'Show Alerts ({count})', 'alerts'))
+        self.groups = [opening, lifecycle, related, [('Delete sandbox…', 'delete')]]
+        self.actions = [item for group in self.groups for item in group]
+        self.page = None
+        self.parent_index = 0
+
+    def root_options(self):
+        for index, group in enumerate(self.groups):
+            if index:
+                yield None
+            yield from (label for label, _ in group)
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label('Actions · ' + self.sandbox_name)
-            yield OptionList(*[label for label, _ in self.actions], id='more-actions')
+            yield OptionList(*self.root_options(), id='more-actions', compact=True)
             with Horizontal(classes='dialog-actions'):
-                yield Button('Cancel', id='more-cancel')
+                yield Button('Close', id='more-cancel')
 
     @on(OptionList.OptionSelected)
     def selected(self, event):
         event.stop()
-        self.dismiss(self.actions[event.option_index][1])
+        if self.page:
+            self.dismiss(self.pages[self.page][1][event.option_index][1])
+            return
+        action = self.actions[event.option_index][1]
+        if action not in self.pages:
+            self.dismiss(action)
+            return
+        self.page = action
+        self.parent_index = event.option_index
+        title, items = self.pages[action]
+        self.query_one(Label).update(f'{title} · {self.sandbox_name}')
+        self.query_one('#more-cancel', Button).label = 'Back'
+        event.option_list.set_options(label for label, _ in items)
+        event.option_list.highlighted = 0
 
     @on(Button.Pressed)
     def cancel(self, event):
         event.stop()
-        self.dismiss(None)
+        self.action_cancel()
 
     def action_cancel(self):
-        self.dismiss(None)
+        if self.page is None:
+            self.dismiss(None)
+            return
+        self.page = None
+        self.query_one(Label).update('Actions · ' + self.sandbox_name)
+        self.query_one('#more-cancel', Button).label = 'Close'
+        choices = self.query_one(OptionList)
+        choices.set_options(self.root_options())
+        choices.highlighted = self.parent_index
+        choices.focus()
 
 
 class ContainersScreen(Screen):
@@ -1572,6 +1608,11 @@ class SandboxTable(DataTable):
     # The header and entries each use one content line and one inert margin.
     ROW_PITCH = 2
 
+    class ActionsRequested(Message):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
     def _render_line(self, y, x1, x2, base_style):
         if y % self.ROW_PITCH:
             return Strip.blank(self.size.width, base_style)
@@ -1590,12 +1631,19 @@ class SandboxTable(DataTable):
         meta = event.style.meta
         row, column = meta.get('row', -1), meta.get('column', -1)
         if meta.get('out_of_bounds') or not (0 <= row < self.row_count and 0 <= column < len(self.columns)):
+            if event.button != 1:
+                event.prevent_default()
+                event.stop()
             return
         event.prevent_default()
         event.stop()
+        coordinate = Coordinate(row, column)
+        if event.button == 3:
+            if event.chain == 1:
+                self.post_message(self.ActionsRequested(str(self.coordinate_to_cell_key(coordinate).row_key.value)))
+            return
         if event.button != 1:
             return
-        coordinate = Coordinate(row, column)
         self.focus()
         self.move_cursor(row=row, column=column, animate=False)
         if event.chain == 1 and meta.get('sandbox_action'):
@@ -4068,6 +4116,7 @@ class Cockpit(App):
     TITLE = 'AI Sandbox Factory'
     BINDINGS = [Binding('f2', 'new', 'New sandbox', priority=True),
                 Binding('n', 'new', 'New', show=False), Binding('r', 'refresh_inventory', 'Refresh'),
+                Binding('a', 'sandbox_actions', 'Actions'), Binding('shift+f10', 'sandbox_actions', show=False),
                 Binding('slash', 'search', 'Search'), Binding('d', 'defaults', 'Defaults'), Binding('q', 'quit', 'Quit')]
     CSS = '''
     Screen { background: #171a1d; }
@@ -4429,6 +4478,9 @@ class Cockpit(App):
     PrimarySignIn #confirm-box, Confirm.sign-in-confirm #confirm-box { width: 61; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
+    MoreActions #confirm-box { max-height: 100%; }
+    MoreActions #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
+    MoreActions #confirm-box .dialog-actions { margin: 0; }
     SandboxAlerts #confirm-box { padding: 1 2; }
     #sandbox-alerts-list { height: auto; max-height: 56vh; margin: 0 0 1 0; }
     .sandbox-alert { height: auto; padding: 1 2; margin: 0 0 1 0; background: #25292e; }
@@ -4531,7 +4583,6 @@ class Cockpit(App):
             yield Feedback('', id='home-error', markup=False)
             yield Feedback('', id='open-error', classes='error', markup=False)
             with Horizontal(classes='buttons'):
-                yield Button('Open with…', id='launch-with')
                 yield Button('Settings', id='settings')
                 yield Button('Actions…', id='more')
         yield Footer()
@@ -4746,6 +4797,35 @@ class Cockpit(App):
             if record:
                 self.perform(action, record=record)
 
+    @on(SandboxTable.ActionsRequested)
+    def right_click_actions(self, event):
+        event.stop()
+        if self.screen is self.screen_stack[0]:
+            self.show_sandbox_actions(event.name)
+
+    def action_sandbox_actions(self):
+        self.perform('more')
+
+    def show_sandbox_actions(self, name):
+        from .browser_editor import runtime
+        record = next((row for row in self.records if row['name'] == name), None)
+        if record is not None:
+            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))),
+                             lambda choice: self.choose_sandbox_action(name, choice))
+
+    def choose_sandbox_action(self, name, choice):
+        if choice is None:
+            return
+        record = next((row for row in self.records if row['name'] == name), None)
+        if record is None:
+            self.notify(f'{name} is no longer in the sandbox list.', severity='warning')
+            return
+        if choice in ('start', 'stop') and (choice == 'stop') != (record['dev'] == 'running'):
+            self.notify(f'{name} changed state. Choose an action again.')
+            self.show_sandbox_actions(name)
+            return
+        self.perform(choice, record=record)
+
     def update_details(self):
         record = self.selected()
         text = ('No matching sandboxes. Clear the search or use New sandbox (F2).'
@@ -4759,9 +4839,7 @@ class Cockpit(App):
         details = self.query_one('#details', Static)
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
-        agent = coding_agent(record['config']) if record else 'pi'
-        self.query_one('#launch-with', Button).label = 'Open ' + PRIMARY_AGENTS[agent] if agent != 'pi' else 'Open with…'
-        for action in ('launch-with', 'settings', 'more'):
+        for action in ('settings', 'more'):
             self.query_one('#' + action, Button).disabled = record is None
 
     @on(Button.Pressed)
@@ -4778,7 +4856,7 @@ class Cockpit(App):
     def check_action(self, action, parameters):
         if action == 'quit':
             return not any(isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
-        if action in ('new', 'search', 'refresh_inventory', 'defaults'):
+        if action in ('new', 'search', 'refresh_inventory', 'defaults', 'sandbox_actions'):
             return self.screen is self.screen_stack[0]
         return True
 
@@ -4859,9 +4937,7 @@ class Cockpit(App):
         elif action == 'stop-editor':
             self.operation('Stopping browser editor', ['browser-editor', name, '--stop'])
         elif action == 'more':
-            from .browser_editor import runtime
-            self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))),
-                             lambda choice: self.perform(choice, record=record) if choice else None)
+            self.show_sandbox_actions(name)
         elif action == 'containers':
             self.push_screen(ContainersScreen(record))
         elif action == 'profile-guide':

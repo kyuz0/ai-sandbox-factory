@@ -1274,7 +1274,7 @@ It restores the saved editor settings and leaves the editor stopped.
 
 In the TUI, check **Editor** during creation and **Settings → Editor** afterward.
 Generate a password, save, open the browser and sign in. Close the manager and
-confirm the editor remains usable. Reopen through **Open**; use **Open with… → Pi
+confirm the editor remains usable. Reopen through **Open**; use **Actions… → Open with… → Pi
 CLI** alongside it. Confirm that selecting Pi CLI during creation opens it in the
 terminal and returns to the manager when Pi exits. For remote HTTPS, use a
 certificate trusted by the connecting browser and verify FrostPi loads there too.

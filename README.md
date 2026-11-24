@@ -67,9 +67,9 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 ## Use and update sandboxes
 
 Click **Open** beside a sandbox’s name to start working. To use a different
-client, choose **Open with…** and pick one, such as Pi CLI. [Using a sandbox](docs/usage.md)
+client, choose **Actions… → Open with…** and pick one, such as Pi CLI. [Using a sandbox](docs/usage.md)
 
-Save a sandbox’s chats to a ZIP with **Actions… → Export chat history…**.
+Save a sandbox’s chats to a ZIP with **Actions… → Chat history… → Export chat history…**.
 [Back up and restore chats](docs/usage.md#back-up-and-restore-chats)
 
 Use **Continue in another sandbox…** to copy a conversation to another coding

@@ -15,7 +15,7 @@ The first connection installs AWS CLI and Boto3. If a sandbox already has a cont
 Factory asks before replacing it. Project files, the sandbox home folder and saved
 chats are kept. Active work stops, and files stored only in the old container, such
 as files in `/tmp`, are removed. A stopped sandbox stays stopped. For an optional
-backup of Pi or FrostPi conversations, choose **Actions… → Export chat history…**.
+backup of Pi or FrostPi conversations, choose **Actions… → Chat history… → Export chat history…**.
 If Factory reports that an older Pi sandbox needs a runtime update, use
 **Actions… → Update sources and recreate…** before connecting AWS.
 

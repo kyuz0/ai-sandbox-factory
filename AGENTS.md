@@ -134,7 +134,7 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   that will stop, the data that will be removed, and the data that will survive.
   Put those consequences and a clearly named action together. Offer a backup or
   export before confirmation when saved data is at risk. For Pi chat history,
-  use **Actions… → Export chat history…**. Test that the confirmed action matches
+  use **Actions… → Chat history… → Export chat history…**. Test that the confirmed action matches
   the lifecycle path and that unrelated settings changes skip the warning.
 
 - HARD GATE — every validation rule needs a concrete reason. Reject input only

@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu
-from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu, MoreActions, SandboxTable
+from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static, Label
 from textual_fspicker.parts import DirectoryNavigation
 from tui_geometry import check_table_layout
 
@@ -83,7 +83,7 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(str(shown.render()), message if notice else '')
                 self.assertEqual(app.title, 'AI Sandbox Factory')
                 self.assertFalse(app.screen.query('Toast'))
-                for action in ('#more', '#settings', '#launch-with'):
+                for action in ('#more', '#settings'):
                     self.assertTrue(app.screen.region.contains_region(app.query_one(action).region))
 
     @classmethod
@@ -120,7 +120,14 @@ class TUITests(unittest.TestCase):
     async def choose_more_action(self, app, pilot, action):
         await pilot.click('#more');await pilot.pause()
         menu=app.screen.query_one('#more-actions',OptionList)
-        menu.highlighted=next(i for i, (_, key) in enumerate(app.screen.actions) if key == action);menu.focus()
+        actions = app.screen.actions
+        for page, (_, items) in app.screen.pages.items():
+            if any(key == action for _, key in items):
+                menu.highlighted = next(i for i, (_, key) in enumerate(actions) if key == page)
+                await pilot.press('enter')
+                actions = items
+                break
+        menu.highlighted=next(i for i, (_, key) in enumerate(actions) if key == action);menu.focus()
         await pilot.press('enter');await pilot.pause()
 
     async def test_select_approval_model_across_providers(self):
@@ -1197,10 +1204,10 @@ class TUITests(unittest.TestCase):
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot);self.assertEqual(app.theme,'cockpit-gold')
-            for name in ['launch-with','settings','new','create-from','more','packages']:
+            for name in ['settings','new','create-from','more','packages']:
                 b=app.query_one('#'+name,Button)
                 self.assertLessEqual(b.region.right,80,name);self.assertLessEqual(b.region.bottom,23,name)
-            self.assertEqual(sum(button.display for button in app.query('#home Button')), 7)
+            self.assertEqual(sum(button.display for button in app.query('#home Button')), 6)
             app.save_screenshot(filename='sandbox-home-declutter.svg',path='/tmp')
             await self.settings_page(app,pilot,action="network-settings")
             self.assertLessEqual(app.screen.query_one('#apply',Button).region.bottom,23)
@@ -1281,7 +1288,7 @@ class TUITests(unittest.TestCase):
             app.query_one(DataTable).move_cursor(row=1)
             with patch.object(app,'suspend',return_value=nullcontext()) as suspend, \
                  patch('ai_sandbox_factory.sandbox_tui.subprocess.run',return_value=subprocess.CompletedProcess([],0)) as run:
-                await pilot.click('#launch-with');await pilot.pause()
+                await self.choose_more_action(app, pilot, 'launch-with')
                 choices=app.screen.query_one('#editor-choices',OptionList)
                 choices.highlighted=1;choices.focus()
                 await pilot.press('enter');await self.ready(app,pilot)
@@ -1440,20 +1447,67 @@ class TUITests(unittest.TestCase):
             self.assertEqual(service.calls[0][-4:],['--website-groups','dev-python','dev-npmjs','dev-github'])
             self.assertIsInstance(app.screen,Operation)
 
+    async def test_context_menu_keeps_the_clicked_identity_when_selection_changes(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one(SandboxTable)
+            table.move_cursor(row=table.get_row_index('alpha'))
+            cell = table._get_cell_region(table.get_cell_coordinate('beta', 'name'))
+            for y in (0, 1, cell.y + 1):
+                await pilot.click('#sandboxes', offset=(3, y), button=3)
+                self.assertIs(app.screen, app.screen_stack[0])
+            await pilot.click('#sandboxes', offset=(3, cell.y), button=3)
+            self.assertEqual(str(app.screen.query_one(Label).render()), 'Actions · beta')
+            self.assertEqual(app.selected_name(), 'alpha')
+            choices = app.screen.query_one(OptionList)
+            index = next(i for i, (_, action) in enumerate(app.screen.actions) if action == 'diagnostics')
+            choices.highlighted = index
+            await pilot.press('enter')
+            self.assertEqual(str(app.screen.query_one(Label).render()), 'Troubleshooting · beta')
+            await pilot.press('escape')
+            self.assertEqual(str(app.screen.query_one(Label).render()), 'Actions · beta')
+            self.assertEqual(choices.highlighted, index)
+            await pilot.press('enter')
+            self.assertEqual(str(choices.get_option_at_index(0).prompt), 'Containers…')
+            await pilot.press('enter')
+            self.assertEqual(app.screen.record['name'], 'beta')
+
+    async def test_keyboard_menu_refreshes_if_the_sandbox_changes_state(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            app.query_one(SandboxTable).focus()
+            await pilot.press('shift+f10')
+            menu = app.screen
+            self.assertIsInstance(menu, MoreActions)
+            self.assertEqual(menu.actions[:3], [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')])
+            app.selected()['dev'] = 'exited'
+            menu.query_one(OptionList).highlighted = next(i for i, (_, key) in enumerate(menu.actions) if key == 'stop')
+            await pilot.press('enter')
+            await pilot.pause()
+            self.assertIsNot(app.screen, menu)
+            self.assertIsInstance(app.screen, MoreActions)
+            self.assertIn(('Start sandbox', 'start'), app.screen.actions)
+            self.assertFalse(service.calls)
+
+
     async def test_contextual_actions_and_empty_selection(self):
         self.records[1]['dev']='exited'
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot)
             await pilot.click('#more');await pilot.pause()
-            self.assertEqual(app.screen.actions[0],('Stop sandbox','stop'))
+            self.assertIn(('Stop sandbox','stop'), app.screen.actions)
             await pilot.press('escape');await pilot.pause()
             app.query_one(DataTable).move_cursor(row=1)
             await pilot.click('#more');await pilot.pause()
-            self.assertEqual(app.screen.actions[0],('Start sandbox','start'))
+            self.assertIn(('Start sandbox','start'), app.screen.actions)
             await pilot.press('escape');await pilot.pause()
             app.query_one('#search',Input).value='no-match';await pilot.pause()
-            for name in ('launch-with','settings','more'):
+            for name in ('settings','more'):
                 self.assertTrue(app.query_one('#'+name,Button).disabled)
             self.assertFalse(app.query_one('#new',Button).disabled)
 
@@ -1468,11 +1522,7 @@ class TUITests(unittest.TestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             app.query_one(DataTable).move_cursor(row=1)
-            await pilot.click('#more')
-            menu = app.screen.query_one('#more-actions', OptionList)
-            menu.highlighted = next(i for i, (_, key) in enumerate(app.screen.actions) if key == 'containers')
-            menu.focus()
-            await pilot.press('enter')
+            await self.choose_more_action(app, pilot, 'containers')
             listing = app.screen.query_one('#container-list')
             back = app.screen.query_one('#containers-back')
             self.assertIs(app.focused, back)
@@ -1535,6 +1585,8 @@ class TUITests(unittest.TestCase):
                     launch.assert_not_called()
                 await pilot.click('#sandboxes', offset=(region.x + 3, region.y), button=3)
                 launch.assert_not_called()
+                self.assertEqual(app.screen.sandbox_name, 'beta')
+                await pilot.press('escape')
                 await pilot.click('#sandboxes', offset=(region.x + 3, region.y), times=2)
                 launch.assert_called_once_with('beta', 'browser')
                 launch.reset_mock()
