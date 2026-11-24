@@ -1,5 +1,7 @@
 """Cancellation and rollback for one new sandbox, never an existing sandbox."""
+from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import queue
 import re
@@ -47,13 +49,30 @@ def reserved(state, token):
         raise ValueError('Creation reservation changed; refusing to use this sandbox state.')
 
 
-def prepare_resources(state, token):
-    """Refuse orphaned resources before this attempt can start any containers."""
+@dataclass(frozen=True)
+class ResourceConflicts:
+    engine: str
+    connection: str | None
+    containers: tuple[tuple[str, str], ...]
+    volumes: tuple[tuple[str, str], ...]
+
+    def describe(self):
+        groups = [
+            heading + '\n' + '\n'.join(names)
+            for heading, names in (('Containers', [name for name, _ in self.containers]),
+                                   ('Volumes', [name for name, _ in self.volumes])) if names
+        ]
+        return '\n\n'.join(groups)
+
+    def require_available(self):
+        if self.containers or self.volumes:
+            raise ValueError('This name is already used by container resources. Choose another sandbox name.\n\n'
+                             + self.describe())
+
+
+def resource_conflicts(config):
+    """Find exact names on the selected engine without changing those resources."""
     from . import sandbox, sandbox_advisors, sandbox_ssh, inference, aws_access, primary_workspace, connectors
-    if not owns(state, token):
-        raise ValueError('Creation reservation changed.')
-    config = json.loads((state / 'config.json').read_text())
-    host_platform.check_engine(config['engine'], config.get('podman_connection'))
     dev, proxy, *volumes = sandbox.names(config)
     advisor, advisor_proxy, *advisor_volumes = sandbox_advisors.names(config)
     ssh, *ssh_volumes = sandbox_ssh.names(config)
@@ -65,11 +84,75 @@ def prepare_resources(state, token):
         from . import primary_agents
         for kind, names in primary_agents.resources(config).items():
             wanted[kind].update(names)
-    for kind, names in wanted.items():
-        command = [config['engine'], 'ps', '-a', '--format', '{{.Names}}'] if kind == 'container' else [config['engine'], 'volume', 'ls', '--format', '{{.Name}}']
-        existing = set(subprocess.check_output(command, text=True).splitlines()) & names
-        if existing:
-            raise ValueError('Resources already exist for this name; choose another sandbox name: ' + ', '.join(sorted(existing)))
+    engine = config['engine']
+    try:
+        listed = sandbox.run([engine, 'ps', '-a', '--no-trunc', '--format', '{{.Names}}\t{{.ID}}'],
+                             capture=True, stderr=subprocess.PIPE).stdout.splitlines()
+        volume_names = sandbox.run([engine, 'volume', 'ls', '--format', '{{.Name}}'],
+                                   capture=True, stderr=subprocess.PIPE).stdout.splitlines()
+        matching = sorted(set(volume_names) & wanted['volume'])
+        if matching:
+            inspected = sandbox.run([engine, 'volume', 'inspect', *matching],
+                                    capture=True, stderr=subprocess.PIPE).stdout
+            volumes = tuple(sorted((volume['Name'], json.dumps({
+                field: volume.get(field) for field in ('CreatedAt', 'Driver', 'Mountpoint', 'Labels', 'Options')
+            }, sort_keys=True)) for volume in json.loads(inspected)))
+        else:
+            volumes = ()
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or '').strip()
+        raise ValueError(f'Could not check existing {engine} containers and volumes (exit {error.returncode}). '
+                         f'Check that {engine} is available and try again.\n{detail}'.rstrip()) from error
+    containers = (line.partition('\t')[::2] for line in listed)
+    return ResourceConflicts(engine, config.get('podman_connection'),
+                             tuple(sorted((name, identifier) for name, identifier in containers if name in wanted['container'])),
+                             volumes)
+
+
+def check_name(state):
+    if os.path.lexists(state):
+        raise ValueError('A sandbox with this name is already saved. Open it from the sandbox list or choose another name.')
+
+
+def check_draft(state_root, draft, approved=None):
+    """Check before scheduling creation, and remove only resources the user approved."""
+    from . import sandbox
+    name = draft['name']
+    if not SANDBOX_NAME.fullmatch(name):
+        raise ValueError(SANDBOX_NAME_ERROR)
+    with operation_locks.sandbox(name, 'check name' if approved is None else 'remove conflicts'):
+        check_name(state_root / name)
+        engine = sandbox.choose_engine(draft['engine'], quiet=True)
+        connection = host_platform.check_engine(engine, full=False)
+        config = {**draft, 'engine': engine, 'podman_connection': connection}
+        current = resource_conflicts(config)
+        if approved is None:
+            return current
+        if current != approved or any(not re.fullmatch(r'[0-9a-f]{64}', identifier) for _, identifier in approved.containers):
+            raise ValueError('The conflicting resources changed. Check the name again and review the current list.')
+        try:
+            if approved.containers:
+                sandbox.run([engine, 'rm', '--force', *(identifier for _, identifier in approved.containers)],
+                            capture=True, stderr=subprocess.PIPE)
+            if approved.volumes:
+                if resource_conflicts(config).volumes != approved.volumes:
+                    raise ValueError('The conflicting volumes changed. Check the name again and review the current list.')
+                sandbox.run([engine, 'volume', 'rm', *(volume for volume, _ in approved.volumes)],
+                            capture=True, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or '').strip()
+            raise ValueError(f'Could not remove all the listed {engine} resources (exit {error.returncode}). '
+                             f'Check the remaining resources or go back to choose another name.\n{detail}'.rstrip()) from error
+        return resource_conflicts(config)
+
+
+def prepare_resources(state, token):
+    """Recheck names before allowing this attempt to start any containers."""
+    if not owns(state, token):
+        raise ValueError('Creation reservation changed.')
+    config = json.loads((state / 'config.json').read_text())
+    host_platform.check_engine(config['engine'], config.get('podman_connection'))
+    resource_conflicts(config).require_available()
     (state / READY).write_text(token)
 
 

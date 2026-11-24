@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from ai_sandbox_factory import sandbox
+from ai_sandbox_factory import creation, sandbox
 from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, CreationRequest, DEFAULT_SETTINGS, Service, SettingsMenu, MoreActions, SandboxTable
@@ -32,6 +32,8 @@ class FakeService:
         self.calls.append(args);log('done')
         if args[0]=='delete':self.records=[r for r in self.records if r['name']!=args[1]]
     def create(self,draft,key,log,cancellation=None):self.calls.append(['create',draft]);log('created')
+    def check_creation(self, draft, approved=None):
+        return creation.ResourceConflicts('podman', None, (), ())
     def update(self,name,draft,key,log,update=None):self.calls.append(['update',name,draft]);log('updated')
     def provider(self,name,provider,mode,key,log):self.calls.append(['provider',name,provider,mode,key]);log('Provider ready')
     def models(self,name,mode,log):self.calls.append(['models',name,mode]);log('Model catalogue')

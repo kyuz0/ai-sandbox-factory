@@ -129,14 +129,130 @@ class CreationTests(unittest.TestCase):
         self.state.mkdir(parents=True)
         (self.state / creation.MARKER).write_text('ours')
         (self.state / 'config.json').write_text(json.dumps({'name': 'demo', 'engine': 'podman'}))
-        for collision in ('pi-sandbox-factory-demo', 'pi-sandbox-factory-demo-advisor', 'pi-sandbox-factory-demo-inference-keys'):
-            with self.subTest(collision=collision), patch.object(host_platform, 'check_engine'), patch('subprocess.check_output', return_value=collision + '\n'):
-                with self.assertRaisesRegex(ValueError, 'Resources already exist'):
-                    creation.prepare_resources(self.state, 'ours')
-                self.assertFalse((self.state / creation.READY).exists())
-        with patch.object(host_platform, 'check_engine'), patch('subprocess.check_output', return_value='unrelated\n'):
+        prefix = 'pi-sandbox-factory-demo'
+        containers = (prefix + suffix for suffix in
+                      ('', '-proxy', '-advisor', '-advisor-proxy', '-ssh', '-inference', '-aws'))
+        volumes = (prefix + suffix for suffix in
+                   ('-socket', '-home', '-advisor-socket', '-advisor-home', '-advisor-egress',
+                    '-ssh-socket', '-ssh-keys', '-inference-socket', '-inference-keys'))
+        for kind, names in (('container', containers), ('volume', volumes)):
+            for collision in names:
+                with self.subTest(kind=kind, collision=collision):
+                    def run(args, **kwargs):
+                        if args[1] == 'ps':
+                            self.assertEqual(args[2:], ['-a', '--no-trunc', '--format', '{{.Names}}\t{{.ID}}'])
+                            output = collision + '\t' + 'a' * 64 + '\n' if kind == 'container' else ''
+                        elif args[2] == 'ls':
+                            self.assertEqual(args[3:], ['--format', '{{.Name}}'])
+                            output = collision + '\n' if kind == 'volume' else ''
+                        else:
+                            self.assertEqual(args[1:], ['volume', 'inspect', collision])
+                            output = json.dumps([{'Name': collision, 'CreatedAt': '2026-11-24T00:00:00Z'}])
+                        return subprocess.CompletedProcess(args, 0, stdout=output)
+                    with patch.object(host_platform, 'check_engine'), patch.object(sandbox, 'run', side_effect=run):
+                        with self.assertRaisesRegex(ValueError, 'already used by container resources'):
+                            creation.prepare_resources(self.state, 'ours')
+                    self.assertFalse((self.state / creation.READY).exists())
+        with patch.object(host_platform, 'check_engine'), patch.object(sandbox, 'run', side_effect=[
+                subprocess.CompletedProcess([], 0, stdout='unrelated\t' + 'b' * 64 + '\n'),
+                subprocess.CompletedProcess([], 0, stdout='unrelated\n')]):
             creation.prepare_resources(self.state, 'ours')
         self.assertEqual((self.state / creation.READY).read_text(), 'ours')
+
+    def test_check_draft_preserves_saved_state_even_with_approved_conflicts(self):
+        self.state.mkdir(parents=True)
+        (self.state / 'keep').write_text('saved conversation')
+        approved = creation.ResourceConflicts('podman', None, (), ())
+        for approval in (None, approved):
+            with self.subTest(approved=approval), patch.object(sandbox, 'run') as run, \
+                    patch.object(creation, 'resource_conflicts') as conflicts:
+                with self.assertRaisesRegex(ValueError, 'already saved'):
+                    creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}, approval)
+                run.assert_not_called()
+                conflicts.assert_not_called()
+                self.assertEqual((self.state / 'keep').read_text(), 'saved conversation')
+
+    def test_check_draft_only_reports_conflicts_without_approval(self):
+        conflicts = creation.ResourceConflicts('podman', None,
+                                              (('pi-sandbox-factory-demo', 'a' * 64),),
+                                              (('pi-sandbox-factory-demo-home', 'original'),))
+        with patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                patch.object(host_platform, 'check_engine', return_value=None), \
+                patch.object(creation, 'resource_conflicts', return_value=conflicts), \
+                patch.object(sandbox, 'run') as run:
+            self.assertEqual(creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}), conflicts)
+        run.assert_not_called()
+        self.assertFalse(self.state.exists())
+
+    def test_check_draft_refuses_changed_resources_before_deleting(self):
+        approved = creation.ResourceConflicts('podman', None,
+                                             (('pi-sandbox-factory-demo', 'a' * 64),),
+                                             (('pi-sandbox-factory-demo-home', 'original'),))
+        changed = (
+            creation.ResourceConflicts('podman', None, (('pi-sandbox-factory-demo', 'b' * 64),), approved.volumes),
+            creation.ResourceConflicts('podman', None, approved.containers,
+                                       (('pi-sandbox-factory-demo-home', 'replacement'),)),
+        )
+        for current in changed:
+            with self.subTest(current=current), patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                    patch.object(host_platform, 'check_engine', return_value=None), \
+                    patch.object(creation, 'resource_conflicts', return_value=current), \
+                    patch.object(sandbox, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'conflicting resources changed'):
+                    creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}, approved)
+                run.assert_not_called()
+        self.assertFalse(self.state.exists())
+
+    def test_check_draft_deletes_full_container_ids_then_named_volumes_without_force(self):
+        from unittest.mock import call
+        approved = creation.ResourceConflicts('podman', None,
+                                             (('pi-sandbox-factory-demo', 'a' * 64),
+                                              ('pi-sandbox-factory-demo-proxy', 'b' * 64)),
+                                             (('pi-sandbox-factory-demo-home', 'original'),))
+        volumes_only = creation.ResourceConflicts('podman', None, (), approved.volumes)
+        available = creation.ResourceConflicts('podman', None, (), ())
+        with patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                patch.object(host_platform, 'check_engine', return_value=None), \
+                patch.object(creation, 'resource_conflicts', side_effect=[approved, volumes_only, available]), \
+                patch.object(sandbox, 'run') as run:
+            result = creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}, approved)
+        self.assertEqual(result, available)
+        self.assertEqual(run.call_args_list, [
+            call(['podman', 'rm', '--force', 'a' * 64, 'b' * 64], capture=True, stderr=subprocess.PIPE),
+            call(['podman', 'volume', 'rm', 'pi-sandbox-factory-demo-home'], capture=True, stderr=subprocess.PIPE),
+        ])
+        self.assertFalse(self.state.exists())
+
+    def test_check_draft_rechecks_volume_identity_after_container_removal(self):
+        approved = creation.ResourceConflicts('podman', None,
+                                             (('pi-sandbox-factory-demo', 'a' * 64),),
+                                             (('pi-sandbox-factory-demo-home', 'original'),))
+        changed = creation.ResourceConflicts('podman', None, (),
+                                            (('pi-sandbox-factory-demo-home', 'replacement'),))
+        with patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                patch.object(host_platform, 'check_engine', return_value=None), \
+                patch.object(creation, 'resource_conflicts', side_effect=[approved, changed]), \
+                patch.object(sandbox, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'conflicting volumes changed'):
+                creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}, approved)
+        run.assert_called_once_with(['podman', 'rm', '--force', 'a' * 64], capture=True, stderr=subprocess.PIPE)
+
+    def test_conflict_cleanup_preserves_engine_diagnostic_and_retry_guidance(self):
+        volume = 'pi-sandbox-factory-demo-home'
+        approved = creation.ResourceConflicts('podman', None, (), ((volume, 'original'),))
+        failure = subprocess.CalledProcessError(125, ['podman', 'volume', 'rm', volume],
+                                               stderr=f'Error: volume {volume} is in use by container fixture')
+        with patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                patch.object(host_platform, 'check_engine', return_value=None), \
+                patch.object(creation, 'resource_conflicts', return_value=approved), \
+                patch.object(sandbox, 'run', side_effect=failure):
+            with self.assertRaises(ValueError) as raised:
+                creation.check_draft(self.service.state, {'name': 'demo', 'engine': 'podman'}, approved)
+        message = str(raised.exception)
+        self.assertIn('exit 125', message)
+        self.assertIn(failure.stderr, message)
+        self.assertIn('choose another name', message)
+        self.assertFalse(self.state.exists())
 
     def test_reservation_requires_exact_token_and_empty_owned_directory(self):
         self.state.mkdir(parents=True)

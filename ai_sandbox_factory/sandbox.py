@@ -1060,6 +1060,9 @@ def create(args, state):
         config['aws_access'] = aws_access.settings(json.loads(Path(args.aws_access_file).read_text()))
     if getattr(args, 'ssh_file', None):
         config['ssh'] = sandbox_ssh.validate(json.loads(Path(args.ssh_file).read_text()))
+    ids, grants = connector_settings.parse_cli_grants(getattr(args, 'connector', None) or [])
+    from .creation import resource_conflicts
+    resource_conflicts({**config, 'connector_ids': ids}).require_available()
     config['website_groups'] = (network_groups.snapshots(options(config.get('options'))['website_groups'],
         curlie_revision=getattr(args, 'curlie_list', None)) if mode == 'allowlist' else {})
     if not native:
@@ -1067,7 +1070,6 @@ def create(args, state):
     if not creation_token:
         state.mkdir(parents=True, mode=0o700)
     try:
-        ids, grants = connector_settings.parse_cli_grants(getattr(args, 'connector', None) or [])
         reviewed_file = getattr(args, 'connector_review_file', None)
         if ids or reviewed_file:
             reviewed = json.loads(Path(reviewed_file).read_text()) if reviewed_file else None

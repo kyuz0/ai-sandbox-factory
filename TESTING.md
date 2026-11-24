@@ -722,7 +722,10 @@ testing; production cancellation preserves build cache. Unit and UI tests also
 cover ownership collisions, cleanup failures, repeated clicks and late cancellation.
 
 Run `.venv/bin/python tests/creation_provider.py` to check provider setup through
-the actual creation worker. It makes two disposable Podman creation attempts with a
+the actual creation worker. It checks that stopped containers and leftover volumes
+are reported before saving a new sandbox, that only exact approved resources
+are removed, and that neighboring resources and their data are preserved.
+It also makes two disposable Podman creation attempts with a
 synthetic managed provider. A fixture HTTP 503 must appear in the job output
 and the failed attempt must roll back. Retrying the same name must succeed.
 An independent stop command is refused while a trusted settings worker can

@@ -301,6 +301,10 @@ class Service:
             raise ValueError('Could not read saved search keys. Make sure the sandbox is running.')
         return json.loads(result.stdout)
 
+    def check_creation(self, draft, approved=None):
+        from .creation import check_draft
+        return check_draft(self.state, draft, approved)
+
     def create(self, draft, key, log, cancellation=None, *, creation_token=None):
         if cancellation is not None:
             return cancellation.run(self, draft, key, log)
@@ -1239,6 +1243,29 @@ class Confirm(ModalScreen[bool]):
     def pressed(self, event):
         event.stop()
         self.dismiss(event.button.id == 'yes')
+
+
+class ConfirmCreationConflicts(Confirm):
+    DEFAULT_CSS = '''
+    ConfirmCreationConflicts #confirm-box { width: 88; height: 21; overflow: hidden; }
+    ConfirmCreationConflicts VerticalScroll { height: 1fr; margin: 0 0 1 0; }
+    ConfirmCreationConflicts Static { height: auto; }
+    '''
+
+    def __init__(self, sandbox_name, kind, resources, warning):
+        count = len(resources)
+        resource = kind if count != 1 else kind[:-1]
+        message = f'The name “{sandbox_name}” is already in use. Review {count} {resource}.\n\n{warning}'
+        super().__init__(message + '\n\n' + '\n'.join(name for name, _ in resources),
+                         'Delete ' + kind, confirm_by_default=False,
+                         title='Delete conflicting ' + kind + '?')
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label(self.title_text, markup=False)
+            with VerticalScroll():
+                yield Static(self.message, id='creation-conflict-list', markup=False)
+            yield from self.action_buttons()
 
 
 class InstallSystemPackages(EntryDialog):
@@ -3798,6 +3825,8 @@ class SettingsForm(Screen):
             elif action == 'explain-approval':
                 self.app.push_screen(ApprovalHelp(editing=self.editing))
             elif action == 'apply':
+                if event.button.disabled:
+                    return
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
                 if self.setting == 'primary-approvals':
@@ -3876,7 +3905,7 @@ class SettingsForm(Screen):
                     self.app.push_screen(ApplySettingsReview(self.draft, draft, mode),
                         lambda yes: self.submit(draft, key) if yes else None)
                 else:
-                    self.submit(draft, key)
+                    self.begin_creation_check(draft, key)
         except (OSError, ValueError) as error:
             if any(message.display for message in self.query('SkillSelection Feedback')):
                 self.query_one('#skill-library-section', Collapsible).collapsed = False
@@ -3902,6 +3931,76 @@ class SettingsForm(Screen):
     def choose_local_keys(self, choices):
         if choices is not None:
             self.local_key_choices = choices
+
+    def begin_creation_check(self, draft, key, approved=None):
+        button = self.query_one('#apply', Button)
+        button.disabled = True
+        feedback = self.query_one('#form-error', Feedback)
+        feedback.add_class('checking-creation')
+        feedback.update('Checking the sandbox name…' if approved is None else 'Deleting the listed resources…')
+        feedback.scroll_visible(animate=False)
+        self.query_one('VerticalScroll.form').disabled = True
+        self.check_creation(draft, key, approved)
+
+    @work(exit_on_error=False)
+    async def check_creation(self, draft, key, approved):
+        app = self.app
+        error = None
+        try:
+            conflicts = await asyncio.to_thread(app.service.check_creation, draft, approved)
+        except (OSError, ValueError) as cause:
+            error = str(cause)
+        finally:
+            if self.is_attached:
+                self.query_one('#apply', Button).disabled = False
+                self.query_one('VerticalScroll.form').disabled = False
+        if not self.is_attached or app.screen is not self:
+            return
+        feedback = self.query_one('#form-error', Feedback)
+        feedback.remove_class('checking-creation')
+        feedback.update(error or '')
+        if error is not None:
+            self.call_after_refresh(feedback.scroll_visible, animate=False)
+            return
+        if not (conflicts.containers or conflicts.volumes):
+            self.submit(draft, key)
+            return
+
+        def remove(yes):
+            if yes and app.screen is self:
+                self.begin_creation_check(draft, key, conflicts)
+
+        def confirm_volumes(yes):
+            if not yes or app.screen is not self:
+                return
+            if conflicts.volumes:
+                warning = [
+                    'Deleting volumes permanently erases their contents.',
+                    'They can hold saved chats, sign-in data and editor settings.',
+                    'Files in your host project folder stay in place.',
+                ]
+                if any(name.endswith('-agent-workspace') for name, _ in conflicts.volumes):
+                    warning.append('The volume ending in -agent-workspace holds runtime sockets.')
+                backup = 'Cancel to back up these volumes or choose another name.'
+                if conflicts.engine == 'podman':
+                    backup += '\nReplace VOLUME with the listed name.\n\npodman volume export VOLUME --output VOLUME.tar'
+                else:
+                    backup += '\nSee the Docker guide on backing up volumes.'
+                app.push_screen(ConfirmCreationConflicts(
+                    draft['name'], 'volumes', conflicts.volumes, settings_effects.bullets(warning) + '\n\n' + backup), remove)
+            else:
+                remove(True)
+
+        if conflicts.containers:
+            app.push_screen(ConfirmCreationConflicts(
+                draft['name'], 'containers', conflicts.containers, settings_effects.bullets([
+                    'Running work in these containers will stop.',
+                    'Files stored only inside these containers will be deleted.',
+                    'Files in your host project folder stay in place.',
+                    'Deleting volumes requires separate confirmation.',
+                ]) + '\n\nCancel and go back to choose another name.'), confirm_volumes)
+        else:
+            confirm_volumes(True)
 
     def submit(self, draft, key):
         app = self.app
@@ -4185,6 +4284,9 @@ class Cockpit(App):
     DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
     DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
     .error { color: #b75b52; height: auto; }
+    SettingsForm #form-error { color: #ffb3a7; text-style: bold; }
+    SettingsForm:nocolor #form-error { color: white; text-style: bold reverse; }
+    SettingsForm #form-error.checking-creation { color: #f1f3f5; text-style: none; }
     Screen:nocolor ConnectorFields .error { color: white; text-style: bold reverse; }
     .model-dialog > Feedback, FolderEditor Feedback { margin-top: 1; }
     .compact-terminal FolderEditor #folder-fields { max-height: 52vh; }

@@ -145,6 +145,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   directory to their subprocesses. Real-engine tests use production lock paths
   and unique sandbox names. Arrange contention explicitly when testing it.
   Exercise affected tests alongside real jobs before calling the workflow finished.
+- Check the saved state and engine names before starting a creation job. Recheck
+  under the lifecycle lock before allocating resources. Test stopped containers
+  and volumes left after container deletion, including cancellation of either
+  confirmation and preservation of similarly named resources.
 
 ## Capacity and recovery
 

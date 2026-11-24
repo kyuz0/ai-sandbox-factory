@@ -24,6 +24,14 @@ The selected workspace is trusted automatically in the coding agent and browser 
 
 Under **Review sandbox → Connectors**, choose a service to give the workspace access. Open **SSH & Git…** to set the Git commit author, add SSH destinations or configure repository access. Open **AWS…** to select an access profile. You can edit the same choices later in **Settings → Connectors**. [Connector setup](connectors.md)
 
+If the name is already used by containers or volumes, Factory lists the conflicts
+before starting creation. Go back to choose another name, or confirm removal of
+the listed containers and, separately, any listed volumes. Deleting a volume
+permanently removes the files it holds, which can include sign-ins and saved chats.
+To keep a copy with Podman, cancel and run
+`podman volume export VOLUME --output VOLUME.tar`. Replace `VOLUME` with the
+listed volume name.
+
 ## Open a sandbox
 
 Choose **Open** on the dashboard. All four agents use the browser editor by default on supported hosts. Each opens its own chat panel beside your files.
