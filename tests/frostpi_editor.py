@@ -493,8 +493,10 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
                 assert success in result, result
             assert hashes() == before, 'Indexing modified a read-only source'
         for client in ('frostpi', 'pi'):
+            (source / '.env').write_text('DEMO_VALUE=SYNTHETIC_KNOWLEDGE_ENV\n')
             workflow(client)
             write_documents(source, f'ORCHID_REFRESH_{client.upper()}_842')
+            (source / '.env').write_text(f'DEMO_VALUE=SYNTHETIC_KNOWLEDGE_REFRESH_{client.upper()}\n')
             workflow(client, refresh=True)
         send('/knowledge-refresh frostpi-docs')
         frame.get_by_text(re.compile(r'^Updated:')).first.wait_for(timeout=60000)
@@ -528,7 +530,7 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
         assert passages >= 1 and queries >= 2, trace
         database, = inside('find', '/home/node', '-name', 'knowledge.db', '-type', 'f').splitlines()
         vectors = inside('find', str(Path(database).parent / 'vectors'), '-name', '*.bin').splitlines()
-        assert len(vectors) == 2, vectors
+        assert len(vectors) == 4, vectors
         checksum = inside('sha256sum', *sorted(vectors))
 
         selected = json.loads(options_file.read_text())
@@ -909,9 +911,10 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 write_documents(root / 'reference')
                 (root / 'reference/credentials.json').write_text('{"token":"SYNTHETIC_KNOWLEDGE_CREDENTIAL"}')
                 (root / 'reference/secrets.yml').write_text('secret: SYNTHETIC_KNOWLEDGE_SECRET\n')
-                (root / 'reference/.env').write_text('TOKEN=SYNTHETIC_KNOWLEDGE_ENV\n')
             else:
                 (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
+            (root / 'reference/.gitignore').write_text('.env\ncredentials.json\nsecrets.yml\n.knowledge-note.txt\n')
+            (root / 'reference/.knowledge-note.txt').write_text('SYNTHETIC_HIDDEN_KNOWLEDGE\n')
             (root / 'workspace/outside-reference').symlink_to('/etc/passwd')
             config['extra_folders'] = [{'name': 'reference', 'source': str(root / 'reference'), 'read_only': True}]
         if subagents:

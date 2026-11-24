@@ -98,10 +98,16 @@ function knowledgeReply(messages, tools) {
     ['knowledge_update', {target: name}, /(?:Updated|Refreshed)/i],
     ['knowledge_search', {query: 'ORCHID_REFRESH_' + client.toUpperCase() + '_842', kb_id: name, mode: 'fast'},
       new RegExp('ORCHID_REFRESH_' + client.toUpperCase() + '_842')],
+    ['knowledge_search', {query: 'SYNTHETIC_KNOWLEDGE_REFRESH', kb_id: name, mode: 'fast'},
+      new RegExp('SYNTHETIC_KNOWLEDGE_REFRESH_' + client.toUpperCase())],
   ] : [
-    ['knowledge_add', {source: '/mnt/reference', name}, /2 files/],
+    ['knowledge_add', {source: '/mnt/reference', name}, /7 files/],
     ['knowledge_search', {query: 'DOCX_SOURCE_842', kb_id: name, mode: 'semantic'}, /DOCX_SOURCE_842/],
     ['knowledge_search', {query: 'PDF_SOURCE_842', kb_id: name, mode: 'semantic'}, /PDF_SOURCE_842/],
+    ['knowledge_search', {query: 'SYNTHETIC_KNOWLEDGE_CREDENTIAL', kb_id: name, mode: 'fast'}, /SYNTHETIC_KNOWLEDGE_CREDENTIAL/],
+    ['knowledge_search', {query: 'SYNTHETIC_KNOWLEDGE_SECRET', kb_id: name, mode: 'fast'}, /SYNTHETIC_KNOWLEDGE_SECRET/],
+    ['knowledge_add', {source: '/mnt/reference/.env', name: name + '-direct'}, /1 files?/],
+    ['knowledge_search', {query: 'SYNTHETIC_KNOWLEDGE_ENV', kb_id: name + '-direct', mode: 'fast'}, /SYNTHETIC_KNOWLEDGE_ENV/],
     ['bash', {command: 'cd /tmp && pdfinfo /mnt/reference/secret-management-guide.pdf >/tmp/factory-pdf-info.txt && pdftotext -layout /mnt/reference/secret-management-guide.pdf factory-doc-verify.txt && grep PDF_SOURCE_842 factory-doc-verify.txt | head -3'}, /PDF_SOURCE_842/],
     ['bash', {command: 'pdftotext -layout /mnt/reference/secret-management-guide.pdf /mnt/reference/denied.txt'}, /Denied by policy|Read-only file system|Permission denied|Couldn.t open text file/i],
   ];
@@ -200,10 +206,10 @@ http.createServer((request, response) => {
       delta = researchReply(messages, tools);
     } else if (userText === 'Factory keyword fixture' && tools.length) {
       delta = tools.includes('knowledge_search') ? { content: 'FACTORY UNEXPECTED SEMANTIC SEARCH' }
-        : choice('bash', { command: 'rg -a -n ORCHID_WINDOW /mnt/reference' });
+        : choice('bash', { command: "rg --hidden --no-ignore -a -n 'ORCHID_WINDOW|SYNTHETIC_HIDDEN_KNOWLEDGE' /mnt/reference" });
     } else if (last.role === 'tool' && last.tool_call_id?.startsWith('factory-bash-') &&
                context.includes('Factory keyword fixture')) {
-      delta = { content: String(last.content).includes('ORCHID_WINDOW_842')
+      delta = { content: ['ORCHID_WINDOW_842', 'SYNTHETIC_HIDDEN_KNOWLEDGE'].every(marker => String(last.content).includes(marker))
         ? 'FACTORY LOCAL KNOWLEDGE VERIFIED' : 'FACTORY KEYWORD RESULT MISSING' };
     } else if (userText === 'Factory knowledge fixture' && tools.length) {
       if (!tools.includes('knowledge_search') || tools.some(name =>

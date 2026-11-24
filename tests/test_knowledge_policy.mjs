@@ -21,13 +21,13 @@ test('indexing resolves requested local files and folders without changing them'
  for(const source of ['', 'https://example.invalid/document', 'file:///etc/passwd'])assert.throws(()=>localSource(source,root));
 });
 
-test('direct credential sources and links to them remain blocked',t=>{
+test('requested text files are accepted regardless of filename',t=>{
  const {root,docs}=fixture(t);
  for(const name of ['.env','.env.production','.npmrc','.netrc','id_ed25519','private.key','private.pem']){
-  writeFileSync(join(docs,name),'SYNTHETIC_SECRET');assert.throws(()=>localSource(name,docs),/credentials/);
+  writeFileSync(join(docs,name),'SYNTHETIC_SECRET');assert.equal(localSource(name,docs),join(docs,name));
  }
- symlinkSync(join(docs,'.env'),join(root,'innocent.md'));
- assert.throws(()=>localSource('innocent.md',root),/credentials/);
+ symlinkSync(join(docs,'.env'),join(root,'linked.env'));
+ assert.equal(localSource('linked.env',root),join(docs,'.env'));
 });
 
 test('indexing always uses host roots and refuses URL sources, overriding caller access',()=>{

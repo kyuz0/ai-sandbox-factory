@@ -1,8 +1,8 @@
 Factory passes user-selected mounts as Knowledge source roots. Filesystems
 such as DrvFS may report different ownership or modes for readable inputs.
 Retain the existing checks for outputs and private Knowledge state.
-Index ordinary documents even when their names mention credentials or secrets.
-Keep exclusions for common credential files and private key formats.
+Honor the folder selected for indexing. Use the upstream full-scan option
+for scoped add and refresh, including refresh of existing collections.
 
 --- a/dist/src/filesystem-access.js
 +++ b/dist/src/filesystem-access.js
@@ -27,21 +27,12 @@ Keep exclusions for common credential files and private key formats.
 -    const roots = bindRoots(policy);
 +    const roots = bindRoots(policy, true);
      if (roots.length === 0)
---- a/dist/src/indexer/chunker.js
-+++ b/dist/src/indexer/chunker.js
-@@ -79,8 +79,11 @@
-     "*.crt",
-     "*.cert",
--    "*secret*",
--    "*secrets*",
--    "*credential*",
--    "*credentials*",
-+    "credentials",
-+    "credentials.json",
-+    "application_default_credentials.json",
-+    "secrets",
-+    "secrets.json",
-+    "secrets.yaml",
-+    "secrets.yml",
-     "docs/*eval-report*.md",
-     "docs/*evaluation-report*.md",
+--- a/dist/src/engine.js
++++ b/dist/src/engine.js
+@@ -72,5 +72,5 @@
+ function toScanOptions(options = {}, accessPolicy) {
+     return {
+-        includeSuggestedText: options.include_suggested_text === true,
++        includeSuggestedText: accessPolicy !== undefined || options.include_suggested_text === true,
+         includePaths: options.include_paths,
+         excludePaths: options.exclude_paths,
