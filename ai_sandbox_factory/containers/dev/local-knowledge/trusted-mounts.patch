@@ -1,0 +1,27 @@
+Factory passes user-selected mounts as Knowledge source roots. Filesystems
+such as DrvFS may report different ownership or modes for readable inputs.
+Retain the existing checks for outputs and private Knowledge state.
+
+--- a/dist/src/filesystem-access.js
++++ b/dist/src/filesystem-access.js
+@@ -9,3 +9,3 @@
+ }
+-function bindRoots(policy) {
++function bindRoots(policy, checkOwnership) {
+     if (policy.allowedRoots.length > MAX_ALLOWED_ROOTS)
+@@ -22,3 +22,4 @@
+         const canonical = realpathSync.native(requested);
+-        assertOwnedDirectory(canonical);
++        if (checkOwnership)
++            assertOwnedDirectory(canonical);
+         const info = statSync(canonical);
+@@ -49,3 +50,3 @@
+         return requested;
+-    const roots = bindRoots(policy);
++    const roots = bindRoots(policy, false);
+     if (roots.length === 0)
+@@ -66,3 +67,3 @@
+         return requested;
+-    const roots = bindRoots(policy);
++    const roots = bindRoots(policy, true);
+     if (roots.length === 0)

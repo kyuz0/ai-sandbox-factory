@@ -74,7 +74,7 @@ def check(state, tls_address):
                             '-subj', '/CN=Disposable editor test', '-addext', f'subjectAltName=IP:{tls_address}',
                             '-keyout', str(key), '-out', str(cert)], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            key.chmod(0o600)
+            key.chmod(0o640)
             info = configure({'address': tls_address, 'password_hash': digest,
                               'certificate': str(cert), 'private_key': str(key)})
             context = ssl.create_default_context(cafile=str(cert))
@@ -85,7 +85,7 @@ def check(state, tls_address):
             assert request(info['url'], headers={'Cookie': headers['Set-Cookie'].split(';')[0]}, context=context)[0] == 200
             assert request(info['url'], headers={'Origin': 'http://' + urlsplit(info['url']).netloc}, context=context)[0] == 403
             browser_editor.stop(state)
-        print('PASS HTTPS login, verified certificate, Secure cookie and scheme validation', flush=True)
+        print('PASS HTTPS login with a group-readable key, verified certificate, Secure cookie and scheme validation', flush=True)
 
         with socket.socket() as occupied:
             occupied.bind(('127.0.0.1', 0)); occupied.listen()

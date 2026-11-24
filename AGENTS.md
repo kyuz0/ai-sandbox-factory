@@ -88,7 +88,7 @@ workstation defaults. Full configuration copies reuse package snapshots, with fr
 workspace selection and private state; never copy credential paths or seed homes.
 Exercise fallback and Only-provider behavior in both clients.
 
-Preserve workspace files, ownership checks and private home state. Model discovery
+Preserve workspace files and private home state. Model discovery
 must work before a Pi session exists and allow opening the editor while offline.
 Extra folders use `/mnt/<name>` and default to read-only. The starting directory
 is relative to `/workspace` and applies at launch. Keep mount validation, inner
@@ -104,6 +104,21 @@ Use container architecture for binary downloads, not the Python host architectur
 Browser supervisors must work without `fork`, `/proc` or Linux pidfds on the host.
 Keep generated browser origins separate per sandbox and validate Host and Origin.
 Do not solve VM mount failures with recursive ownership changes or wider host mounts.
+
+### Trust boundaries for files
+
+- Factory trusts the host and the data folders the user selects. Honor host
+  readability, the sandbox's mount modes and the granted roots. Do not require
+  the user's UID or private-directory modes on a selected project or data folder.
+  Keep Factory-managed credentials outside the files, processes and configuration
+  exposed to sandbox agents and editor extensions.
+- Check what a file rule actually protects. Test a permitted case alongside the
+  denied case. For mount and indexing changes, exercise group-writable folders,
+  read-only mounts and Windows-backed WSL2 paths when affected. Use the real
+  client path so dependency checks and image build steps are exercised.
+- When generated client settings depend on multiple saved choices, test changes
+  to each choice independently. Confirm that editing one setting gives the same
+  effective permissions as a fresh setup with those choices.
 
 ## Async work and test isolation
 

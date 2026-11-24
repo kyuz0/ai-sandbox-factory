@@ -18,11 +18,11 @@ export function localSource(value, cwd = process.cwd()) {
     throw new Error('Local Knowledge indexes files in the workspace or mounted folders, not URLs.');
   }
   const source = realpathSync(resolve(cwd, value.trim()));
-  if (/^(?:\.env(?:\..*)?|\.npmrc|\.netrc|id_[^.]+)$|\.(?:key|pem|env)(?:\..*)?$/i.test(basename(source))) {
-    throw new Error('Choose a source file or folder without credentials.');
-  }
   const info = statSync(source);
   if (!info.isFile() && !info.isDirectory()) throw new Error('Choose a regular file or folder.');
+  if (info.isFile() && /^(?:\.env(?:\..*)?|\.npmrc|\.netrc|id_[^.]+)$|\.(?:key|pem|env)(?:\..*)?$/i.test(basename(source))) {
+    throw new Error('Choose a source file without credentials.');
+  }
   return source;
 }
 

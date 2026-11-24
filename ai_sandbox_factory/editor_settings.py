@@ -67,13 +67,14 @@ def tls_context(value):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     key = Path(value['private_key']).expanduser()
-    import os
-    info = key.stat()
-    if info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise ValueError('HTTPS private key must belong to you and have permissions 0600 or stricter')
+
     def encrypted():
         raise ValueError('Use an unencrypted HTTPS key; the background editor cannot prompt for its passphrase')
-    context.load_cert_chain(str(Path(value['certificate']).expanduser()), str(key), password=encrypted)
+
+    try:
+        context.load_cert_chain(str(Path(value['certificate']).expanduser()), str(key), password=encrypted)
+    except OSError as error:
+        raise ValueError(f'Could not load the editor HTTPS certificate and key. {error}') from error
     return context
 
 

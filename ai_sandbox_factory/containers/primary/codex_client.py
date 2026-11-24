@@ -37,7 +37,8 @@ def configure(home, settings):
             or not marker.exists()):
         config['web_search'] = 'cached' if settings.get('codex_web_search', False) else 'disabled'
     config.setdefault('projects', {}).setdefault(settings['working_directory'], {})['trust_level'] = 'trusted'
-    if previous.get('write_roots') != settings.get('write_roots'):
+    if (previous.get('write_roots') != settings.get('write_roots')
+            or previous.get('working_directory') != settings['working_directory']):
         # Native workspace-write already permits the working directory. Listing
         # it again makes the native editor classify the default as Custom.
         config.setdefault('sandbox_workspace_write', {})['writable_roots'] = [

@@ -95,7 +95,8 @@ To connect from another computer, enter the host's interface IP, enable a passwo
 and supply an HTTPS certificate and private key. These fields appear when the
 address is non-local. The certificate must be trusted by the connecting browser
 and cover that IP. FrostPi's webviews require a secure browser context. The key
-stays on the host and must have permissions `0600`; encrypted keys are unsupported.
+stays on the host. Factory needs read access to the certificate and the
+unencrypted private key.
 
 ## Choose a client
 

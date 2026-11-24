@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -83,7 +84,8 @@ class FolderTests(unittest.TestCase):
     def test_sources_and_overlaps(self):
         child = self.extra / 'child'; child.mkdir()
         hidden = self.root / '.ssh'; hidden.mkdir()
-        invalid = ['/', str(Path.home()), '/etc', str(self.workspace), str(self.workspace / 'app'), str(self.state), str(self.root), str(self.root / 'missing')]
+        invalid = ['/', str(Path.home()), '/etc', '/tmp', '/var/tmp', str(self.workspace),
+                   str(self.workspace / 'app'), str(self.state), str(self.root), str(self.root / 'missing')]
         for source in invalid:
             with self.subTest(source=source), self.assertRaises(ValueError):
                 self.validate([dict(source=source)])
@@ -110,6 +112,24 @@ class FolderTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.validate(rows, saved=True)
         with self.assertRaises(ValueError):
             self.validate([dict(source=str(original))], private_paths=[original])
+
+    def test_read_only_temporary_folder_can_have_a_different_owner(self):
+        with tempfile.TemporaryDirectory(dir='/tmp') as directory:
+            source = Path(directory).resolve()
+            real_stat = Path.stat
+
+            def stat_with_different_owner(path, *args, **kwargs):
+                info = real_stat(path, *args, **kwargs)
+                if path != source:
+                    return info
+                fields = list(info)
+                fields[4] = os.getuid() + 1
+                return os.stat_result(fields)
+
+            with patch.object(Path, 'stat', stat_with_different_owner):
+                rows = folders.validate([dict(source=str(source))], self.workspace, self.state)
+            self.assertEqual(rows[0]['source'], str(source))
+            self.assertTrue(rows[0]['read_only'])
 
     def test_directional_permissions_keep_secret_denials(self):
         config = dict(self.config, extra_folders=self.validate([dict(source=str(self.extra))]))

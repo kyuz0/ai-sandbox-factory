@@ -61,6 +61,30 @@ class ClientSettings(unittest.TestCase):
             config = tomlkit.parse((home / 'config.toml').read_text())
             self.assertEqual(config['sandbox_workspace_write']['writable_roots'], ['/workspace', '/mnt/code'])
 
+    def test_changing_only_the_starting_directory_updates_writable_roots(self):
+        from ai_sandbox_factory import primary_agents
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home, workspace = root / 'codex', root / 'workspace'
+            home.mkdir()
+            (workspace / 'project').mkdir(parents=True)
+            config = dict(primary_agent='codex', workspace=str(workspace), extra_folders=[
+                dict(name='code', read_only=False), dict(name='reference', read_only=True),
+            ])
+            path = home / 'config.toml'
+            for starting_folder, roots in (
+                ('.', ['/mnt/code']),
+                ('project', ['/workspace', '/mnt/code']),
+                ('.', ['/mnt/code']),
+            ):
+                primary_agents.prepare_workspace(config | {'working_directory': starting_folder}, root)
+                settings = json.loads((root / 'primary-runtime/settings.json').read_text())
+                configure(home, settings)
+                saved = tomlkit.parse(path.read_text())
+                self.assertEqual(saved['sandbox_workspace_write']['writable_roots'], roots)
+                self.assertEqual(saved['projects'][settings['working_directory']]['trust_level'], 'trusted')
+
     def test_web_search_toggle_applies_only_when_factory_choice_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

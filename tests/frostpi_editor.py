@@ -903,6 +903,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                                          knowledge_embedding_model='fixture-embedding')
             (root / 'reference').mkdir()
             if local_knowledge == 'endpoint':
+                # Shared host directories may be group-writable before they are mounted.
+                (root / 'workspace').chmod(0o775)
+                (root / 'reference').chmod(0o775)
                 write_documents(root / 'reference')
             else:
                 (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')

@@ -66,7 +66,9 @@ uses the old offline model, switch to keyword search first. [Updating a sandbox]
 Ask Pi or FrostPi “Index the documents in `/mnt/reference` so we can search them.”
 Pi indexes that folder using your configured embedding service. Read-only folders
 work: the source files stay unchanged and the index is saved in the sandbox's
-private home. Then ask your questions and request file or section citations.
+private home. On WSL2, you can index files in a Windows folder selected as the
+workspace or added under **Folders**. Ask your questions and request file or
+section citations.
 
 After changing the documents or embedding model, ask Pi to refresh the index.
 You can also use `/knowledge-index /mnt/reference` and

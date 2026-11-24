@@ -495,7 +495,8 @@ Run `--local-knowledge off` with the Local Knowledge profile image to check that
 both clients can find text without an embedding request. Run `--local-knowledge endpoint`
 with the optional pi-knowledge layer to ask the agent to index PDF and DOCX files
 in a read-only mount, search both formats and refresh the index in both clients.
-It also verifies PDF extraction to scratch storage, rejection of conversion output
+The workspace and reference folder are group-writable on the host.
+The check also verifies PDF extraction to scratch storage, rejection of conversion output
 to the read-only source folder, unchanged source files, rejection of a link outside
 the allowed folders, working slash commands, and disabling and re-enabling embeddings
 preserves the saved index. The
@@ -1294,7 +1295,8 @@ For authentication and lifecycle changes, run:
 ```
 
 It checks passwordless startup, reopening, address reuse, password login,
-anonymous WebSocket rejection, foreign origins, HTTPS cookies and occupied ports.
+anonymous WebSocket rejection, foreign origins, HTTPS with a group-readable
+key, and occupied ports.
 It restores the saved editor settings and leaves the editor stopped.
 
 In the TUI, check **Editor** during creation and **Settings → Editor** afterward.
@@ -1340,6 +1342,11 @@ Podman Machine, install from [platform setup](docs/platforms.md) and check:
    recovery after logout. Never include credentials in results or fixtures.
 
 For Windows, check WSL-native projects first, then a specific `/mnt/c` project.
+To check semantic search, use a disposable Windows-backed workspace with
+its normal DrvFS permissions. Add and search a synthetic document with
+`knowledge_add` and `knowledge_search`. Edit it from the host, refresh with
+`knowledge_update`, and search for the edited text. Confirm the source files
+stay unchanged during indexing and that a path outside the grants is rejected.
 Test an SSH-forwarded model in WSL and, separately, a Windows-local model with
 mirrored networking. For macOS, check localhost model access, native ARM64 images
 and Chromium interaction.

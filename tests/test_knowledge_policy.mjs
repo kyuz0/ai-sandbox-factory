@@ -14,6 +14,8 @@ function fixture(t){
 test('indexing resolves requested local files and folders without changing them',t=>{
  const {root,docs}=fixture(t);
  assert.equal(localSource('docs',root),docs);
+ const manuals=join(root,'id_manuals');mkdirSync(manuals);
+ assert.equal(localSource('id_manuals',root),manuals);
  assert.equal(localSource('source.md',docs),join(docs,'source.md'));
  assert.throws(()=>localSource('missing.md',docs),/ENOENT/);
  for(const source of ['', 'https://example.invalid/document', 'file:///etc/passwd'])assert.throws(()=>localSource(source,root));
