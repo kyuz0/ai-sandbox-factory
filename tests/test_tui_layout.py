@@ -134,7 +134,7 @@ class TUILayoutTests(unittest.TestCase):
                     check_dropdown_layout(form)
                     await app.pop_screen()
 
-    async def test_review_uses_terminal_width_with_padded_actions(self):
+    async def test_review_keeps_form_and_actions_together_with_padded_edges(self):
         for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
@@ -145,10 +145,10 @@ class TUILayoutTests(unittest.TestCase):
                 form = app.screen.query_one('.form')
                 actions = app.screen.query_one('.wizard-actions')
                 primary = actions.query_one('Button.-primary', Button)
-                self.assertEqual(form.region.width, size[0])
-                self.assertEqual(actions.region.width, size[0])
-                self.assertEqual(actions.content_region.x, 3)
-                self.assertEqual(primary.region.right, size[0] - 3)
+                self.assertEqual(form.region.width, min(size[0], 100))
+                self.assertEqual(actions.region.width, form.region.width)
+                self.assertEqual(actions.content_region.x, form.region.x + 3)
+                self.assertEqual(primary.region.right, form.region.right - 3)
                 self.assertLess(primary.region.bottom,
                                 app.screen.query_one('Footer').region.y)
                 await pilot.press('escape')

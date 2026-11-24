@@ -150,6 +150,10 @@ def guidance(config, state):
     if skill_catalog:
         lines += ['', 'Installed skills. Read the relevant instructions and references in the workspace before using a skill.',
                   *skill_catalog]
+    from . import profile_runtime, profile_services
+    profile_context = profile_runtime.guidance(state) + profile_services.guidance(config)
+    if profile_context:
+        lines.append(profile_context)
     selected_prompt = prompt_library.selection(state)
     if selected_prompt:
         lines.extend(['', selected_prompt['text']])

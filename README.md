@@ -8,6 +8,11 @@ You can also use the selected agent’s CLI. FrostPi and Pi CLI use the same Pi 
 
 ![AI Sandbox Factory dashboard](docs/sandboxes.png)
 
+Profiles can also provide application containers. **Developer + PostgreSQL** adds a
+private database with direct workspace SSH access and persistent data. The agent
+can read its applied profile recipes separately from project files. See
+[profiles](docs/profiles.md#application-containers).
+
 ## Install
 
 Requires **rootless Podman**, **Python 3.10+**, **Git**, and **pipx**. Use WSL2

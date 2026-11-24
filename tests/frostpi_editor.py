@@ -847,9 +847,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
-          reviewed_file_access=None, provider_connection_check=None, full_width=False):
+          reviewed_file_access=None, provider_connection_check=None, full_width=False, profile_services_check=False):
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
+    if profile_services_check:
+        name = 'pi-sandbox-factory-' + name
     if subagent_compaction:
         subagents = 'automatic'
     mode = ('manual' if folder_access else provider_connection_check or reviewed_file_access or startup_only
@@ -976,6 +978,19 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 {'name': name, 'source': str(root / name), 'read_only': name == 'reference'}
                 for name in ('reference', 'output')
             ])
+        if profile_services_check:
+            from ai_sandbox_factory import profile_runtime, profile_services
+            from unittest.mock import patch
+            config.update(name=name.removeprefix('pi-sandbox-factory-'), uid=1000, gid=1000,
+                          network='allowlist', profile=sandbox.load_profile('developer-postgres'),
+                          common=sandbox.common_profile())
+            profile_services.build(config)
+            with patch.object(sandbox, 'image_names', return_value=(image, 'localhost/pi-sandbox-factory-proxy:1')):
+                with profile_runtime.recording(config, root):
+                    pass
+                profile_runtime.select(config, root)
+            profile_services.up(config, root)
+            resources.callback(profile_services.delete, config)
         sandbox.prepare_options(config, root)
         if system_prompt or worker_prompt:
             os.environ['SANDBOX_REGISTRY_DIR'] = str(root / 'library')
@@ -1005,7 +1020,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                            '/tmp/folder-access-cases.json', 'ro'))
         args = ['run', '-d', '--pull=never', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
                 '--user', '1000:1000', '--security-opt', 'label=disable',
-                '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
+                '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=' + ('allowlist' if profile_services_check else 'unrestricted'), '--entrypoint', 'sleep']
+        if profile_services_check:
+            index = args.index('--network')
+            args[index:index + 2] = profile_services.network_args(config)
+            args += profile_runtime.mounts(root) + profile_services.mounts(config, root)
         if subagents or deep_research:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
@@ -1149,6 +1168,15 @@ p.write_text(json.dumps(v))
                 assert not frame.get_by_text(re.compile(r'project is not trusted|Grant project trust')).count(), 'A fresh workspace was not trusted'
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if profile_services_check:
+                    send('Factory profile service fixture')
+                    result = frame.get_by_text('FACTORY PROFILE SERVICES VERIFIED', exact=True)
+                    result.wait_for(timeout=60000)
+                    page.screenshot(path=str(output / 'profile-services.png'))
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS shipped FrostPi webview: applied recipe read, blocked inner SSH and reviewed direct service SQL.')
+                    return
                 if provider_connection_check:
                     check_provider_connection(page, frame, send, inside, output, mode, root,
                                               inference.connection_checks(config)['sample']['target'])
@@ -1409,6 +1437,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--profile-services', action='store_true', help='Check profile recipes and direct SSH through the shipped FrostPi webview.')
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
@@ -1447,4 +1476,4 @@ if __name__ == '__main__':
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
-          provider_connection_check=args.provider_connection_check)
+          provider_connection_check=args.provider_connection_check, profile_services_check=args.profile_services)

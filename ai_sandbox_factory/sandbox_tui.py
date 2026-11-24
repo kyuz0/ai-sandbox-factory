@@ -18,7 +18,7 @@ from rich.text import Text
 from typing import NamedTuple, Optional
 from inspect import isawaitable
 
-from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages
+from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages, profile_spec, profile_services, profile_runtime
 from . import chat_history
 from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
@@ -1479,6 +1479,9 @@ class MoreActions(ModalScreen[Optional[str]]):
         if browser_running:
             lifecycle.append(('Stop browser editor', 'stop-editor'))
         related = [('Troubleshooting…', 'diagnostics')]
+        saved_profile = record.get('config', {}).get('profile')
+        if isinstance(saved_profile, dict) and all(key in saved_profile for key in ('name', 'digest', 'path')):
+            related.insert(0, ('Profile and services…', 'profile-information'))
         diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
         if not native:
             diagnostics.append(('Test MCP connections', 'connections'))
@@ -1488,7 +1491,7 @@ class MoreActions(ModalScreen[Optional[str]]):
             self.pages['chats'] = ('Chat history', [(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats'),
                                                    ('Continue in another sandbox…', 'copy-chat')])
         profile = record.get('config', {}).get('profile') or {}
-        if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
+        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
             related.append(('Getting started…', 'profile-guide'))
         if count := len(sandbox_alerts(record)):
             related.append((f'Alerts ({count})', 'alerts'))
@@ -1585,6 +1588,75 @@ class ContainersScreen(Screen):
         self.query_one('#containers-back').focus()
 
     @on(Button.Pressed, '#containers-back')
+    def back_pressed(self, event):
+        event.stop()
+        self.action_back()
+
+    def action_back(self):
+        self.app.pop_screen()
+
+
+class AppliedProfile(Screen):
+    BINDINGS = [('escape', 'back', 'Back')]
+
+    def __init__(self, record, state):
+        super().__init__()
+        self.record, self.state = record, state
+
+    def compose(self):
+        yield Header()
+        yield Label('Profile and services · ' + self.record['name'], classes='title focused-settings-title')
+        with VerticalScroll(classes='form'):
+            profile = self.record['config']['profile']
+            with Vertical(classes='setting'):
+                yield Label(profile.get('description') or profile['name'])
+                yield Static('Saved profile revision: ' + profile['digest'], markup=False)
+                if profile_runtime.applied(self.state):
+                    yield Static('Read-only build recipes: ' + profile_runtime.PATH, markup=False)
+                else:
+                    yield Static('Rebuild this sandbox to make its applied recipes available inside the workspace.', markup=False)
+                yield Static('The profile and base-image recipes are separate from your project files.', classes='setting-help')
+            if not profile.get('services'):
+                yield Static('This profile has no additional application containers.')
+            else:
+                yield Feedback('Checking profile containers…', id='profile-service-status', markup=False)
+                for name, spec in profile['services'].items():
+                    with Vertical(classes='setting'):
+                        yield Label(name + ' · Checking…', id='profile-service-' + name)
+                        yield Static(spec['description'], markup=False)
+                        yield Static('ssh -F ' + profile_services.CLIENT + '/config ' + profile_services.hostname(name), markup=False)
+                yield Static('Connection settings and application credentials: ' + profile_services.CLIENT + '/connections.json', markup=False)
+                yield Static('Application data survives Stop and workspace rebuilds. Delete sandbox removes it.', classes='setting-help')
+        with Horizontal(classes='wizard-actions'):
+            yield Button('Back', id='profile-information-back')
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one('#profile-information-back').focus()
+        if self.record['config']['profile'].get('services'):
+            self.load_status()
+
+    @work(exit_on_error=False)
+    async def load_status(self):
+        try:
+            rows = await asyncio.to_thread(profile_services.status, self.record['config'])
+            text = ''
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            text = 'Could not read profile container status: ' + safe_text(error) + '. Check the container engine and reopen this page.'
+        if self.is_attached:
+            message = self.query_one('#profile-service-status', Static)
+            message.update(text)
+            message.display = bool(text)
+            message.set_class(bool(text), 'error')
+            if text:
+                for name in self.record['config']['profile']['services']:
+                    self.query_one('#profile-service-' + name, Label).update(name + ' · Status unavailable')
+            if not text:
+                for row in rows:
+                    self.query_one('#profile-service-' + row['name'], Label).update(
+                        row['name'] + ' · ' + ('Running' if row['running'] else 'Stopped'))
+
+    @on(Button.Pressed, '#profile-information-back')
     def back_pressed(self, event):
         event.stop()
         self.action_back()
@@ -2716,6 +2788,7 @@ class NewSandbox(Screen):
             source = settings['reused_profile']
             profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (copied)'
             self.profile_paths[settings['profile']] = source['path']
+        self.profiles = profiles
         yield Header()
         yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
                     classes='title focused-settings-title', id='new-title')
@@ -2751,22 +2824,37 @@ class NewSandbox(Screen):
         yield Footer()
 
     def on_mount(self):
+        self.refresh_profiles()
         self.profile_changed()
+
+    def refresh_profiles(self):
+        agent = self.query_one('#primary-agent', Select).value
+        selector = self.query_one('#profile', Select)
+        choices = []
+        for name, label in self.profiles.items():
+            try:
+                metadata = (self.copied_draft['reused_profile'] if self.copied_draft and name == self.copied_draft['profile']
+                            else json.loads((Path(self.profile_paths.get(name, sandbox.ROOT / 'profiles' / name))
+                                             / 'profile.json').read_text()))
+                if profile_spec.compatible(metadata, agent):
+                    choices.append((label, name))
+            except (OSError, ValueError):
+                continue
+        current = selector.value
+        selector.set_options([*choices, ('Custom profile…', 'custom')])
+        selector.value = current if current == 'custom' or any(value == current for _, value in choices) else 'base'
 
     @on(Select.Changed, '#primary-agent')
     def coding_agent_changed(self):
+        self.refresh_profiles()
         self.profile_changed()
         self.suggest_name()
 
     @on(Select.Changed, '#profile')
     def profile_changed(self):
         profile = self.query_one('#profile', Select).value
-        pi = self.query_one('#primary-agent', Select).value == 'pi'
-        self.query_one('#profile-setting').display = pi
-        self.query_one('#custom-profile-fields').display = pi and profile == 'custom'
-        if not pi:
-            self.guide = ''
-            return
+        self.query_one('#profile-setting').display = True
+        self.query_one('#custom-profile-fields').display = profile == 'custom'
         summary = '' if self.copied_draft else self.summaries.get(profile, '')
         helper = self.query_one('#profile-summary', Static)
         helper.update(shorten(safe_text(summary), width=130, placeholder='…'))
@@ -2804,12 +2892,18 @@ class NewSandbox(Screen):
             focus = '#profile'
             try:
                 agent = self.query_one('#primary-agent', Select).value
-                profile = self.query_one('#profile', Select).value if agent == 'pi' else 'base'
+                profile = self.query_one('#profile', Select).value
                 if profile == 'custom':
                     focus = '#custom-profile'
                     profile = self.query_one('#custom-profile', Input).value
+                    path = host_platform.local_path(profile)
+                    if not path.is_dir():
+                        problem = 'does not exist' if not path.exists() else 'is not a folder'
+                        raise ValueError(f'Profile folder {profile!r} {problem}. Choose an existing folder containing profile.json, Dockerfile and profile.md.')
                 metadata = (self.copied_draft['reused_profile'] if self.copied_draft and profile == self.copied_draft['reused_profile']['path']
                             else sandbox.load_profile(profile))
+                if not profile_spec.compatible(metadata, agent):
+                    raise ValueError(f'Profile {metadata["name"]!r} does not declare support for {PRIMARY_AGENTS[agent]}. Choose a compatible profile.')
                 focus = '#name'
                 name = self.query_one('#name', Input).value.strip()
                 if not SANDBOX_NAME.fullmatch(name):
@@ -2940,7 +3034,7 @@ class SettingsForm(Screen):
         self.profile = (draft['reused_profile'] if draft.get('reused_profile') and draft['profile'] == draft['reused_profile']['path']
                         else sandbox.load_profile(draft['profile']))
         self.profile_name = self.profile['name']
-        self.guide = registry.profile_guide(self.profile['path']) if not (editing or defaults or self.native) else ''
+        self.guide = registry.profile_guide(self.profile['path']) if not (editing or defaults) else ''
 
     def compose(self):
         value, selected = self.draft, options(self.draft.get('options'))
@@ -2966,18 +3060,23 @@ class SettingsForm(Screen):
                     yield Label('Workspace parent folder')
                     yield PathField('workspace-parent', value.get('workspace_parent', ''), title='Choose workspace parent folder')
             if not self.defaults_mode and not self.setting:
-                with Horizontal(classes='profile-guide-row review-profile-row'):
-                    if self.native:
-                        summary = PRIMARY_AGENTS[self.primary] + ' · ' + value['name'] + ' · ' + value['workspace']
-                    else:
-                        summary = ('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
-                                   + '\nWorkspace: ' + value['workspace'])
-                    project = Static(summary, id='review-project', markup=False,
-                                     classes='primary-review-summary' if self.native else 'pi-review-summary')
+                with Vertical(classes='setting review-profile-summary'):
+                    with Horizontal(classes='profile-guide-row review-profile-row'):
+                        yield Static(PRIMARY_AGENTS[self.primary] + ' · ' + value['name'], markup=False)
+                        if self.guide:
+                            yield Button('Getting started…', id='review-profile-guide')
+                    summary = ('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
+                               + '\nWorkspace: ' + value['workspace'])
+                    project = Static(summary, id='review-project', markup=False)
                     project.tooltip = value['workspace']
                     yield project
-                    if self.guide:
-                        yield Button('Getting started…', id='review-profile-guide')
+            if review and self.profile.get('services'):
+                with Vertical(classes='setting', id='review-profile-services'):
+                    yield Label('Profile containers')
+                    for name, spec in self.profile['services'].items():
+                        yield Static('• ' + name + ': ' + spec['description'], markup=False)
+                    yield Static('They start with this sandbox. Application data survives Stop and workspace rebuilds; Delete sandbox removes it.',
+                                 classes='setting-help', markup=False)
             if value.get('_copy_source_agent') is not None:
                 yield Static(f'Shared settings are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
                              classes='setting-help', id='copied-settings')
@@ -3419,7 +3518,9 @@ class SettingsForm(Screen):
                 self.query_one('#' + category.focus).focus()
             elif can_copy_primary_sign_in(self.primary):
                 self.primary_auth_changed()
-                self.set_focus(self.query_one('#primary-auth', Select), scroll_visible=False)
+                field = self.query_one('#primary-auth', Select)
+                self.set_focus(field, scroll_visible=False)
+                self.call_after_refresh(field.scroll_visible, animate=False)
             if self.setting in (None, 'primary-browser'):
                 self.primary_browser_changed()
             if self.setting in (None, 'primary-approvals'):
@@ -4016,13 +4117,23 @@ class SettingsForm(Screen):
         if error is not None:
             self.call_after_refresh(feedback.scroll_visible, animate=False)
             return
-        if not (conflicts.containers or conflicts.volumes):
+        if not (conflicts.containers or conflicts.volumes or conflicts.networks):
             self.submit(draft, key)
             return
 
         def remove(yes):
             if yes and app.screen is self:
                 self.begin_creation_check(draft, key, conflicts)
+
+        def confirm_networks(yes):
+            if not yes or app.screen is not self:
+                return
+            if conflicts.networks:
+                app.push_screen(ConfirmCreationConflicts(
+                    draft['name'], 'networks', conflicts.networks,
+                    'The listed private networks will be deleted. Other networks stay in place.'), remove)
+            else:
+                remove(True)
 
         def confirm_volumes(yes):
             if not yes or app.screen is not self:
@@ -4041,9 +4152,9 @@ class SettingsForm(Screen):
                 else:
                     backup += '\nSee the Docker guide on backing up volumes.'
                 app.push_screen(ConfirmCreationConflicts(
-                    draft['name'], 'volumes', conflicts.volumes, settings_effects.bullets(warning) + '\n\n' + backup), remove)
+                    draft['name'], 'volumes', conflicts.volumes, settings_effects.bullets(warning) + '\n\n' + backup), confirm_networks)
             else:
-                remove(True)
+                confirm_networks(True)
 
         if conflicts.containers:
             app.push_screen(ConfirmCreationConflicts(
@@ -4153,7 +4264,7 @@ class Cockpit(App):
     Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
     Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus,
-    .settings-review #local-provider > CollapsibleTitle:focus {
+    .settings-review CollapsibleTitle:focus {
         background: #d4e0e7; color: #171a1d; text-style: bold underline;
     }
     Confirm:nocolor #yes.-error, ExternalConnectorDialog:nocolor #connector-confirm.-error { background: #454a51; color: white; }
@@ -4183,7 +4294,8 @@ class Cockpit(App):
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
     .setting, .default-profile-setting { height: auto; }
     .setting { margin-bottom: 1; }
-    .native-primary-form > .form, .native-primary-form > .wizard-actions { max-width: 100; }
+    .native-primary-form > .form, .native-primary-form > .wizard-actions,
+    .settings-review > .form, .settings-review > .wizard-actions { max-width: 100; }
     .native-primary-form EditorFields > .setting { margin: 0 0 1 0; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 2 0 0; }
@@ -4275,11 +4387,11 @@ class Cockpit(App):
     NewSandbox #profile { margin: 1 0 0 0; }
     NewSandbox #sandbox-name-setting { margin: 0; }
     NewSandbox #new-error { margin: 1 0; }
-    .profile-guide-row Button { padding: 0 2; margin: 0 1; }
+    .profile-guide-row Button { padding: 0 2; margin: 0 0 0 1; }
     .review-profile-row { margin: 0 0 1 0; }
     .review-profile-row Static { width: 1fr; height: auto; }
-    .review-profile-row .primary-review-summary { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
-    .review-profile-row .pi-review-summary { height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    #review-project { height: auto; text-wrap: wrap; }
+    .review-profile-summary .review-profile-row { margin: 0; }
     Button { height: 1; max-height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
@@ -4454,6 +4566,8 @@ class Cockpit(App):
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
     Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox, InstallSystemPackages, JobsMenu { align: center middle; background: #000000 70%; }
+    ConfirmCreationConflicts #confirm-box { width: 88; height: auto; max-height: 90%; overflow: hidden; }
+    ConfirmCreationConflicts VerticalScroll { height: auto; max-height: 55vh; margin: 0 0 1 0; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
     .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
@@ -5257,7 +5371,7 @@ class Cockpit(App):
             return
         name, config = record['name'], record['config']
         running_job = self.active_job(name)
-        if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'alerts'):
+        if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'profile-information', 'alerts'):
             self.show_job(running_job)
             return
         if action == 'refresh-creation':
@@ -5280,6 +5394,8 @@ class Cockpit(App):
             self.show_sandbox_actions(name)
         elif action == 'containers':
             self.push_screen(ContainersScreen(record))
+        elif action == 'profile-information':
+            self.push_screen(AppliedProfile(record, self.state_root / name))
         elif action == 'profile-guide':
             profile = sandbox.selected_profile(config)
             self.push_screen(ProfileGuide(profile.get('description') or profile['name'], registry.profile_guide(profile['path'])))
@@ -5355,7 +5471,8 @@ class Cockpit(App):
             from .session_transfer_ui import ContinueChat
             self.push_screen(ContinueChat(name))
         elif action == 'delete':
-            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
+            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config),
+                                           services=list(profile_services.selected(config))),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
         elif action == 'pi':
             self.launch_client(name, 'pi')

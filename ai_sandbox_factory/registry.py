@@ -120,6 +120,9 @@ def manifest(kind, path):
     if kind == "profile":
         profile_system_prompt(path, data["name"])
         profile_guide(path)
+        from . import profile_spec
+        profile_spec.services(data, path)
+        profile_spec.compatible(data, 'pi')
         summary = data.get("summary", "")
         if not isinstance(summary, str) or '\n' in summary or '\r' in summary:
             raise ValueError("Profile summary must be a single line of text")

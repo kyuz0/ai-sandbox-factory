@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "developer-postgres",
+  "description": "Developer + PostgreSQL",
+  "summary": "Development tools and a private PostgreSQL server with SSH access and persistent data.",
+  "agents": ["pi", "codex", "claude", "agy"],
+  "services": {
+    "database": {
+      "description": "PostgreSQL for this project's application and development work",
+      "build": {"context": "services/database", "dockerfile": "Dockerfile"},
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_USER": "app",
+        "POSTGRES_PASSWORD": {"generate": "database-password"}
+      },
+      "volumes": {"data": "/var/lib/postgresql/data"},
+      "healthcheck": ["pg_isready", "-U", "app", "-d", "app"],
+      "connections": {
+        "port": 5432,
+        "database": "app",
+        "user": "app",
+        "password": {"environment": "POSTGRES_PASSWORD"}
+      }
+    }
+  }
+}

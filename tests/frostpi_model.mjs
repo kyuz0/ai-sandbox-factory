@@ -171,6 +171,26 @@ http.createServer((request, response) => {
         return;
       }
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (context.includes('Factory profile service fixture')) {
+      if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+        delta = {content: JSON.stringify({outcome:'allow',risk_level:'medium',user_authorization:'high',rationale:'Disposable profile regression.'})};
+      } else {
+        const results = messages.filter(message => message.role === 'tool');
+        const system = JSON.stringify(messages.filter(message => message.role === 'system'));
+        if (!system.includes('/opt/sandbox/base-profile') || !system.includes('database.profile.internal') || !system.includes('bash_escalate')) {
+          delta = {content:'FACTORY PROFILE SERVICES FAILED missing managed instructions'};
+        } else if (results.length === 0) {
+          delta = choice('read', {path:'/opt/sandbox/base-profile/profile/profile.json'});
+        } else if (results.length < 3) {
+          const command = `ssh -F /run/profile-services/config database.profile.internal "psql -U app -d app -Atc \"SELECT 'PROFILE_SQL_OK'\""`;
+          delta = choice(results.length === 1 ? 'bash' : 'bash_escalate', {command, justification:'Check direct SQL over profile SSH.'});
+        } else {
+          delta = {content: JSON.stringify(results[0]).includes('developer-postgres') &&
+                            !JSON.stringify(results[1]).includes('PROFILE_SQL_OK') &&
+                            JSON.stringify(results[2]).includes('PROFILE_SQL_OK')
+                   ? 'FACTORY PROFILE SERVICES VERIFIED' : 'FACTORY PROFILE SERVICES FAILED ' + JSON.stringify(results)};
+        }
+      }
     } else if (userText === 'Factory profile prompt fixture') {
       const { text } = JSON.parse(readFileSync('/opt/pi-security/config/profile-system-prompt.json', 'utf8'));
       const system = messages.filter(message => message.role === 'system')

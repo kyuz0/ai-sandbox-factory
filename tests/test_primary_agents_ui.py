@@ -55,7 +55,8 @@ class PrimaryAgentsUI(unittest.TestCase):
                     selector.value = agent
                     screen.query_one('#workspace', Input).value = str(self.state)
                     await pilot.pause()
-                    self.assertFalse(screen.query_one('#profile-setting').display)
+                    self.assertTrue(screen.query_one('#profile-setting').display)
+                    screen.query_one('#profile', Select).value = 'developer-postgres'
                     self.assertIs(screen.focused, selector)
                     name = screen.query_one('#name', Input)
                     name.value = 'quick-start'
@@ -65,6 +66,7 @@ class PrimaryAgentsUI(unittest.TestCase):
                     self.assertIsInstance(review, SettingsForm)
                     auth = review.query_one('#primary-auth', Select)
                     self.assertIs(review.focused, auth)
+                    self.assertTrue(review.query_one('.form').content_region.contains_region(auth.region))
                     self.assertEqual(auth.value, 'copy')
                     self.assertLessEqual(auth.region.width, 40)
                     self.assertFalse(review.query_one('#primary-sign-in-section', Collapsible).collapsed)

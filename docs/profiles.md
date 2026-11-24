@@ -1,13 +1,15 @@
 # Profiles
 
 Choose a profile for the kind of work you want to do. A profile can add
-software, skills, extensions, and instructions for Pi. Choose your model
-provider separately so the same profile can work with a local or hosted model.
+software, skills and instructions for the selected coding agent. Pi profiles can
+also add Pi extensions. For Pi, choose model providers separately so the same
+profile can work with a local or hosted model.
 
 ## What profiles inherit
 
-**Default Developer Sandbox** is the built-in profile (`base`). It includes Pi,
-FrostPi, Node.js, Python, Git, document tools and the sandbox security components.
+**Default Developer Sandbox** is the built-in profile (`base`). Its workspace
+includes Node.js, Python, Git and document tools. Factory adds the selected coding
+agent; Pi workspaces include Pi, FrostPi and the Pi sandbox components.
 
 Custom profiles extend that base image with their own dependencies, skills and
 instructions. They do not inherit other profiles’ additions.
@@ -124,3 +126,114 @@ ai-sandbox-factory check reports --allowed-url http://local-model.internal:8000/
 The endpoint must be running and allowed. This checks the container boundaries,
 common tools and your `check.py`. Open Pi/FrostPi and confirm the skill loads.
 Delete the disposable sandbox afterward; its workspace is retained.
+
+## Applied recipes and coding agents
+
+**Actions → Profile and services…** identifies the sandbox's saved profile and
+lists its application containers. The workspace can read the exact applied
+package at `/opt/sandbox/base-profile/profile/`. Its base build inputs and
+`build.json` are in the same read-only directory. These files are separate from
+`/workspace` and its project instructions. Factory adds this location and the
+profile revision to the selected coding agent's managed instructions.
+
+Existing profiles remain Pi profiles unless they declare an `agents` list:
+
+```json
+{"version": 1, "name": "developer", "description": "Developer tools", "agents": ["pi", "codex", "claude", "agy"]}
+```
+
+The built-in Default Developer Sandbox and Developer + PostgreSQL support all
+four coding agents. A portable profile adds tools through `ARG BASE_IMAGE` and
+finishes as `USER node`. Pi extensions and Pi-specific resources require Pi;
+declaring other agents does not translate those extensions.
+
+## Application containers
+
+![Applied profile recipes and a running PostgreSQL application container](profile-services.png)
+
+Choose **Developer + PostgreSQL** for a workspace with a database. The database
+starts with the sandbox and is reachable at `database.profile.internal:5432`.
+Read `/run/profile-services/connections.json` inside the workspace for its
+application username, database and generated password. The agent can use those
+credentials. Factory-managed model, SSH connector and cloud credentials stay in
+separate companion containers.
+
+The workspace has administrative SSH access to the actual database container:
+
+```sh
+ssh -F /run/profile-services/config database.profile.internal
+```
+
+Pi uses its existing `bash_escalate` tool for this direct connection when the
+inner sandbox is enabled. The configured approval mode still applies. With
+approvals off, use the workspace terminal or enable approvals. Native agents
+and workspace terminals use the SSH command directly.
+
+Application containers share one private network with their workspace. They can
+connect to each other directly, including ping, database clients and SSH. Their
+external requests use the sandbox's approved proxy destinations. Factory does
+not publish application ports on the host or give profiles control over
+credential companions. Application containers currently require rootless
+Podman and Restricted networking.
+
+Add optional `services` to `profile.json`; the root workspace Dockerfile stays
+implicit. Each service chooses an existing image or a build context:
+
+```json
+{
+  "services": {
+    "database": {
+      "description": "Application PostgreSQL database",
+      "build": {"context": "services/database", "dockerfile": "Dockerfile"},
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_USER": "app",
+        "POSTGRES_PASSWORD": {"generate": "database-password"}
+      },
+      "volumes": {"data": "/var/lib/postgresql/data"},
+      "healthcheck": ["pg_isready", "-U", "app", "-d", "app"],
+      "connections": {
+        "port": 5432, "database": "app", "user": "app",
+        "password": {"environment": "POSTGRES_PASSWORD"}
+      }
+    }
+  }
+}
+```
+
+An image declaration uses `"image": "registry.example.com/team/service:version"`
+in place of `build`. Factory records its resolved image ID for the sandbox.
+Build contexts and Dockerfile paths are relative to the profile. Optional
+`command` overrides the image command with an argument list; the original
+entrypoint remains in use. Like workspace profiles, service Dockerfiles are
+trusted build inputs executed by the host container engine.
+
+Each service image must supply a shell and an OpenSSH server. Factory starts
+that server inside the application container with a sandbox-specific key and
+pinned host key; the application's entrypoint remains PID 1. The optional `ssh`
+object selects `port` (default 22), `user` (default root) and `server` (default
+`/usr/sbin/sshd`). The chosen account must exist and allow public-key login.
+For PostgreSQL, see the runnable built-in
+[profile](../ai_sandbox_factory/profiles/developer-postgres/profile.json) and
+[service Dockerfile](../ai_sandbox_factory/profiles/developer-postgres/services/database/Dockerfile).
+
+`healthcheck` runs inside the service until initialization succeeds. An exited
+service or a missing check command produces an error with its diagnostic output.
+A creation job can be cancelled while initialization is running.
+`environment` accepts strings and generated values. `connections` contains
+agent-readable text, numbers and references to those environment values.
+`volumes` maps persistent volume names to paths inside that service. Factory
+chooses the engine names, mounts, private network and proxy settings.
+
+Stop/Start preserves application containers, data, generated passwords and SSH
+keys. A workspace rebuild keeps unchanged application containers running. A
+failed workspace replacement restores the previous workspace containers and
+settings. Adding or removing application containers, or changing an existing application's
+image, build recipe or storage layout, requires a separate sandbox in this version; export/import application
+data when moving to the new profile. Factory refuses that change before
+interrupting the existing services.
+
+A new sandbox created from an existing configuration gets fresh application
+volumes, keys and passwords. **Delete sandbox** removes its application data as
+well as its private state. Export database data before confirming deletion;
+chat-history export does not include application databases.

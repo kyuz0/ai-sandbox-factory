@@ -248,9 +248,11 @@ if begin in contents and end in contents:
     contents = contents[:start] + contents[finish:]
 profile_prompt_file = Path('/opt/pi-security/config/profile-system-prompt.json')
 profile_prompt = json.loads(profile_prompt_file.read_text()).get('text', '') if profile_prompt_file.is_file() else ''
-if profile.exists() or profile_prompt:
+profile_context_file = Path('/opt/pi-security/config/profile-context.json')
+profile_context = json.loads(profile_context_file.read_text()).get('text', '') if profile_context_file.is_file() else ''
+if profile.exists() or profile_prompt or profile_context:
     guidance = '\n\n'.join(text for text in (
-        profile_prompt, profile.read_text().rstrip() if profile.exists() else '',
+        profile_prompt, profile_context, profile.read_text().rstrip() if profile.exists() else '',
     ) if text)
     for common in ('document-tools.md', 'security.md'):
         extra = (Path('/opt/pi-security/config/security.md') if selection and common == 'security.md'

@@ -1626,3 +1626,34 @@ podman run --rm -i --network=none --read-only --cap-drop=ALL \
 ```
 
 For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.
+
+## Profile recipes and application containers
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services test_profile_replacement test_profile_services_ui test_creation_conflicts_ui
+PYTHONPATH=.:tests .venv/bin/python tests/profile_services_integration.py
+```
+
+The real Podman fixture uses disposable names, project folders and synthetic
+provider credentials. It exercises all four workspace agents, read-only applied
+recipes, direct SSH with pinned keys, authenticated PostgreSQL access, private
+networking, proxy rules, workspace replacement and rollback, Stop/Start, data
+persistence and deletion. Pi creation includes an upstream provider failure and
+same-name retry through the real creation worker. No host sign-ins are copied.
+
+Review the profile picker, creation summary, profile/service status, status error,
+network-conflict confirmation and application-data deletion warning at 80×24,
+120×40 and 220×50. Dismiss the profile page while its status query is in flight;
+the late result must not update a replacement screen.
+
+Use `tests/profile_services_runtime.py --image WORKSPACE_IMAGE --proxy-image PROXY_IMAGE`
+for the runtime checks with cached images on Linux or WSL2. This checks the
+service implementation without claiming to rebuild the cached workspace image.
+The fixture covers live destination revocation, a stopped proxy relay, direct
+SSH/SQL, external IPv4/IPv6 denial and persistent data across Stop/Start.
+
+Run `tests/frostpi_editor.py --image WORKSPACE_IMAGE --code-server CODE_SERVER_DIR
+--output OUTPUT_DIR --profile-services` for the shipped browser editor. Its
+synthetic model reads the applied profile, tries inner Bash SSH and then uses
+the existing reviewed `bash_escalate` path to query PostgreSQL. The regular
+profile integration fixture runs the corresponding actual Pi CLI check.

@@ -38,7 +38,9 @@ def backup_message(path, count):
 
 
 def delete_confirmation(app, name, agent, message=None):
-    screen = DeleteSandbox(name, has_config=True, agent=agent, backup=message)
+    record = next((row for row in getattr(app, 'records', []) if row.get('name') == name), {})
+    services = (record.get('config', {}).get('profile') or {}).get('services', {})
+    screen = DeleteSandbox(name, has_config=True, agent=agent, backup=message, services=list(services))
     app.push_screen(screen, lambda yes: app.operation('Deleting ' + name, ['delete', name]) if yes else None)
 
 
@@ -238,13 +240,14 @@ class DeleteSandbox(ModalScreen[bool]):
     DeleteSandbox .chat-note, DeleteSandbox .chat-result { margin: 1 0 0 0; }
     """
 
-    def __init__(self, name, *, has_config, agent='pi', backup=None):
+    def __init__(self, name, *, has_config, agent='pi', backup=None, services=()):
         super().__init__()
         self.sandbox_name = name
         self.has_config = has_config
         self.agent = agent
         self.can_export = has_config
         self.backup = backup
+        self.services = services
 
     def compose(self):
         with Vertical(id='confirm-box'):
@@ -257,6 +260,9 @@ class DeleteSandbox(ModalScreen[bool]):
             if self.has_config:
                 yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
                              'Original sign-ins and keys outside this sandbox are kept.', classes='chat-note', markup=False)
+            if self.services:
+                yield Static('Profile application data will be permanently deleted: ' + ', '.join(self.services)
+                             + '. Cancel to export database data before deleting. Chat history export does not include application data.', classes='chat-note', markup=False)
             yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')
