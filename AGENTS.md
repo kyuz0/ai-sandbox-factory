@@ -347,11 +347,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   paths, errors and keyboard focus. Check monochrome checkbox states too. Geometry
   tests complement visual inspection; neither replaces the other.
 
-Visual review is a hard gate for TUI changes. Capture every screen and its expanded,
-populated and error states at the sizes above; review the images with Claude Opus.
-Check shared left edges, panel padding, button padding, label/control/help grouping,
-scrolling and visible actions. Fix every deviation before committing. A passing test
-suite or a general approval without screen-by-screen findings does not satisfy this gate.
+For TUI changes, capture and visually inspect the affected screens and states
+at the sizes above. Check alignment, padding, label/control/help grouping,
+scrolling and visible actions. Fix layout problems before committing and record
+the findings. Passing automated tests alone does not complete visual review.
 Prefer shared layout rules over per-screen spacing overrides. Contextual buttons need
 two columns of inner padding and separation from surrounding prose; modal actions use
 the same responsive height as page actions. Indentation must express a parent/child

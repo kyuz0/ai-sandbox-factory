@@ -213,6 +213,23 @@ def copy_draft(record, state_root):
     return value
 
 
+def copy_for_agent(value, agent):
+    draft = copy.deepcopy(value)
+    source = coding_agent(value)
+    if agent == source:
+        return draft
+    selected = options(value.get('options'))
+    shared = {key: selected[key] for key in ('browser', 'git_identity', 'website_groups')}
+    if source != 'pi' and agent != 'pi':
+        shared['native_approval'] = selected['native_approval']
+    draft.update(primary_agent=agent, model_providers={}, local_model_ports=None, subagents=False, advisors={},
+                 options=options(shared), _copy_source_agent=source)
+    draft['allowlist'] = '\n'.join(
+        f'{host}:{port}' for host, port in sandbox.parse_rules(draft['allowlist'])
+        if host != 'local-model.internal')
+    return draft
+
+
 class Service:
     """Subprocess argument lists only; keys are sent to the container over stdin."""
     def __init__(self, state):
@@ -2705,8 +2722,7 @@ class NewSandbox(Screen):
             with Vertical(id='coding-agent-setting', classes='setting'):
                 yield Label('Coding agent', id='primary-agent-label')
                 yield Select([(label, agent) for agent, label in PRIMARY_AGENTS.items()],
-                             value=coding_agent(settings), allow_blank=False, id='primary-agent',
-                             disabled=bool(self.copied_draft))
+                             value=coding_agent(settings), allow_blank=False, id='primary-agent')
             with Vertical(id='profile-setting', classes='setting'):
                 with Horizontal(classes='profile-guide-row'):
                     yield Label('Profile', id='profile-label')
@@ -2811,7 +2827,7 @@ class NewSandbox(Screen):
                         raise ValueError('Choose an existing workspace or enable folder creation.')
                 elif not workspace.is_dir():
                     raise ValueError('Workspace is not a directory.')
-                draft = (copy.deepcopy(self.copied_draft) if self.copied_draft
+                draft = (copy_for_agent(self.copied_draft, agent) if self.copied_draft
                          else preset(metadata['name'], self.app.defaults, metadata.get('defaults')))
                 draft.update(profile=profile, name=name, workspace=str(workspace),
                              mkdir=self.query_one('#mkdir', Checkbox).value,
@@ -2825,7 +2841,8 @@ class NewSandbox(Screen):
                 draft.update({k: v for k, v in self.connector_draft.items() if k != 'git_identity'})
                 if 'git_identity' in self.connector_draft:
                     draft['options']['git_identity'] = self.connector_draft['git_identity']
-                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys, on_create=self.start_creation),
+                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys if agent == 'pi' else {},
+                                                  on_create=self.start_creation),
                                      self.remember_connectors)
             except (OSError, ValueError) as error:
                 feedback = self.query_one('#new-error', Feedback)
@@ -2933,7 +2950,8 @@ class SettingsForm(Screen):
             yield Label(category.label + ' · ' + value['name'],
                         classes='title focused-settings-title')
         elif review:
-            yield Label('Review sandbox · 2 of 2', classes='title focused-settings-title')
+            origin = ' · from ' + value['reuse_from'] if value.get('reuse_from') else ''
+            yield Label('Review sandbox · 2 of 2' + origin, classes='title focused-settings-title')
         with VerticalScroll(classes='form'):
             if not self.setting and not review:
                 yield Label('Defaults for new sandboxes' if self.defaults_mode else 'Sandbox settings', classes='title')
@@ -2959,6 +2977,9 @@ class SettingsForm(Screen):
                     yield project
                     if self.guide:
                         yield Button('Getting started…', id='review-profile-guide')
+            if value.get('_copy_source_agent') is not None:
+                yield Static(f'Shared settings are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
+                             classes='setting-help', id='copied-settings')
             for action, category in self.categories.items():
                 if self.native and self.editing and action != self.setting:
                     continue
@@ -4246,7 +4267,6 @@ class Cockpit(App):
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
-    .compact-terminal NewSandbox > #new-title { padding: 0 3; }
     NewSandbox #primary-agent { max-width: 32; }
     SettingsForm #primary-auth, SettingsForm #native-approval { max-width: 40; }
     NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }

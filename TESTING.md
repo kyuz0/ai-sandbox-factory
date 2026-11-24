@@ -721,6 +721,11 @@ existing containers. The fixture removes its own disposable build storage after
 testing; production cancellation preserves build cache. Unit and UI tests also
 cover ownership collisions, cleanup failures, repeated clicks and late cancellation.
 
+Run `test_copy_settings` and `test_copy_agent_ui` when changing copied creation.
+They exercise all source and target agent combinations, preservation of shared
+settings and source data, and defaults for agent-specific settings. The
+`copy-agent-*` fixtures in `tests/render_tui.py` cover the selector and review.
+
 The model setup warning tests cover returning to Model Providers, explicitly
 continuing without a model, and creating with a configured model source. Capture
 `no-model-warning` and `no-model-return` with `tests/render_tui.py` to review

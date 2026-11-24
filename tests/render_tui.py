@@ -28,7 +28,7 @@ from ai_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProf
 from ai_sandbox_factory.creation import Creation
 from ai_sandbox_factory.settings_catalog import EDIT_FORMS
 from ai_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
-from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, settings_effects, web_access
+from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, settings_effects, web_access, copy_draft
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
 from ai_sandbox_factory.tui_widgets import Checkbox
@@ -76,9 +76,10 @@ async def capture(size):
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
         aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
         no_model_only = args.only and set(args.only) <= {'no-model-warning', 'no-model-return'}
+        copy_agent_only = args.only and all(name.startswith('copy-agent-') for name in args.only)
         if aws_only:
             record['workspace'] = '/home/example/projects/demo'
-        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only or no_model_only else {}
+        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only or no_model_only or copy_agent_only else {}
         with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
             app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
             async with app.run_test(size=size, notifications=app.startup_notice) as pilot:
@@ -196,6 +197,27 @@ async def capture(size):
                     return
                 if args.only and set(args.only) <= {'home', 'home-renamed'}:
                     await shot('home-renamed' if app.startup_notice else 'home')
+                    return
+                if copy_agent_only:
+                    draft = copy_draft(record, root)
+                    new = NewSandbox(draft, search_keys={})
+                    await app.push_screen(new)
+                    new.query_one('#workspace', Input).value = str(workspace)
+                    await pilot.pause()
+                    selector = new.query_one('#primary-agent', Select)
+                    selector.focus()
+                    selector.expanded = True
+                    await shot('copy-agent-choices')
+                    selector.expanded = False
+                    for agent in ('codex', 'claude', 'agy', 'pi'):
+                        selector.value = agent
+                        await pilot.pause()
+                        await shot('copy-agent-' + agent, focus='#primary-agent')
+                    selector.value = 'codex'
+                    await pilot.pause()
+                    new.query_one('#continue', Button).press()
+                    await pilot.pause()
+                    await shot('copy-agent-codex-review')
                     return
                 if no_model_only:
                     draft = preset('base', DEFAULT_SETTINGS)

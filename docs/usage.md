@@ -55,9 +55,16 @@ it yourself.
 ## Copy a setup to a new sandbox
 
 Choose **Create from existing…** beside **New sandbox**. Pick the sandbox to
-copy, then enter a new name and workspace. Review the profile, model providers,
+copy, then choose the coding agent and enter a new name and workspace. Review the profile, model providers,
 network rules, features, and advisors before creating it. Factory includes the
 source’s added skills. Clear any you don’t need under **Skills**.
+
+You can choose Pi, Codex, Claude Code or Antigravity. When switching from Pi
+to another agent, the new sandbox uses that agent’s sign-in flow and the base
+profile. Shared choices such as folders, network rules, memory and added skills
+are carried over, along with Git identity, browser and editor choices, and a custom
+system prompt. Agent-specific settings use the selected agent’s defaults.
+The approval choice also carries over between Codex, Claude Code and Antigravity.
 
 Select **Include search API keys** if you want to copy those keys from a running
 source. The new sandbox has its own package copies. It starts with fresh chats,
