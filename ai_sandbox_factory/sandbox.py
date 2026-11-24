@@ -1594,6 +1594,28 @@ def open_selected(config, state, mode=None):
          *tty, names(config)[0], 'pi'])
 
 
+def package_command(args):
+    kind, action = args.command, args.package_action
+    if action == 'list':
+        for name, description in registry.choices(kind).items():
+            print(f'{name}: {description}')
+        return
+    name = args.package_name
+    if action == 'show':
+        path = registry.resolve(kind, name)
+        print(json.dumps(registry.installed(kind).get(name) or registry.manifest(kind, path), indent=2))
+    elif action == 'add':
+        row = registry.add(kind, name, args.source, args.ref, subdir=args.subdir)
+        print(f'Installed {kind} {row["name"]} at {row["commit"] or row["digest"]}.')
+    elif action == 'update':
+        row = registry.update(kind, name)
+        print(f'Updated {kind} {row["name"]} at {row["commit"] or row["digest"]}.')
+        print('To apply it to an existing sandbox, choose Actions → Update sources and recreate…')
+    elif action == 'remove':
+        registry.remove(kind, name)
+        print('Registration removed. Existing sandboxes and their saved snapshots are preserved.')
+
+
 def main(*, startup_notice=''):
     parser = argparse.ArgumentParser(prog=COMMAND, description=__doc__)
     from .updates import installed_version
@@ -1739,19 +1761,14 @@ def main(*, startup_notice=''):
     if args.command == 'connector-login':
         connector_settings.login(args.connector_id)
         return
-    if args.command in ('profile','provider'):
-        kind=args.command;action=args.package_action
-        if action=='list':
-            for name,description in registry.choices(kind).items(): print(f'{name}: {description}')
-        elif action=='show':
-            path=registry.resolve(kind,args.package_name)
-            print(json.dumps(registry.installed(kind).get(args.package_name) or registry.manifest(kind,path),indent=2))
-        elif action=='add':
-            row=registry.add(kind,args.package_name,args.source,args.ref,subdir=args.subdir);print(f'Installed {row["name"]} at {row["commit"] or row["digest"]}')
-        elif action=='update':
-            row=registry.update(kind,args.package_name);print(f'Updated {row["name"]}. Existing sandboxes keep their saved snapshot until recreated.')
-        else:
-            registry.remove(kind,args.package_name);print('Registration removed. Existing sandboxes and their saved snapshots are preserved.')
+    if args.command in ('profile', 'provider'):
+        try:
+            package_command(args)
+        except subprocess.CalledProcessError as error:
+            raise SystemExit(f'Error: Git exited with status {error.returncode}. See the Git message above. '
+                             'Check the saved repository access and revision.') from None
+        except (OSError, ValueError) as error:
+            raise SystemExit(f'Error: {error}') from None
         return
     if args.command == 'tui':
         from .sandbox_tui import launch

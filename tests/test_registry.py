@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -35,6 +36,57 @@ class RegistryTests(unittest.TestCase):
             "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"
         )
         return self.git("rev-parse", "HEAD")
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, '-c', 'from ai_sandbox_factory.cli import main; main()', *args],
+                              text=True, capture_output=True, check=False)
+
+    def test_cli_wrong_kind_and_duplicate_point_to_the_git_profile_update(self):
+        profile = self.source / 'tools'
+        profile.mkdir()
+        for path in ('profile.json', 'profile.md', 'Dockerfile'):
+            (self.source / path).rename(profile / path)
+        self.git('init', '-q', '-b', 'main')
+        first = self.commit()
+        add = ('profile', 'add', 'reporting', str(self.source), '--subdir', 'tools')
+        installed = self.cli(*add)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertIn(first, installed.stdout)
+        snap = sandbox.snapshot_profile(sandbox.load_profile('reporting'), self.root / 'state')
+        (profile / 'profile.md').write_text('New committed instructions.')
+        second = self.commit()
+
+        for args, reason in ((add, 'already registered'),
+                             (('provider', 'update', 'reporting'), 'registered as a profile')):
+            with self.subTest(args=args):
+                result = self.cli(*args)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertIn('ai-sandbox-factory profile update reporting', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertEqual(registry.installed('profile')['reporting']['commit'], first)
+
+        updated = self.cli('profile', 'update', 'reporting')
+        self.assertEqual(updated.returncode, 0, updated.stderr)
+        self.assertIn(second, updated.stdout)
+        row = registry.installed('profile')['reporting']
+        self.assertEqual(row['subdir'], 'tools')
+        self.assertEqual((Path(row['path']) / 'profile.md').read_text(), 'New committed instructions.')
+        self.assertEqual((Path(snap['path']) / 'profile.md').read_text(), 'Use the sample tools.')
+
+    def test_cli_failed_git_update_keeps_registration_and_reports_git_error(self):
+        self.git('init', '-q', '-b', 'main')
+        first = self.commit()
+        self.git('branch', 'review')
+        row = registry.add('profile', 'sample', str(self.source), 'review')
+        self.git('branch', '-D', 'review')
+        failed = self.cli('profile', 'update', 'sample')
+        self.assertEqual(failed.returncode, 1, failed.stderr)
+        self.assertIn('fatal:', failed.stderr)
+        self.assertIn('Check the saved repository access and revision', failed.stderr)
+        self.assertNotIn('Traceback', failed.stderr)
+        self.assertEqual(row['commit'], first)
+        self.assertEqual(registry.installed('profile')['sample'], row)
 
     def test_git_install_update_and_existing_snapshot_survives_removal(self):
         self.git("init", "-q", "-b", "main")

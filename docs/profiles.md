@@ -53,7 +53,8 @@ ai-sandbox-factory profile update reporting
 ai-sandbox-factory recreate reports --profile reporting
 ```
 
-Update fetches the selected branch or ref. Recreate builds the updated profile
+Use `profile update` for profiles and `provider update` for provider plugins.
+The update fetches the selected branch or ref. Recreate builds the updated profile
 before stopping the old containers, then preserves the workspace and private
 home. Close the editor first. Updating a pinned commit keeps that commit.
 

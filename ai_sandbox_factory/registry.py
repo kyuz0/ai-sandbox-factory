@@ -12,6 +12,8 @@ import tempfile
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
+from .cli import COMMAND
+
 # Installed provider IDs are directory names inside the Linux container.
 NAME = re.compile(r"[a-z][a-z0-9-]{0,254}")
 NAME_ERROR = 'Use a package name that starts with a lowercase letter and contains up to 255 lowercase letters, digits or hyphens.'
@@ -287,10 +289,13 @@ def locked():
         yield base
 
 
+def read_registry(base):
+    path = base / "registry.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
 def installed(kind):
-    path = root() / "registry.json"
-    data = json.loads(path.read_text()) if path.exists() else {}
-    return data.get(kind, {})
+    return read_registry(root()).get(kind, {})
 
 
 def write_registry(base, data):
@@ -300,74 +305,83 @@ def write_registry(base, data):
     temp.replace(base / "registry.json")
 
 
-def add(kind, name, source, ref=None, *, subdir=".", replace=False):
-    from .sandbox import tree_digest
-
+def add(kind, name, source, ref=None, *, subdir="."):
     if kind not in KINDS or not NAME.fullmatch(name) or name in ("base", "local"):
         raise ValueError(NAME_ERROR + ' The names base and local are reserved.')
+    with locked() as base:
+        data = read_registry(base)
+        if name in data.get(kind, {}):
+            raise ValueError(f'{kind.capitalize()} {name!r} is already registered. '
+                             f'Fetch its source with `{COMMAND} {kind} update {name}`.')
+        return _install(base, data, kind, name, source, ref, subdir)
+
+
+def _install(base, data, kind, name, source, ref, subdir):
+    from .sandbox import tree_digest
+
     source = source_url(source)
     relative = Path(subdir or ".")
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("Package subdirectory must stay inside the source repository")
     subdir = str(relative)
-    with locked() as base:
-        file = base / "registry.json"
-        data = json.loads(file.read_text()) if file.exists() else {}
-        if name in data.get(kind, {}) and not replace:
-            raise ValueError("Package already registered; use update")
-        with tempfile.TemporaryDirectory(prefix=".install-", dir=base) as temp:
-            path = Path(temp) / "package"
-            revision = export(source, path, ref, subdir=subdir)
-            info = manifest(kind, path)
-            dependencies = {}
-            if info.get("git_source"):
-                if (path / "source").exists():
-                    raise ValueError("source/ is reserved for the package dependency")
-                dependencies[info["git_source"]] = export(
-                    info["git_source"], path / "source", info.get("git_ref")
-                )
-                info.pop("git_source")
-                info.pop("git_ref", None)
-                (path / KINDS[kind]).write_text(json.dumps(info, indent=2) + "\n")
-            manifest(kind, path)
-            # Registration aliases are independent from the package's own identity.
-            digest = tree_digest(path)
-            target = base / "sources" / digest
-            target.parent.mkdir(exist_ok=True, mode=0o700)
-            if not target.exists():
-                shutil.move(path, target)
-            record = {
-                "name": name,
-                "package_name": info["name"],
-                "description": info.get("description", ""),
-                "source": source,
-                "subdir": subdir,
-                "ref": ref,
-                "commit": revision,
-                "dependencies": dependencies,
-                "digest": digest,
-                "path": str(target),
-            }
-            data.setdefault(kind, {})[name] = record
-            write_registry(base, data)
-            return record
+    with tempfile.TemporaryDirectory(prefix=".install-", dir=base) as temp:
+        path = Path(temp) / "package"
+        revision = export(source, path, ref, subdir=subdir)
+        info = manifest(kind, path)
+        dependencies = {}
+        if info.get("git_source"):
+            if (path / "source").exists():
+                raise ValueError("source/ is reserved for the package dependency")
+            dependencies[info["git_source"]] = export(
+                info["git_source"], path / "source", info.get("git_ref")
+            )
+            info.pop("git_source")
+            info.pop("git_ref", None)
+            (path / KINDS[kind]).write_text(json.dumps(info, indent=2) + "\n")
+        manifest(kind, path)
+        # Registration aliases are independent from the package's own identity.
+        digest = tree_digest(path)
+        target = base / "sources" / digest
+        target.parent.mkdir(exist_ok=True, mode=0o700)
+        if not target.exists():
+            shutil.move(path, target)
+        record = {
+            "name": name,
+            "package_name": info["name"],
+            "description": info.get("description", ""),
+            "source": source,
+            "subdir": subdir,
+            "ref": ref,
+            "commit": revision,
+            "dependencies": dependencies,
+            "digest": digest,
+            "path": str(target),
+        }
+        data.setdefault(kind, {})[name] = record
+        write_registry(base, data)
+        return record
+
+
+def _registered(data, kind, name, action):
+    if row := data.get(kind, {}).get(name):
+        return row
+    other = 'profile' if kind == 'provider' else 'provider'
+    if name in data.get(other, {}):
+        raise ValueError(f'{name!r} is registered as a {other}. Run `{COMMAND} {other} {action} {name}`.')
+    raise ValueError(f'{kind.capitalize()} {name!r} is not registered. Run `{COMMAND} {kind} list` to see available names.')
 
 
 def update(kind, name):
-    row = installed(kind).get(name)
-    if not row:
-        raise ValueError("Package is not registered: " + name)
-    return add(
-        kind, name, row["source"], row.get("ref"), subdir=row.get("subdir", "."), replace=True
-    )
+    with locked() as base:
+        data = read_registry(base)
+        row = _registered(data, kind, name, 'update')
+        return _install(base, data, kind, name, row['source'], row.get('ref'), row.get('subdir', '.'))
 
 
 def remove(kind, name):
     with locked() as base:
-        file = base / "registry.json"
-        data = json.loads(file.read_text()) if file.exists() else {}
-        if name not in data.get(kind, {}):
-            raise ValueError("Package is not registered: " + name)
+        data = read_registry(base)
+        _registered(data, kind, name, 'remove')
         del data[kind][name]
         write_registry(base, data)
         # Snapshots may still be used by saved sandboxes; removing registration is non-destructive.

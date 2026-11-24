@@ -81,7 +81,9 @@ endpoint one provider package to avoid competing catalogue owners.
 Reload an open Pi/FrostPi session after a launcher refresh, or use the provider's
 in-session refresh command.
 
-`provider update NAME` fetches its registered source. **Actions → Update sources
+Run `ai-sandbox-factory provider update NAME` or choose **Update** under
+**Library → Providers** to fetch the registered source. Factory keeps the saved
+branch or ref and subfolder. **Actions → Update sources
 and recreate…** applies installed package updates to an existing sandbox.
 `recreate NAME --profile PROFILE` does the same from the CLI. Ordinary starts and
 settings changes retain saved versions. Removing a registration leaves existing
