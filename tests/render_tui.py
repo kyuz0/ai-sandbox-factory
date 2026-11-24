@@ -134,6 +134,39 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('editor-clients-') for name in args.only):
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='demo', workspace=str(workspace))
+                    for context in ('create', 'defaults'):
+                        screen = SettingsForm(copy.deepcopy(draft), defaults=context == 'defaults')
+                        await app.push_screen(screen)
+                        await shot(f'editor-clients-{context}', section='#editor-section', focus='#editor-mode')
+                        screen.query_one('#editor-mode', Select).expanded = True
+                        await shot(f'editor-clients-{context}-choices')
+                        await app.pop_screen()
+                    await app.push_screen(EditorScreen('demo'))
+                    screen = app.screen
+                    await shot('editor-clients-settings')
+                    selector = screen.query_one('#editor-mode', Select)
+                    selector.expanded = True
+                    await shot('editor-clients-settings-choices')
+                    selector.expanded = False
+                    screen.query_one('#editor-uploads', Checkbox).value = True
+                    screen.query_one('#editor-port', Input).value = '43123'
+                    await shot('editor-clients-connection', section='#editor-connection', focus='#editor-port')
+                    if 'editor-clients-error' in args.only:
+                        screen.query_one('#editor-connection', Collapsible).collapsed = False
+                        screen.query_one('#editor-port', Input).value = '70000'
+                        await pilot.pause()
+                        await pilot.click('#editor-save')
+                        await pilot.pause()
+                        assert 'Enter a port' in str(screen.query_one('#editor-port-error').render())
+                    await shot('editor-clients-error')
+                    await app.pop_screen()
+                    (state / 'editor.json').write_text('{"mode":"desktop"}')
+                    await shot('editor-clients-settings-cli', EditorScreen('demo'))
+                    await shot('editor-clients-open-with', OpenWith())
+                    return
                 if args.only and all(name.startswith('native-web-search-') for name in args.only):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='demo', workspace=str(workspace), primary_agent='codex',
@@ -342,9 +375,8 @@ async def capture(size):
                                    '#connectors-section', '#connector-ssh')
                         await shot('connector-review-native-sign-in', SettingsForm({**draft, 'primary_agent': 'codex'}),
                                    '#primary-sign-in-section', '#primary-auth')
-                        for mode in ('pi', 'desktop'):
-                            await shot('connector-review-open-' + mode, SettingsForm({**draft, 'editor': {'mode': mode}}),
-                                       '#connectors-section', '#connector-ssh')
+                        await shot('connector-review-open-pi', SettingsForm({**draft, 'editor': {'mode': 'pi'}}),
+                                   '#connectors-section', '#connector-ssh')
                         await shot('connector-review-ssh', CreateSSHDialog(draft, 'SSH & Git'))
                         await app.push_screen(CreateSSHDialog({**draft, 'ssh': {}, '_ssh_key': 'later'}, 'SSH & Git'))
                         app.screen.query_one('#create-ssh-key', Select).value = 'generate'

@@ -1,4 +1,4 @@
-from contextlib import closing, redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import importlib.util
 import io
@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sqlite3
 import shutil
 import sys
 import tempfile
@@ -339,7 +338,7 @@ class LocalModelSetupTests(unittest.TestCase):
                  patch.object(sandbox,'build',side_effect=lambda *a:calls.append('build')), \
                  patch.object(sandbox,'up',side_effect=lambda *a:calls.append('up')), \
                  patch.object(sandbox,'initialize_models',side_effect=lambda *a:calls.append('models')), \
-                 patch.object(sandbox,'open_editor') as editor:
+                 patch.object(sandbox,'open_selected') as editor:
                 sandbox.main()
             self.assertEqual(calls,['create','build','up','models']);editor.assert_not_called()
 
@@ -347,11 +346,10 @@ class LocalModelSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp)/'example';state.mkdir()
             config={'name':'example','engine':'podman','local_model_ports':'8000','options':{'browser':False}}
-            with patch.object(sandbox,'inspect',return_value={'State':{'Running':True}}), \
-                 patch('shutil.which',return_value='/usr/bin/code'), \
+            with patch.object(sandbox,'up'), \
                  patch.object(sandbox,'initialize_models',side_effect=ValueError('invalid configuration')) as initialize, \
                  patch.object(sandbox,'run') as run:
-                with self.assertRaisesRegex(ValueError,'invalid configuration'):sandbox.open_editor(config,state)
+                with self.assertRaisesRegex(ValueError,'invalid configuration'):sandbox.open_selected(config,state,'pi')
             initialize.assert_called_once();run.assert_not_called()
             self.assertFalse((state/'vscode').exists())
 
@@ -600,12 +598,6 @@ with operation_locks.sandbox(state.name, 'create'):
             self.assertNotIn('chat_editor', modern)
             expected = hashlib.sha256(b'1.4.0-0.94.2-1000-1000-fixture').hexdigest()[:16]
             self.assertEqual(sandbox.base_tag(legacy['config']), expected)
-            sandbox.write_attach(legacy['config'], state)
-            attach = json.loads((state / 'attached-container.json').read_text())
-            self.assertEqual(attach['extensions'], ['cdervis.vscode-pi'])
-            self.assertEqual(attach['settings'], {'pendant.agentDir': '/home/node/.pi/agent'})
-            sandbox.write_attach(modern['config'], fresh)
-            self.assertEqual(json.loads((fresh / 'attached-container.json').read_text())['extensions'], ['frostime.frostpi'])
             commands.assert_called_once()
 
     def test_each_saved_engine_is_queried_and_foreign_container_ownership_is_visible(self):
@@ -853,64 +845,6 @@ class RecoveryTests(LifecycleTestCase):
             restart.assert_not_called()
 
 
-class EditorTests(unittest.TestCase):
-    def test_open_attaches_directly_without_onboarding_or_another_window(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = Path(tmp)
-            (state / 'attached-container.json').write_text('{"workspaceFolder":"/workspace"}')
-            settings_file = state / 'vscode/User/settings.json'
-            settings_file.parent.mkdir(parents=True)
-            settings_file.write_text('{"editor.fontSize":16}')
-            with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
-                 patch.object(sandbox.shutil, 'which', return_value='/usr/bin/code'), \
-                 patch.object(sandbox, 'run') as run, \
-                 patch.dict(os.environ, {'SSH_AUTH_SOCK': '/host/agent', 'VSCODE_IPC_HOOK_CLI': '/host/editor'}):
-                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state),
-                                     'options': {'browser': False}}, state)
-            command = run.call_args.args[0]
-            self.assertIn('--reuse-window', command)
-            self.assertIn('--skip-welcome', command)
-            self.assertNotIn('--new-window', command)
-            uri = command[command.index('--folder-uri') + 1]
-            encoded = uri.split('attached-container+', 1)[1].split('/', 1)[0]
-            # A slash-prefixed name fails Podman's lookup and triggers the picker.
-            self.assertEqual(json.loads(bytes.fromhex(encoded)), {'containerName': 'pi-sandbox-factory-editor-demo'})
-            self.assertTrue(uri.endswith('/workspace'))
-            settings = json.loads(settings_file.read_text())
-            self.assertEqual(settings['dev.containers.dockerPath'], 'podman')
-            self.assertEqual(settings['workbench.startupEditor'], 'none')
-            self.assertFalse(settings['workbench.welcomePage.experimentalOnboarding'])
-            self.assertEqual(settings['window.restoreWindows'], 'none')
-            self.assertTrue(settings['security.workspace.trust.enabled'])
-            self.assertEqual(settings['editor.fontSize'], 16)
-            self.assertTrue(settings['chat.disableAIFeatures'])
-            self.assertEqual(settings['workbench.secondarySideBar.defaultVisibility'], 'visible')
-            storage = state / 'vscode/User/globalStorage/state.vscdb'
-            with closing(sqlite3.connect(storage)) as database, database:
-                extension_key = 'ms-vscode-remote.remote-containers'
-                acknowledgement = json.loads(database.execute('SELECT value FROM ItemTable WHERE key=?', (extension_key,)).fetchone()[0])
-                self.assertEqual(acknowledgement, {'userConfirmedAttachToContainerRequiresTrust': True})
-                # Existing extension state must not be edited on reconnect,
-                # even if the user resets their acknowledgement.
-                existing_state = {'userConfirmedAttachToContainerRequiresTrust': False, 'otherState': 'preserved'}
-                database.execute('UPDATE ItemTable SET value=? WHERE key=?', (json.dumps(existing_state), extension_key))
-                layout = json.loads(database.execute("SELECT value FROM ItemTable WHERE key='views.customizations'").fetchone()[0])
-                self.assertEqual(layout['viewContainerLocations']['workbench.view.extension.frostpi'], 2)
-                # A later user move must survive reconnecting.
-                layout['viewContainerLocations']['workbench.view.extension.frostpi'] = 0
-                database.execute("UPDATE ItemTable SET value=? WHERE key='views.customizations'", (json.dumps(layout),))
-            with patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
-                 patch.object(sandbox.shutil, 'which', return_value='/usr/bin/code'), \
-                 patch.object(sandbox, 'run'):
-                sandbox.open_editor({'name': 'editor-demo', 'engine': 'podman', 'workspace': str(state),
-                                     'options': {'browser': False}}, state)
-            with closing(sqlite3.connect(storage)) as database, database:
-                self.assertEqual(json.loads(database.execute("SELECT value FROM ItemTable WHERE key='views.customizations'").fetchone()[0]), layout)
-                self.assertEqual(json.loads(database.execute('SELECT value FROM ItemTable WHERE key=?', (extension_key,)).fetchone()[0]), existing_state)
-            for variable in ('SSH_AUTH_SOCK', 'VSCODE_IPC_HOOK_CLI'):
-                self.assertNotIn(variable, run.call_args.kwargs['env'])
-
-
 class BootstrapTests(unittest.TestCase):
     def test_workspace_trust_is_scoped_and_preserves_explicit_decisions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -976,13 +910,12 @@ class BootstrapTests(unittest.TestCase):
 
     def bootstrap(self, root, subagents=False):
         script = (sandbox.ROOT / 'containers/dev/bootstrap.py').read_text()
-        shutil.copytree(sandbox.ROOT / 'containers/dev/editor-startup', root / 'editor-extensions/pi-sandbox-factory.editor-startup-1.1.0', dirs_exist_ok=True)
         for relative in ('sandbox/profile.md', 'recall/node_modules/pi-compaction-recall/src/index.ts'):
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('Profile guidance' if relative.endswith('profile.md') else '')
         for original, relative in (('/home/node', 'home'), ('/pi-config', 'shared'), ('/opt/pi-goal', 'goals'),
-                                   ('/opt/pi-security', 'security'), ('/opt/editor-extensions', 'editor-extensions'),
+                                   ('/opt/pi-security', 'security'),
                                    ('/opt/betterwright', 'betterwright'),
                                    ('/opt/pi-compaction-recall', 'recall'),
                                    ('/opt/rpiv-ask-user-question', 'ask'),
@@ -992,27 +925,22 @@ class BootstrapTests(unittest.TestCase):
         subprocess.run(['python3', '-c', script], check=True,
                        env=dict(os.environ, SANDBOX_SUBAGENTS='1' if subagents else '0'))
 
-    def test_bootstrap_retires_legacy_editor_copies_and_preserves_other_extensions(self):
+    def test_bootstrap_writes_browser_defaults_without_updating_desktop_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'shared').mkdir()
-            legacy = ('cdervis.vscode-pi-0.94.2', 'pi-sandbox-factory.editor-startup-1.0.0')
-            for server in ('.vscode-server', '.vscode-server-insiders'):
-                extensions = root / 'home' / server / 'extensions'
-                for name in (*legacy, 'fixture.user-extension-1.0.0'):
-                    target = extensions / name
-                    target.mkdir(parents=True)
-                    (target / 'fixture.txt').write_text(name)
+            legacy = root / 'home/.vscode-server/data/Machine/settings.json'
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text('{"editor.fontSize":16}')
             self.bootstrap(root)
-            self.bootstrap(root)
-            for server in ('.vscode-server', '.vscode-server-insiders'):
-                base = root / 'home' / server
-                self.assertTrue((base / 'extensions/fixture.user-extension-1.0.0/fixture.txt').is_file())
-                self.assertTrue((base / 'extensions/pi-sandbox-factory.editor-startup-1.1.0').is_symlink())
-                backup, = (base / 'factory-retired-extensions').iterdir()
-                for name in legacy:
-                    self.assertFalse((base / 'extensions' / name).exists())
-                    self.assertEqual((backup / name / 'fixture.txt').read_text(), name)
+            self.assertEqual(legacy.read_text(), '{"editor.fontSize":16}')
+            self.assertFalse((root / 'home/.vscode-server/extensions').exists())
+            self.assertFalse((root / 'home/.vscode-server-insiders').exists())
+            defaults = root / 'home/.local/share/pi-browser-editor/machine-defaults.json'
+            settings = json.loads(defaults.read_text())
+            self.assertEqual(settings['frostpi.pi.executable'], '/usr/local/bin/pi')
+            self.assertEqual(settings['http.proxy'], 'http://127.0.0.1:3128')
+            self.assertFalse(settings['git.terminalAuthentication'])
 
     def test_managed_ssh_guidance_tracks_saved_destinations_without_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1076,7 +1004,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn('browser link already shared in chat', prompt)
             self.assertIn('Do not put the URL in the question form', prompt)
             self.assertNotIn('include the link and the action\nin `ask_user_question`', prompt)
-            settings = json.loads((root / 'home/.vscode-server/data/Machine/settings.json').read_text())
+            settings = json.loads((root / 'home/.local/share/pi-browser-editor/machine-defaults.json').read_text())
             pattern, value = next(iter(settings['remote.portsAttributes'].items()))
             self.assertEqual(value['onAutoForward'], 'ignore')
             self.assertIsNotNone(re.search(pattern, '/opt/betterwright/chromium/betterchromium --headless=new'))

@@ -286,9 +286,9 @@ class PrimaryAgentsUI(unittest.TestCase):
                         review.query_one('#editor-mode', Select).value = 'pi'
                         await pilot.pause()
                         self.assertEqual(str(launch.label), 'Open Pi CLI when ready')
-                        review.query_one('#editor-mode', Select).value = 'desktop'
+                        review.query_one('#editor-mode', Select).value = 'browser'
                         await pilot.pause()
-                        self.assertEqual(str(launch.label), 'Open VS Code on this computer when ready')
+                        self.assertEqual(str(launch.label), 'Open the browser editor when ready')
                     else:
                         self.assertEqual(str(launch.label), 'Open the browser editor when ready')
                     self.assertTrue(group.collapsed)

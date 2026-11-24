@@ -13,7 +13,6 @@ def open_client(mode):
 def reconnect(mode='browser', *, opened=False):
     action = {
         'browser': open_client('browser'),
-        'desktop': 'Reload the VS Code window.',
         'pi': 'Restart Pi CLI.',
         None: 'Choose Open to start the coding agent again.',
     }[mode]

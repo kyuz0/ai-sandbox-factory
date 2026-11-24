@@ -9,7 +9,7 @@ from pathlib import Path
 from .sandbox_options import write_json
 from . import host_platform, activity
 
-MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on host'}
+MODES = {'browser': 'Browser editor', 'pi': 'Pi CLI'}
 DEFAULTS = {'mode': 'browser', 'address': '', 'port': 0, 'password_hash': '', 'certificate': '', 'private_key': '', 'allow_uploads': False}
 
 
@@ -78,13 +78,15 @@ def tls_context(value):
 
 
 def saved_choice(value):
-    """Read editor preferences saved before standalone FrostPi was retired."""
+    """Read saved preferences, including retired client choices."""
     if isinstance(value, dict):
         value = dict(value)
         value.pop('frostpi_uploads', None)
         value.pop('frostpi_downloads', None)
         if value.get('mode') == 'frostpi':
             value['mode'] = 'browser'
+        elif value.get('mode') == 'desktop':
+            value['mode'] = 'pi'
     return validate(value)
 
 
@@ -97,8 +99,6 @@ def load(state):
 
 def save(state, value, *, record_edit=True):
     value = validate(value)
-    if value['mode'] == 'desktop' and (Path(state) / 'browser-editor.enabled').exists():
-        raise ValueError('This sandbox uses the browser editor. Create a separate sandbox for VS Code on host.')
     tls_context(value)
     previous = load(state)
     write_json(Path(state) / 'editor.json', value)
@@ -143,4 +143,4 @@ def authority(address, port):
 def default_mode(engine='podman'):
     import platform
     import os
-    return 'browser' if engine in ('podman', 'auto') and platform.system() in ('Linux', 'Darwin') and platform.machine() in ('x86_64', 'aarch64', 'arm64') and os.geteuid() else 'desktop'
+    return 'browser' if engine in ('podman', 'auto') and platform.system() in ('Linux', 'Darwin') and platform.machine() in ('x86_64', 'aarch64', 'arm64') and os.geteuid() else 'pi'

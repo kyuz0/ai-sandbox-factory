@@ -28,7 +28,7 @@ from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
     ADVISORS_LABEL, ADVISORS_PATH, CATEGORIES, EDIT_FORMS, Category,
     HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
-    MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH, OPEN_LABELS,
+    MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH,
     NO_SYSTEM_PROMPT_ADD_ON, PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
 from .folders_ui import FolderFields
@@ -2855,9 +2855,7 @@ class SettingsForm(Screen):
         yield Footer()
 
     def open_client_label(self, mode):
-        client = (('the browser editor' if mode == 'browser' else PRIMARY_AGENTS[self.primary] + ' CLI') if self.native else {
-            'browser': 'the browser editor', 'pi': 'Pi CLI', 'desktop': 'VS Code on this computer',
-        }[mode])
+        client = 'the browser editor' if mode == 'browser' else editor_settings.modes(self.primary)[mode]
         return 'Open ' + client + (' after applying' if self.editing else ' when ready')
 
     @on(Select.Changed, '#editor-mode')
@@ -3642,7 +3640,7 @@ class SettingsForm(Screen):
         if not self.editing:
             draft['editor'] = self.query_one(EditorFields).collect()
             if draft['editor']['mode'] == 'browser' and editor_settings.default_mode(self.query_one('#engine', Select).value) != 'browser':
-                raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose Pi CLI or VS Code on host.')
+                raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose Pi CLI.')
         draft.update(network=self.query_one('#network', Select).value, memory=memory_limit(inp('memory')),
                      subagents=check('subagents'), options=options(selected), engine=self.query_one('#engine', Select).value,
                      env_file=inp('env-file') or None, pi_config=inp('pi-config') or None,
@@ -4965,7 +4963,7 @@ class Cockpit(App):
         if action == 'primary-sign-in' and native:
             self.push_screen(PrimarySignIn(record))
         elif action == 'launch-with':
-            self.push_screen(OpenWith(agent=coding_agent(config), desktop_allowed=not (self.state_root / name / 'browser-editor.enabled').exists()), lambda mode: self.launch_client(name, mode) if mode else None)
+            self.push_screen(OpenWith(agent=coding_agent(config)), lambda mode: self.launch_client(name, mode) if mode else None)
         elif action == 'editor-settings':
             self.push_screen(EditorScreen(name))
         elif action == 'stop-editor':

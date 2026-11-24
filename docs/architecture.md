@@ -4,19 +4,16 @@
 
 The Factory terminal app runs on your computer and manages rootless Podman
 containers. The browser editor runs Pi, FrostPi, and the editor server inside the
-development container. If you choose desktop VS Code, the app runs on your
-computer and connects to the sandbox through Dev Containers.
+development container.
 
 The folder you choose on your computer appears as `/workspace`. When Pi edits a
 file there, it changes the original file on your computer.
 
-Desktop VS Code and its extensions remain trusted host software. A remote extension
-can use VS Code APIs that request client-side resources; Dev Containers alone is
-not isolation from malicious editor extensions. The default [browser editor](browser-editor.md)
-runs the backend in the container and uses the browser filesystem permission boundary
-for client-side access.
+The browser limits what editor extensions can access on your computer. File
+grants and uploads can share local files with the editor. See the [browser editor
+access boundaries](browser-editor.md#access-boundaries).
 
-Each sandbox has a separate persistent home volume for Pi configuration and sessions. Desktop editor state is kept separately on the host. Stopping or recreating containers preserves that saved state. Deleting a sandbox removes its private home and editor state, but keeps the selected workspace and shared images.
+Each sandbox has a separate persistent home volume for Pi configuration and sessions. Stopping or recreating containers preserves that saved state. Deleting a sandbox removes its private home and editor state, but keeps the selected workspace and shared images.
 
 Factory imposes no process/thread caps or default container memory quotas. The
 editor, browser, development tools and companions share the host's available

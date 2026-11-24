@@ -45,7 +45,6 @@ class ProviderCredentialsTests(unittest.TestCase):
         commands = (['open', 'demo', '--editor', 'browser'],
                     ['browser-editor', 'demo', '--background', '--no-open'],
                     ['open', 'demo', '--editor', 'pi'],
-                    ['open', 'demo', '--editor', 'desktop'],
                     ['pi', 'demo', '--', '--continue'],
                     ['configure', 'demo'], ['configure', 'demo', '--preview'],
                     ['configure', 'demo', '--status'],
@@ -66,7 +65,6 @@ class ProviderCredentialsTests(unittest.TestCase):
                         stack.enter_context(patch.object(sandbox, name))
                     stack.enter_context(patch.object(sandbox, 'inspect', return_value={
                         'State': {'Running': True}, 'Id': 'a' * 64}))
-                    stack.enter_context(patch('shutil.which', return_value='/usr/bin/code'))
                     stack.enter_context(patch.object(browser_editor.host_platform, 'check_engine'))
                     stack.enter_context(patch.object(browser_editor.subprocess, 'check_output',
                         side_effect=lambda args, **kw: 'true' if args[1] == 'info' else 'x86_64'))

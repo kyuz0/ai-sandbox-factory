@@ -47,4 +47,4 @@ NETWORK_PATH = f'Settings → {CATEGORIES["network-settings"].label} → {NETWOR
 ADVISORS_PATH = 'Settings → ' + ADVISORS_LABEL
 MODEL_PROVIDERS_PATH = 'Settings → ' + CATEGORIES['models'].label
 LOCAL_MODELS_PATH = MODEL_PROVIDERS_PATH + ' → ' + EDIT_FORMS['model-sources'].label
-OPEN_LABELS = {'browser': 'Open in browser', 'pi': 'Open Pi CLI', 'desktop': 'Open VS Code'}
+OPEN_LABELS = {'browser': 'Open in browser', 'pi': 'Open Pi CLI'}

@@ -4,7 +4,6 @@ import secrets
 from textual import on
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets.option_list import Option
 from textual.widgets import Button, Collapsible, Footer, Header, Input, Label, OptionList, Select, Static
 
 from . import editor_settings
@@ -31,10 +30,9 @@ class EditorFields(Vertical):
     EditorFields > .last-editor-field { margin: 0; }
     '''
 
-    def __init__(self, value=None, *, desktop_allowed=True, connection_settings=True, agent='pi'):
+    def __init__(self, value=None, *, connection_settings=True, agent='pi'):
         super().__init__(classes='spaced-form-fields')
         self.value = editor_settings.validate(value)
-        self.desktop_allowed = desktop_allowed
         self.connection_settings = connection_settings
         self.agent = agent
         self.modes = editor_settings.modes(agent)
@@ -42,11 +40,9 @@ class EditorFields(Vertical):
     def compose(self):
         with Vertical(classes='setting'):
             yield Label('Client')
-            yield Select([(title, key) for key, title in self.modes.items() if self.desktop_allowed or key != 'desktop'],
+            yield Select([(title, key) for key, title in self.modes.items()],
                          value=self.value['mode'], allow_blank=False, id='editor-mode')
             yield Static('', id='editor-description', classes='setting-help')
-            if not self.desktop_allowed and self.agent == 'pi':
-                yield Static('VS Code on host requires a separate sandbox after browser-editor use.', classes='setting-help')
         with Vertical(classes='setting', id='editor-upload-fields'):
             yield Checkbox('Allow file uploads', value=self.value['allow_uploads'], id='editor-uploads')
         if not self.connection_settings:
@@ -94,7 +90,6 @@ class EditorFields(Vertical):
             'browser': ('Open VS Code and FrostPi in your browser.' if self.agent == 'pi' else
                         f'Open VS Code with {name} in your browser.'),
             'pi': f'Run {name} in this terminal. Exit {name} to return here.',
-            'desktop': 'Open VS Code on this computer. Host-side extensions have host access.',
         }[mode])
         for section in self.screen.query('#editor-section'):
             section.title = CATEGORIES['editor-settings'].label + ' · ' + self.modes[mode]
@@ -189,8 +184,7 @@ class EditorScreen(Screen):
             from .primary_workspace import agent
             import json
             config = json.loads((state / 'config.json').read_text()) if (state / 'config.json').exists() else {}
-            yield EditorFields(editor_settings.load(state), agent=agent(config),
-                               desktop_allowed=not (state / 'browser-editor.enabled').exists())
+            yield EditorFields(editor_settings.load(state), agent=agent(config))
             from . import browser_editor
             self.editor_running = browser_editor.active(state)
             yield Static('• Saving changes closes the editor and interrupts any active reply.\n• Saved chats are kept.',
@@ -262,19 +256,14 @@ class OpenWith(ModalScreen):
     OpenWith #editor-choices > .option-list--option { padding: 0; }
     '''
 
-    def __init__(self, *, desktop_allowed=True, agent='pi'):
+    def __init__(self, *, agent='pi'):
         super().__init__()
-        self.desktop_allowed = desktop_allowed
-        self.agent = agent
         self.modes = editor_settings.modes(agent)
 
     def compose(self):
         with Vertical(id='confirm-box'):
             yield Label('Open with')
-            yield OptionList(*(Option(title, disabled=key == 'desktop' and not self.desktop_allowed)
-                               for key, title in self.modes.items()), id='editor-choices')
-            if not self.desktop_allowed and self.agent == 'pi':
-                yield Static('VS Code on host requires a separate sandbox after browser-editor use.', classes='setting-help')
+            yield OptionList(*self.modes.values(), id='editor-choices')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='editor-cancel')
 

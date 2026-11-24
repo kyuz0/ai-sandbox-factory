@@ -504,13 +504,11 @@ endpoints and one public endpoint, and chats through Pi and FrostPi. It checks t
 model picker, per-port credentials, replacement while the sandbox is running, and
 preservation of the current key after a rejected replacement.
 
-For desktop VS Code, create a separate disposable sandbox with `--editor desktop`.
-Open it, trust its workspace, and verify that FrostPi opens a chat, displays the
-approval notice, and streams a reply using a configured model. For the update
-check, start with the previous Factory release in disposable state, add a
-workspace file and save a Pi chat, then run `recreate NAME --profile base` from
-the new checkout. Verify that both survive and that the old shipped extensions
-are retired in the stable and Insiders server directories.
+For the update check, start with the previous Factory release in disposable
+state, add a workspace file and save a Pi chat, then run
+`recreate NAME --profile base` from the new checkout. Verify that both survive
+and FrostPi opens in the browser. The editor preference tests also verify that
+a saved choice for the retired desktop client opens Pi CLI.
 
 For the browser migration, open a disposable Pendant sandbox using the new
 Factory launcher before recreating it. Verify the sandbox list offers the
@@ -713,8 +711,7 @@ mkdir "$test_root/workspace"
 
 This checks container boundaries, installed document tools, actual Pendant worker
 startup, shared configuration, shell tools, and question choices, free text and
-cancellation. Questions must not invoke the reviewer. A desktop smoke check is
-still needed for VS Code keyboard behavior and visual layout.
+cancellation. Questions must not invoke the reviewer.
 
 For the wider security and scheduling scenarios, create a separate sandbox with
 `--options-file` containing `{"approval":"assisted"}` and omit
@@ -803,8 +800,7 @@ exercises the shipped webview, including answers and cancellation.
 
 ## Hosted model connections
 
-`tests/test_provider_credentials.py` exercises creation, browser editor, desktop
-editor, Pi CLI and provider refresh/preview/status from saved configurations with
+`tests/test_provider_credentials.py` exercises creation, the browser editor, Pi CLI and provider refresh/preview/status from saved configurations with
 no transient state path. Each uses a custom state directory, with and without a
 configured companion key; discovery failures must still block agent launch.
 
@@ -1229,10 +1225,9 @@ session. For WSL, drive Windows Edge so the check includes Windows localhost
 forwarding. Keep the debugging listener on loopback and use a disposable browser profile.
 
 The check waits for the FrostPi composer without selecting its tab. Inspect
-the screenshot for dark mode and right-side placement. Also check a fresh host
-VS Code profile when changing extension startup behavior.
+the screenshot for dark mode and right-side placement.
 
-For synthetic host-file probes, create a disposable sandbox without desktop VS Code:
+For synthetic host-file probes, create a disposable sandbox:
 
 ```sh
 check_root="${TMPDIR:-/tmp}/pi-browser-boundary-check"
@@ -1377,7 +1372,7 @@ instructions enter the managed agent context without host-key material.
 Actual Pi receives that context and runs the status check through
 reviewed escalation with synthetic model replies and no human dialog. Images that
 include Pendant also run its worker through the same check. Both status
-and Git are checked with `SSH_AUTH_SOCK` empty, matching attached desktop VS Code.
+and Git are checked with `SSH_AUTH_SOCK` empty.
 Each client also creates a commit through ordinary inner Bash and verifies its
 author name and email. Run `tests/test_git_settings.py` and the bootstrap suite
 for identity validation, quoting, local overrides, disabling and repeated startup.

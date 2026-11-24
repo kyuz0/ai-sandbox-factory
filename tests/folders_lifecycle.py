@@ -48,7 +48,6 @@ if labels:
 sandbox.apply_settings(config, state, {'working_directory': '.'})
 assert cid() == original_id
 saved = json.loads((state / 'config.json').read_text())
-assert json.loads((state / 'attached-container.json').read_text())['workspaceFolder'] == '/workspace'
 command = [sys.executable, '-m', 'ai_sandbox_factory', '--state-dir', str(args.state_dir), 'exec', args.name, '--', 'pwd']
 assert subprocess.check_output(command, text=True).strip() == '/workspace'
 sandbox.apply_settings(saved, state, {'working_directory': 'app'})

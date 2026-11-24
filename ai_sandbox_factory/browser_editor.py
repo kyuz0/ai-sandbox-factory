@@ -34,7 +34,7 @@ SOCKET = '/home/node/.local/share/pi-browser-editor/editor.sock'
 
 
 def active(state):
-    """The host lock prevents opening desktop VS Code during a browser session."""
+    """Check whether the browser editor supervisor holds the host lock."""
     with (state / 'browser-editor.lock').open('a+') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -382,7 +382,6 @@ async def serve(container, cwd, preferences, state, ready=None):
         if status != b'ready\n':
             raise ValueError('Browser editor did not start; see the error above')
         url = relay.scheme + '://' + relay.host
-        (state / 'browser-editor.enabled').touch(mode=0o600)
         editor_settings.remember_connection(state, preferences, address, port)
         write_json(state / 'browser-editor-runtime.json', {
             'pid': os.getpid(), 'token': token, 'url': url,

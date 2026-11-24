@@ -6,15 +6,13 @@ The recommended way to use Pi is **VS Code in your browser with the [FrostPi](ht
 
 You can also use the selected agent’s CLI. FrostPi and Pi CLI use the same Pi executable and saved chats.
 
-If you have VS Code installed on your computer, choose **VS Code on host** for a Pi sandbox. This gives less isolation from editor extensions because host-side extensions can access your computer. Choose this when creating a separate sandbox; a sandbox already used with the browser editor cannot switch to host VS Code. [Editor options and security](docs/browser-editor.md#choose-a-client)
-
 ![AI Sandbox Factory dashboard](docs/sandboxes.png)
 
 ## Install
 
 Requires **rootless Podman**, **Python 3.10+**, **Git**, and **pipx**. Use WSL2
 on Windows or a rootless Podman Machine on macOS. Linux also supports Docker for
-Pi CLI or VS Code on host. [Platform setup](docs/platforms.md)
+Pi CLI. [Platform setup](docs/platforms.md)
 
 ```sh
 pipx ensurepath

@@ -291,48 +291,23 @@ if profile.exists() or profile_prompt:
 if contents or append_file.exists():
     append_file.write_text(contents)
 
-for server in ('.vscode-server', '.vscode-server-insiders'):
-    base = Path('/home/node') / server
-    extensions = base / 'extensions'
-    extensions.mkdir(parents=True, exist_ok=True)
-    # Previous Factory versions copied both extensions into the remote host.
-    # Preserve those copies outside VS Code's search directory for rollback.
-    legacy = [extensions / name for name in (
-        'cdervis.vscode-pi-0.94.2', 'pi-sandbox-factory.editor-startup-1.0.0',
-    )]
-    legacy = [target for target in legacy if target.is_dir() and not target.is_symlink()]
-    if legacy:
-        retired = base / 'factory-retired-extensions'
-        retired.mkdir(exist_ok=True)
-        backup = Path(tempfile.mkdtemp(prefix='pendant-', dir=retired))
-        for target in legacy:
-            target.rename(backup / target.name)
-    managed_editors = Path('/opt/editor-extensions')
-    for target in extensions.iterdir():
-        if target.is_symlink() and target.readlink().parent == managed_editors and not target.exists():
-            target.unlink()
-    for source in managed_editors.glob('*'):
-        target = extensions / source.name
-        if not target.exists() and not target.is_symlink():
-            target.symlink_to(source, target_is_directory=True)
-    machine = base / 'data/Machine/settings.json'
-    machine.parent.mkdir(parents=True, exist_ok=True)
-    settings = json.loads(machine.read_text()) if machine.exists() else {}
-    settings.update({
-        'frostpi.pi.executable': '/usr/local/bin/pi',
-        'frostpi.questionTool.enabled': False,
-        'python.defaultInterpreterPath': (os.environ['VIRTUAL_ENV'] + '/bin/python'
-                                          if os.environ.get('VIRTUAL_ENV') else '/usr/bin/python3'),
-        'http.proxy': ('http://127.0.0.1:3128' if os.environ.get('SANDBOX_NETWORK_MODE') != 'unrestricted' else ''),
-        'http.proxySupport': ('override' if os.environ.get('SANDBOX_NETWORK_MODE') != 'unrestricted' else 'off'),
-        'git.terminalAuthentication': False,
-    })
-    if browser_enabled:
-        # Match the Chromium process, leaving application port forwarding intact.
-        settings.setdefault('remote.portsAttributes', {})[r'(^|/)betterchromium(?:\s|$)'] = {
-            'onAutoForward': 'ignore', 'label': 'Sandbox browser (use viewer)',
-        }
-    machine.write_text(json.dumps(settings, indent=2) + '\n')
+machine = Path('/home/node/.local/share/pi-browser-editor/machine-defaults.json')
+machine.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+settings = {
+    'frostpi.pi.executable': '/usr/local/bin/pi',
+    'frostpi.questionTool.enabled': False,
+    'python.defaultInterpreterPath': (os.environ['VIRTUAL_ENV'] + '/bin/python'
+                                      if os.environ.get('VIRTUAL_ENV') else '/usr/bin/python3'),
+    'http.proxy': ('http://127.0.0.1:3128' if os.environ.get('SANDBOX_NETWORK_MODE') != 'unrestricted' else ''),
+    'http.proxySupport': ('override' if os.environ.get('SANDBOX_NETWORK_MODE') != 'unrestricted' else 'off'),
+    'git.terminalAuthentication': False,
+}
+if browser_enabled:
+    # Match the Chromium process, leaving application port forwarding intact.
+    settings.setdefault('remote.portsAttributes', {})[r'(^|/)betterchromium(?:\s|$)'] = {
+        'onAutoForward': 'ignore', 'label': 'Sandbox browser (use viewer)',
+    }
+machine.write_text(json.dumps(settings, indent=2) + '\n')
 
 # The launcher owns the approved host and port selection; preserve other discovery preferences.
 if os.environ.get('LOCAL_MODEL_PORTS'):

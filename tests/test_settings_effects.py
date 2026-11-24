@@ -34,14 +34,14 @@ class SettingsEffectsTests(unittest.TestCase):
     def test_notices_are_relevant_to_changed_settings_and_selected_client(self):
         before={'options':{},'memory':'8g'}
         after={'options':{},'memory':'16g'}
-        for mode, expected in [('browser','Open in browser'),('pi','Restart Pi CLI'),('desktop','Reload the VS Code')]:
+        for mode, expected in [('browser','Open in browser'),('pi','Restart Pi CLI')]:
             notes=settings_effects.configuration_notes(before,after,mode)
             text=settings_effects.bullets(notes)
             self.assertIn(expected,text)
             for unrelated in ('Slack','SSH','Identity','browser viewer','clean context','removed connection'):
                 self.assertNotIn(unrelated,text)
             self.assertTrue(all(line.startswith('• ') for line in text.splitlines()))
-            if mode!='desktop': self.assertNotIn('VS Code',text)
+            self.assertNotIn('VS Code',text)
             if mode!='pi': self.assertNotIn('Pi CLI',text)
         after['options']={'browser':False}
         self.assertNotIn('browser viewer',' '.join(settings_effects.configuration_notes({'options':{'browser':True}},after)))

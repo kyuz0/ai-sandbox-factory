@@ -6,19 +6,27 @@ import unittest
 from unittest.mock import patch
 
 from argon2 import PasswordHasher
-from ai_sandbox_factory import editor_settings as settings
+from ai_sandbox_factory import editor_settings as settings, sandbox
 
 
 class Preferences(unittest.TestCase):
-    def test_browser_default_and_host_editor_boundary(self):
-        self.assertEqual(settings.validate()['mode'], 'browser')
+    def test_saved_desktop_sandbox_opens_pi_without_rewriting_state(self):
         with tempfile.TemporaryDirectory() as folder:
-            state = Path(folder)
+            state = Path(folder) / 'example'
+            state.mkdir()
             self.assertEqual(settings.load(state), settings.DEFAULTS)
-            (state / 'browser-editor.enabled').touch()
-            self.assertEqual(settings.load(state)['mode'], 'browser')
-            with self.assertRaisesRegex(ValueError, 'separate sandbox'):
-                settings.save(state, {'mode': 'desktop'})
+            saved = '{"mode":"desktop","port":43210}'
+            prefs = state / 'editor.json'
+            prefs.write_text(saved)
+            self.assertEqual(settings.load(state), {**settings.DEFAULTS, 'mode': 'pi', 'port': 43210})
+            self.assertEqual(settings.copy_choice(json.loads(saved))['mode'], 'pi')
+            config = {'name': state.name, 'engine': 'podman', 'workspace': folder}
+            with patch.object(sandbox, 'up'), patch.object(sandbox, 'run') as run:
+                sandbox.open_selected(config, state)
+            self.assertEqual(run.call_args.args[0][-2:], ['pi-sandbox-factory-example', 'pi'])
+            self.assertEqual(prefs.read_text(), saved)
+        with self.assertRaisesRegex(ValueError, 'Editor menu'):
+            settings.validate({'mode': 'desktop'})
 
     def test_password_hash_private_file_and_no_container_change(self):
         password = 'synthetic-editor-password'
@@ -62,7 +70,7 @@ class Preferences(unittest.TestCase):
             self.assertEqual(chat.read_text(), 'synthetic saved conversation')
             settings.save(state, current)
             self.assertEqual(json.loads((state / 'editor.json').read_text()), current)
-            self.assertEqual(set(settings.modes()), {'browser', 'pi', 'desktop'})
+            self.assertEqual(set(settings.modes()), {'browser', 'pi'})
             with self.assertRaisesRegex(ValueError, 'Editor menu'):
                 settings.validate({'mode': 'frostpi'})
 
@@ -100,5 +108,5 @@ class Preferences(unittest.TestCase):
             with patch('platform.machine', return_value=arch):
                 self.assertEqual(settings.default_mode(), 'browser')
         with patch('platform.machine', return_value='unsupported'):
-            self.assertEqual(settings.default_mode(), 'desktop')
-        self.assertEqual(settings.default_mode('docker'), 'desktop')
+            self.assertEqual(settings.default_mode(), 'pi')
+        self.assertEqual(settings.default_mode('docker'), 'pi')

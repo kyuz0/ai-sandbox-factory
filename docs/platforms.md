@@ -85,7 +85,7 @@ and [Ubuntu’s installation guide](https://ubuntu.com/wsl/docs/latest/howto/ins
 
 You need an Apple Silicon Mac with macOS 15 or newer, [Homebrew](https://docs.brew.sh/Installation),
 Podman 5.6 or newer, Git and pipx. Homebrew installs Python with pipx. Safari works
-with the browser editor; installing desktop VS Code is optional.
+with the browser editor.
 
 The commands below allocate four CPU cores and 8 GB RAM to Podman Machine.
 Allow additional memory for models running on the Mac.

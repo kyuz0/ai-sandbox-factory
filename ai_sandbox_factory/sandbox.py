@@ -9,8 +9,8 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import operation_locks
-from contextlib import closing, contextmanager
+from . import editor_settings, operation_locks
+from contextlib import contextmanager
 import errno
 import fcntl
 import hashlib
@@ -21,12 +21,11 @@ import os
 from pathlib import Path
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urlsplit, quote
+from urllib.parse import urlsplit
 from types import SimpleNamespace
 from uuid import uuid4
 from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
@@ -816,14 +815,18 @@ def _up(config, state, *, prepare_sign_in=True):
                 args += ['--env', f'{key}={value}']
             run(base + args + [dev_image])
     # Readiness also catches bootstrap failures (permissions, malformed settings).
-    for _ in range(40):
-        ready = ('test -f /tmp/factory-workspace-ready' if native else
-                 'test -f /home/node/.vscode-server/data/Machine/settings.json')
+    if native:
+        ready = 'test -f /tmp/factory-workspace-ready'
+    else:
         entrypoint = Path(config.get('common', {}).get('path', '/nonexistent')) / 'entrypoint.sh'
-        if not native and 'options' in config and entrypoint.is_file() and '/var/tmp/pi/pi-sandbox-factory-ready' in entrypoint.read_text():
-            ready += ' && test -f /var/tmp/pi/pi-sandbox-factory-ready'
-        if restricted:
-            ready += ' && test -S /run/egress/proxy.sock && echo >/dev/tcp/127.0.0.1/3128'
+        marker = '/var/tmp/pi/pi-sandbox-factory-ready'
+        if not entrypoint.is_file() or marker not in entrypoint.read_text():
+            # Older Pi images signaled readiness by writing the editor settings.
+            marker = '/home/node/.vscode-server/data/Machine/settings.json'
+        ready = 'test -f ' + marker
+    if restricted:
+        ready += ' && test -S /run/egress/proxy.sock && echo >/dev/tcp/127.0.0.1/3128'
+    for _ in range(40):
         result = run([engine, 'exec', dev, 'bash', '-c', ready], capture=True, check=False,
                      stderr=subprocess.DEVNULL)
         if result.returncode == 0:
@@ -1115,26 +1118,10 @@ def create(args, state):
     activity.save_config(state, config)
     (state / 'allowlist.txt').write_text(policy_text)
     (state / 'squid.conf').write_text(network_policy(config, rules))
-    write_attach(config, state)
-    from . import editor_settings
     editor_settings.save(state, {'mode': getattr(args, 'editor', None) or editor_settings.default_for_agent(selected, engine)}, record_edit=False)
     activity.record(state, 'created')
     description = f'Coding agent: {primary_workspace.AGENTS[selected]}' if native else f'Profile: {profile["name"]}'
     print(f'Created {state}\n{description}. Network: {mode}; {len(rules)} hostname/port rules. Run build, then up.')
-
-
-
-def write_attach(config, state):
-    if primary_workspace.agent(config) != 'pi':
-        return
-    pendant = pendant_versions(config)
-    attach = {'workspaceFolder': folders.container_cwd(config), 'remoteUser': 'node',
-              'extensions': ['cdervis.vscode-pi' if pendant else 'frostime.frostpi'],
-              'settings': ({'pendant.agentDir': '/home/node/.pi/agent'} if pendant
-                           else {'frostpi.pi.executable': '/usr/local/bin/pi'}),
-              'remoteEnv': {'SSH_AUTH_SOCK': '', 'GIT_ASKPASS': '',
-                            'SSH_ASKPASS': ''}}
-    (state / 'attached-container.json').write_text(json.dumps(attach, indent=2) + '\n')
 
 
 def shell_network_policy(config, state):
@@ -1455,7 +1442,6 @@ def apply_settings(config, state, changes, *, apply_gate=None):
         if not updating.begin_apply(apply_gate):
             return
         activity.save_config(state, updated)
-        write_attach(updated, state)
         if native:
             from . import primary_agents
             primary_agents.prepare_workspace(updated, state)
@@ -1504,7 +1490,6 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     print('Applying settings: recreating containers; saved workspace and home are preserved.')
     down(config, remove=True)
     activity.save_config(state, updated)
-    write_attach(updated, state)
     (state / 'allowlist.txt').write_text(text)
     (state / 'squid.conf').write_text(network_policy(updated, rules))
     if text != old_text:
@@ -1585,18 +1570,16 @@ def configure_models(config, state, preview=False):
 
 
 def open_selected(config, state, mode=None):
-    from . import editor_settings, browser_editor
+    from . import browser_editor
     mode = mode or editor_settings.load(state)['mode']
     selected = primary_workspace.agent(config)
-    if selected != 'pi' and mode not in editor_settings.modes(selected):
+    if mode not in editor_settings.modes(selected):
         raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
     with operation_locks.sandbox(state.name, 'open'):
         if selected != 'pi' or mode == 'pi':
             up(config, state)
         if mode == 'browser':
             return browser_editor.open_browser_editor(config, state, background=True)
-        if mode != 'pi':
-            return open_editor(config, state)
         if selected == 'pi' and (config.get('local_model_ports') or config.get('model_providers')):
             initialize_models(config, state)
     # The interactive terminal must not hold the lock for the whole session.
@@ -1606,81 +1589,6 @@ def open_selected(config, state, mode=None):
     tty = ['-it'] if sys.stdin.isatty() else ['-i']
     run([config['engine'], 'exec', '--workdir', folders.container_cwd(config),
          *tty, names(config)[0], 'pi'])
-
-
-def open_editor(config, state):
-    from .browser_editor import active
-    if (state / 'browser-editor.enabled').exists():
-        raise ValueError('This sandbox uses the browser editor. Create a separate sandbox for desktop VS Code.')
-    if active(state):
-        raise ValueError("Stop the browser editor before opening desktop VS Code for this sandbox")
-    dev = names(config)[0]
-    current = inspect(config, dev)
-    if not current or not current['State']['Running']:
-        raise ValueError('Start the sandbox with up first')
-    if options(config.get('options'))['browser']:
-        browser_viewer.ensure_viewer(config['engine'], current['Id'])
-    if not shutil.which('code'):
-        raise ValueError('Install desktop VS Code and its code command first')
-    # A separate user-data directory avoids inheriting host dotfiles extensions,
-    # credential helpers, and user customizations into an agent workspace.
-    if config.get('local_model_ports') or config.get('model_providers'):
-        initialize_models(config, state)
-    profile = state / 'vscode'
-    settings = profile / 'User/settings.json'
-    settings.parent.mkdir(parents=True, exist_ok=True)
-    values = json.loads(settings.read_text()) if settings.exists() else {}
-    values.update({'dev.containers.dockerPath': config['engine'],
-                   'dev.containers.copyGitConfig': False,
-                   'dev.containers.gitCredentialHelperConfigLocation': 'none',
-                   'dev.containers.dockerCredentialHelper': False,
-                   'dev.containers.mountWaylandSocket': False,
-                   'dev.containers.defaultExtensions': [],
-                   'extensions.autoUpdate': False,
-                   'extensions.autoCheckUpdates': False,
-                   'git.terminalAuthentication': False,
-                   'chat.disableAIFeatures': True,
-                   'workbench.startupEditor': 'none',
-                   'workbench.welcomePage.experimentalOnboarding': False,
-                   'workbench.welcomePage.walkthroughs.openOnInstall': False,
-                   'window.restoreWindows': 'none',
-                   'security.workspace.trust.enabled': True})
-    values.setdefault('workbench.secondarySideBar.defaultVisibility', 'visible')
-    settings.write_text(json.dumps(values, indent=2) + '\n')
-    # View placement and Dev Containers' one-time attach acknowledgement use
-    # native profile storage, not settings.json options.
-    # Seed only a new profile; never edit a running editor's database or user layout.
-    storage = profile / 'User/globalStorage/state.vscdb'
-    if not storage.exists():
-        view = 'pendant-container' if pendant_versions(config) else 'frostpi'
-        storage.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(storage)) as database, database:
-            database.execute('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)')
-            database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
-                             ('views.customizations', json.dumps({
-                                 'viewContainerLocations': {'workbench.view.extension.' + view: 2},
-                                 'viewLocations': {}, 'viewContainerBadgeEnablementStates': {},
-                             })))
-            # Equivalent to "Got It" for attaching in this dedicated profile.
-            # This does not grant workspace trust or acknowledge cloning warnings.
-            database.execute('INSERT OR IGNORE INTO ItemTable (key, value) VALUES (?, ?)',
-                             ('ms-vscode-remote.remote-containers', json.dumps({
-                                 'userConfirmedAttachToContainerRequiresTrust': True,
-                             })))
-    attached = profile / 'User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs' / (dev + '.json')
-    attached.parent.mkdir(parents=True, exist_ok=True)
-    write_attach(config, state)
-    shutil.copyfile(state / 'attached-container.json', attached)
-    env = os.environ.copy()
-    for key in ('SSH_AUTH_SOCK', 'GIT_ASKPASS', 'SSH_ASKPASS', 'VSCODE_IPC_HOOK_CLI'):
-        env.pop(key, None)
-    cmd = ['code', '--user-data-dir', str(profile), '--extensions-dir', str(state / 'vscode-extensions')]
-    run(cmd + ['--install-extension', 'ms-vscode-remote.remote-containers'], env=env)
-    # VS Code's attached-container authority is hex-encoded JSON.
-    # Podman requires the actual name without Docker's inspect-output slash.
-    authority = json.dumps({'containerName': dev}, separators=(',', ':')).encode().hex()
-    run(cmd + ['--reuse-window', '--skip-welcome', '--folder-uri',
-               f'vscode-remote://attached-container+{authority}{quote(folders.container_cwd(config), safe="/")}'], env=env)
 
 
 def main(*, startup_notice=''):
@@ -1754,7 +1662,7 @@ def main(*, startup_notice=''):
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
-    new.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Client to open (default: browser on supported hosts)')
+    new.add_argument('--editor', choices=editor_settings.MODES, help='Client to open (default: browser on supported hosts)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
         'browser-editor': 'Open the browser editor (rootless Podman)',
@@ -1777,7 +1685,7 @@ def main(*, startup_notice=''):
             cmd.add_argument('--no-open', action='store_true', help='Print the address without opening a browser tab')
             cmd.add_argument('--stop', action='store_true', help='Stop only the browser editor')
         if command == 'open':
-            cmd.add_argument('--editor', choices=['browser', 'pi', 'desktop'], help='Open with a different client this time')
+            cmd.add_argument('--editor', choices=editor_settings.MODES, help='Open with a different client this time')
         if command == 'ssh-import-key':
             cmd.add_argument('--key-file', required=True)
         if command in ('ssh-import-key', 'ssh-unlock'):

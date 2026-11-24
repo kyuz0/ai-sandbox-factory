@@ -30,15 +30,14 @@ Choose **Open** on the dashboard. All four agents use the browser editor by defa
 
 Use **Actions… → Open with…** to pick a different client for this launch. During creation,
 expand **Editor** to choose the browser editor or the selected agent's CLI.
-Pi also offers **VS Code on host**. Clear the checkbox for
-opening your selected client if you want to open it yourself later. For an existing sandbox,
-**Settings → Editor** lets you change the default client, address, port, or password.
+Clear the checkbox for opening your selected client if you want to open it yourself later.
+For an existing sandbox, **Settings → Editor** lets you change the default client,
+address, port, or password.
 
 Pi CLI opens in your current terminal. Exit Pi to return to Factory. Pi CLI and
 FrostPi use the same files, model settings, and saved chats, so you can open
 either client. They start in the folder you chose under **Settings → Folders**.
-Use a separate sandbox for VS Code on your computer after using the browser
-editor. [Editor setup and access](browser-editor.md)
+[Editor setup and access](browser-editor.md)
 
 Pi uses your first prompt to name a new chat. It asks the current model for a
 short title and falls back to the first few words if the request fails. The
@@ -208,7 +207,7 @@ and shows both paths so you can resolve the conflict.
 | Connectors → AWS | Connecting AWS for the first time can require replacing the workspace container. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
 | Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
-| Editor: default client and browser-editor connection | Saving stops a running browser editor. | Use Open to reopen with the saved settings. Host VS Code requires a separate sandbox after browser-editor use. |
+| Editor: default client and browser-editor connection | Saving stops a running browser editor. | Choose **Open** to reopen with the saved settings. |
 | Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
 | Model Providers: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |

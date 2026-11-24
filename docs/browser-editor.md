@@ -6,8 +6,7 @@ VS Code with FrostPi is the recommended, most feature-rich way to use Pi.
 The browser editor is the default with rootless Podman on Linux, Windows
 through WSL2, and macOS through Podman Machine. The editor and its extensions run inside the
 workspace container. Choose **Actions… → Open with…** to use the selected agent's CLI instead.
-Pi also supports VS Code on your computer. The browser editor supports amd64 and arm64
-containers. [Platform setup](platforms.md)
+The browser editor supports amd64 and arm64 containers. [Platform setup](platforms.md)
 
 FrostPi previews images Pi receives from tools such as `read` and Betterwright.
 Click an image to enlarge it. You can see it again when you reopen the saved chat.
@@ -101,22 +100,16 @@ stays on the host and must have permissions `0600`; encrypted keys are unsupport
 ## Choose a client
 
 **Settings → Editor** changes the default client. **Actions… → Open with…** selects a client
-for one launch. Use Pi CLI alongside either editor.
+for one launch. Pi CLI and the browser editor share workspace files and Pi chats.
 
-For **VS Code on host**, put `code` on your PATH. Factory installs the Dev
-Containers extension if needed.
-
-A sandbox used with the VS Code browser editor cannot subsequently attach to host VS Code: that
-would give its installed extensions a bridge back to the host client. Create a
-separate sandbox for host VS Code. A running desktop VS Code server also prevents
-browser-editor startup.
+After upgrading, Pi sandboxes that had the former desktop client selected open in Pi CLI.
+Choose **Browser editor** in **Settings → Editor** to change the default.
 
 ## Command line
 
 ```sh
 ai-sandbox-factory open NAME
 ai-sandbox-factory open NAME --editor pi
-ai-sandbox-factory open NAME --editor desktop
 ai-sandbox-factory browser-editor NAME --background
 ai-sandbox-factory browser-editor NAME --stop
 ```

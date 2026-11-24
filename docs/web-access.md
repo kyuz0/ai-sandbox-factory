@@ -78,11 +78,9 @@ that group. Clear it to deselect them together, or use the individual checkboxes
 Factory saves the selected categories by name.
 
 Under **Developer services**, select **VS Code extensions** to allow extension
-catalogue requests and downloads from Open VSX for the browser editor and the
-Visual Studio Marketplace for desktop VS Code. An extension that downloads
-additional tools or data may need another allowed destination.
-[code-server FAQ](https://coder.com/docs/code-server/FAQ) ·
-[VS Code network connections](https://code.visualstudio.com/docs/setup/network)
+catalogue requests and downloads from Open VSX for the browser editor. An
+extension that downloads additional tools or data may need another allowed
+destination. [code-server FAQ](https://coder.com/docs/code-server/FAQ)
 
 The other developer categories come from
 [V2Fly domain-list-community](https://github.com/v2fly/domain-list-community):

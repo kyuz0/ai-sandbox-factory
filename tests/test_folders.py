@@ -126,7 +126,7 @@ class FolderTests(unittest.TestCase):
         with patch.object(sandbox, 'down') as down, patch.object(sandbox, 'build') as build:
             sandbox.apply_settings(self.config, state, {'working_directory': '.'})
         down.assert_not_called(); build.assert_not_called()
-        self.assertEqual(json.loads((state / 'attached-container.json').read_text())['workspaceFolder'], '/workspace')
+        self.assertEqual(json.loads((state / 'config.json').read_text())['working_directory'], '.')
         self.assertEqual((state / 'private-marker').read_text(), 'keep')
         with patch.object(sandbox, 'down') as down, self.assertRaises(ValueError):
             sandbox.apply_settings(self.config, state, {'working_directory': 'missing'})
