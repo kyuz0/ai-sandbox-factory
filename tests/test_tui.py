@@ -1081,8 +1081,8 @@ class TUITests(unittest.TestCase):
                 await pilot.pause()
                 self.assertIsInstance(app.screen,NewSandbox)
                 self.assertFalse(app.screen.query_one('#profile-summary', Static).display)
-                self.assertEqual(app.screen.query_one('#workspace',Input).value,'')
-                self.assertEqual(app.screen.query_one('#name',Input).value,'')
+                self.assertEqual(app.screen.query_one('#workspace',Input).value, record['config']['workspace'])
+                self.assertEqual(app.screen.query_one('#name',Input).value, 'alpha')
                 app.screen.query_one('#workspace',Input).value=str(workspace)
                 await pilot.pause()
                 app.screen.query_one('#name',Input).value='copied-agent'

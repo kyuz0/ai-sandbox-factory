@@ -202,7 +202,8 @@ def copy_draft(record, state_root):
             value[field] = copy.deepcopy(config[field])
     value.update(primary_agent=coding_agent(config), primary_auth=DEFAULT_AUTH,
                  profile=config['profile']['path'], options=options(config.get('options')),
-                 name='', workspace='', workspace_parent='', env_file='', pi_config='', working_directory='.',
+                 name='', workspace=config['workspace'], workspace_parent=config['workspace'],
+                 env_file='', pi_config='', working_directory='.',
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
     value['options']['approval_model'] = 'current'  # Copies start without provider credentials.
     value['editor'] = editor_settings.copy_choice(editor_settings.load(Path(state_root) / record['name']))

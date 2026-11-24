@@ -202,8 +202,8 @@ async def capture(size):
                     draft = copy_draft(record, root)
                     new = NewSandbox(draft, search_keys={})
                     await app.push_screen(new)
-                    new.query_one('#workspace', Input).value = str(workspace)
                     await pilot.pause()
+                    assert new.query_one('#workspace', Input).value == str(workspace)
                     selector = new.query_one('#primary-agent', Select)
                     selector.focus()
                     selector.expanded = True

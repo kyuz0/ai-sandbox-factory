@@ -55,7 +55,8 @@ it yourself.
 ## Copy a setup to a new sandbox
 
 Choose **Create from existing…** beside **New sandbox**. Pick the sandbox to
-copy, then choose the coding agent and enter a new name and workspace. Review the profile, model providers,
+copy, then choose the coding agent and a new name. The workspace is filled in
+from the source sandbox. Keep it or choose another folder. Review the profile, model providers,
 network rules, features, and advisors before creating it. Factory includes the
 source’s added skills. Clear any you don’t need under **Skills**.
 

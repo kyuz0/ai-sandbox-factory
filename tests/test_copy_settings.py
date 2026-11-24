@@ -83,8 +83,10 @@ class CopySettingsTests(unittest.TestCase):
     def test_draft_excludes_private_paths_and_is_independent(self):
         original = copy.deepcopy(self.config)
         draft = copy_draft({'name': 'source', 'config': self.config}, self.root)
-        for field in ('name', 'workspace', 'env_file', 'pi_config'):
+        for field in ('name', 'env_file', 'pi_config'):
             self.assertEqual(draft[field], '')
+        self.assertEqual(draft['workspace'], self.config['workspace'])
+        self.assertEqual(draft['workspace_parent'], self.config['workspace'])
         self.assertNotIn('ssh', draft)
         self.assertFalse(draft['options']['web_access']['providers']['exa']['has_key'])
         draft['advisors']['providers'].clear()

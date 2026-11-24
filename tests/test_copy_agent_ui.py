@@ -31,6 +31,7 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                                            'knowledge_embedding_url': 'https://embeddings.example.test/v1',
                                            'git_identity': {'name': 'Test Author', 'email': 'author@example.test'}}))
             original = copy.deepcopy(config)
+            Path(config['workspace']).mkdir()
             submitted = []
             service = FakeService([])
             app = Cockpit(root / 'state', service)
@@ -50,14 +51,17 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         new = NewSandbox(draft, search_keys={})
                         await app.push_screen(new)
                         await pilot.pause()
+                        self.assertEqual(new.query_one('#workspace', Input).value, config['workspace'])
                         selector = new.query_one('#primary-agent', Select)
                         self.assertFalse(selector.disabled)
                         selector.value = target_agent
                         await pilot.pause()
+                        self.assertEqual(new.query_one('#workspace', Input).value, config['workspace'])
                         self.assertLessEqual(new.query_one('#name', Input).region.bottom,
                                              new.query_one('.form').content_region.bottom)
-                        workspace = root / f'{source_agent}-{target_agent}'
-                        workspace.mkdir()
+                        workspace = (Path(config['workspace']) if (source_agent, target_agent) == ('pi', 'codex')
+                                     else root / f'{source_agent}-{target_agent}')
+                        workspace.mkdir(exist_ok=True)
                         new.query_one('#workspace', Input).value = str(workspace)
                         await pilot.pause()
                         new.query_one('#continue', Button).press()
@@ -67,6 +71,7 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(form.primary, target_agent)
                         selected, _ = form.collect()
                         self.assertEqual(selected['primary_agent'], target_agent)
+                        self.assertEqual(selected['workspace'], str(workspace))
                         self.assertEqual(selected['memory'], '12g')
                         self.assertEqual(selected['extra_folders'], draft['extra_folders'])
                         self.assertEqual(selected['reuse_from'], 'source')
