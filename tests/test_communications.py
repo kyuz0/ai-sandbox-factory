@@ -49,7 +49,8 @@ class CommunicationsTests(unittest.TestCase):
         from ai_sandbox_factory.sandbox_tui import copy_draft
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp); (state/'source').mkdir(); (state/'source/allowlist.txt').write_text('slack.com:443')
-            config={'profile':{'path':'base'}, 'options':options({'communications':{'slack':True}}),
+            config={'profile':{'path':'base'}, 'workspace':str(state/'project'),
+                    'options':options({'communications':{'slack':True}}),
                     '_communication_keys': {'botToken':'secret'}}
             copied=copy_draft({'name':'source','config':config}, state)
             self.assertTrue(copied['options']['communications']['slack'])
