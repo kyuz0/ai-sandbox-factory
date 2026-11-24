@@ -15,7 +15,7 @@ class SSHTests(unittest.TestCase):
     def test_import_errors_identify_the_alias_and_constraint(self):
         for alias in ('_build', '.build', 'build+ci', 'build=ci'):
             self.assertEqual(ssh.validate({'hosts': [{**HOST, 'alias': alias}]})['hosts'][0]['alias'], alias)
-        for alias, reason in [('build*', 'wildcard'), ('root@build', 'relay filenames'),
+        for alias, reason in [('build*', 'wildcard'), ('root@build', 'must use only'),
                               ('a' * (ssh.MAX_ALIAS_LENGTH + 1), 'relay socket path')]:
             with self.subTest(alias=alias), patch.object(ssh.subprocess, 'run') as run:
                 with self.assertRaises(ValueError) as error:
@@ -25,6 +25,39 @@ class SSHTests(unittest.TestCase):
                 run.assert_not_called()
         with self.assertRaisesRegex(ValueError, 'Host aliases'):
             ssh.import_aliases('')
+
+    def test_import_reports_multiple_invalid_entries_before_calling_openssh(self):
+        with patch.object(ssh.subprocess, 'run') as run, self.assertRaises(ValueError) as error:
+            ssh.import_aliases('valid ~/.ssh/config build* -ci !extra')
+        run.assert_not_called()
+        message = str(error.exception)
+        for detail in ("'~/.ssh/config' contains a slash", "'build*' is an SSH wildcard",
+                       "'-ci' starts with a hyphen", '1 more'):
+            self.assertIn(detail, message)
+        self.assertNotIn("'valid'", message)
+
+    def test_import_rejects_duplicate_entries_before_calling_openssh(self):
+        with patch.object(ssh.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, "'build' is listed more than once"):
+                ssh.import_aliases('build ci build')
+        run.assert_not_called()
+
+    def test_import_reports_each_failing_alias_from_a_real_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / 'config'
+            known_hosts = Path(tmp) / 'known_hosts'
+            known_hosts.write_text('build.example.test ssh-ed25519 AAAA\n')
+            config.write_text(f'Host build\n  HostName build.example.test\n'
+                              f'Host via-jump\n  ProxyJump bastion\n'
+                              f'Host no-key\n  Hostname other.example.test\n'
+                              f'Host *\n  User demo\n  UserKnownHostsFile {known_hosts}\n')
+            with self.assertRaises(ValueError) as error:
+                ssh.import_aliases('build via-jump no-key', config)
+            message = str(error.exception)
+            self.assertIn("'via-jump'. Uses ProxyJump", message)
+            self.assertIn("'no-key'. No trusted host key for other.example.test:22", message)
+            self.assertNotIn("'build'", message)
+            self.assertEqual(ssh.import_aliases('build', config), {'hosts': [{**HOST, 'hostname': 'build.example.test'}]})
 
     def test_import_preserves_the_real_openssh_parse_error(self):
         with tempfile.TemporaryDirectory() as tmp:

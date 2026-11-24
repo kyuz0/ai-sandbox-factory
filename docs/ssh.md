@@ -28,7 +28,7 @@ For authenticated Git operations with an isolated private key, use SSH.
 
 ## SSH setup
 
-In **Review sandbox → Connectors → SSH & Git**, enter destinations or import host SSH aliases. Import errors identify the rejected alias and explain the constraint. OpenSSH configuration errors include its exit status, diagnostic, and the file and line number when supplied by OpenSSH.
+In **Review sandbox → Connectors → SSH & Git**, enter destinations or import host SSH aliases. For example, if your SSH config contains `Host build` and `Host staging`, enter `build staging`. Import errors show the first few rejected entries and why each failed. OpenSSH configuration errors include its exit status, diagnostic, and the file and line number when supplied by OpenSSH.
 Choose **Generate repository key** or **Import and unlock** to set up the key
 as soon as the sandbox starts. If you generate a key, Factory displays its
 public half for you to register with the Git server.

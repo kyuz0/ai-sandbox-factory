@@ -4384,10 +4384,10 @@ class Cockpit(App):
     #sandboxes:focus > .datatable--cursor { background: transparent; text-style: bold underline; }
     #details { height: auto; min-height: 3; padding: 1 0; text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
-    #ssh-duration-error, #ssh-key-feedback.error, SSHDestinationFields Feedback, CreateSSHFields Feedback { color: #ef9a91; }
+    #ssh-duration-error, #ssh-key-feedback.error, #ssh-aliases-error, SSHDestinationFields Feedback, CreateSSHFields Feedback { color: #ef9a91; }
     #ssh-key-feedback.unlock-succeeded { color: #87c99b; text-style: bold; }
     Screen:nocolor #ssh-key-feedback { color: white; text-style: bold; }
-    Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error,
+    Screen:nocolor #ssh-key-feedback.error, Screen:nocolor #ssh-duration-error, Screen:nocolor #ssh-aliases-error,
     Screen:nocolor SSHDestinationFields Feedback, Screen:nocolor CreateSSHFields Feedback { color: white; text-style: bold reverse; }
     #home-error, #open-error { height: auto; margin: 0 0 1 0; color: #b75b52; }
     #operation-body { width: 100%; padding: 1 3 0 3; }

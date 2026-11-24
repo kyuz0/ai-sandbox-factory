@@ -83,12 +83,18 @@ class MissingHostKey(ValueError): pass
 
 def validate_alias(alias):
     if not isinstance(alias, str) or not ALIAS.fullmatch(alias) or alias.startswith('-'):
-        raise ValueError(f'Invalid SSH alias {alias!r}. This connector uses aliases in SSH commands and relay filenames. '
-                         'Use letters, digits, dots, hyphens, underscores, + or =; do not start with a hyphen. '
-                         'Enter Host names from your SSH config, not a command or wildcard pattern.')
+        if isinstance(alias, str) and '/' in alias:
+            reason = 'contains a slash. Enter a name from a Host line, such as build.'
+        elif isinstance(alias, str) and any(char in alias for char in '*?!'):
+            reason = 'is an SSH wildcard or exclusion pattern. Enter a specific Host alias.'
+        elif isinstance(alias, str) and alias.startswith('-'):
+            reason = 'starts with a hyphen. Choose a Host alias without a leading hyphen.'
+        else:
+            reason = 'must use only letters, digits, dots, hyphens, underscores, + or =.'
+        raise ValueError(f'SSH alias {alias!r} {reason}')
     if len(alias) > MAX_ALIAS_LENGTH:
         raise ValueError(f'SSH alias {alias!r} has {len(alias)} characters. The relay socket path allows '
-                         f'at most {MAX_ALIAS_LENGTH} characters; use a shorter Host alias in your SSH config.')
+                         f'at most {MAX_ALIAS_LENGTH} characters. Use a shorter Host alias in your SSH config.')
 
 def trusted_keys(hostname, port, known_hosts):
     target = hostname if port == 22 else f'[{hostname}]:{port}'
@@ -125,33 +131,68 @@ def parse_hosts(text, known_hosts):
 
 
 def import_aliases(aliases, ssh_config=None):
+    names = aliases.split()
+    if not names:
+        raise ValueError('Enter one or more Host aliases from your SSH config, separated by spaces, such as build staging.')
+    errors = []
+    seen = set()
+    for alias in names:
+        try:
+            validate_alias(alias)
+            if alias in seen:
+                raise ValueError(f'SSH alias {alias!r} is listed more than once. Enter it once.')
+            seen.add(alias)
+        except ValueError as error:
+            errors.append(str(error))
+    if errors:
+        raise ValueError(_alias_import_errors(errors))
+
     hosts = []
-    if not aliases.split():
-        raise ValueError('Enter one or more Host aliases from your SSH config, separated by spaces.')
-    for alias in aliases.split():
-        validate_alias(alias)
-        args = ['ssh'] + (['-F',str(Path(ssh_config).expanduser())] if ssh_config else []) + ['-G',alias]
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
-        if result.returncode:
-            raise ValueError(f'Could not import SSH alias {alias!r}: ssh -G exited with status {result.returncode}. '
-                             + (result.stderr.strip() or result.stdout.strip() or 'ssh returned no diagnostic output.'))
-        config = {}
-        for line in result.stdout.splitlines():
-            key,_,value = line.partition(' '); config.setdefault(key,[]).append(value)
-        if config.get('proxyjump',['none'])[0] != 'none' or config.get('proxycommand',['none'])[0] != 'none':
-            directive = 'ProxyJump' if config.get('proxyjump', ['none'])[0] != 'none' else 'ProxyCommand'
-            raise ValueError(f'SSH alias {alias!r} uses {directive}, which this connector does not support. '
-                             'Choose a directly reachable host.')
-        hostname,user,port = config['hostname'][0],config['user'][0],int(config['port'][0])
-        keys, missing = [], []
-        for path in config.get('userknownhostsfile',['~/.ssh/known_hosts'])[0].split():
-            try: keys += trusted_keys(config.get('hostkeyalias',[hostname])[0],port,path)
-            except MissingHostKey as error: missing.append(str(error))
-        if not keys:
-            raise ValueError(f'No trusted host key for SSH alias {alias!r} ({hostname}:{port}). '
-                             'Verify this host in your host terminal first.\n' + '\n'.join(missing))
-        hosts.append({'alias':alias,'hostname':hostname,'user':user,'port':port,'host_keys':sorted(set(keys))})
-    return validate({'hosts':hosts})
+    for alias in names:
+        try:
+            hosts.append(_import_alias(alias, ssh_config))
+        except (OSError, ValueError) as error:
+            errors.append(f'SSH alias {alias!r}. {error}')
+    if errors:
+        raise ValueError(_alias_import_errors(errors))
+    return {'hosts': hosts}
+
+
+def _alias_import_errors(errors):
+    if len(errors) == 1:
+        return errors[0]
+    shown = 3  # Keep the first few failures easy to scan in a small terminal.
+    lines = [f'Could not import {len(errors)} SSH alias entries.', *('• ' + error for error in errors[:shown])]
+    if len(errors) > shown:
+        lines.append(f'{len(errors) - shown} more. Fix these entries and try again.')
+    return '\n'.join(lines)
+
+
+def _import_alias(alias, ssh_config):
+    args = ['ssh'] + (['-F',str(Path(ssh_config).expanduser())] if ssh_config else []) + ['-G',alias]
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise ValueError(f'ssh -G exited with status {result.returncode}. '
+                         + (result.stderr.strip() or result.stdout.strip() or 'ssh returned no diagnostic output.'))
+    config = {}
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition(' ')
+        config.setdefault(key, []).append(value)
+    if config.get('proxyjump', ['none'])[0] != 'none' or config.get('proxycommand', ['none'])[0] != 'none':
+        directive = 'ProxyJump' if config.get('proxyjump', ['none'])[0] != 'none' else 'ProxyCommand'
+        raise ValueError(f'Uses {directive}. Choose a directly reachable host.')
+    hostname, user, port = config['hostname'][0], config['user'][0], int(config['port'][0])
+    keys, missing = [], []
+    for path in config.get('userknownhostsfile', ['~/.ssh/known_hosts'])[0].split():
+        try:
+            keys += trusted_keys(config.get('hostkeyalias', [hostname])[0], port, path)
+        except MissingHostKey as error:
+            missing.append(str(error))
+    if not keys:
+        raise ValueError(f'No trusted host key for {hostname}:{port}. '
+                         'Verify this host in your host terminal first.\n' + '\n'.join(missing))
+    host = {'alias': alias, 'hostname': hostname, 'user': user, 'port': port, 'host_keys': sorted(set(keys))}
+    return validate({'hosts': [host]})['hosts'][0]
 
 
 def enabled(config): return bool(config.get('ssh',{}).get('hosts'))

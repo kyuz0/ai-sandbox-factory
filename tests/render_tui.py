@@ -196,20 +196,23 @@ async def capture(size):
                 if args.only and set(args.only) <= {'home', 'home-renamed'}:
                     await shot('home-renamed' if app.startup_notice else 'home')
                     return
-                if args.only and set(args.only) == {'ssh-alias-invalid'}:
+                if args.only and set(args.only) <= {'ssh-alias-invalid', 'ssh-alias-settings-invalid'}:
                     draft = preset('base', DEFAULT_SETTINGS)
-                    await app.push_screen(CreateSSHDialog(draft, 'SSH & Git'))
-                    await pilot.pause()
-                    aliases = app.screen.query_one('#ssh-aliases', Input)
-                    for ancestor in aliases.ancestors:
-                        if isinstance(ancestor, Collapsible):
-                            ancestor.collapsed = False
-                    aliases.value = 'build*'
-                    aliases.focus()
-                    aliases.scroll_visible(animate=False)
-                    await pilot.pause()
-                    app.screen.query_one('#ssh-import-aliases', Button).press()
-                    await shot('ssh-alias-invalid')
+                    for name, screen in (('ssh-alias-invalid', CreateSSHDialog(draft, 'SSH & Git')),
+                                         ('ssh-alias-settings-invalid', SSHScreen(record))):
+                        if name not in args.only:
+                            continue
+                        await app.push_screen(screen)
+                        await pilot.pause()
+                        aliases = app.screen.query_one('#ssh-aliases', Input)
+                        for ancestor in aliases.ancestors:
+                            if isinstance(ancestor, Collapsible):
+                                ancestor.collapsed = False
+                        aliases.value = '~/.ssh/config build* -ci'
+                        await pilot.pause()
+                        app.screen.query_one('#ssh-import-aliases', Button).press()
+                        await shot(name)
+                        await app.pop_screen()
                     return
                 if args.only and all(name.startswith('native-docs-') for name in args.only):
                     record['config']['primary_agent'] = 'agy'

@@ -1395,6 +1395,10 @@ and the project’s `APPEND_SYSTEM.md`.
 ## Repository SSH access
 
 Run `tests/test_ssh.py` and the TUI suite, then exercise the actual SSH companion.
+The alias import tests check that the error names each of the first few rejected
+entries, keeps OpenSSH diagnostics, and stays beside the alias field. Capture
+`ssh-alias-invalid` and `ssh-alias-settings-invalid` with `tests/render_tui.py`
+to review creation and saved settings at all three terminal sizes.
 
 ```sh
 .venv/bin/python tests/repository_ssh_container.py --dev-image YOUR_FACTORY_DEV_IMAGE

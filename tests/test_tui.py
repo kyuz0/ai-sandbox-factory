@@ -62,7 +62,7 @@ class TUITests(unittest.TestCase):
                     if isinstance(ancestor, Collapsible):
                         ancestor.collapsed = False
                 await pilot.pause()
-                aliases.value = 'build*'
+                aliases.value = '~/.ssh/config build* -ci'
                 aliases.focus()
                 aliases.scroll_visible(animate=False)
                 await pilot.pause()
@@ -71,8 +71,11 @@ class TUITests(unittest.TestCase):
                 self.assertTrue(await pilot.click('#ssh-import-aliases'))
                 await pilot.pause()
                 feedback = app.screen.query_one('#ssh-aliases-error')
-                self.assertIn("'build*'", str(feedback.render()))
-                self.assertIn('wildcard', str(feedback.render()))
+                message = str(feedback.render())
+                self.assertIn("'~/.ssh/config'", message)
+                self.assertIn("'build*' is an SSH wildcard", message)
+                self.assertIn("'-ci' starts with a hyphen", message)
+                self.assertIs(app.focused, aliases)
                 self.assertEqual(feedback.parent, aliases.parent.parent)
                 self.assertEqual(str(app.screen.query_one('#ssh-destinations-error').render()), '')
 

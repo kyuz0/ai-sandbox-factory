@@ -121,11 +121,13 @@ class SSHDestinationFields(Vertical):
     def import_aliases(self, event):
         event.stop()
         feedback = self.query_one('#ssh-aliases-error', Feedback)
+        aliases = self.query_one('#ssh-aliases', Input)
         try:
-            settings = sandbox_ssh.import_aliases(self.query_one('#ssh-aliases', Input).value, Path.home() / '.ssh/config')
+            settings = sandbox_ssh.import_aliases(aliases.value, Path.home() / '.ssh/config')
         except (OSError, ValueError) as error:
             feedback.update(str(error))
-            feedback.scroll_visible(animate=False)
+            aliases.focus(scroll_visible=False)
+            self.call_after_refresh(feedback.scroll_visible, animate=False)
             return
         text = self.format_hosts(settings)
         self.query_one('#ssh-hosts', TextArea).load_text(text)
