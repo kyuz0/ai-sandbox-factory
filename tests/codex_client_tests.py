@@ -5,12 +5,106 @@ import sys
 import tempfile
 import unittest
 import tomlkit
+import subprocess
+import queue
+import threading
+import os
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/primary'))
-from codex_client import configure
+from codex_client import configure, main
+from unittest.mock import patch
 
 
 class ClientSettings(unittest.TestCase):
+    def test_full_profile_reaches_the_cli_override_with_valid_toml(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'context.md'
+            for context in ('FIRST_PROFILE_REVISION\nEmoji: 😀\nControl: \x7f\n',
+                            'SECOND_PROFILE_REVISION\nUse the database.', ''):
+                path.write_text(context)
+                with patch('codex_client.prepare'), patch('codex_client.Path', return_value=path), \
+                        patch('codex_client.os.umask'), patch('codex_client.os.execv') as execute, \
+                        patch.object(sys, 'argv', ['codex', '--version']):
+                    main()
+                argv = execute.call_args.args[1]
+                self.assertEqual(argv[:2], ['codex', '-c'])
+                self.assertEqual(argv[-1], '--version')
+                self.assertEqual(tomlkit.parse(argv[2])['developer_instructions'], context)
+
+    def test_pinned_codex_parses_full_instructions_above_trusted_project_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home, project = root / 'home', root / 'project'
+            home.mkdir(); project.mkdir(); (project / '.codex').mkdir()
+            (project / '.codex/config.toml').write_text('developer_instructions="PROJECT_OVERRIDE"\n')
+            (home / 'config.toml').write_text('[projects.' + json.dumps(str(project)) + ']\ntrust_level="trusted"\n')
+            profile = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/profiles/developer-postgres/profile.md'
+            context = profile.read_text(encoding='utf-8') + '\nEmoji: 😀\nControl: \x7f\n'
+            path = root / 'context.md'
+            path.write_text(context)
+            with patch('codex_client.prepare'), patch('codex_client.Path', return_value=path), \
+                    patch('codex_client.os.umask'), patch('codex_client.os.execv') as execute, \
+                    patch.object(sys, 'argv', ['codex', 'app-server']):
+                main()
+            args = execute.call_args.args[1][1:]
+            process = subprocess.Popen(['/usr/local/bin/factory-agent', *args], cwd=project,
+                env={**os.environ, 'CODEX_HOME':str(home)}, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            responses = queue.Queue()
+            def read_responses():
+                for line in process.stdout:
+                    responses.put(line)
+                responses.put(None)
+            reader = threading.Thread(target=read_responses, daemon=True)
+            reader.start()
+            try:
+                for identifier, method, params in (
+                    (1, 'initialize', {'clientInfo':{'name':'fixture','version':'1'},
+                                       'capabilities':{'experimentalApi':True}}),
+                    (2, 'config/read', {'includeLayers':True, 'cwd':str(project)}),
+                ):
+                    process.stdin.write(json.dumps({'id':identifier,'method':method,'params':params}) + '\n')
+                    process.stdin.flush()
+                    while True:
+                        try:
+                            line = responses.get(timeout=60)
+                        except queue.Empty:
+                            self.fail(f'Codex did not respond to {method}; process status {process.poll()}')
+                        self.assertTrue(line, f'Codex exited before {method}: {process.poll()}')
+                        response = json.loads(line)
+                        if response.get('id') == identifier:
+                            break
+                    self.assertNotIn('error', response)
+                self.assertEqual(response['result']['config']['developer_instructions'], context)
+                self.assertEqual((project / '.codex/config.toml').read_text(),
+                                 'developer_instructions="PROJECT_OVERRIDE"\n')
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill(); process.wait()
+                reader.join(timeout=15)
+                self.assertFalse(reader.is_alive(), 'Codex response reader did not stop')
+                process.stdin.close(); process.stdout.close()
+
+    def test_real_os_argument_limit_has_an_actionable_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'context.md'
+            # Exceed the actual total argv limit, including on large-page kernels.
+            path.write_text('x' * (os.sysconf('SC_ARG_MAX') + 1))
+            driver = ("import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+                      "import codex_client; source = Path(sys.argv[2]); "
+                      "codex_client.prepare = lambda: None; codex_client.Path = lambda value: source; "
+                      "sys.argv=['codex', '--version']; codex_client.main()")
+            result = subprocess.run([sys.executable, '-c', driver,
+                str(Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/primary'), str(path)],
+                capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            for text in ('Cannot start Codex', 'operating system', 'bytes', 'context.md', 'Shorten the profile'):
+                self.assertIn(text, result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+
     def test_fresh_default_matches_native_workspace_write_preset(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

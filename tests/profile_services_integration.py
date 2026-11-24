@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from ai_sandbox_factory import creation, profile_runtime, profile_services, registry, sandbox
 from ai_sandbox_factory.creation import Creation
-from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
+from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, copy_draft, preset
 from creation_provider import ADAPTER, KEY
 
 
@@ -57,9 +57,25 @@ def exercise(agent, root, log):
         assert command('sh', '-c', 'echo changed > ' + profile_runtime.PATH + '/profile/profile.md', check=False).returncode
         db_id = sandbox.inspect(config, db)['Id']
         context_path = '/home/node/.pi/agent/AGENTS.md' if agent == 'pi' else '/run/primary-runtime/context.md'
+        if agent == 'pi':
+            sandbox.run(['podman', 'exec', '--user', '0', dev, 'sh', '-c',
+                         'printf IMAGE_COPY_MUST_NOT_OVERRIDE_SAVED_PROFILE > /opt/sandbox/profile.md'])
+            command('python3', '/usr/local/lib/sandbox-bootstrap.py')
         context = command('cat', context_path).stdout
+        instructions = (Path(config['profile']['path']) / 'profile.md').read_text().rstrip()
+        assert instructions in context, 'Full saved profile.md is missing from managed instructions'
+        if agent != 'pi':
+            wrapper = {'codex':'/usr/local/bin/codex', 'claude':'/usr/local/bin/claude', 'agy':'/usr/local/bin/agy'}[agent]
+            command(wrapper, '--factory-prepare')
+            if agent == 'codex':
+                assert 'codex' in command(wrapper, '--version').stdout.lower()
+            if agent != 'codex':
+                rules = '/home/node/.claude/CLAUDE.md' if agent == 'claude' else '/home/node/.gemini/AGENTS.md'
+                assert instructions in command('cat', rules).stdout
         assert profile_runtime.PATH in context and 'database.profile.internal' in context, context
-        assert ('bash_escalate' in context) == (agent == 'pi'), context
+        generated = profile_services.guidance(config).rstrip()
+        assert generated in context, 'Generated service guidance missing from client context'
+        assert ('bash_escalate' in generated) == (agent == 'pi'), generated
         from ai_sandbox_factory.profile_replacement import runtime_names
         for resource in runtime_names(config) - {dev}:
             info = sandbox.inspect(config, resource)
@@ -68,6 +84,26 @@ def exercise(agent, root, log):
         credentials = (state / 'profile-services/client/connections.json').read_bytes()
         assert sql('SELECT 42') == '42'
         sql('CREATE TABLE fixture (value text); INSERT INTO fixture VALUES (\'preserved\')')
+        if agent == 'pi':
+            copied = copy_draft({'name':name, 'config':config}, service.state)
+            copied.update(name=name + '-copy', open_editor=False, _provider_keys={'fixture':KEY},
+                          model_providers={row['name']:row.get('settings', {}) for row in config['model_providers']})
+            try:
+                service.create(copied, None, log, cancellation=Creation())
+                copied_config = service.config(copied['name'])
+                copied_dev = sandbox.names(copied_config)[0]
+                check = sandbox.run(['podman','exec',copied_dev,'ssh','-F','/run/profile-services/config',
+                    'database.profile.internal', "psql -U app -d app -Atc \"SELECT count(*) FROM pg_tables WHERE tablename='fixture'\""],
+                    capture=True)
+                assert check.stdout.strip() == '0', 'Create from existing copied database contents'
+                assert sql('SELECT value FROM fixture') == 'preserved'
+                assert copied_config['profile']['digest'] == config['profile']['digest']
+                assert (service.state / copied['name'] / 'profile-services/client/connections.json').read_bytes() != credentials
+                print('PASS Create from existing keeps the saved profile, initializes empty database data and leaves the source unchanged', flush=True)
+            finally:
+                if (service.state / copied['name'] / 'config.json').exists():
+                    service.run(['delete', copied['name']], log)
+
         settings = command('ssh', '-G', '-F', '/run/profile-services/config', 'database.profile.internal').stdout
         for value in ('batchmode yes', 'stricthostkeychecking true', 'identityagent none'):
             assert value in settings, settings

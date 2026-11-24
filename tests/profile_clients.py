@@ -20,6 +20,10 @@ class Model(BaseHTTPRequestHandler):
                         for row in messages)
         if not reviewing and request.get('tools'):
             assert '/opt/sandbox/base-profile' in content, 'Applied recipe instructions missing'
+            system = '\n'.join(row['content'] if isinstance(row.get('content'), str) else
+                '\n'.join(part.get('text', '') for part in row.get('content', []))
+                for row in messages if row['role'] in ('system', 'developer'))
+            assert Path('/opt/sandbox/base-profile/profile/profile.md').read_text().rstrip() in system, 'Full profile instructions missing from model request'
             assert 'database.profile.internal' in content and 'bash_escalate' in content
         delta = {'role': 'assistant', 'content': 'PROFILE_CLIENT_FINISHED'}
         finish = 'stop'

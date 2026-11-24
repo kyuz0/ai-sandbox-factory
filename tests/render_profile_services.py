@@ -9,7 +9,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Input, Select, Static
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.sandbox_tui import (AppliedProfile, Cockpit, ConfirmCreationConflicts, DEFAULT_SETTINGS,
-                                          NewSandbox, SettingsForm, preset)
+                                          NewSandbox, SettingsForm, CreateFromSandbox, copy_draft, preset)
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
@@ -56,6 +56,13 @@ async def capture(output, size):
                 await shot('profile-review-summary-' + agent)
                 form.query_one('#review-profile-services').scroll_visible(top=True, animate=False)
                 await shot('profile-review-services-' + agent)
+                if agent == 'pi':
+                    title = form.query_one('#skills-section CollapsibleTitle')
+                    title.focus()
+                    title.scroll_visible(top=True, animate=False)
+                    await shot('profile-features-collapsed')
+                    await pilot.press('enter')
+                    await shot('profile-features-expanded')
                 await app.pop_screen()
             record = {'name': 'example', 'config': {'profile': sandbox.load_profile('developer-postgres')}}
             (Path(tmp) / 'profile-runtime').mkdir(exist_ok=True)
@@ -68,6 +75,22 @@ async def capture(output, size):
                     await app.workers.wait_for_complete()
                     await shot('profile-information-error' if failing else 'profile-information')
                     await app.pop_screen()
+            for agent in ('pi', 'codex'):
+                config = {'profile':sandbox.load_profile('developer-postgres'), 'primary_agent':agent,
+                          'workspace':'/home/example/projects/application', 'engine':'podman'}
+                record = {'name':'example', 'dev':'running', 'config':config}
+                await app.push_screen(CreateFromSandbox([record]))
+                await shot('profile-copy-' + agent)
+                await app.pop_screen()
+                source = Path(tmp) / 'example'
+                source.mkdir(exist_ok=True)
+                (source / 'allowlist.txt').write_text('')
+                await app.push_screen(NewSandbox(copy_draft(record, Path(tmp))))
+                await shot('profile-copy-new-' + agent)
+                await app.pop_screen()
+                app.perform('rebuild', record=record)
+                await shot('profile-rebuild-' + agent)
+                await app.pop_screen()
             await app.push_screen(ConfirmCreationConflicts('example', 'networks', [('example-profile', 'synthetic-id')],
                 'The listed private networks will be deleted. Other networks stay in place.'))
             await shot('profile-network-conflict')

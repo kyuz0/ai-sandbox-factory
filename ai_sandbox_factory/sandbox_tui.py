@@ -42,7 +42,7 @@ from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL
 from .repository_ui import SSHDestinationFields
 from .connector_fields import ConnectorFields, connector_summary
 from . import hosted_models, inference, provider_credentials
-from .tui_widgets import EntryDialog, Checkbox, Feedback
+from .tui_widgets import WrappingCollapsible, Bullet, EntryDialog, Checkbox, Feedback
 from .aws_ui import AWSProfileChoices, AWSProfilePicker
 from .document_search_ui import CUSTOM, DocumentSearchDialog, DocumentSearchHelp, search_description, search_summary
 from . import embedding_models
@@ -1614,19 +1614,19 @@ class AppliedProfile(Screen):
                 if profile_runtime.applied(self.state):
                     yield Static('Read-only build recipes: ' + profile_runtime.PATH, markup=False)
                 else:
-                    yield Static('Rebuild this sandbox to make its applied recipes available inside the workspace.', markup=False)
+                    yield Static('Rebuild this sandbox to make its applied recipes available inside the coding-agent container.', markup=False)
                 yield Static('The profile and base-image recipes are separate from your project files.', classes='setting-help')
             if not profile.get('services'):
-                yield Static('This profile has no additional application containers.')
+                yield Static('This profile has no additional profile services.')
             else:
-                yield Feedback('Checking profile containers…', id='profile-service-status', markup=False)
+                yield Feedback('Checking profile services…', id='profile-service-status', markup=False)
                 for name, spec in profile['services'].items():
                     with Vertical(classes='setting'):
                         yield Label(name + ' · Checking…', id='profile-service-' + name)
                         yield Static(spec['description'], markup=False)
                         yield Static('ssh -F ' + profile_services.CLIENT + '/config ' + profile_services.hostname(name), markup=False)
                 yield Static('Connection settings and application credentials: ' + profile_services.CLIENT + '/connections.json', markup=False)
-                yield Static('Application data survives Stop and workspace rebuilds. Delete sandbox removes it.', classes='setting-help')
+                yield Static(profile_services.data_guidance(), classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-information-back')
         yield Footer()
@@ -1642,7 +1642,7 @@ class AppliedProfile(Screen):
             rows = await asyncio.to_thread(profile_services.status, self.record['config'])
             text = ''
         except (OSError, ValueError, subprocess.SubprocessError) as error:
-            text = 'Could not read profile container status: ' + safe_text(error) + '. Check the container engine and reopen this page.'
+            text = 'Could not read profile service status: ' + safe_text(error) + '. Check the container engine and reopen this page.'
         if self.is_attached:
             message = self.query_one('#profile-service-status', Static)
             message.update(text)
@@ -2705,11 +2705,15 @@ class CreateFromSandbox(EntryDialog):
         with Vertical(id='copy-sandbox-dialog'):
             yield Label('Create from existing sandbox', classes='title')
             with VerticalScroll(id='copy-sandbox-fields'):
-                yield Label('Copy settings from')
+                yield Label('Copy settings from', id='copy-source-label')
                 yield Select([(name, name) for name in self.records], value=self.selected,
                              allow_blank=False, id='copy-source')
                 yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
                              'Choose a new name and workspace, then review.', classes='section-intro')
+                yield Static('Application data, such as databases, is not copied. Profile services initialize new data.',
+                             classes='setting-help', id='copy-data-help')
+                yield Static('Project files are not copied: choosing the same workspace shares its files.',
+                             classes='setting-help section-intro', id='copy-project-help')
                 yield Checkbox('Include search API keys', value=False, id='copy-keys')
                 yield Static('', id='copy-keys-help', markup=False)
                 yield Static('', id='copy-sign-in-help', classes='setting-help')
@@ -2720,10 +2724,12 @@ class CreateFromSandbox(EntryDialog):
 
     def on_mount(self):
         self.source_changed()
+        self.call_after_refresh(self.query_one('#copy-sandbox-fields').scroll_home, animate=False)
 
     @on(Select.Changed, '#copy-source')
     def source_changed(self):
         record = self.records[self.query_one('#copy-source', Select).value]
+        self.query_one('#copy-data-help').display = bool(profile_services.selected(record.get('config', {})))
         checkbox = self.query_one('#copy-keys', Checkbox)
         checkbox.value = False
         native = coding_agent(record.get('config', {})) != 'pi'
@@ -2733,8 +2739,8 @@ class CreateFromSandbox(EntryDialog):
         help_text.display = checkbox.disabled and not native
         help_text.update('You can continue without search API keys. Start the source sandbox if you want to copy them.')
         self.query_one('#copy-sign-in-help', Static).update(
-            'Choose a sign-in for the new sandbox. SSH keys and saved chats stay with the original.'
-            if native else 'Sign in to models and advisors again; SSH keys, browser sessions and chat history are not copied.')
+            'Choose a sign-in on Review sandbox. SSH keys, browser sessions and saved chats are not copied.'
+            if native else 'Sign in to models and advisors again. SSH keys, browser sessions and saved chats are not copied.')
 
     def action_cancel(self):
         self.dismiss(None)
@@ -2786,7 +2792,7 @@ class NewSandbox(Screen):
         self.profile_paths = {name: row['path'] for name, row in registry.installed('profile').items()}
         if self.copied_draft:
             source = settings['reused_profile']
-            profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (copied)'
+            profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (saved profile)'
             self.profile_paths[settings['profile']] = source['path']
         self.profiles = profiles
         yield Header()
@@ -3072,13 +3078,13 @@ class SettingsForm(Screen):
                     yield project
             if review and self.profile.get('services'):
                 with Vertical(classes='setting', id='review-profile-services'):
-                    yield Label('Profile containers')
+                    yield Label('Profile services')
                     for name, spec in self.profile['services'].items():
-                        yield Static('• ' + name + ': ' + spec['description'], markup=False)
-                    yield Static('They start with this sandbox. Application data survives Stop and workspace rebuilds; Delete sandbox removes it.',
+                        yield Bullet(name + ': ' + spec['description'])
+                    yield Static('Profile services start with this sandbox.\n' + profile_services.data_guidance(),
                                  classes='setting-help', markup=False)
             if value.get('_copy_source_agent') is not None:
-                yield Static(f'Shared settings are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
+                yield Static(f'Settings that apply to every agent are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
                              classes='setting-help', id='copied-settings')
             for action, category in self.categories.items():
                 if self.native and self.editing and action != self.setting:
@@ -3428,7 +3434,7 @@ class SettingsForm(Screen):
                 self.query_one('#document-search-summary', Static).update('Search mode: ' + mode)
 
     def compose_agent_tools(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+        with WrappingCollapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
@@ -5511,13 +5517,17 @@ class Cockpit(App):
             migration = [] if native else settings_effects.editor_migration(config)
             action_label = 'Rebuild sandbox' if native else 'Update sources and recreate'
             if native:
-                question = f'Rebuild {name} with the current workspace and coding agent software?'
+                question = f'Rebuild {name} using its saved profile and current Factory software?'
             else:
                 args += ['--profile', source if source in profile_titles() else profile['path']]
-                question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
+                profile_source = 'the installed profile' if source in profile_titles() else 'its saved profile'
+                question = f'Update {name} to FrostPi?' if migration else f'Rebuild {name} using {profile_source} and current Factory software?'
             notes = ['Workspace files, private home and saved chats are kept.']
             if record.get('dev') == 'running':
-                notes.insert(0, 'Active processes stop after the build.')
+                notes[0:0] = ['Work in the coding-agent container stops after the build.',
+                              'This includes active tasks, terminals and browser processes.']
+            if profile.get('services'):
+                notes.append('Profile services and their application data are kept.')
             self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),
                 lambda yes: self.start_rebuild(name, args) if yes else None)
         elif action == 'start':

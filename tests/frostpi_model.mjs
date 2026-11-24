@@ -176,8 +176,11 @@ http.createServer((request, response) => {
         delta = {content: JSON.stringify({outcome:'allow',risk_level:'medium',user_authorization:'high',rationale:'Disposable profile regression.'})};
       } else {
         const results = messages.filter(message => message.role === 'tool');
-        const system = JSON.stringify(messages.filter(message => message.role === 'system'));
-        if (!system.includes('/opt/sandbox/base-profile') || !system.includes('database.profile.internal') || !system.includes('bash_escalate')) {
+        const system = messages.filter(message => message.role === 'system' || message.role === 'developer')
+          .map(message => typeof message.content === 'string' ? message.content :
+            (message.content ?? []).map(part => part.text ?? '').join('\n')).join('\n');
+        const profile = readFileSync('/opt/sandbox/base-profile/profile/profile.md', 'utf8').trimEnd();
+        if (!system.includes(profile) || !system.includes('/opt/sandbox/base-profile') || !system.includes('database.profile.internal') || !system.includes('bash_escalate')) {
           delta = {content:'FACTORY PROFILE SERVICES FAILED missing managed instructions'};
         } else if (results.length === 0) {
           delta = choice('read', {path:'/opt/sandbox/base-profile/profile/profile.json'});

@@ -78,7 +78,7 @@ def apply(original, updated, state, *, text=None):
         for name, info in {**prior, **services}.items():
             if info and not info['State']['Running']:
                 sandbox.run([engine, 'stop', name])
-        print('The replacement failed. Previous workspace containers, settings and profile services were restored.', flush=True)
+        print('The rebuild failed. The previous coding-agent container, Factory helper containers and settings were restored; profile containers and their data were kept.', flush=True)
         raise
     for name, container_id in moved.items():
         sandbox.run([engine, 'rm', container_id])

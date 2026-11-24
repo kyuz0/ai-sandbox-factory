@@ -21,6 +21,34 @@ class PrimaryAgentIsolation(unittest.TestCase):
         self.config = {'name': 'test', 'engine': 'podman', 'uid': 1000, 'gid': 1000,
                        'primary_agent': 'claude', 'workspace': workspace.name}
 
+    def test_full_profile_instructions_reach_each_native_client_context(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / 'saved-profile'
+            profile.mkdir()
+            instructions = '# Project database tools\nFULL_PROFILE_INSTRUCTIONS\nUse the database for this project.\n'
+            (profile / 'profile.md').write_text(instructions)
+            project = Path(self.config['workspace']) / 'AGENTS.md'
+            project.write_text('USER_PROJECT_INSTRUCTIONS\n')
+            for agent in ('codex', 'claude', 'agy'):
+                with self.subTest(agent=agent):
+                    state = root / agent
+                    config = {**self.config, 'primary_agent':agent,
+                              'profile':{'name':'fixture', 'path':str(profile)}}
+                    primary_agents.write_context(config, state)
+                    for target in ('primary-agent/context.md', 'primary-runtime/context.md'):
+                        context = (state / target).read_text()
+                        self.assertIn(instructions.rstrip(), context)
+                        self.assertEqual(context.count('FULL_PROFILE_INSTRUCTIONS'), 1)
+            self.assertEqual(project.read_text(), 'USER_PROJECT_INSTRUCTIONS\n')
+
+    def test_unreadable_profile_instructions_name_the_profile_and_file(self):
+        with TemporaryDirectory() as temporary:
+            profile = Path(temporary) / 'missing-profile'
+            config = {**self.config, 'profile':{'name':'fixture', 'path':str(profile)}}
+            with self.assertRaisesRegex(ValueError, 'fixture.*profile.md.*Restore the saved profile'):
+                primary_agents.guidance(config, Path(temporary))
+
     def test_saved_codex_ca_and_relay_do_not_report_ready_before_proxy_listens(self):
         with TemporaryDirectory() as temp, patch.object(primary_agents, 'volume', return_value=True), \
                 patch.object(sandbox, 'inspect', return_value=None), \

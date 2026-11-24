@@ -1931,7 +1931,7 @@ def sandbox_command(args, state, parser):
         building = native or args.profile or args.subagents is not None or args.browser is not None
         replacing_profile_workspace = bool(profile_services.selected(config))
         labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + (
-            ['Replace workspace'] if replacing_profile_workspace else
+            ['Replace coding-agent container'] if replacing_profile_workspace else
             ['Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers'])
         progress = Progress(labels)
         if args.subagents is not None:
@@ -1958,8 +1958,8 @@ def sandbox_command(args, state, parser):
                 return
             if profile_services.selected(original) or profile_services.selected(config):
                 from . import profile_replacement
-                with progress.stage('Replace workspace'):
-                    print('Keeping profile applications and data while replacing the workspace.', flush=True)
+                with progress.stage('Replace coding-agent container'):
+                    print('Keeping profile containers and data while replacing the coding-agent container.', flush=True)
                     profile_replacement.apply(original, config, state)
                 return
             with progress.stage('Save sandbox configuration'):

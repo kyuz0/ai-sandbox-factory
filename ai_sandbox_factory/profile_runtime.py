@@ -62,7 +62,7 @@ def recording(config, state):
             if (sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker') != native_recipe_digest
                     or any(file.read_bytes() != (sandbox.ROOT / 'containers/primary' / file.name).read_bytes()
                            for file in client.iterdir())):
-                raise ValueError('The native workspace sources changed while building. Retry the build with unchanged sources.')
+                raise ValueError('The coding-agent container sources changed while building. Retry the build with unchanged sources.')
         image = sandbox.image_names(config)[0]
         result = sandbox.run([config['engine'], 'image', 'inspect', image], capture=True)
         try:
@@ -151,9 +151,12 @@ def guidance(state):
     value = applied(state)
     if not value:
         return ''
-    return (f'\n## Applied profile\n\nThis workspace was built from profile {value["name"]!r}, '
-            f'revision {value["profile_digest"]}. Read its applied Dockerfile and base-image recipes at {PATH}. '
-            f'The selected package is in profile/ and its base inputs are in base/. '
-            'That directory is read-only. build.json identifies the workspace image and recipes actually used. '
-            'The profile describes the image build; packages installed later and current Factory settings may differ. '
-            'Project instructions in /workspace remain separate.\n')
+    extra = ('workspace/ contains the coding-agent container recipe; it is unrelated to /workspace. '
+             if value.get('agent', 'pi') != 'pi' else '')
+    return (f'\n## Applied profile\n\nYour coding-agent container was built from profile {value["name"]!r}, '
+            f'revision {value["profile_digest"]}. Its read-only build recipes are at {PATH}. '
+            "This directory holds this sandbox's own profile, not just the built-in base profile. "
+            'profile/ contains the profile files and base/ contains Factory base-image inputs. '
+            + extra + 'build.json identifies the image and recipes actually used. '
+            'These files describe the image build; packages installed later and current Factory settings may differ. '
+            'They are separate from the project folder and its instructions at /workspace.\n')

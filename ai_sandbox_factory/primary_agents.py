@@ -116,10 +116,10 @@ def guidance(config, state):
     lines = access_guidance(core.network_mode(config)) + [
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
-        'Run shell commands and access files through the native tools, which run inside this workspace.',
+        'Run shell commands and access files through the native tools, which run inside this coding-agent container.',
         'Follow approval requests from the native client. For a change to mounted folders or connector access, '
         'ask the user to review Settings → Folders or Settings → Connectors in Factory.',
-        'The workspace has the following mounts:',
+        'This coding-agent container has the following mounts:',
     ]
     lines.extend(f'- {json.dumps(path)} ({"read-only" if read_only else "read and write"})'
                  for path, read_only in folders.roots(config))
@@ -154,6 +154,16 @@ def guidance(config, state):
     profile_context = profile_runtime.guidance(state) + profile_services.guidance(config)
     if profile_context:
         lines.append(profile_context)
+    profile = config.get('profile') or {}
+    if isinstance(profile, dict) and profile.get('path'):
+        path = Path(profile['path']) / 'profile.md'
+        try:
+            instructions = path.read_text(encoding='utf-8').rstrip()
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f'Cannot read instructions for profile {profile["name"]!r} from {path}: {error}. '
+                             'Restore the saved profile files or create a sandbox from the profile again.') from error
+        if instructions:
+            lines.extend(['', '## Profile instructions', '', instructions])
     selected_prompt = prompt_library.selection(state)
     if selected_prompt:
         lines.extend(['', selected_prompt['text']])

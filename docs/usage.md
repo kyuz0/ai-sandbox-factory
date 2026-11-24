@@ -54,14 +54,16 @@ it yourself.
 
 ## Copy a setup to a new sandbox
 
-Choose **Create from existing…** beside **New sandbox**. Pick the sandbox to
-copy, then choose the coding agent and a new name. The workspace is filled in
+Choose **Create from existing…** beside **New sandbox**. Pick the sandbox whose settings to
+reuse, then choose the coding agent and a new name. The workspace is filled in
 from the source sandbox. Keep it or choose another folder. Review the profile, model providers,
 network rules, features, and advisors before creating it. Factory includes the
 source’s added skills. Clear any you don’t need under **Skills**.
 
 You can choose Pi, Codex, Claude Code or Antigravity. When switching from Pi
-to another agent, the new sandbox uses that agent’s sign-in flow and the base
+to another agent, the new sandbox uses that agent’s sign-in flow. Choose a profile
+that supports the selected coding agent. If the source profile is incompatible,
+Factory selects Default Developer Sandbox; you can choose another compatible
 profile. Shared choices such as folders, network rules, memory and added skills
 are carried over, along with Git identity, browser and editor choices, and a custom
 system prompt. Agent-specific settings use the selected agent’s defaults.
@@ -71,6 +73,11 @@ Select **Include search API keys** if you want to copy those keys from a running
 source. The new sandbox has its own package copies. It starts with fresh chats,
 browser sessions, model and advisor logins, and SSH credentials. Select any
 environment file or Pi configuration folder you want to use again.
+
+Application data, such as databases, is not copied. Each profile service
+initializes new data; Developer + PostgreSQL starts with an empty database.
+Project files are not copied. Choosing the same workspace folder lets both
+sandboxes edit the same host files.
 
 ## Stop, inspect, or delete a sandbox
 

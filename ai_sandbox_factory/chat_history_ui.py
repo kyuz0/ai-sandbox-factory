@@ -261,8 +261,8 @@ class DeleteSandbox(ModalScreen[bool]):
                 yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
                              'Original sign-ins and keys outside this sandbox are kept.', classes='chat-note', markup=False)
             if self.services:
-                yield Static('Profile application data will be permanently deleted: ' + ', '.join(self.services)
-                             + '. Cancel to export database data before deleting. Chat history export does not include application data.', classes='chat-note', markup=False)
+                yield Static('Application data for these profile services will be permanently deleted: ' + ', '.join(self.services)
+                             + '. Cancel and ask your coding agent to export any needed application data before deleting. Chat history export does not include application data.', classes='chat-note', markup=False)
             yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')

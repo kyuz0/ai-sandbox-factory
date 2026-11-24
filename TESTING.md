@@ -1630,7 +1630,7 @@ For a live test, use an isolated role, a named empty log group and a stream. Gra
 ## Profile recipes and application containers
 
 ```sh
-PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services test_profile_replacement test_profile_services_ui test_creation_conflicts_ui
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services test_profile_replacement test_profile_instructions test_profile_services_ui test_creation_conflicts_ui
 PYTHONPATH=.:tests .venv/bin/python tests/profile_services_integration.py
 ```
 
@@ -1657,3 +1657,11 @@ Run `tests/frostpi_editor.py --image WORKSPACE_IMAGE --code-server CODE_SERVER_D
 synthetic model reads the applied profile, tries inner Bash SSH and then uses
 the existing reviewed `bash_escalate` path to query PostgreSQL. The regular
 profile integration fixture runs the corresponding actual Pi CLI check.
+
+The profile-instruction checks cover the full saved `profile.md`, changes and
+removal across launches, retained global user rules and unchanged project
+instructions. The Codex image suite checks the `developer_instructions` launcher
+override, its precedence over trusted project settings through the pinned native
+app-server, Unicode and control characters, and actionable diagnostics for the OS
+argument limit. The real profile fixture checks managed instructions inside all
+four coding-agent containers and new database data in Create from existing.

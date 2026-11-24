@@ -109,7 +109,8 @@ class ProfileServicesTests(unittest.TestCase):
             self.assertNotIn('ProxyCommand', text)
         for agent in ('codex', 'claude', 'agy'):
             text = services.guidance(dict(self.config, primary_agent=agent))
-            self.assertIn('directly in Bash', text)
+            self.assertIn('Connect directly to the profile host', text)
+            self.assertIn('Follow any shell approval request', text)
             self.assertNotIn('bash_escalate', text)
 
     def test_service_health_waits_for_initialization(self):
@@ -133,7 +134,7 @@ class ProfileServicesTests(unittest.TestCase):
         services.validate_update(original, self.config)
         updated = dict(self.config, profile=sandbox.load_profile('base'))
         with patch.object(sandbox, 'inspect', return_value={'Id': 'running-db'}):
-            with self.assertRaisesRegex(ValueError, 'application containers.*preserved'):
+            with self.assertRaisesRegex(ValueError, 'profile services.*unchanged'):
                 services.validate_update(original, updated)
 
     def test_bad_profile_modes_do_not_affect_ordinary_profiles(self):
@@ -236,7 +237,7 @@ class AppliedRecipeTests(unittest.TestCase):
             for changed in (worker/'Dockerfile',client/'worker-tools.mjs'):
                 with self.subTest(changed=changed.name), patch.object(sandbox,'ROOT',source):
                     state = root / changed.name
-                    with self.assertRaisesRegex(ValueError,'native workspace sources changed'):
+                    with self.assertRaisesRegex(ValueError,'coding-agent container sources changed'):
                         with profile_runtime.recording(config,state):
                             changed.write_text('changed while building\n')
                     self.assertFalse(list((state/'applied-profiles').iterdir()))

@@ -119,10 +119,10 @@ def validate_update(original, updated):
                     Path(config['profile']['path']) / spec['build']['context'])
         return result
     if contract(original) != contract(updated):
-        raise ValueError('This profile changes the sandbox’s application containers. '
-                         'The existing services and their data were preserved. '
+        raise ValueError('This profile changes the sandbox’s profile services. '
+                         'Nothing was stopped; the existing services and their data are unchanged. '
                          'Create a separate sandbox with the new profile; export/import application data if needed. '
-                         'Workspace-only rebuilds keep the existing services.')
+                         'Rebuilds that leave profile services unchanged keep their containers and data.')
 
 
 def build(config):
@@ -362,7 +362,7 @@ def ready(config, state):
         check = _run(config, 'exec', dev, 'ssh', '-F', CLIENT + '/config', '-T', hostname(name), 'true',
                      capture=True, check=False, stderr=subprocess.PIPE)
         if check.returncode:
-            raise ValueError(f'Could not authenticate SSH from the workspace to profile service {name!r} '
+            raise ValueError(f'Could not authenticate SSH from the coding-agent container to profile service {name!r} '
                              f'(exit {check.returncode}): {(check.stderr or check.stdout).strip()}. '
                              'Inspect the service SSH setup and retry Start.')
 
@@ -396,9 +396,9 @@ def delete(config):
 def guidance(config):
     if not selected(config):
         return ''
-    lines = ['\n## Profile containers', '',
-             'These application containers share a private network with this workspace. '
-             'You have administrative SSH access inside them. External requests follow Factory proxy rules. '
+    lines = ['\n## Profile services', '',
+             'Each profile service runs in its own container on a private network shared with your coding-agent container. '
+             'You have administrative SSH access inside each one. External requests follow Factory proxy rules. '
              f'Read {CLIENT}/connections.json for application connection settings and credentials. '
              'These credentials are deliberately available to you; they are separate from Factory connector credentials.']
     for name, spec in selected(config).items():
@@ -409,15 +409,25 @@ def guidance(config):
     current = options(config.get('options'))
     if primary_workspace.agent(config) == 'pi' and current['inner_sandbox']:
         if current['approval'] == 'off':
-            lines.append('The current Pi inner shell blocks direct TCP and approvals are off. '
-                         'The user can run the SSH command in the workspace terminal, or enable approvals to use bash_escalate.')
+            lines.append('The current Pi inner sandbox blocks direct TCP and approvals are off. '
+                         'The user can run the SSH command in a sandbox terminal, or enable approvals to use bash_escalate.')
         else:
-            lines.append('With the current Pi inner shell enabled, use bash_escalate for direct SSH, raw TCP clients and ping. '
+            lines.append('With the current Pi inner sandbox enabled, use bash_escalate for direct SSH, raw TCP clients and ping. '
                          'This uses the existing approval mode and does not bypass an approval denial.')
     else:
-        lines.append('Run the SSH command directly in Bash. Profile hosts do not use the external SSH connector.')
-    lines.append('Changes inside a running container do not update its profile recipe.')
+        lines.append('Connect directly to the profile host using the shell tool. Follow any shell approval request. Profile hosts do not use the external SSH connector.')
+    lines.append('Changes inside a running profile container do not change its profile recipe.')
+    lines.append('Application data is kept when the sandbox is stopped, started or rebuilt. '
+                 'Create from existing… does not copy application data; each new service initializes its own data. '
+                 'Delete sandbox permanently deletes this sandbox’s application data.')
     return '\n'.join(lines) + '\n'
+
+
+def data_guidance():
+    return ('• Stop, start and rebuild keep application data.\n'
+            '• Create from existing… initializes new application data.\n'
+            '• Existing application data is not copied.\n'
+            '• Delete sandbox permanently deletes application data.')
 
 
 def status(config):

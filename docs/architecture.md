@@ -23,13 +23,18 @@ The editor supervisor continuously collects exited helper processes.
 
 ## Restricted networking
 
-In **Restricted** mode, programs inside the development container have no
-direct network connection. They send HTTP and HTTPS requests through the proxy
+In **Restricted** mode, programs inside the coding-agent container have no
+direct external network connection. They send HTTP and HTTPS requests through the proxy
 Factory puts in their environment. The proxy relays those requests to a separate
 gateway container, where Squid checks the destination hostname and port.
 
-The development container runs with `--network=none`. It reaches the gateway
-through a Unix socket in a shared volume that it mounts read-only.
+Without profile services, the coding-agent container runs with `--network=none`.
+With profile services, it joins a private network shared with those profile
+containers; they can communicate directly. Factory helper containers stay off
+that network. Both layouts reach the external gateway through a Unix socket in
+a shared volume mounted read-only. Profile containers use a proxy on their
+private network that relays through a separate profile gateway applying the
+same approved destinations. That gateway has no Factory credential connections.
 
 For host-local models, the rootless Podman gateway uses pasta's host-loopback mapping. `local-model.internal:8000` reaches the host model server at port 8000. The discovery extension reads that server’s metadata and updates Pi’s model catalogue.
 

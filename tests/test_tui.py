@@ -1297,7 +1297,7 @@ class TUITests(unittest.TestCase):
             form.query_one('#apply', Button).press()
             await pilot.pause()
             self.assertIsInstance(app.screen, Confirm)
-            self.assertIn('Recreates the sandbox', app.screen.message)
+            self.assertIn('Replaces the coding-agent container', app.screen.message)
             app.screen.query_one('#yes', Button).press()
             await self.ready(app, pilot)
             self.assertEqual(service.calls[0][0:2], ['update', 'alpha'])

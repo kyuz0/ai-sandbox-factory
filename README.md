@@ -8,8 +8,9 @@ You can also use the selected agent’s CLI. FrostPi and Pi CLI use the same Pi 
 
 ![AI Sandbox Factory dashboard](docs/sandboxes.png)
 
-Profiles can also provide application containers. **Developer + PostgreSQL** adds a
-private database with direct workspace SSH access and persistent data. The agent
+Profiles can also add profile services, each in its own container.
+**Developer + PostgreSQL** adds a private database that the coding agent can
+administer over SSH. Its data is kept until you delete the sandbox. The agent
 can read its applied profile recipes separately from project files. See
 [profiles](docs/profiles.md#application-containers).
 
@@ -35,7 +36,7 @@ continues to forward to the new application. [Migration details](docs/usage.md#u
 
 ## Create a sandbox
 
-1. Choose **New sandbox** and select a **Coding agent**. For Pi, also choose a **Profile**. Pick your **Workspace**, check the **Sandbox name**, then choose **Continue**.
+1. Choose **New sandbox** and select a **Coding agent**. Choose a compatible **Profile**. Pick your **Workspace**, check the **Sandbox name**, then choose **Continue**.
 2. On **Review sandbox**, set up the agent you chose.
    - **Pi** — Open **Model Providers**. For a local model, enable **Connect to models on this computer** and enter the server port, usually `8000`. If a model is missing, check that the server is running and refresh the model list. For OpenRouter, Together, Azure/Foundry or Bedrock, choose **Connect hosted provider…**. Hosted credentials stay in a separate container. [Local models](docs/usage.md#local-models) · [Hosted models](docs/hosted-models.md)
    - **Codex, Claude Code or Antigravity** — **Copy sign-in from this computer** is selected by default where supported. Choose **Sign in inside the sandbox** if you want a fresh login. [Agent sign-in](docs/usage.md#choose-a-coding-agent)
@@ -53,8 +54,9 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 
 - **Files:** `/workspace` is your project folder. Edits change the host files.
   Extra folders are read-only until you give them write access. [Folder setup](docs/usage.md#workspace-and-additional-folders)
-- **Network:** In **Restricted** mode, the sandbox has no direct network
-  connection. HTTP and HTTPS go through a gateway that checks the destination
+- **Network:** In **Restricted** mode, the sandbox has no direct external network
+  connection. Profile services can communicate on their private network. HTTP
+  and HTTPS go through a gateway that checks the destination
   hostname and port. Approved shell commands still follow those network rules.
   **Unrestricted** gives the container ordinary network access. [Isolation and approvals](docs/architecture.md#restricted-networking)
 - **Allowed destinations:** Open **Settings → Network and Web Search → Network**. Then
@@ -85,16 +87,20 @@ agent. [Copy a chat between agents](docs/usage.md#continue-a-chat-with-another-a
 
 *FrostPi updates a hiking route planner and runs its tests in the sandbox.*
 
-Update Factory with **Upgrade now** or `pipx upgrade ai-sandbox-factory`.
-To update a sandbox, use **Actions… → Update sources and recreate…**. This
-builds the replacement first, then restarts the sandbox with its workspace
-and saved chats intact. **Alerts** offers **Update to FrostPi…** for older
+Upgrade Factory with **Upgrade now** or `pipx upgrade ai-sandbox-factory`.
+For Pi, use **Actions… → Update sources and recreate…** to rebuild using the
+installed profile (or its saved profile if no longer installed) and current
+Factory software. Codex, Claude Code and Antigravity use **Actions… → Rebuild sandbox…**. Factory builds the new image
+first, then replaces the coding-agent container. Project files, saved chats and
+application data are kept. Running profile services keep running; a stopped
+sandbox stays stopped after rebuilding. **Alerts** offers **Update to FrostPi…**
+for older
 Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes) · [Archived Pendant branch](https://github.com/kyuz0/ai-sandbox-factory/tree/pendant)
 
 ## Profiles and providers
 
-- A **Profile** can add tools, skills, and instructions for Pi. It can also
-  provide a Dockerfile that adds software and dependencies to Factory’s base
+- A **Profile** can add tools, skills, and instructions for compatible coding
+  agents. It can also provide a Dockerfile that adds software and dependencies to Factory’s base
   image. [Profiles](docs/profiles.md)
 - A **Provider** connects Pi to a model service. [Providers](docs/providers.md)
 
