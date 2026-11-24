@@ -159,6 +159,9 @@ class PrimaryAgentIsolation(unittest.TestCase):
                     self.assertIs(saved['options'][key], enabled)
                     runtime = json.loads((state / 'primary-runtime/settings.json').read_text())
                     self.assertIs(runtime[key], enabled)
+                    guide = (state / 'primary-runtime/context.md').read_text()
+                    expected = 'enabled' if enabled else 'turned off'
+                    self.assertIn(f'Factory has {expected} built-in Web Search', guide)
                     for other in ('codex', 'claude', 'agy'):
                         if other != provider:
                             self.assertNotIn(other + '_web_search', runtime)
@@ -182,6 +185,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
                     sandbox.apply_settings(original, state, {'claude_web_search': True})
             self.assertEqual(json.loads((state / 'config.json').read_text()), original)
             self.assertIs(json.loads((state / 'primary-runtime/settings.json').read_text())['claude_web_search'], False)
+            self.assertIn('turned off built-in Web Search', (state / 'primary-runtime/context.md').read_text())
 
     def test_codex_web_search_is_saved_and_passed_only_to_codex_runtime(self):
         with TemporaryDirectory() as temporary, patch.object(sandbox, 'run', side_effect=AssertionError('No runtime operation')):
@@ -192,10 +196,14 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertIs(saved['options']['codex_web_search'], False)
             runtime = json.loads((state / 'primary-runtime/settings.json').read_text())
             self.assertIs(runtime['codex_web_search'], False)
+            context = state / 'primary-runtime/context.md'
+            self.assertIn('turned off built-in Web Search', context.read_text())
             self.assertEqual(saved['workspace'], config['workspace'])
             with self.assertRaisesRegex(ValueError, 'must be a boolean'):
                 sandbox.apply_settings(saved, state, {'codex_web_search': 'invalid'})
             self.assertEqual(json.loads((state / 'config.json').read_text()), saved)
+            sandbox.apply_settings(saved, state, {'codex_web_search': True})
+            self.assertIn('enabled built-in Web Search', context.read_text())
         for agent in ('pi', 'claude', 'agy'):
             with self.subTest(agent=agent), TemporaryDirectory() as temporary:
                 state = Path(temporary)
@@ -258,14 +266,20 @@ class PrimaryAgentIsolation(unittest.TestCase):
             self.assertIn('native tools', text)
             self.assertNotIn('workspace_shell', text)
             self.assertIn('configured allowlist', text)
+            self.assertIn('allow the specific hostname and port', text)
+            self.assertIn('without sudo', text)
+            self.assertIn('wait for confirmation', text)
+            self.assertIn('Settings → Browser', text)
             self.assertNotIn('browser tool', text)
             self.assertNotIn('AWS CLI', text)
             self.assertNotIn('bash_escalate', text)
-            config.update(options={'browser': True}, aws_access={'role': 'sample', 'region': 'eu-west-1',
+            config.update(network='unrestricted', options={'browser': True}, aws_access={'role': 'sample', 'region': 'eu-west-1',
                           'grants': [{'Action': 'ec2:DescribeRegions', 'Resource': '*'}]})
             enabled = primary_agents.guidance(config, Path(temp))
             self.assertIn('browser tool', enabled)
             self.assertIn('AWS CLI', enabled)
+            self.assertIn('Network is Unrestricted', enabled)
+            self.assertNotIn('allow the specific hostname and port', enabled)
 
 
 if __name__ == '__main__':

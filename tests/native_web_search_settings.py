@@ -55,9 +55,13 @@ def check(image):
                 assert native['permissions']['allow'] == ['WebFetch'], native
                 assert 'Bash(rm -rf *)' in denied, native
                 assert native['env'] == preferences['env'], native
+                guidance = engine('exec', identifier, 'cat', '/home/node/.claude/CLAUDE.md')
+                expected = 'enabled' if enabled else 'turned off'
+                assert f'Factory has {expected} built-in Web Search' in guidance, guidance
+                assert 'wait for confirmation' in guidance, guidance
                 assert engine('inspect', '-f', '{{.Id}}', container) == identifier
                 assert engine('inspect', '-f', '{{.State.Running}}', container) == 'true'
-            print('PASS: live search off/on/off saved native rules; WebFetch and user settings kept; workspace not restarted.')
+            print('PASS: live search off/on/off updated native rules and instructions, kept user settings and preserved the workspace.')
         finally:
             try:
                 if auth is not None:

@@ -13,10 +13,24 @@ import os
 
 SOURCE = Path(__file__).resolve().parents[1] / 'ai_sandbox_factory/containers/primary'
 sys.path.insert(0, str(SOURCE))
-from agy_client import configure_browser, configure_hub_permissions, configure_search, keyring, native_preferences, public_auth, read_configuration, search_policy
+from agy_client import configure_browser, configure_hub_permissions, configure_search, keyring, main, native_preferences, public_auth, read_configuration, search_policy
 
 
 class AntigravityClientTests(unittest.TestCase):
+    def test_app_setup_refreshes_native_instructions_without_removing_user_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            context = home / 'context.md'
+            rules = home / 'AGENTS.md'
+            rules.write_text('User rules before\n<!-- factory-context -->\nOld capabilities\n'
+                             '<!-- /factory-context -->\nUser rules after\n')
+            context.write_text('Current sandbox capabilities\n')
+            with patch('agy_client.prepare', return_value=home), patch('agy_client.Path', return_value=context), \
+                    patch.object(sys, 'argv', ['agy', '--factory-prepare']), patch('agy_client.os.umask'):
+                main()
+            self.assertEqual(rules.read_text(), 'User rules before\n<!-- factory-context -->\n'
+                             'Current sandbox capabilities\n<!-- /factory-context -->\nUser rules after\n')
+
     def test_hub_manual_preset_and_factory_grant_changes_preserve_user_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

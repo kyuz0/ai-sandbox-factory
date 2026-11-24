@@ -201,6 +201,20 @@ def prepare():
     return home
 
 
+def instructions(home, context):
+    target = home / 'AGENTS.md'
+    begin, end = '<!-- factory-context -->', '<!-- /factory-context -->'
+    content = target.read_text() if target.exists() else ''
+    block = begin + '\n' + context.rstrip() + '\n' + end
+    if begin in content and end in content:
+        before, remainder = content.split(begin, 1)
+        _, after = remainder.split(end, 1)
+        content = before + block + after
+    else:
+        content = content.rstrip() + ('\n\n' if content.strip() else '') + block + '\n'
+    atomic_write(target, content.encode())
+
+
 def main():
     os.umask(0o077)
     if sys.argv[1:] == ['--factory-search-policy']:
@@ -208,6 +222,7 @@ def main():
         print(json.dumps(search_policy(json.load(sys.stdin), settings)))
         return
     home = prepare()
+    instructions(home, Path('/run/primary-runtime/context.md').read_text())
     args = sys.argv[1:]
     if args == ['--factory-prepare']:
         return
@@ -216,15 +231,6 @@ def main():
         os.environ['SSH_CONNECTION'] = '127.0.0.1 0 127.0.0.1 0'
         args = []
     settings = read_configuration(Path('/run/primary-runtime/settings.json'))
-    context = Path('/run/primary-runtime/context.md').read_text()
-    target = home / 'AGENTS.md'
-    begin, end = '<!-- factory-context -->', '<!-- /factory-context -->'
-    content = target.read_text() if target.exists() else ''
-    if begin in content and end in content:
-        start = content.index(begin)
-        finish = content.index(end, start) + len(end)
-        content = content[:start] + content[finish:]
-    atomic_write(target, (content.rstrip() + '\n\n' + begin + '\n' + context + '\n' + end + '\n').encode())
     os.execv('/usr/local/bin/factory-agent', ['agy', '--settings', json.dumps(native_preferences(settings)), *args])
 
 

@@ -7,8 +7,9 @@ import sys
 import time
 
 from . import advisor_credentials, folders, host_platform, prompt_library, sandbox_advisors
-from .primary_workspace import AGENTS, agent
-from .sandbox_options import RESOURCE_PREFIX, options, write_json
+from .primary_workspace import AGENTS, WEB_SEARCH_OPTIONS, agent
+from .sandbox_options import RESOURCE_PREFIX, access_guidance, options, write_json
+from .settings_catalog import CATEGORIES
 
 SOURCE = Path(__file__).resolve().parent / 'containers' / 'primary'
 PRIMARY_HOSTS = {**sandbox_advisors.HOSTS,
@@ -111,24 +112,31 @@ def guidance(config, state):
     from . import sandbox as core
     from .connectors import context
     current = agent(config)
-    browser = options(config.get('options'))['browser']
-    lines = [
-        'You are working in a AI Sandbox Factory workspace.',
+    selected = options(config.get('options'))
+    lines = access_guidance(core.network_mode(config)) + [
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
         'Run shell commands and access files through the native tools, which run inside this workspace.',
+        'Follow approval requests from the native client. For a change to mounted folders or connector access, '
+        'ask the user to review Settings → Folders or Settings → Connectors in Factory.',
         'The workspace has the following mounts:',
     ]
     lines.extend(f'- {json.dumps(path)} ({"read-only" if read_only else "read and write"})'
                  for path, read_only in folders.roots(config))
-    if core.network_mode(config) == 'allowlist':
-        lines.append('Workspace network requests use the inherited proxy and configured allowlist. '
-                     'Only the user can change allowed destinations in Factory.')
-    else:
-        lines.append('Workspace network access is open.')
-    if browser:
+    if selected['browser']:
         lines.append('Use the Factory browser tool for Playwright and share its live viewer link with the user when needed. '
                      'The browser can reach development servers running inside the workspace.')
+    else:
+        lines.append('The Factory browser is off. If interactive browser access is needed, ask the user to enable it '
+                     'under Settings → Browser.')
+    search_key = WEB_SEARCH_OPTIONS.get(current)
+    if search_key:
+        if selected[search_key]:
+            lines.append('Factory has enabled built-in Web Search. Use it when available in the current client. '
+                         'Opening a result in the workspace follows the workspace network policy.')
+        else:
+            lines.append('Factory has turned off built-in Web Search. If a search is needed, ask the user to enable it '
+                         f'under Settings → {CATEGORIES["network-settings"].label}.')
     connector_prompt, _ = context.render(config, state)
     if connector_prompt:
         lines.extend(['', connector_prompt.rstrip()])
@@ -150,9 +158,10 @@ def guidance(config, state):
 
 def write_context(config, state):
     from .connectors.context import write_text
-    write_text(Path(state) / 'primary-agent/context.md', guidance(config, state))
+    text = guidance(config, state)
+    write_text(Path(state) / 'primary-agent/context.md', text)
     if agent(config) in ('codex', 'claude', 'agy'):
-        write_text(Path(state) / 'primary-runtime/context.md', guidance(config, state))
+        write_text(Path(state) / 'primary-runtime/context.md', text)
 
 
 def prepare_workspace(config, state):

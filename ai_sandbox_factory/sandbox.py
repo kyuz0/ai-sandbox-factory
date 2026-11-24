@@ -1191,7 +1191,8 @@ def prepare_options(config, state):
             filesystem['protectCommonCredentialFiles'] = selected['protect_credentials']
         write_json(target / path.name, value)
     guide = target / 'security.md'
-    guide.write_text(guidance(selected, config.get('subagents', False)) + folders.guidance(config))
+    guide.write_text(guidance(selected, config.get('subagents', False), network=network_mode(config))
+                     + folders.guidance(config))
     guide.chmod(0o600)
 
 
@@ -1354,13 +1355,15 @@ def apply_settings(config, state, changes, *, apply_gate=None):
         if updating.begin_apply(apply_gate):
             from . import primary_agents
             updated = {**config, 'options': selected}
-            primary_agents.prepare_workspace(updated, state)
             try:
+                primary_agents.prepare_workspace(updated, state)
+                primary_agents.write_context(updated, state)
                 primary_agents.refresh_workspace_settings(updated)
                 activity.save_config(state, updated)
             except Exception as error:
-                primary_agents.prepare_workspace(config, state)
                 try:
+                    primary_agents.prepare_workspace(config, state)
+                    primary_agents.write_context(config, state)
                     primary_agents.refresh_workspace_settings(config)
                 except Exception as rollback:
                     raise ValueError(f'{error} Restoring the previous native settings also failed: {rollback}') from error

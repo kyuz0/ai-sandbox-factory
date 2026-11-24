@@ -74,3 +74,20 @@ class SkillPermissionTests(unittest.TestCase):
         text=guidance({'inner_sandbox':False})
         self.assertNotIn('inner sandbox blocks Unix sockets',text)
         self.assertNotIn('Each bash call has its own temporary directory',text)
+
+    def test_agent_can_identify_disabled_settings_and_ask_for_access(self):
+        text = guidance({'question_forms': False, 'browser': False, 'scheduling': False, 'goals': False,
+                         'compaction_recall': 'off'}, network='unrestricted')
+        for message in ('AI Sandbox Factory workspace', 'without sudo', 'wait for confirmation',
+                        'Network is Unrestricted', 'Question forms are off', 'The Factory browser is off',
+                        'Scheduled prompts are off', 'Goals are off', 'Subagents are off',
+                        'Conversation recall is set to Off', 'Web Search is off', 'Settings → Pi features',
+                        'Settings → Network and Web Search'):
+            self.assertIn(message, text)
+        for message in ('ask_user_question', 'configured allowlist', 'The outer network allowlist still applies'):
+            self.assertNotIn(message, text)
+        enabled = guidance({'web_access': {'enabled': True}}, subagents=True)
+        self.assertIn('Use ask_user_question', enabled)
+        self.assertIn('Use web_search', enabled)
+        self.assertIn('Standard pi-subagents are enabled', enabled)
+        self.assertNotIn('Web Search is off', enabled)

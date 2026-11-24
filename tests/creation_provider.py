@@ -80,6 +80,12 @@ def main():
                         result = sandbox.run(['podman', 'exec', container, 'cat',
                                               '/home/node/.pi/agent/fixture-provider-ready'], capture=True)
                         assert result.stdout == model, result.stdout
+                        instructions = sandbox.run(['podman', 'exec', container, 'cat',
+                                                    '/home/node/.pi/agent/AGENTS.md'], capture=True).stdout
+                        assert 'AI Sandbox Factory workspace' in instructions
+                        assert 'Network is Restricted' in instructions
+                        assert 'wait for confirmation' in instructions
+                        assert 'without sudo' in instructions
                         assert any('Fixture catalogue loaded' in line for line in output), output
                         check_existing(service, name, config, container, root, log)
                     assert (workspace / 'keep.txt').read_text() == 'project files stay in place'

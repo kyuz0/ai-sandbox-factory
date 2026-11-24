@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 from . import web_access, network_groups, communications, git_settings
+from .settings_catalog import CATEGORIES, NETWORK_PATH
 
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
@@ -199,10 +200,30 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def guidance(selected, subagents=False):
+def access_guidance(network):
+    lines = [
+        'You are working in an AI Sandbox Factory workspace. The agent and workspace terminal run without sudo. '
+        'If a system package is missing, tell the user which package the task needs and why.',
+    ]
+    if network == 'allowlist':
+        lines.append('Network is Restricted. Workspace requests use the inherited proxy and configured allowlist. '
+                     f'If access is denied, ask the user to allow the specific hostname and port under {NETWORK_PATH}.')
+    else:
+        lines.append('Network is Unrestricted at the container boundary.')
+    lines.append('If the task needs a capability that is off or unavailable, explain why, ask the user for the smallest '
+                 'change that would unblock the task, and wait for confirmation before using it. '
+                 'Check the tools available in the current session after a change.')
+    return lines
+
+
+def guidance(selected, subagents=False, *, network='allowlist'):
     selected = options(selected)
     mode, inner = selected['approval'], selected['inner_sandbox']
-    lines = ['Work inside the devcontainer. The selected outer network policy always applies.']
+    features = CATEGORIES['agent-tools'].label
+    search_settings = CATEGORIES['network-settings'].label
+    lines = access_guidance(network)
+    lines.append('Use ask_user_question for a settings request when a question form would help, or ask in chat.'
+                 if selected['question_forms'] else f'Question forms are off in Settings → {features}. Ask in chat.')
     if inner:
         lines.append('Ordinary bash runs inside the inner OS sandbox without command-level model review. '
                      'Workspace edits are allowed; private home and security configuration are protected.')
@@ -240,13 +261,15 @@ def guidance(selected, subagents=False):
             lines.append('tmux cannot run in the inner sandbox because Unix sockets are blocked. '
                          'bash_escalate is unavailable with approval disabled; ask the user to select an approval mode if tmux is needed.')
     if inner:
-        lines.append('For network commands in bash, keep the inherited proxy settings. '
-                     'Explicit allowlist and network-category destinations are preapproved. '
+        lines.append(('For network commands in bash, keep the inherited proxy settings. The outer network allowlist still applies. '
+                      if network == 'allowlist' else '')
+                     + 'Configured network destinations are preapproved in the inner shell. '
                      + ('Other outbound connections are reviewed. ' if mode != 'off' else 'Other outbound connections are refused while approval is off. ')
-                     + 'The outer network allowlist still applies. '
-                     'Container-local services, including the inference proxy on outer-container loopback, '
-                     'may require bash_escalate because the inner shell has a separate network namespace. '
-                     'Escalation does not add destinations to the outer allowlist or reveal provider keys.')
+                     + 'The inner shell has a separate network namespace. '
+                     + ('Container-local services, including the inference proxy on outer-container loopback, may require '
+                        'bash_escalate. Escalation does not grant new network destinations or reveal provider keys.'
+                        if mode != 'off' else 'Ask the user to choose an approval mode if you need to reach a service on '
+                        'outer-container loopback.'))
     if selected['browser']:
         server_shell = ('bash_escalate (or the editor terminal)' if mode != 'off' else 'the editor terminal') if inner else 'bash (or the editor terminal)'
         lines.append('Use the native browser tool for Playwright automation. For browser testing, start the dev server with '
@@ -259,18 +282,27 @@ def guidance(selected, subagents=False):
                          'Use browser account selection and login on matching sites; do not inspect, dump or copy vault files through bash_escalate. '
                          'An explicitly authorized browser_session_export is a separate scoped login handoff for a same-service local script, '
                          'not permission to read the vault. Keep session values out of output, logs and Git.')
+    else:
+        lines.append(f'The Factory browser is off. If interactive browser access is needed, ask the user to enable '
+                     f'Agent browser under Settings → {features}.')
     lines.append('Explicit permission denials must be respected. Commands cannot execute on the physical host. '
                  'Use inherited proxy settings in restricted network mode.')
     lines.append('Standard pi-subagents are enabled and load the sandbox permission rules.' if subagents
-                 else 'Subagents are disabled. Work in the current agent; do not start extra Pi processes for delegation.')
+                 else f'Subagents are off in Settings → {features}. Work in the current agent until enabled.')
     if selected['goals']:
         lines.append('The shared Pi goal extension continues work in the current session. '
                      'Use /goal only when the user explicitly requests a goal. '
                      'Set turn or cost limits only when the user specifies them. '
                      'Use goal_update to report verified completion or request help when blocked.')
+    else:
+        lines.append(f'Goals are off in Settings → {features}.')
     if selected['scheduling']:
         lines.append('Use schedule_prompt for requested future or recurring prompts. Jobs inject into this chat, '
                      'with its model and approval rules. Timers run only while this Pi session is open; '
                      'never promise delivery while Pi or the container is stopped. /schedule-prompt manages jobs.')
-    lines.append(web_access.guidance(selected['web_access']))
+    else:
+        lines.append(f'Scheduled prompts are off in Settings → {features}.')
+    lines.append(f'Conversation recall is set to {selected["compaction_recall"].capitalize()} under Settings → {features}.')
+    lines.append(web_access.guidance(selected['web_access']) or
+                 f'Web Search is off. Ask the user to configure it under Settings → {search_settings} if a search is needed.')
     return '\n\n'.join(x for x in lines if x) + '\n'

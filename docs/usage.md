@@ -219,6 +219,12 @@ and shows both paths so you can resolve the conflict.
 
 Use **Resources & environment** for the container memory limit and environment file.
 
+Factory gives Pi, Codex, Claude Code and Antigravity instructions about the
+sandbox’s network, mounted folders and enabled features. If a task needs access
+that is off, the agent can ask you to change the relevant setting and explain
+why. Pi can use **Question forms** when enabled. The other agents can ask in chat.
+Reopen the client when a setting requires it so the agent picks up the change.
+
 Reloading tools and instructions does not rewrite earlier chat messages. Engine,
 profile, workspace and seed-home choices are fixed for an existing sandbox; create
 another sandbox to change them. A failed image build leaves the current runtime

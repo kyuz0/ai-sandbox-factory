@@ -269,8 +269,9 @@ PYTHONPATH=. .venv/bin/python tests/native_web_search_settings.py \
 
 - Claude sign-in copy checks first launch and account replacement with synthetic
   accounts. Only placeholders reach the running workspace.
-- Claude search settings checks off → on → off with the same running workspace,
-  preserving WebFetch and unrelated settings.
+- Claude search settings checks off → on → off with the same running workspace.
+  The native rules and Factory instructions stay in sync, and WebFetch and
+  unrelated settings are preserved.
 - Codex trust uses the real parser for ordinary, dotted, Unicode, quoted and
   escaped paths. It preserves other trust choices and the automatic reviewer.
   The [Claude and Antigravity CLI checks](#authenticated-cli-checks) cover Unicode
