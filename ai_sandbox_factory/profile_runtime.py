@@ -49,6 +49,7 @@ def recording(config, state):
                     shutil.copytree(common / part, target / 'base' / part)
         if agent != 'pi':
             shutil.copytree(sandbox.ROOT / 'containers/primary-worker', target / 'workspace')
+            native_recipe_digest = sandbox.tree_digest(target / 'workspace')
             client = target / 'workspace' / 'client'
             client.mkdir()
             for name in ('worker.sh', 'worker-tools.mjs', agent + '_client.py'):
@@ -57,6 +58,11 @@ def recording(config, state):
         for part in ('profile', 'common'):
             if sandbox.tree_digest(Path(config[part]['path'])) != config[part]['digest']:
                 raise ValueError(f'The {part} sources changed while building. Retry the build with unchanged sources.')
+        if agent != 'pi':
+            if (sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker') != native_recipe_digest
+                    or any(file.read_bytes() != (sandbox.ROOT / 'containers/primary' / file.name).read_bytes()
+                           for file in client.iterdir())):
+                raise ValueError('The native workspace sources changed while building. Retry the build with unchanged sources.')
         image = sandbox.image_names(config)[0]
         result = sandbox.run([config['engine'], 'image', 'inspect', image], capture=True)
         try:
@@ -69,7 +75,7 @@ def recording(config, state):
             'profile_digest': config['profile']['digest'],
             'common_inputs_digest': config['common']['digest'],
             'base_recipe_digest': (config['common']['digest'] if agent == 'pi'
-                                   else sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker')),
+                                   else native_recipe_digest),
             'agent': agent, 'image': image, 'image_id': image_id,
             'profile_layer_applied': True,
             'base_recipe': 'base/Dockerfile' if agent == 'pi' else 'workspace/Dockerfile',

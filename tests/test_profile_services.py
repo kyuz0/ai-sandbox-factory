@@ -218,3 +218,26 @@ class AppliedRecipeTests(unittest.TestCase):
             self.assertTrue((folder/'base/cli-tools').is_dir())
             self.assertFalse((folder/'base/bootstrap.py').exists())
             self.assertFalse((folder/'workspace/client/Dockerfile').exists())
+
+    def test_native_source_change_during_build_cannot_publish_a_mismatched_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'factory'
+            worker = source / 'containers/primary-worker'; worker.mkdir(parents=True)
+            client = source / 'containers/primary'; client.mkdir()
+            (worker / 'Dockerfile').write_text('FROM original\n')
+            for name in ('worker.sh','worker-tools.mjs','codex_client.py'):
+                (client / name).write_text('original\n')
+            profile = root / 'profile'; profile.mkdir()
+            common = root / 'common'; common.mkdir()
+            config = {'engine':'podman','primary_agent':'codex','options':{'browser':False},
+                      'profile':{'name':'fixture','path':str(profile),'digest':sandbox.tree_digest(profile)},
+                      'common':{'path':str(common),'digest':sandbox.tree_digest(common)}}
+            for changed in (worker/'Dockerfile',client/'worker-tools.mjs'):
+                with self.subTest(changed=changed.name), patch.object(sandbox,'ROOT',source):
+                    state = root / changed.name
+                    with self.assertRaisesRegex(ValueError,'native workspace sources changed'):
+                        with profile_runtime.recording(config,state):
+                            changed.write_text('changed while building\n')
+                    self.assertFalse(list((state/'applied-profiles').iterdir()))
+                    changed.write_text('FROM original\n' if changed.name=='Dockerfile' else 'original\n')
