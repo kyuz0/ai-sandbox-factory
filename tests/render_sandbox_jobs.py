@@ -107,15 +107,22 @@ async def render(destination, size):
                 await pilot.press('escape')
 
                 creation.run(lambda log: log('Sandbox containers are ready.'))
-
-                def choose_model():
-                    app.push_screen(ModelDialog(creation.name, 'sample-provider', plugin_label='Sample provider',
-                                                optional=True, offer_later=True))
-
-                creation.followup = ('Choose a model', choose_model)
                 app.jobs.append(creation)
+                app.prepare_job_setup(creation, {'_provider_credential_choices': {'chaucer': {}},
+                                                'open_editor': False, 'options': {'approval': 'manual'}},
+                                      'Chaucer model catalogue', creating=True)
+                service.records.append(dict(service.records[0], name=creation.name))
+                app.receive_inventory(service.inventory())
                 app.poll_jobs()
+                table = app.query_one(SandboxTable)
+                cell = table.get_cell_coordinate(creation.name, 'open')
+                table.move_cursor(row=cell.row, column=cell.column)
+                table.focus()
                 await dashboard('dashboard-job-followup', 'To review')
+                await pilot.press('enter')
+                assert isinstance(app.screen, ModelDialog)
+                await shot('dashboard-model-choice')
+                await pilot.click('#model-later')
                 await pilot.press('j')
                 await shot('jobs-followup')
                 await pilot.press('enter')

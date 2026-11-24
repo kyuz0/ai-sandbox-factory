@@ -135,17 +135,18 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                 log('Podman example STEP 99/99')
                 started.set()
                 release.wait()
+                service.records.append(dict(records()[0], name=draft['name']))
                 log('The fixture sandbox is ready.')
 
             service.create = create
             service.plugin_model = lambda *args, **kwargs: {'models': []}
             app = Cockpit(Path(tmp), service)
             draft = {'name': 'new-sandbox', 'workspace': tmp, 'options': {'approval': 'manual'},
-                     '_provider_credential_choices': {'model-fixture': {}}, 'open_editor': False}
+                     '_provider_credential_choices': {'chaucer': {}}, 'open_editor': False}
             async with app.run_test(size=(80, 24)) as pilot:
                 try:
                     await wait_for(pilot, lambda: len(app.records) == 2)
-                    job = app.start_creation(CreationRequest(draft, {}, 'Test provider', False))
+                    job = app.start_creation(CreationRequest(draft, {}, 'Chaucer model catalogue', False))
                     await wait_for(pilot, started.is_set)
                     self.assertEqual(job.status, 'Step 3 of 5 · Building images')
                     self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Hide details')
@@ -171,7 +172,19 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     await wait_for(pilot, lambda: job.followup is not None)
                     self.assertIs(app.screen, other)
                     self.assertTrue(app.check_action('quit', ()))
-                    await pilot.press('escape', 'j', 'enter')
+                    await pilot.press('escape')
+                    await wait_for(pilot, lambda: draft['name'] in table.rows)
+                    self.assertEqual(str(table.get_cell(draft['name'], 'open')).strip(), 'Choose a model')
+                    cell = table.get_cell_coordinate(draft['name'], 'open')
+                    table.move_cursor(row=cell.row, column=cell.column)
+                    table.focus()
+                    await pilot.press('enter')
+                    await wait_for(pilot, lambda: isinstance(app.screen, ModelDialog))
+                    self.assertEqual(app.screen.provider, 'chaucer')
+                    self.assertEqual(app.screen.plugin_label, 'Chaucer model catalogue')
+                    await pilot.click('#model-later')
+                    self.assertEqual(str(table.get_cell(draft['name'], 'open')).strip(), 'Choose a model')
+                    await pilot.press('j', 'enter')
                     await wait_for(pilot, lambda: isinstance(app.screen, JobDetails))
                     self.assertIs(app.screen.job, job)
                     await wait_for(pilot, lambda: 'STEP 99/99' in output(app.screen))
@@ -187,6 +200,68 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.click('#model-cancel')
                     self.assertIsNone(job.followup)
                     self.assertIs(app.screen, app.screen_stack[0])
+                    self.assertEqual(str(table.get_cell(draft['name'], 'open')).strip(), 'Open')
+                    self.assertFalse(service.calls)
+                finally:
+                    release.set()
+                    await app.workers.wait_for_complete()
+
+    async def test_hidden_chaucer_choice_is_saved_before_opening_requested_client(self):
+        service = JobsService()
+        release = Event()
+        model = {'id': 'new-default', 'name': 'New default', 'contextWindow': 8192,
+                 'maxTokens': 2048, 'input': ['text'], 'reasoning': False}
+
+        def create(draft, key, log, cancellation):
+            release.wait()
+            service.records.append(dict(records()[0], name=draft['name']))
+
+        def models(name, action, *, provider, **kwargs):
+            self.assertEqual(provider, 'chaucer')
+            if action == 'catalogue':
+                return {'models': [model]}
+            service.calls.append(['select', name, provider, kwargs['model']])
+            return {}
+
+        service.create = create
+        service.plugin_model = models
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(tmp), service)
+            draft = {'name': 'new-sandbox', 'workspace': tmp, 'options': {'approval': 'manual'},
+                     '_provider_credential_choices': {'chaucer': {}}, 'open_editor': True}
+            async with app.run_test(size=(80, 24)) as pilot:
+                try:
+                    await wait_for(pilot, lambda: len(app.records) == 2)
+                    job = app.start_creation(CreationRequest(draft, {}, 'Chaucer model catalogue', False))
+                    await pilot.press('escape')
+                    release.set()
+                    await wait_for(pilot, lambda: job.followup and len(app.records) == 3)
+                    record = next(row for row in app.records if row['name'] == job.name)
+                    with patch.object(app, 'interactive') as interactive:
+                        app.perform('open', record=record)
+                        app.perform('open', record=record)
+                        await wait_for(pilot, lambda: isinstance(app.screen, ModelDialog)
+                                       or any(call[0] == 'open' for call in service.calls))
+                        self.assertIsInstance(app.screen, ModelDialog)
+                        await pilot.pause()
+                        await pilot.click('#model-later')
+                        self.assertFalse(service.calls)
+                        interactive.assert_not_called()
+
+                        app.perform('launch-with', record=record)
+                        await pilot.pause()
+                        choices = app.screen.query_one('#editor-choices', OptionList)
+                        choices.highlighted = list(app.screen.modes).index('pi')
+                        await pilot.press('enter')
+                        await wait_for(pilot, lambda: isinstance(app.screen, ModelDialog) and bool(app.screen.models))
+                        self.assertFalse(service.calls)
+                        interactive.assert_not_called()
+                        app.screen.query_one('#model-results', OptionList).highlighted = 0
+                        await wait_for(pilot, lambda: not app.screen.query_one('#model-save', Button).disabled)
+                        await pilot.click('#model-save')
+                        await wait_for(pilot, lambda: interactive.called)
+                        self.assertEqual(service.calls, [['select', job.name, 'chaucer', 'new-default']])
+                        interactive.assert_called_once_with('pi', job.name)
                 finally:
                     release.set()
                     await app.workers.wait_for_complete()

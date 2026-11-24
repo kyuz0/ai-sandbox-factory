@@ -77,6 +77,7 @@ try:
 except ImportError as error:
     raise SystemExit('Install AI Sandbox Factory with pipx install git+https://github.com/kyuz0/ai-sandbox-factory.git.') from error
 
+CHOOSE_MODEL = 'Choose a model'
 SIGN_IN_LABEL = 'Sign-in'
 SIGN_IN_OPTIONS = [
     ('Copy sign-in from this computer', 'copy'),
@@ -4584,7 +4585,8 @@ class Cockpit(App):
             if self.size.width < 100 and len(name) > 32:
                 name = name[:31] + '…'
             active = self.active_job(record['name'])
-            action = active.view_label if active else '' if record.get('creation') else 'Open'
+            action = active.view_label if active else '' if record.get('creation') else (
+                CHOOSE_MODEL if self.pending_model_choice(record['name']) else 'Open')
             alert_count = len(sandbox_alerts(record))
             cells = (
                 name,
@@ -4673,6 +4675,9 @@ class Cockpit(App):
             if action == 'open' and (job := self.active_job(name)):
                 self.show_job(job)
                 return
+            if action == 'open' and (job := self.pending_model_choice(name)):
+                self.resume_job(job)
+                return
             record = next((item for item in self.records if item['name'] == name), None)
             if record:
                 self.perform(action, record=record)
@@ -4737,17 +4742,6 @@ class Cockpit(App):
         table = self.screen_stack[0].query_one_optional(SandboxTable)
         if table is None or not table.is_attached:
             return
-        rows = tuple(job for job in self.jobs if job.result is None and job.targets)
-        if rows != self._dashboard_jobs:
-            self._dashboard_jobs = rows
-            self.render_records()
-        elif rows:
-            for job in rows:
-                label = job.view_label
-                for name in job.targets:
-                    if name in table.rows and str(table.get_cell(name, 'open')).strip() != label:
-                        table.update_cell(name, 'open', SandboxTable.action_cell(label, primary=True),
-                                          update_width=True)
         finished = [job for job in self.job_completions if job.result is not None]
         if finished:
             self.refresh_inventory()
@@ -4764,30 +4758,44 @@ class Cockpit(App):
             elif not visible:
                 self.notify(f'{job.title} · {job.followup[0] if job.followup else job.status}',
                             severity='error' if job.result == 'Failed' else 'information')
+        rows = tuple(job for job in self.jobs if job.result is None and job.targets)
+        if rows != self._dashboard_jobs:
+            self._dashboard_jobs = rows
+            self.render_records()
+        elif rows:
+            for job in rows:
+                label = job.view_label
+                for name in job.targets:
+                    if name in table.rows and str(table.get_cell(name, 'open')).strip() != label:
+                        table.update_cell(name, 'open', SandboxTable.action_cell(label, primary=True),
+                                          update_width=True)
         self.update_jobs_badge()
 
-    def resume_job(self, job):
-        if job.followup:
-            label, resume = job.followup
-            job.followup = None
-            self.update_jobs_badge()
+    def resume_job(self, job, *args):
+        if followup := job.followup:
+            label, resume = followup
+
+            def set_followup(value):
+                job.followup = value
+                if isinstance(job, CreationJob) and label == CHOOSE_MODEL:
+                    self.render_records()
+                self.update_jobs_badge()
+
             if isinstance(self.screen, JobDetails) and self.screen.job is job:
                 self.pop_screen()
             context = self.screen
             async def dispatch():
-                if self.screen is not context:
-                    job.followup = (label, resume)
-                    self.update_jobs_badge()
+                if self.screen is not context or job.followup is not followup:
                     return
+                set_followup(None)
                 try:
-                    result = resume()
+                    result = resume(*args)
                     if isawaitable(result):
                         await result
                 except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
                     job.notice = f'Could not continue with {label.lower()}: {error}'
                     job.write(job.notice)
-                    job.followup = (label, resume)
-                    self.update_jobs_badge()
+                    set_followup(followup)
                     self.show_job(job)
             self.call_later(dispatch)
 
@@ -4917,22 +4925,29 @@ class Cockpit(App):
             else:
                 self.launch_client(name, mode)
 
-        def after_models(choice=None):
+        def after_models(choice=None, *, launch=None):
             if choice is ModelDialog.LATER:
-                job.followup = ('Choose a model', choose_model)
+                job.followup = (CHOOSE_MODEL, choose_model)
+                if creating:
+                    self.render_records()
                 self.update_jobs_badge()
+            elif launch:
+                launch()
             elif open_requested:
                 open_client()
 
-        def choose_model():
+        def choose_model(launch=None):
+            def finished(choice=None):
+                after_models(choice, launch=launch)
+
             if len(providers) == 1 and not hosted:
                 provider = providers[0]
                 self.push_screen(ModelDialog(name, provider, plugin_label=provider_label or provider,
                                              optional=True, approval_model=approval_model, offer_later=True),
-                                 after_models)
+                                 finished)
             else:
                 self.push_screen(ModelsScreen({'name': name, 'config': self.service.config(name)},
-                                              finished=after_models))
+                                              finished=finished))
 
         def after_ssh(ready=True):
             if not ready:
@@ -4957,12 +4972,17 @@ class Cockpit(App):
 
             job.followup = ('Import SSH key', import_key)
         elif providers or hosted:
-            job.followup = ('Choose a model', choose_model)
+            job.followup = (CHOOSE_MODEL, choose_model)
         elif open_requested:
             job.followup = ('Sign in' if login else 'Open editor' if mode != 'pi' else 'Open terminal', open_client)
 
     def active_job(self, name):
-        return next((job for job in self.jobs if name in job.targets and job.result is None), None)
+        return next((job for job in self.jobs if name in job.targets and
+                     (job.result is None or isinstance(job, CreationJob) and job in self.job_completions)), None)
+
+    def pending_model_choice(self, name):
+        return next((job for job in reversed(self.jobs) if isinstance(job, CreationJob) and job.name == name
+                     and job.followup and job.followup[0] == CHOOSE_MODEL), None)
 
     def on_unmount(self):
         for job in self.jobs:
@@ -5180,8 +5200,10 @@ class Cockpit(App):
         elif action == 'delete':
             self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
-        elif action in ('pi', 'shell'):
-            self.interactive(action, name)
+        elif action == 'pi':
+            self.launch_client(name, 'pi')
+        elif action == 'shell':
+            self.interactive('shell', name)
         elif action == 'open':
             self.launch_client(name, editor_settings.load(self.state_root / name)['mode'])
         elif action == 'connections':
@@ -5230,7 +5252,9 @@ class Cockpit(App):
             self.operation('Stopping ' + name, ['down', name])
 
     def launch_client(self, name, mode):
-        if mode is None:
+        if job := self.pending_model_choice(name):
+            self.resume_job(job, lambda: self.launch_client(name, mode))
+        elif mode is None:
             self.interactive('open', name)
         elif mode == 'pi':
             self.interactive('pi', name)

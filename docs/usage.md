@@ -149,9 +149,11 @@ A count such as **Step 4 of 6 · Build sandbox images** identifies the step runn
 now. Its duration depends on the work, such as whether the images are cached.
 
 If you stay on a creation job, Factory can open the model picker or the editor
-you selected when setup finishes. If you leave the job, open it from **Jobs…**
-to find the next action. In the model picker, **Later** keeps the choice pending
-and **Skip** keeps the current default.
+you selected when setup finishes. If you return to the dashboard while creation
+runs, select **Choose a model** beside the sandbox when that choice is ready.
+You can also reopen the job to continue setup. **Open** and **Open with…**
+prompt for a pending model choice before starting the client. In the picker,
+**Later** keeps the choice pending and **Skip** keeps the current default.
 
 ## Update Factory and sandboxes
 
