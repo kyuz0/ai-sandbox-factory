@@ -1,6 +1,8 @@
 Factory passes user-selected mounts as Knowledge source roots. Filesystems
 such as DrvFS may report different ownership or modes for readable inputs.
 Retain the existing checks for outputs and private Knowledge state.
+Index ordinary documents even when their names mention credentials or secrets.
+Keep exclusions for common credential files and private key formats.
 
 --- a/dist/src/filesystem-access.js
 +++ b/dist/src/filesystem-access.js
@@ -25,3 +27,21 @@ Retain the existing checks for outputs and private Knowledge state.
 -    const roots = bindRoots(policy);
 +    const roots = bindRoots(policy, true);
      if (roots.length === 0)
+--- a/dist/src/indexer/chunker.js
++++ b/dist/src/indexer/chunker.js
+@@ -79,8 +79,11 @@
+     "*.crt",
+     "*.cert",
+-    "*secret*",
+-    "*secrets*",
+-    "*credential*",
+-    "*credentials*",
++    "credentials",
++    "credentials.json",
++    "application_default_credentials.json",
++    "secrets",
++    "secrets.json",
++    "secrets.yaml",
++    "secrets.yml",
+     "docs/*eval-report*.md",
+     "docs/*evaluation-report*.md",

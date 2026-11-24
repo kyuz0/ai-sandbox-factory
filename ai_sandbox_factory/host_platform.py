@@ -221,9 +221,29 @@ def model_gateway_args():
             '--add-host=local-model.internal:169.254.1.2']
 
 
+def _private_home_paths(home):
+    return [home / name for name in (
+        '.ssh', '.gnupg', '.aws', '.azure', '.docker', '.codex', '.claude', '.gemini',
+        '.pi/agent', '.config/gcloud', '.config/gh', '.local/share/keyrings',
+        '.local/state/ai-sandbox-factory', '.local/state/pi-sandbox-factory',
+    )]
+
+
 def validate_data_path(path):
     """Protect host application state, including macOS aliases and Windows drives."""
     path = comparison_path(path)
+    home = comparison_path(Path.home())
+    protected_host = [
+        *_private_home_paths(home),
+        *(Path(os.environ[key]).expanduser() for key in ('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR')
+          if os.environ.get(key)),
+        Path(os.environ.get('XDG_CONFIG_HOME') or home / '.config').expanduser() / 'ai-sandbox-factory',
+    ]
+    for private in map(comparison_path, protected_host):
+        inside = path == private or private in path.parents
+        contains = path in private.parents and path != home and path not in home.parents
+        if inside or contains:
+            raise ValueError('Choose a data folder outside host sign-in and Factory configuration directories.')
     if platform.system() == 'Darwin':
         protected = [comparison_path(p) for p in ('/System', '/Library', '/Applications', '/etc', '/var', '/private/etc', '/private/var')]
         protected.append(comparison_path(Path.home() / 'Library'))
@@ -233,8 +253,11 @@ def validate_data_path(path):
         parts = path.parts
         if windows_drive(path):
             rest = [p.lower() for p in parts[3:]]
+            windows_home = Path(*parts[:5])
+            private_windows = [windows_home / 'appdata', *_private_home_paths(windows_home)]
             if (not rest or rest[0] in ('windows', 'program files', 'program files (x86)', 'programdata')
-                    or (rest[0] == 'users' and (len(rest) < 3 or rest[2] == 'appdata' or rest[2].startswith('.')))):
+                    or (rest[0] == 'users' and (len(rest) < 3 or any(
+                        path == p or path in p.parents or p in path.parents for p in private_windows)))):
                 raise ValueError('Choose a Windows project folder, not a drive, user home or application state.')
 
 

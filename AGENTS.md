@@ -110,6 +110,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 - Factory trusts the host and the data folders the user selects. Honor host
   readability, the sandbox's mount modes and the granted roots. Do not require
   the user's UID or private-directory modes on a selected project or data folder.
+  Use specific private locations and credential filenames for exclusions.
+  Include fixtures with ordinary hidden folders and security documentation.
   Keep Factory-managed credentials outside the files, processes and configuration
   exposed to sandbox agents and editor extensions.
 - Check what a file rule actually protects. Test a permitted case alongside the

@@ -43,10 +43,12 @@ class HostTests(unittest.TestCase):
             self.assertEqual(host.local_path(r'C:\Users\test\Project'), Path('/mnt/c/Users/test/Project'))
             self.assertEqual(convert.call_args.args[0][:2], ['wslpath', '-u'])
             for path in ('/mnt/c', '/mnt/c/Windows', '/mnt/c/Users', '/mnt/c/Users/test',
-                         '/mnt/c/Users/test/AppData/Local', '/mnt/c/Users/test/.ssh'):
+                         '/mnt/c/Users/test/AppData/Local', '/mnt/c/Users/test/.SSH', '/mnt/c/Users/test/.config'):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     host.validate_data_path(path)
             host.validate_data_path('/mnt/c/Users/test/Project')
+            host.validate_data_path('/mnt/c/Users/test/.datasets/manuals')
+            host.validate_data_path('/mnt/c/Users/test/.config/project-data')
 
     def test_mac_private_paths_and_short_control_socket(self):
         with patch('platform.system', return_value='Darwin'):

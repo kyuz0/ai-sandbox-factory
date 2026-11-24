@@ -73,8 +73,6 @@ def validate(rows, workspace, state_root, *, saved=False, private_paths=()):
             raise ValueError('Choose a specific data folder, not a filesystem root or your whole home.')
         if any(overlaps(source, p) for p in protected) or any(compared == p or p in compared.parents for p in system):
             raise ValueError('System folders and private sandbox state cannot be mounted as data folders.')
-        if compared.is_relative_to(home) and compared.relative_to(home).parts[0].startswith('.'):
-            raise ValueError('Hidden home folders contain private application state; choose a data folder.')
         if overlaps(source, Path(workspace).resolve()) or any(overlaps(source, Path(r['source'])) for r in result):
             raise ValueError('Extra folders must not overlap the workspace or another extra folder.')
         name = row.get('name') or suggested_name(source, result)

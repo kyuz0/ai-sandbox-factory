@@ -342,9 +342,10 @@ When saving, select the destination folder and enter **File name**.
 ![File picker searching subfolders](file-picker.png)
 
 Use **Add folder…** to share another host directory. It appears at
-`/mnt/<folder-name>`, with a name you can edit. Folders start read-only; clear
-**Read-only** to allow changes to the host files. System folders,
-private sandbox state and overlapping mounts are rejected.
+`/mnt/<folder-name>`, with a name you can edit. You can select hidden data folders
+such as `~/.datasets/manuals`. Folders start read-only. Clear **Read-only** to allow
+changes to the host files. Factory rejects system folders, host sign-in directories,
+private sandbox state and overlapping mounts.
 
 For an existing sandbox, open **Settings → Folders**. Changing mounts recreates
 the container and interrupts running processes; its private home and host files

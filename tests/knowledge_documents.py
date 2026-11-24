@@ -7,7 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 def write_documents(directory: Path, revision: str = ''):
     directory.mkdir(exist_ok=True)
     text = 'The meadow is closed on the second Tuesday. ORCHID_WINDOW_842.'
-    with ZipFile(directory / 'maintenance.docx', 'w', ZIP_DEFLATED) as doc:
+    with ZipFile(directory / 'credential-rotation-guide.docx', 'w', ZIP_DEFLATED) as doc:
         doc.writestr('[Content_Types].xml', '''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>''')
         doc.writestr('_rels/.rels', '''<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>''')
         doc.writestr('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>' + escape(text + ' DOCX_SOURCE_842. ' + revision) + '</w:t></w:r></w:p></w:body></w:document>')
@@ -28,4 +28,4 @@ def write_documents(directory: Path, revision: str = ''):
     for offset in offsets:
         pdf.extend(f'{offset:010d} 00000 n \n'.encode())
     pdf.extend(f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode())
-    (directory / 'maintenance.pdf').write_bytes(pdf)
+    (directory / 'secret-management-guide.pdf').write_bytes(pdf)

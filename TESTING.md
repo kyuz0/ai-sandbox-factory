@@ -495,7 +495,9 @@ Run `--local-knowledge off` with the Local Knowledge profile image to check that
 both clients can find text without an embedding request. Run `--local-knowledge endpoint`
 with the optional pi-knowledge layer to ask the agent to index PDF and DOCX files
 in a read-only mount, search both formats and refresh the index in both clients.
-The workspace and reference folder are group-writable on the host.
+The workspace and reference folder are group-writable on the host. The fixture
+indexes credential-themed documents alongside synthetic credential files and
+checks that only the documents are indexed.
 The check also verifies PDF extraction to scratch storage, rejection of conversion output
 to the read-only source folder, unchanged source files, rejection of a link outside
 the allowed folders, working slash commands, and disabling and re-enabling embeddings

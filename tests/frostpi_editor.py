@@ -907,6 +907,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 (root / 'workspace').chmod(0o775)
                 (root / 'reference').chmod(0o775)
                 write_documents(root / 'reference')
+                (root / 'reference/credentials.json').write_text('{"token":"SYNTHETIC_KNOWLEDGE_CREDENTIAL"}')
+                (root / 'reference/secrets.yml').write_text('secret: SYNTHETIC_KNOWLEDGE_SECRET\n')
+                (root / 'reference/.env').write_text('TOKEN=SYNTHETIC_KNOWLEDGE_ENV\n')
             else:
                 (root / 'reference/triage.md').write_text('# Maintenance window\nThe meadow is closed on the second Tuesday. ORCHID_WINDOW_842.\n')
             (root / 'workspace/outside-reference').symlink_to('/etc/passwd')

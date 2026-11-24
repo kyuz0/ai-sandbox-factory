@@ -104,6 +104,22 @@ class FolderTests(unittest.TestCase):
         with patch.object(Path, 'home', return_value=self.root):
             with self.assertRaises(ValueError): self.validate([dict(source=str(hidden))])
 
+    def test_hidden_data_folder_can_be_mounted_without_host_sign_ins(self):
+        home = self.root / 'home'
+        data = home / '.datasets' / 'manuals'
+        data.mkdir(parents=True)
+        sign_in = home / '.pi' / 'agent'
+        sign_in.mkdir(parents=True)
+        alias = home / '.aliases'
+        alias.symlink_to(sign_in, target_is_directory=True)
+        with patch.object(Path, 'home', return_value=home):
+            rows = self.validate([dict(source=str(data))])
+            self.assertEqual(rows, [dict(source=str(data.resolve()), name='manuals', read_only=True)])
+            self.assertEqual(self.validate(rows, saved=True), rows)
+            for path in (sign_in, sign_in.parent, alias):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'host sign-in'):
+                    self.validate([dict(source=str(path))])
+
     def test_saved_source_replacement_and_private_seed(self):
         rows = self.validate([dict(source=str(self.extra))])
         original = self.root / 'original'
