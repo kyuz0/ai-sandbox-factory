@@ -473,6 +473,25 @@ def check_local_knowledge(page, frame, send, inside, output, mode, options_file)
     prompt = 'Factory knowledge fixture' if endpoint else 'Factory keyword fixture'
     if endpoint:
         inside('test', '!', '-e', '/opt/pi-knowledge/models')
+        inside('node', '--input-type=module', input="""
+import assert from 'node:assert/strict';
+import { iterateScannableFilesAsync } from '/opt/pi-knowledge/node_modules/pi-knowledge/dist/src/indexer/chunker.js';
+
+const controller = new AbortController();
+const scan = iterateScannableFilesAsync('/mnt/reference', undefined, { includeSuggestedText: true }, controller.signal);
+const realNow = Date.now;
+try {
+    assert.equal((await scan.next()).done, false);
+    // The scanner is suspended while the indexer processes a file.
+    Date.now = () => realNow() + 30 * 60_000;
+    assert.equal((await scan.next()).done, false);
+    controller.abort();
+    await assert.rejects(scan.next(), /Cancelled/);
+} finally {
+    Date.now = realNow;
+    await scan.return();
+}
+""")
         source = options_file.parent / 'reference'
         def hashes():
             return {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in source.iterdir()}

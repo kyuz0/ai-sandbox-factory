@@ -497,7 +497,8 @@ with the optional pi-knowledge layer to ask the agent to index PDF and DOCX file
 in a read-only mount, search both formats and refresh the index in both clients.
 The workspace and reference folder are group-writable on the host. The fixture
 checks that Git-ignored synthetic credentials are indexed by both folder and
-direct-file selection and picked up by refresh.
+direct-file selection and picked up by refresh. It advances the clock while the
+scanner is paused between files, then checks that scanning resumes and can be cancelled.
 The check also verifies PDF extraction to scratch storage, rejection of conversion output
 to the read-only source folder, unchanged source files, rejection of a link outside
 the allowed folders, working slash commands, and disabling and re-enabling embeddings

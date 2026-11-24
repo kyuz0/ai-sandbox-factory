@@ -4,6 +4,9 @@ Retain the existing checks for outputs and private Knowledge state.
 Honor the folder selected for indexing. Use the upstream full-scan option
 for scoped add and refresh, including refresh of existing collections.
 
+Folder scans pause while the indexer extracts and embeds each file. Keep
+cancellation and remove the deadline that counts this time as scanning.
+
 --- a/dist/src/filesystem-access.js
 +++ b/dist/src/filesystem-access.js
 @@ -9,3 +9,3 @@
@@ -36,3 +39,24 @@ for scoped add and refresh, including refresh of existing collections.
 +        includeSuggestedText: accessPolicy !== undefined || options.include_suggested_text === true,
          includePaths: options.include_paths,
          excludePaths: options.exclude_paths,
+--- a/dist/src/indexer/chunker.js
++++ b/dist/src/indexer/chunker.js
+@@ -302,5 +302,4 @@
+ const MAX_SCAN_TOTAL_BYTES = 64 * 1024 * 1024 * 1024;
+ const MAX_SCAN_DEPTH = 128;
+-const MAX_SCAN_DURATION_MS = 5 * 60_000;
+ function scanPathIsWithin(path, root) {
+     const rel = relative(root, path);
+@@ -395,5 +394,4 @@
+     const excludePaths = normalizeScanPaths(options.excludePaths);
+     const includeSuggestedText = options.includeSuggestedText === true;
+-    const deadline = Date.now() + MAX_SCAN_DURATION_MS;
+     let visitedEntries = 0;
+     let totalBytes = 0;
+@@ -401,6 +399,4 @@
+         if (signal?.aborted)
+             throw new Error("Cancelled");
+-        if (Date.now() > deadline)
+-            throw new Error(`Directory scan exceeded ${MAX_SCAN_DURATION_MS}ms`);
+     };
+     async function* walk(dir, depth) {
