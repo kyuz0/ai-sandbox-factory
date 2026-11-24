@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 from . import web_access, network_groups, communications, git_settings
-from .settings_catalog import CATEGORIES, NETWORK_PATH
+from .settings_catalog import CATEGORIES, INSTALL_SYSTEM_PACKAGES, NETWORK_PATH
 
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
@@ -203,7 +203,8 @@ def write_json(path, value):
 def access_guidance(network):
     lines = [
         'You are working in an AI Sandbox Factory workspace. The agent and workspace terminal run without sudo. '
-        'If a system package is missing, tell the user which package the task needs and why.',
+        f'If a system package is missing, tell the user which Debian package the task needs and why. Ask them to use '
+        f'Actions → {INSTALL_SYSTEM_PACKAGES} on this sandbox in Factory.',
     ]
     if network == 'allowlist':
         lines.append('Network is Restricted. Workspace requests use the inherited proxy and configured allowlist. '

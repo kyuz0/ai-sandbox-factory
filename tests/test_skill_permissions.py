@@ -82,7 +82,7 @@ class SkillPermissionTests(unittest.TestCase):
                         'Network is Unrestricted', 'Question forms are off', 'The Factory browser is off',
                         'Scheduled prompts are off', 'Goals are off', 'Subagents are off',
                         'Conversation recall is set to Off', 'Web Search is off', 'Settings → Pi features',
-                        'Settings → Network and Web Search'):
+                        'Settings → Network and Web Search', 'Actions → Install system packages…'):
             self.assertIn(message, text)
         for message in ('ask_user_question', 'configured allowlist', 'The outer network allowlist still applies'):
             self.assertNotIn(message, text)

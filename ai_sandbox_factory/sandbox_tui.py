@@ -18,7 +18,7 @@ from rich.text import Text
 from typing import NamedTuple, Optional
 from inspect import isawaitable
 
-from . import sandbox, editor_settings, sandbox_ssh, prompt_library
+from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages
 from . import chat_history
 from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
@@ -27,7 +27,7 @@ from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
     ADVISORS_LABEL, ADVISORS_PATH, CATEGORIES, EDIT_FORMS, Category,
-    HOSTED_PROVIDERS_LABEL, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
+    HOSTED_PROVIDERS_LABEL, INSTALL_SYSTEM_PACKAGES, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH,
     NO_SYSTEM_PROMPT_ADD_ON, PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
 )
@@ -55,6 +55,7 @@ from . import settings_effects
 from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from . import operation_locks
+from .updating import Update
 from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
                               endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
                               SANDBOX_NAME_ERROR, SANDBOX_NAME_LIMIT)
@@ -1233,6 +1234,59 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(event.button.id == 'yes')
 
 
+class InstallSystemPackages(EntryDialog):
+    BINDINGS = [('escape', 'cancel', 'Cancel')]
+
+    def __init__(self, name):
+        super().__init__()
+        self.sandbox_name = name
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('Install system packages · ' + self.sandbox_name, markup=False)
+            with VerticalScroll(id='system-packages-fields'):
+                with Vertical(classes='setting'):
+                    yield Label('Debian package names')
+                    yield Input(id='system-package-names')
+                    yield Static('Separate names with spaces or commas, for example jq ripgrep.', classes='setting-help')
+                    yield Feedback(id='system-packages-error', markup=False)
+                yield Static(settings_effects.bullets([
+                    'Package scripts can run as root inside this sandbox.',
+                    'Install only packages you trust. The sandbox stays running.',
+                ]), id='system-packages-warning')
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Cancel', id='system-packages-cancel')
+                yield Button('Install packages', id='system-packages-install', variant='primary')
+
+    @on(Button.Pressed, '#system-packages-install')
+    @on(Input.Submitted, '#system-package-names')
+    def install(self, event):
+        event.stop()
+        field = self.query_one(Input)
+        try:
+            packages = system_packages.package_names(field.value.replace(',', ' ').split())
+        except ValueError as error:
+            feedback = self.query_one(Feedback)
+            feedback.update(str(error))
+            feedback.scroll_visible(animate=False)
+            field.add_class('-invalid')
+            return
+        self.dismiss(packages)
+
+    @on(Input.Changed, '#system-package-names')
+    def clear_error(self, event):
+        event.input.remove_class('-invalid')
+        self.query_one(Feedback).update('')
+
+    @on(Button.Pressed, '#system-packages-cancel')
+    def cancel(self, event):
+        event.stop()
+        self.action_cancel()
+
+    def action_cancel(self):
+        self.dismiss(None)
+
+
 def confirm_aws_installation(name, effect, *, restricted=False):
     if effect == 'gateway':
         return Confirm('The sandbox will keep running. Active network connections may need to reconnect.',
@@ -1354,6 +1408,8 @@ class MoreActions(ModalScreen[Optional[str]]):
         opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                      ('Rebuild sandbox…' if native else 'Update sources and recreate…', 'rebuild')]
+        if record.get('config', {}).get('engine'):
+            lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
             lifecycle.append(('Stop browser editor', 'stop-editor'))
         related = [('Troubleshooting…', 'diagnostics')]
@@ -4229,7 +4285,7 @@ class Cockpit(App):
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
     Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
-    ChatTransfer, DeleteSandbox, JobsMenu { align: center middle; background: #000000 70%; }
+    ChatTransfer, DeleteSandbox, InstallSystemPackages, JobsMenu { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
     .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
@@ -4252,8 +4308,17 @@ class Cockpit(App):
     PrimarySignIn #confirm-box, Confirm.sign-in-confirm #confirm-box { width: 61; }
     #confirm-box > Label { margin-bottom: 1; color: #f2b544; text-style: bold; }
     #confirm-box > OptionList { height: auto; max-height: 14; margin-bottom: 1; }
+    InstallSystemPackages #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
+    #system-packages-fields { height: auto; max-height: 55vh; }
+    #system-packages-warning { color: #f2b544; }
+    #system-packages-error { color: #ef9a91; }
+    InstallSystemPackages .dialog-actions Button:focus { text-style: bold underline; }
+    Screen:nocolor #system-packages-warning { color: white; text-style: bold; }
+    Screen:nocolor #system-packages-error { color: white; text-style: bold reverse; }
+    Screen:nocolor #system-package-names.-invalid { border-left: thick #b8bdc3; }
     MoreActions #confirm-box { max-height: 100%; }
     MoreActions #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
+    MoreActions #more-actions { max-height: 15; }
     MoreActions #confirm-box .dialog-actions { margin: 0; }
     JobsMenu #confirm-box > OptionList { max-height: 55vh; }
     #job-log-error { height: auto; color: #ffb3a7; }
@@ -5090,6 +5155,19 @@ class Cockpit(App):
                 if result.returncode:
                     raise ValueError(f'{config["engine"]} logs exited with status {result.returncode}.')
             self.start_task(name, 'Container logs · ' + name, logs, working='Reading container logs')
+        elif action == 'install-system-packages':
+            if record.get('dev') != 'running':
+                self.notify('Start the sandbox, then choose Install system packages again.')
+                return
+
+            def install_packages(packages):
+                if packages:
+                    job = Job(name, 'Install system packages · ' + name, 'Preparing package installation')
+                    update = Update(progress=job.set_progress)
+                    self.start_job(job, lambda log: self.service.run_update(
+                        ['install-system-packages', name, *packages], log, update))
+
+            self.push_screen(InstallSystemPackages(name), install_packages)
         elif action == 'rebuild':
             profile = config.get('profile', {})
             source = profile.get('registry_name', profile.get('name', 'base'))

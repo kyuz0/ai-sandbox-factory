@@ -234,6 +234,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
                 self.assertFalse(settings['browser'])
                 instructions = (runtime / 'context.md').read_text()
                 self.assertIn('native tools', instructions)
+                self.assertIn('Actions → Install system packages…', instructions)
                 self.assertNotIn('workspace_shell', instructions)
                 connector_settings.refresh_agent_context(config, state)
                 self.assertIn('build.example', (runtime / 'context.md').read_text())

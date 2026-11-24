@@ -67,6 +67,9 @@ If a hosted-only setup hits a `pasta` error on Linux or WSL, turn off
 Click **Open** beside a sandbox’s name to start working. To use a different
 client, choose **Actions… → Open with…** and pick one, such as Pi CLI. [Using a sandbox](docs/usage.md)
 
+Add Debian packages to a running sandbox with **Actions… → Install system packages…**.
+[Installing system packages](docs/usage.md#install-system-packages)
+
 Save a sandbox’s chats to a ZIP with **Actions… → Chat history… → Export chat history…**.
 [Back up and restore chats](docs/usage.md#back-up-and-restore-chats)
 

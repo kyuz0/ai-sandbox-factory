@@ -254,6 +254,27 @@ manager's home screen affects future sandboxes, not existing ones.
 See [approval modes and shell behavior](approvals.md#configuration-and-updates).
 The outer container and its network policy still apply when the inner sandbox is off.
 
+## Install system packages
+
+On a running sandbox, choose **Actions → Install system packages…** and enter
+Debian package names separated by spaces or commas. The agent can give you the
+names and explain why it needs them. Select **Install packages** and open **View
+job** to see the APT output. You can keep working in other sandboxes during the
+install.
+
+Factory runs APT in the existing container. Open sessions keep running and the
+agent and terminal retain their regular user permissions. Package scripts can
+run as root inside the container. Some packages require Linux capabilities the
+sandbox does not grant. Their APT or dpkg error appears in the job output.
+
+APT follows the sandbox’s current network rules. If a repository is blocked in
+**Restricted** mode, add its hostname and port in **Settings → Network and Web
+Search → Network**, then retry. For Factory’s default Debian repositories the
+host is `deb.debian.org`, usually on port `80`. Use `443` for HTTPS sources.
+
+Packages remain available when you stop and start that container. An explicit
+rebuild or another action that recreates it discards packages installed this way.
+
 ## Pi features and skills
 
 **Pi features** shows the current settings for subagents, question forms,

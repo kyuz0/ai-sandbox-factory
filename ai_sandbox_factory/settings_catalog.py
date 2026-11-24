@@ -18,6 +18,7 @@ SYSTEM_PROMPT_LABEL = 'Custom system prompt add-on'
 SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompt add-ons'
 NO_SYSTEM_PROMPT_ADD_ON = 'No add-on'
 PI_FEATURES_LABEL = 'Pi features'
+INSTALL_SYSTEM_PACKAGES = 'Install system packages…'
 
 
 # In display order. A focus target opens the shared settings form for a saved

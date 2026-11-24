@@ -7,12 +7,12 @@ import tempfile
 from threading import Event
 from unittest.mock import patch
 
-from textual.widgets import Button, OptionList
+from textual.widgets import Button, Input, OptionList
 
 from ai_sandbox_factory.models_ui import ModelDialog
 from ai_sandbox_factory.sandbox_jobs import CreationJob, RebuildJob
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, MoreActions, SandboxTable
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, InstallSystemPackages, MoreActions, SandboxTable
 from test_sandbox_jobs import JobsService, wait_for
 
 
@@ -160,10 +160,61 @@ async def render(destination, size):
             job.close()
 
 
+async def render_system_packages(destination, size):
+    service = JobsService()
+    finish = Event()
+
+    def fail(args, log, update):
+        update.progress(2, 2, 'Install packages with APT')
+        log('Reading package information from the configured APT repositories.')
+        finish.wait()
+        log('Package sample-missing is unavailable in the configured APT repositories.')
+        raise ValueError('Could not install sample-missing. See the APT output above for the package or repository error.')
+
+    service.run_update = fail
+    with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+        app = Cockpit(Path(tmp), service)
+        async with app.run_test(size=size) as pilot:
+            await wait_for(pilot, lambda: len(app.records) == 2)
+
+            async def shot(name):
+                await pilot.pause()
+                (destination / f'{name}-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot(), encoding='utf-8')
+
+            app.query_one(SandboxTable).focus()
+            await pilot.press('a')
+            menu = app.screen
+            menu.query_one(OptionList).highlighted = next(i for i, (_, action) in enumerate(menu.actions)
+                                                          if action == 'install-system-packages')
+            await shot('package-actions')
+            await pilot.press('enter')
+            assert isinstance(app.screen, InstallSystemPackages)
+            await shot('package-entry')
+            field = app.screen.query_one(Input)
+            field.value = 'jq ripgrep'
+            app.screen.query_one('#system-packages-install').focus()
+            await shot('package-filled')
+            field.value = 'jq --unsafe-option'
+            field.focus()
+            await pilot.press('enter')
+            await shot('package-input-error')
+            field.value = 'sample-missing'
+            await pilot.press('enter')
+            try:
+                await wait_for(pilot, lambda: bool(app.jobs) and 'Step 2 of 2' in app.jobs[0].status)
+                await shot('package-job-installing')
+            finally:
+                finish.set()
+            await wait_for(pilot, lambda: isinstance(app.screen, JobDetails)
+                           and str(app.screen.query_one('#job-hide', Button).label) == 'Back')
+            await shot('package-job-error')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--mono', action='store_true')
+    parser.add_argument('--system-packages-only', action='store_true')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.mono:
@@ -172,4 +223,5 @@ if __name__ == '__main__':
         os.environ.pop('NO_COLOR', None)
     os.environ['TEXTUAL_COLOR_SYSTEM'] = 'truecolor'
     for dimensions in [(80, 24), (120, 40), (220, 50)]:
-        asyncio.run(render(args.output, dimensions))
+        render_view = render_system_packages if args.system_packages_only else render
+        asyncio.run(render_view(args.output, dimensions))

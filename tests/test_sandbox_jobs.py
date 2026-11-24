@@ -5,12 +5,12 @@ from threading import Event
 import unittest
 from unittest.mock import patch
 
-from textual.widgets import Button, OptionList, RichLog
+from textual.widgets import Button, Input, OptionList, RichLog, Static
 
 from ai_sandbox_factory.models_ui import ModelDialog
 from ai_sandbox_factory.sandbox_jobs import Job
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails, JobsMenu
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, MoreActions, SandboxTable
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, InstallSystemPackages, MoreActions, SandboxTable
 from ai_sandbox_factory.updating import UpdateCancelled
 from test_tui import FakeService
 
@@ -67,6 +67,46 @@ def output(screen):
 
 
 class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_package_menu_validates_input_and_starts_a_sandbox_job(self):
+        service = JobsService()
+        calls = []
+
+        def run_update(args, log, update):
+            calls.append(args)
+            log('Packages installed.')
+
+        service.run_update = run_update
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(tmp), service)
+            async with app.run_test(size=(80, 24)) as pilot:
+                await wait_for(pilot, lambda: len(app.records) == 2)
+                app.query_one(SandboxTable).focus()
+                await pilot.press('a')
+                menu = app.screen
+                index = menu.actions.index(('Install system packages…', 'install-system-packages'))
+                menu.query_one(OptionList).highlighted = index
+                await pilot.press('enter')
+                self.assertIsInstance(app.screen, InstallSystemPackages)
+                field = app.screen.query_one('#system-package-names', Input)
+                self.assertIs(app.screen.focused, field)
+                warning = str(app.screen.query_one('#system-packages-warning', Static).render())
+                for phrase in ('scripts can run as root', 'sandbox stays running'):
+                    self.assertIn(phrase, warning)
+                field.value = 'jq --allow-unauthenticated'
+                await pilot.press('enter')
+                self.assertIn('Enter Debian package names', str(app.screen.query_one('#system-packages-error').render()))
+                self.assertFalse(calls)
+                await pilot.press('escape')
+                self.assertFalse(calls)
+                app.perform('install-system-packages', record=app.selected())
+                await pilot.pause()
+                app.screen.query_one(Input).value = 'ripgrep,jq jq'
+                await pilot.click('#system-packages-install')
+                await wait_for(pilot, lambda: bool(app.jobs) and app.jobs[0].result is not None)
+                self.assertEqual(calls, [['install-system-packages', 'alpha', 'jq', 'ripgrep']])
+                self.assertEqual(app.jobs[0].targets, ('alpha',))
+                self.assertEqual(app.jobs[0].result, 'Complete')
+
     async def test_successful_delete_clears_previous_setup_without_removing_output(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             app = Cockpit(Path(tmp), JobsService())

@@ -9,7 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import editor_settings, operation_locks
+from . import editor_settings, operation_locks, system_packages
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -1668,6 +1668,7 @@ def main(*, startup_notice=''):
     new.add_argument('--editor', choices=editor_settings.MODES, help='Client to open (default: browser on supported hosts)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
+        'install-system-packages': 'Install Debian packages in a running sandbox',
         'browser-editor': 'Open the browser editor (rootless Podman)',
         'update': 'Apply settings to a saved sandbox',
         'up': 'Resume containers and recover stale runtime or gateway state',
@@ -1677,11 +1678,13 @@ def main(*, startup_notice=''):
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('update', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
-        if command in ('update', 'recreate'):
+        if command in ('update', 'recreate', 'install-system-packages'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
+        if command == 'install-system-packages':
+            cmd.add_argument('packages', nargs='+', help='Debian package names')
         if command == 'browser-editor':
             cmd.add_argument('--archive', help='Use a downloaded copy of the pinned code-server archive')
             cmd.add_argument('--background', action='store_true', help='Keep the editor running after this command exits')
@@ -1764,7 +1767,7 @@ def main(*, startup_notice=''):
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
-    if args.command in ('create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy',
+    if args.command in ('create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                         'configure', 'primary-login', 'primary-import'):
         with operation_locks.sandbox(args.name, args.command):
             sandbox_command(args, state, parser)
@@ -1847,6 +1850,11 @@ def sandbox_command(args, state, parser):
         delete(config, state)
     elif args.command == 'update':
         apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
+    elif args.command == 'install-system-packages':
+        try:
+            system_packages.install(config, args.packages, args.apply_gate)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise SystemExit(f'Error: {error}') from None
     elif args.command == 'recreate':
         from .job_progress import Progress
         if native and (args.profile or args.subagents is not None):

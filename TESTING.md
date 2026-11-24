@@ -50,6 +50,26 @@ rendered images, including checked and unchecked controls and the error dialog.
 
 ## Package installation
 
+### Live APT in a sandbox
+
+These checks use disposable rootless Podman sandboxes and download from Debian.
+They exercise a gateway denial, retry after editing the network rules, a missing
+package, and a successful install with the same container and terminal session.
+The Codex run uses a sandbox without a subscription sign-in.
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/system_packages_integration.py --agent pi
+PYTHONPATH=. .venv/bin/python tests/system_packages_integration.py --agent codex
+```
+
+Render the package dialog, input validation and job details at all supported review sizes:
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/render_sandbox_jobs.py /tmp/factory-apt-review --system-packages-only
+```
+
+### Factory wheel
+
 Build the wheel from a clean copy of the revision you plan to ship. Build output
 left by older runs can contain files that have since been deleted. Install the
 wheel outside the checkout and create a sandbox to verify its bundled assets.
