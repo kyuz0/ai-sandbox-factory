@@ -61,6 +61,7 @@ class ProviderCredentialsTests(unittest.TestCase):
                     saved = json.dumps(config)
                     (state / 'config.json').write_text(saved)
                     stack.enter_context(patch('sys.argv', ['pi-sandbox-factory', '--state-dir', tmp, *command]))
+                    stack.enter_context(patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(tmp)))
                     for name in ('create', 'build', 'up'):
                         stack.enter_context(patch.object(sandbox, name))
                     stack.enter_context(patch.object(sandbox, 'inspect', return_value={
@@ -103,10 +104,12 @@ class ProviderCredentialsTests(unittest.TestCase):
 
     def test_provider_failure_keeps_diagnostics_and_masks_key(self):
         log = []
-        with patch('ai_sandbox_factory.sandbox_tui.subprocess.run', return_value=subprocess.CompletedProcess(
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(tmp)), \
+             patch('ai_sandbox_factory.sandbox_tui.subprocess.run', return_value=subprocess.CompletedProcess(
                 [], 17, 'Workspace ready', 'Catalogue request failed with HTTP 503\nKey: synthetic-secret')):
             with self.assertRaisesRegex(ValueError, r'provider company for demo \(exit 17\)'):
-                Service('/tmp/fixture').provider('demo', 'company', 'refresh', 'synthetic-secret', log.append)
+                Service(tmp).provider('demo', 'company', 'refresh', 'synthetic-secret', log.append)
         self.assertEqual(log, ['Workspace ready', 'Catalogue request failed with HTTP 503\nKey: [redacted]'])
 
         with patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess(

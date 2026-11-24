@@ -335,6 +335,7 @@ class LocalModelSetupTests(unittest.TestCase):
             calls=[]
             argv=['sandbox.py','--state-dir',temp,'create','example','--workspace','/project','--start']
             with patch('sys.argv',argv), patch.object(sandbox,'create',side_effect=lambda *a:calls.append('create')), \
+                 patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(temp)), \
                  patch.object(sandbox,'build',side_effect=lambda *a:calls.append('build')), \
                  patch.object(sandbox,'up',side_effect=lambda *a:calls.append('up')), \
                  patch.object(sandbox,'initialize_models',side_effect=lambda *a:calls.append('models')), \

@@ -1447,20 +1447,24 @@ class MoreActions(ModalScreen[Optional[str]]):
     @on(OptionList.OptionSelected)
     def selected(self, event):
         event.stop()
-        if self.page:
-            self.dismiss(self.pages[self.page][1][event.option_index][1])
+        choices, index = event.option_list, event.option_index
+        if (not choices.is_attached or index >= choices.option_count
+                or choices.get_option_at_index(index) is not event.option):
             return
-        action = self.actions[event.option_index][1]
+        if self.page:
+            self.dismiss(self.pages[self.page][1][index][1])
+            return
+        action = self.actions[index][1]
         if action not in self.pages:
             self.dismiss(action)
             return
         self.page = action
-        self.parent_index = event.option_index
+        self.parent_index = index
         title, items = self.pages[action]
         self.query_one(Label).update(f'{title} · {self.sandbox_name}')
         self.query_one('#more-cancel', Button).label = 'Back'
-        event.option_list.set_options(label for label, _ in items)
-        event.option_list.highlighted = 0
+        choices.set_options(label for label, _ in items)
+        choices.highlighted = 0
 
     @on(Button.Pressed)
     def cancel(self, event):
@@ -4465,6 +4469,9 @@ class Cockpit(App):
             self.call_from_thread(self.show_update, latest)
 
     def show_update(self, latest):
+        row = self.query_one_optional('#application-update')
+        if row is None or not row.is_attached:
+            return
         self.available_version = latest
         self.query_one('#application-update-message', Static).update(
             f'Update available · v{latest}')
@@ -4476,7 +4483,7 @@ class Cockpit(App):
         hint.display = pipx_install and not button.display
         hint.update('Install pipx to upgrade.')
         self.query_one('#application-update-help', Button).display = not pipx_install
-        self.query_one('#application-update').display = True
+        row.display = True
 
     def confirm_update(self):
         if self.upgrade_pending():
@@ -4506,12 +4513,24 @@ class Cockpit(App):
 
     @work(thread=True, exclusive=True, group='inventory', exit_on_error=False)
     def refresh_inventory(self, only_if_changed=False):
+        worker = get_current_worker()
         try:
             records = self.service.inventory()
-            if not get_current_worker().is_cancelled:
-                self.call_from_thread(self.receive_inventory, records, only_if_changed)
         except Exception as error:
-            self.call_from_thread(self.query_one('#home-error', Static).update, safe_text(error))
+            self.call_from_thread(self.finish_inventory, worker, only_if_changed, error=safe_text(error))
+        else:
+            self.call_from_thread(self.finish_inventory, worker, only_if_changed, records=records)
+
+    def finish_inventory(self, worker, only_if_changed, *, records=None, error=None):
+        if worker.is_cancelled:
+            return
+        feedback = self.query_one_optional('#home-error', Feedback)
+        if feedback is None or not feedback.is_attached:
+            return
+        if error is not None:
+            feedback.update(error)
+            return
+        self.receive_inventory(records, only_if_changed)
 
     def action_refresh_inventory(self):
         self.check_dependencies()
@@ -4530,11 +4549,11 @@ class Cockpit(App):
         self.set_class(bool(missing), 'missing-dependencies')
 
     def receive_inventory(self, records, only_if_changed=False):
+        self.query_one('#home-error', Static).update('')
         if only_if_changed and records == self.records:
             return
         self.records = records
         self.query_one('#create-from', Button).disabled = not records
-        self.query_one('#home-error', Static).update('')
         self.render_records()
 
     def render_records(self):
@@ -4636,8 +4655,9 @@ class Cockpit(App):
         self.render_records()
 
     @on(DataTable.CellHighlighted, '#sandboxes')
-    def highlighted(self):
-        self.update_details()
+    def highlighted(self, event):
+        if event.data_table.is_attached:
+            self.update_details()
 
     @on(DataTable.CellSelected, '#sandboxes')
     def select_sandbox_cell(self, event):

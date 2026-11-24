@@ -68,6 +68,7 @@ def main():
                         assert all(part in str(error) for part in (
                             'Step 6 of 6', 'refresh provider fixture', 'HTTP 503')), str(error)
                         assert any('Catalogue request failed' in line for line in output), output
+                        assert not any(line.startswith('Traceback') for line in output), output
                         assert not state.exists(), 'Failed attempt retained its state'
                         config = {'name': name, 'engine': 'podman'}
                         assert all(sandbox.inspect(config, n) is None for n in

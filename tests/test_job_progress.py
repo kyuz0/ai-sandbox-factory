@@ -100,13 +100,21 @@ with Progress(['Build selected images']).stage('Build selected images'):
         from ai_sandbox_factory import creation
         from ai_sandbox_factory.sandbox_tui import Service
         name = 'progress-lock-fixture'
-        script = ('from ai_sandbox_factory.operation_locks import sandbox\n'
-                  'with sandbox("' + name + '", "replace"):\n    pass\n')
+        from ai_sandbox_factory import operation_locks
+
+        script = (
+            'from pathlib import Path\n'
+            'import sys\n'
+            'from ai_sandbox_factory import operation_locks\n'
+            'operation_locks.private_runtime_dir = lambda: Path(sys.argv[1])\n'
+            'with operation_locks.sandbox(sys.argv[2], "replace"):\n    pass\n'
+        )
         def blocked():
-            result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('another Factory operation', result.stderr)
         with tempfile.TemporaryDirectory() as tmp:
+            command = [sys.executable, '-c', script, tmp, name]
             service = Service(Path(tmp))
             job = creation.Creation()
             cleanup = job.cleanup
@@ -116,11 +124,12 @@ with Progress(['Build selected images']).stage('Build selected images'):
             def rollback(*args):
                 blocked()
                 return cleanup(*args)
-            with patch.object(job, '_worker', side_effect=worker), patch.object(job, 'cleanup', side_effect=rollback):
+            with patch.object(operation_locks, 'private_runtime_dir', return_value=Path(tmp)), \
+                 patch.object(job, '_worker', side_effect=worker), patch.object(job, 'cleanup', side_effect=rollback):
                 with self.assertRaisesRegex(ValueError, 'synthetic build rejection'):
                     job.run(service, {'name': name}, None, lambda line: None)
             self.assertFalse((Path(tmp) / name).exists())
-            result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_recreate_plan_omits_build_when_reusing_images(self):

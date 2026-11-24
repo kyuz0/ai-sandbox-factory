@@ -31,6 +31,32 @@ class HostedUITests(unittest.TestCase):
     def tearDownClass(cls): cls.runner.close()
     def _callTestMethod(self,method): self.runner.run(method())
 
+    async def test_model_highlight_ignores_replaced_options(self):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(temp), ModelService([]))
+            async with app.run_test(size=(80, 24)) as pilot:
+                dialog = ModelDialog('test', 'openrouter')
+                await app.push_screen(dialog)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                choices = dialog.query_one('#model-results', OptionList)
+                stale = OptionList.OptionHighlighted(choices, choices.get_option_at_index(0), 0)
+                search = dialog.query_one('#model-search', Input)
+                search.value = 'unmatched'
+                await pilot.pause()
+                dialog.post_message(stale)
+                await pilot.pause()
+                save = dialog.query_one('#model-save', Button)
+                self.assertTrue(save.disabled)
+                refresh = dialog.query_one('#model-refresh', Button)
+                self.assertIs(refresh.parent, save.parent)
+                self.assertTrue(dialog.region.contains_region(refresh.region))
+                search.value = ''
+                await pilot.pause()
+                choices.highlighted = 0
+                await pilot.pause()
+                self.assertFalse(save.disabled)
+
     async def test_post_creation_reviewer_choice_survives_skipping_chat_default(self):
         from ai_sandbox_factory.reviewer_ui import ReviewerFields
         service = ModelService([])

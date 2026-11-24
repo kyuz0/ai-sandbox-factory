@@ -4,6 +4,7 @@ from contextlib import nullcontext
 import json
 from pathlib import Path
 import tempfile
+from threading import Event
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -528,6 +529,39 @@ class TUITests(unittest.TestCase):
                     self.assertEqual(app.focused.id, 'key-close')
                     await pilot.press('enter')
                 await pilot.press('escape')
+
+    async def test_public_key_read_can_finish_after_screen_is_removed(self):
+        from ai_sandbox_factory.repository_ui import PublicKey
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        started, release, delivered = Event(), Event(), Event()
+
+        def read_key(*args):
+            started.set()
+            release.wait(10)
+            return 'ssh-ed25519 AAAA fixture'
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            dialog = PublicKey('alpha')
+            loaded = dialog.loaded
+
+            def finish(*args):
+                loaded(*args)
+                delivered.set()
+
+            with patch.object(service, 'ssh_key', create=True, side_effect=read_key), \
+                 patch.object(dialog, 'loaded', side_effect=finish):
+                try:
+                    await app.push_screen(dialog)
+                    self.assertTrue(await asyncio.to_thread(started.wait, 10))
+                    await app.pop_screen()
+                    release.set()
+                    self.assertTrue(await asyncio.to_thread(delivered.wait, 10))
+                    self.assertIs(app.screen, app.screen_stack[0])
+                    self.assertFalse(dialog.public_key)
+                finally:
+                    release.set()
 
     async def test_ssh_settings_keep_key_import_separate(self):
         from ai_sandbox_factory.sandbox_tui import SSHScreen
@@ -2155,6 +2189,82 @@ class DashboardActivityTests(unittest.TestCase):
     setUp = TUITests.setUp
     tearDown = TUITests.tearDown
     ready = TUITests.ready
+
+    async def test_actions_ignore_selection_from_previous_menu_page(self):
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            chosen = []
+            menu = MoreActions(self.records[0])
+            await app.push_screen(menu, chosen.append)
+            options = menu.query_one(OptionList)
+            for index in (next(i for i, (_, action) in enumerate(menu.actions) if action == 'diagnostics'),
+                          len(menu.actions) - 1):
+                menu.post_message(OptionList.OptionSelected(options, options.get_option_at_index(index), index))
+            await pilot.pause()
+            self.assertIs(app.screen, menu)
+            self.assertEqual(menu.page, 'diagnostics')
+            self.assertEqual(chosen, [])
+            await pilot.press('enter')
+            self.assertEqual(chosen, ['containers'])
+
+    async def test_superseded_inventory_failure_cannot_overwrite_current_state(self):
+        service = FakeService(self.records)
+        app = Cockpit(self.root, service)
+        old_started, release_old, old_finished = Event(), Event(), Event()
+
+        def fail_old():
+            old_started.set()
+            release_old.wait(10)
+            raise ValueError('Obsolete inventory error')
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            feedback = app.query_one('#home-error')
+            finish_inventory = app.finish_inventory
+            responses = iter((fail_old, lambda: self.records[:1],
+                              lambda: self.records[:1]))
+
+            def inventory():
+                return next(responses)()
+
+            def finish(*args, **kwargs):
+                finish_inventory(*args, **kwargs)
+                if kwargs.get('error') == 'Obsolete inventory error':
+                    old_finished.set()
+
+            with patch.object(service, 'inventory', side_effect=inventory), \
+                 patch.object(app, 'finish_inventory', side_effect=finish):
+                try:
+                    app.refresh_inventory()
+                    self.assertTrue(await asyncio.to_thread(old_started.wait, 10))
+                    await app.refresh_inventory().wait()
+                    release_old.set()
+                    self.assertTrue(await asyncio.to_thread(old_finished.wait, 10))
+                    self.assertEqual(app.records, self.records[:1])
+                    self.assertFalse(feedback.display)
+                    with patch.object(service, 'inventory', side_effect=ValueError('Current inventory error')):
+                        await app.refresh_inventory().wait()
+                    self.assertIn('Current inventory error', str(feedback.render()))
+                    await app.refresh_inventory(only_if_changed=True).wait()
+                    self.assertFalse(feedback.display)
+                finally:
+                    release_old.set()
+
+    async def test_dashboard_ignores_highlight_from_removed_table(self):
+        app = Cockpit(self.root, FakeService(self.records))
+        async with app.run_test(size=(80, 24)) as pilot:
+            await self.ready(app, pilot)
+            table = app.query_one(SandboxTable)
+            coordinate = table.cursor_coordinate
+            event = table.CellHighlighted(table, table.get_cell_at(coordinate),
+                                          coordinate, table.coordinate_to_cell_key(coordinate))
+            await table.remove()
+            app.post_message(event)
+            await pilot.pause()
+            await app.query_one('#application-update').remove()
+            app.show_update('2099.1.1.1')
+            self.assertIsNone(app.available_version)
 
     async def test_dashboard_focus_cues_are_distinct_from_action_fill(self):
         app = Cockpit(self.root, FakeService(self.records))

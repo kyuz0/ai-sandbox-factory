@@ -37,6 +37,7 @@ class DocumentSearchTests(unittest.TestCase):
             config = {'name': 'demo', 'engine': 'podman', 'uid': 1000, 'gid': 1000,
                       'profile': sandbox.load_profile('base'), 'common': {'path': tmp, 'digest': 'fixture'}}
             stack.enter_context(patch.object(sandbox.host_platform, 'check_engine'))
+            stack.enter_context(patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=common))
             stack.enter_context(patch.object(sandbox, 'tree_digest', side_effect=lambda path:
                 'fixture' if path == common else config['profile']['digest']))
             stack.enter_context(patch.object(sandbox.sandbox_extensions, 'build_contexts', return_value=nullcontext([])))

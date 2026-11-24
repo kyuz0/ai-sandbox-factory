@@ -19,6 +19,9 @@ class FolderTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        runtime = patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=self.root)
+        runtime.start()
+        self.addCleanup(runtime.stop)
         self.workspace = self.root / 'project'
         self.workspace.mkdir()
         (self.workspace / 'app').mkdir()

@@ -1497,8 +1497,9 @@ PYTHONPATH=.:tests .venv/bin/python tests/render_tui.py OUTPUT_DIR --only \
   creation-running creation-confirm creation-failed creation-cleanup-error creation-choose-model
 ```
 
-On Linux with rootless Podman, run the two-sandbox check. It uses a temporary
-state directory and deletes its disposable containers and volumes on exit.
+Run the two-sandbox check on Linux with rootless Podman. The release workflow
+runs this check too. It uses a temporary state directory and deletes its
+disposable containers and volumes on exit.
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python tests/sandbox_jobs_integration.py
@@ -1507,9 +1508,10 @@ PYTHONPATH=.:tests .venv/bin/python tests/sandbox_jobs_integration.py
 The check starts a second sandbox from the same TUI while the first rebuild
 waits. It checks that cancellation preserves the first container, that the
 second starts with the rebuilt image, and that each job keeps its own output.
-It also hides a real creation during image build and reopens it with **View job**
-in the **Creating** row. It checks that Quit explains the active job and that
-completion leaves the other sandbox's action menu open. A separate CLI cannot
+It also hides a real creation during image build, verifies the step counter on
+**View job** in the **Creating** row, and uses that button to reopen the job.
+It checks that Quit explains the active job and that completion leaves the
+other sandbox's action menu open. A separate CLI cannot
 stop a sandbox while Factory rebuilds or creates it.
 
 Run `node --test tests/test_editor_watch_fallback.cjs` for watcher events,

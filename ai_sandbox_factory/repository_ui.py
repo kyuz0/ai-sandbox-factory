@@ -230,6 +230,7 @@ class CreateSSHFields(Vertical):
 
 class CreateSSHDialog(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
+    AUTO_FOCUS = '#ssh-hosts'
     DEFAULT_CSS = """
     CreateSSHDialog { align: center middle; background: #000000 70%; }
     CreateSSHDialog > Vertical { width: 82; max-width: 95%; height: 32; max-height: 95%;
@@ -407,11 +408,14 @@ class PublicKey(ModalScreen):
         app = self.app
         try:
             public = app.service.ssh_key(self.sandbox_name, False)
-            app.call_from_thread(self.loaded, public, '')
         except Exception as error:
             app.call_from_thread(self.loaded, '', str(error))
+        else:
+            app.call_from_thread(self.loaded, public, '')
 
     def loaded(self, public, error):
+        if not self.is_attached:
+            return
         self.busy = False
         self.public_key = public
         self.query_one('#key-public', TextArea).load_text(public)

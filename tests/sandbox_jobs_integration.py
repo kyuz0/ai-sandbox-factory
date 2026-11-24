@@ -100,7 +100,8 @@ async def verify_creation(app, service, root, existing):
                     assert app.screen is app.screen_stack[0]
                     table = app.query_one(SandboxTable)
                     assert str(table.get_cell(name, 'dev')) == 'Creating'
-                    assert str(table.get_cell(name, 'open')).strip() == 'View job'
+                    await wait_for(pilot, lambda: str(table.get_cell(name, 'open')).strip() == job.view_label)
+                    assert job.view_label.startswith('View job ('), job.view_label
                     table.move_cursor(row=table.get_row_index(name), column=1)
                     table.focus()
                     await pilot.press('enter')

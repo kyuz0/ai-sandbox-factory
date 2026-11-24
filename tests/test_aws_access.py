@@ -68,12 +68,15 @@ class AWSAccessTests(unittest.TestCase):
 
     def test_connecting_older_snapshot_explains_runtime_update_before_build(self):
         with TemporaryDirectory() as tmp, patch.object(sandbox, 'run') as run:
-            path = Path(tmp)
+            root = Path(tmp)
+            path = root / 'snapshot'
+            path.mkdir()
             (path / 'entrypoint.sh').write_text('#!/bin/sh\n')
-            snapshot = {'name': 'base', 'path': tmp, 'digest': sandbox.tree_digest(path)}
+            snapshot = {'name': 'base', 'path': str(path), 'digest': sandbox.tree_digest(path)}
             config = dict(name='demo', engine='podman', profile=snapshot, common=snapshot,
                           aws_access=self.value, uid=1000, gid=1000)
-            with patch.object(sandbox.host_platform, 'check_engine'):
+            with patch.object(sandbox.host_platform, 'check_engine'), \
+                 patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=root):
                 with self.assertRaisesRegex(ValueError, 'Update sources and recreate'):
                     sandbox.build(config)
             run.assert_not_called()

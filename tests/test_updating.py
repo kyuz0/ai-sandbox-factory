@@ -1,10 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from ai_sandbox_factory import updating
 
@@ -24,6 +26,25 @@ class UpdateTests(unittest.TestCase):
     def test_apply_finishes_after_cancellation_becomes_unavailable(self):
         self.exercise('update', cancel=False)
         self.exercise('recreate', cancel=False)
+
+    def test_failed_stop_leaves_the_apply_gate_closed(self):
+        update = updating.Update()
+        gate = None
+
+        def cannot_stop(command, *args):
+            nonlocal gate
+            gate = Path(command[-1])
+            self.addCleanup(shutil.rmtree, gate.parent, ignore_errors=True)
+            self.assertTrue(update.cancel())
+            raise updating.StopFailed('Could not stop fixture worker')
+
+        with patch.object(update, '_run', side_effect=cannot_stop):
+            with self.assertRaisesRegex(updating.StopFailed, 'Could not stop'):
+                update.run(['unused'], self.fail)
+        self.assertTrue(gate.is_dir())
+        self.assertFalse(updating.begin_apply(gate))
+        self.assertFalse(update.can_cancel)
+        self.assertFalse(update.applying)
 
     def exercise(self, action, *, cancel):
         with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor() as pool:
@@ -62,7 +83,7 @@ def down(config, remove):
         time.sleep(0.01)
 
 with patch.object(sandbox, 'build', build), patch.object(sandbox, 'down', down), \
-     patch.object(sandbox, 'up'):
+     patch.object(sandbox, 'up'), patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=root):
     try:
         sandbox.main()
     except KeyboardInterrupt:

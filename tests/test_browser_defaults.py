@@ -38,6 +38,7 @@ class BrowserDefaultsTests(unittest.TestCase):
                         selected.write_text(json.dumps({'browser': saved}))
                         args.extend(['--options-file', str(selected)])
                     with patch('sys.argv', args), \
+                            patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=root), \
                             patch.object(sandbox, 'choose_engine', return_value='docker'), \
                             patch.object(sandbox.host_platform, 'check_engine', return_value=None), \
                             patch.object(sandbox.os, 'getuid', return_value=1000), \

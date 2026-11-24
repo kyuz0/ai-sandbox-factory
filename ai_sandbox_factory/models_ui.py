@@ -336,21 +336,18 @@ class ModelDialog(EntryDialog):
                 if not self.plugin_label:
                     yield Static('The catalogue supplies model capabilities and limits.',classes='section-intro')
                     with Vertical(classes='setting'):
-                        yield Button('Refresh catalogue',id='model-refresh')
-                    with Vertical(classes='setting'):
                         yield Button('Test selected model · sends a short request', id='model-test', disabled=True)
                 if self.approval_model is not None:
                     yield Static('The default chat model applies to new conversations.', classes='section-intro')
                     yield ReviewerFields(self.sandbox_name, self.approval_model, save_on_choice=True)
-            if self.approval_model is None:
-                yield Static('Default for new conversations only.',classes='section-intro')
+                else:
+                    yield Static('Default for new conversations only.', classes='section-intro')
             yield Static('Loading catalogue…',id='model-error',markup=False)
             if self.offer_later:
                 yield Static('Later keeps this choice in Jobs. Skip keeps the current default.', classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
-                if self.plugin_label:
-                    yield Button('Refresh catalogue', id='model-refresh')
-                    yield Static('', classes='action-spacer')
+                yield Button('Refresh catalogue', id='model-refresh')
+                yield Static('', classes='action-spacer')
                 if self.offer_later:
                     yield Button('Later', id='model-later')
                 yield Button('Skip' if self.optional else 'Cancel',id='model-cancel')
@@ -424,6 +421,11 @@ class ModelDialog(EntryDialog):
 
     @on(OptionList.OptionHighlighted,'#model-results')
     def highlighted(self,event):
+        choices = event.option_list
+        if (not choices.is_attached or choices.highlighted != event.option_index
+                or event.option_index >= choices.option_count
+                or choices.get_option_at_index(event.option_index) is not event.option):
+            return
         model = self.filtered[event.option_index]
         self.query_one('#model-details',Static).update(f"{model['contextWindow']:,} context tokens · {model['maxTokens']:,} output tokens · " + ', '.join(model['input']) + (' · reasoning' if model['reasoning'] else ''))
         self.query_one('#model-save',Button).disabled = False

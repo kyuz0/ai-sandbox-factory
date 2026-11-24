@@ -137,6 +137,7 @@ class SystemPromptTests(unittest.TestCase):
         with (
             patch('sys.argv', args),
             patch.object(sandbox, 'choose_engine', return_value='docker'),
+            patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=self.root),
             patch.object(sandbox.host_platform, 'check_engine', return_value=None),
         ):
             sandbox.main()

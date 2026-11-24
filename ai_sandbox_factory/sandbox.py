@@ -1933,7 +1933,11 @@ def sandbox_command(args, state, parser):
                 secret=sys.stdin.read(65537).strip()
                 if len(secret)>65536:parser.error('Credential input too large')
             up(config,state)
-            model_providers.configure(config,state,'status' if args.status else 'preview' if args.preview else 'refresh',args.provider,secret)
+            action = 'status' if args.status else 'preview' if args.preview else 'refresh'
+            try:
+                model_providers.configure(config, state, action, args.provider, secret)
+            except ValueError as error:
+                raise SystemExit(f'Error: {error}') from None
     elif args.command == 'communication-key':
         current = inspect(config, names(config)[0])
         if not current or not current['State']['Running']:

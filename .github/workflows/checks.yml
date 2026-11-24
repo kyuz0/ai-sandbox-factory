@@ -100,6 +100,9 @@ jobs:
         run: |
           mkdir -p /tmp/factory-fresh-sandbox
           python tests/creation_provider.py 2>&1 | tee /tmp/factory-fresh-sandbox/provider-creation.log
+      - name: Exercise background creation, rebuild and cancellation in the TUI
+        shell: bash
+        run: python tests/sandbox_jobs_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/jobs.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

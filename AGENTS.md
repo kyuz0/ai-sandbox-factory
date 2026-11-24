@@ -105,6 +105,22 @@ Browser supervisors must work without `fork`, `/proc` or Linux pidfds on the hos
 Keep generated browser origins separate per sandbox and validate Host and Origin.
 Do not solve VM mount failures with recursive ownership changes or wider host mounts.
 
+## Async work and test isolation
+
+- Give every queued UI event, timer and worker result an owner. Resolve widgets
+  on the UI thread and check that the owner is still attached before rendering.
+  Check request identity on success and failure so an older result cannot
+  overwrite a newer one. When a list has changed, verify the option itself
+  before using a queued event’s index.
+- Test the affected workflow with work still in flight. Cover dismissal,
+  replacement or application exit as applicable, plus failure and retry.
+  Use a gate or event to force the ordering and assert which screen, data and
+  feedback remain after both callbacks finish.
+- Give tests that mock lifecycle work a private lock directory and pass the same
+  directory to their subprocesses. Real-engine tests use production lock paths
+  and unique sandbox names. Arrange contention explicitly when testing it.
+  Exercise affected tests alongside real jobs before calling the workflow finished.
+
 ## Capacity and recovery
 
 - HARD GATE — actionable errors throughout AI Sandbox Factory: never hide a
