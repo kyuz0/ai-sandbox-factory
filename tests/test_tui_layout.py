@@ -9,6 +9,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Collapsible, Input, Label, OptionList, Select, Static, RichLog
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.sandbox_options import APPROVAL_MODES
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from ai_sandbox_factory.sandbox_tui import (
     Cockpit, Confirm, DEFAULT_SETTINGS, FolderPicker, NewSandbox, SettingsForm,
     SettingsMenu, WebAccessForm, preset,
@@ -694,7 +695,6 @@ class TUILayoutTests(unittest.TestCase):
             app = self.app()
             async with app.run_test(size=(80, 24)) as pilot:
                 await self.ready(app, pilot)
-                await app.push_screen(NewSandbox())
                 draft = self.draft()
                 draft['open_editor'] = open_editor
                 await app.push_screen(SettingsForm(draft))
@@ -703,7 +703,7 @@ class TUILayoutTests(unittest.TestCase):
                 self.assertEqual(app.service.calls[0][0], 'create')
                 self.assertEqual(['open', 'demo'] in app.service.calls, open_editor)
                 self.assertTrue(app.screen.finished)
-                self.assertFalse(app.screen.failed)
+                self.assertTrue(app.screen.succeeded)
                 await pilot.press('escape')
                 await self.ready(app, pilot)
                 await pilot.press('q')
@@ -719,17 +719,17 @@ class TUILayoutTests(unittest.TestCase):
                 with patch.object(app.service, 'run', side_effect=ValueError('Cannot open') if fails else None):
                     app.screen.submit(draft, {})
                     await self.ready(app, pilot)
-                notice = str(app.screen.query_one('#operation-next', Static).render())
-                self.assertIn('Open in browser' if fails else 'reopened client', notice)
-                self.assertNotIn('Slack', notice)
-                self.assertNotIn('SSH', notice)
-                self.assertFalse(app.screen.failed)
+                update, editor = app.jobs
+                self.assertEqual(update.result, 'Complete')
+                self.assertEqual(editor.result, 'Failed' if fails else 'Complete')
+                self.assertIn('Open in browser' if fails else 'reopened client', update.notice)
+                self.assertNotIn('Slack', update.notice)
+                self.assertNotIn('SSH', update.notice)
 
     async def test_create_with_pi_opens_the_terminal_after_success(self):
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
-            await app.push_screen(NewSandbox())
             draft = self.draft()
             draft['editor']['mode'] = 'pi'
             draft['open_editor'] = True
@@ -739,8 +739,8 @@ class TUILayoutTests(unittest.TestCase):
                 await self.ready(app, pilot)
                 launch.assert_called_once_with('pi', 'demo')
             self.assertEqual([call[0] for call in app.service.calls], ['create'])
-            self.assertTrue(app.screen.finished)
-            self.assertFalse(app.screen.failed)
+            self.assertEqual(app.jobs[0].result, 'Complete')
+            self.assertIs(app.screen, app.screen_stack[0])
 
     async def test_editor_choice_stays_with_final_action(self):
         for size in ((80, 24), (120, 40)):
@@ -779,7 +779,6 @@ class TUILayoutTests(unittest.TestCase):
         app.service.run = fail_open
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
-            await app.push_screen(NewSandbox())
             draft = self.draft()
             draft['open_editor'] = True
             await app.push_screen(SettingsForm(draft))
@@ -787,18 +786,16 @@ class TUILayoutTests(unittest.TestCase):
             await self.ready(app, pilot)
             self.assertEqual(app.service.calls[0][0], 'create')
             self.assertTrue(app.screen.finished)
-            self.assertTrue(app.screen.failed)
-            self.assertTrue(app.screen.title.startswith('Opening '))
-            self.assertIsNone(app.screen.cancellation)
+            self.assertEqual(app.screen.job.result, 'Failed')
+            self.assertTrue(app.screen.job.title.startswith('Open editor'))
+            self.assertFalse(app.screen.job.can_cancel)
             output = '\n'.join(line.text for line in app.screen.query_one(RichLog).lines)
             self.assertIn('VS Code is not installed', output)
             # Opening is separate: a late Cancel cannot delete a completed sandbox.
             await pilot.press('escape')
             await self.ready(app, pilot)
-            self.assertTrue(app.screen.finished)
-            self.assertFalse(app.screen.failed)
-            self.assertTrue(app.screen.title.startswith('Created '))
-            await pilot.press('escape')
+            self.assertEqual(app.jobs[0].result, 'Complete')
+            self.assertIs(app.screen, app.screen_stack[0])
             await pilot.press('q')
 
 
@@ -889,7 +886,7 @@ class TUILayoutTests(unittest.TestCase):
             self.assertTrue(str(app.screen.query_one('#agent-section', Collapsible).title).startswith('Approvals & sandbox'))
 
     async def test_labels_controls_and_feedback_do_not_create_empty_rows(self):
-        from ai_sandbox_factory.sandbox_tui import CreateFromSandbox, Operation
+        from ai_sandbox_factory.sandbox_tui import CreateFromSandbox
         from ai_sandbox_factory.models_ui import ProviderDialog
         for size in ((80, 24), (120, 40)):
             app = self.app()
@@ -923,9 +920,9 @@ class TUILayoutTests(unittest.TestCase):
                 feedback.update('')
                 self.assertFalse(feedback.display)
                 await app.pop_screen()
-                await app.push_screen(Operation('Starting sandbox', lambda log: log('Ready.')))
+                app.start_task('demo', 'Start sandbox', lambda log: log('Ready.'))
                 await self.ready(app, pilot)
-                button = app.screen.query_one('#operation-back')
+                button = app.screen.query_one('#job-hide')
                 bar = app.screen.query_one('.wizard-actions')
                 self.assertIs(button.parent, bar)
                 self.assertIs(app.focused, button)

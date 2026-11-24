@@ -7,8 +7,10 @@ from unittest.mock import patch
 
 from textual.widgets import Button, OptionList, RichLog
 
+from ai_sandbox_factory.models_ui import ModelDialog
+from ai_sandbox_factory.sandbox_jobs import Job
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails, JobsMenu
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, MoreActions, SandboxTable
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, CreationRequest, MoreActions, SandboxTable
 from ai_sandbox_factory.updating import UpdateCancelled
 from test_tui import FakeService
 
@@ -65,6 +67,85 @@ def output(screen):
 
 
 class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_successful_delete_clears_previous_setup_without_removing_output(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            app = Cockpit(Path(tmp), JobsService())
+            async with app.run_test(size=(80, 24)) as pilot:
+                await wait_for(pilot, lambda: len(app.records) == 2)
+                for name in ('alpha', 'beta'):
+                    job = Job(name, 'Create · ' + name, 'Creating sandbox')
+                    job.run(lambda log: log('Sandbox ready'))
+                    job.followup = ('Choose a model', lambda: None)
+                    app.jobs.append(job)
+                alpha, beta = app.jobs
+                deletion = app.operation('Deleting alpha', ['delete', 'alpha'])
+                await wait_for(pilot, lambda: deletion.result == 'Complete' and deletion not in app.job_completions)
+                self.assertIsNone(alpha.followup)
+                self.assertEqual(beta.followup[0], 'Choose a model')
+                self.assertIn('Sandbox ready', alpha.read(0)[0])
+
+    async def test_creation_keeps_model_choice_pending_when_hidden(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            service = JobsService()
+            started, release = Event(), Event()
+
+            def create(draft, key, log, cancellation):
+                cancellation.progress(3, 5, 'Building images')
+                log('Podman example STEP 99/99')
+                started.set()
+                release.wait()
+                log('The fixture sandbox is ready.')
+
+            service.create = create
+            service.plugin_model = lambda *args, **kwargs: {'models': []}
+            app = Cockpit(Path(tmp), service)
+            draft = {'name': 'new-sandbox', 'workspace': tmp, 'options': {'approval': 'manual'},
+                     '_provider_credential_choices': {'model-fixture': {}}, 'open_editor': False}
+            async with app.run_test(size=(80, 24)) as pilot:
+                try:
+                    await wait_for(pilot, lambda: len(app.records) == 2)
+                    job = app.start_creation(CreationRequest(draft, {}, 'Test provider', False))
+                    await wait_for(pilot, started.is_set)
+                    self.assertEqual(job.status, 'Step 3 of 5 · Building images')
+                    self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Hide details')
+                    await pilot.press('escape')
+                    self.assertIs(app.screen, app.screen_stack[0])
+                    table = app.query_one(SandboxTable)
+                    self.assertEqual(str(table.get_cell('new-sandbox', 'dev')), 'Creating')
+                    self.assertEqual(str(table.get_cell('new-sandbox', 'open')).strip(), 'View job')
+                    self.assertEqual(str(app.query_one('#jobs', Button).label), 'Jobs… (1)')
+                    table.move_cursor(row=table.get_row_index('new-sandbox'), column=1)
+                    table.focus()
+                    await pilot.press('enter')
+                    self.assertIs(app.screen.job, job)
+                    await pilot.press('escape')
+                    app.show_sandbox_actions('beta')
+                    await pilot.pause()
+                    other = app.screen
+                    release.set()
+                    await wait_for(pilot, lambda: job.followup is not None)
+                    self.assertIs(app.screen, other)
+                    self.assertTrue(app.check_action('quit', ()))
+                    await pilot.press('escape', 'j', 'enter')
+                    await wait_for(pilot, lambda: isinstance(app.screen, JobDetails))
+                    self.assertIs(app.screen.job, job)
+                    await wait_for(pilot, lambda: 'STEP 99/99' in output(app.screen))
+                    self.assertEqual(job.result, 'Complete')
+                    await pilot.click('#job-continue')
+                    await wait_for(pilot, lambda: isinstance(app.screen, ModelDialog))
+                    await pilot.click('#model-later')
+                    self.assertEqual(job.followup[0], 'Choose a model')
+                    await pilot.press('j', 'enter')
+                    await wait_for(pilot, lambda: isinstance(app.screen, JobDetails))
+                    await pilot.click('#job-continue')
+                    await wait_for(pilot, lambda: isinstance(app.screen, ModelDialog))
+                    await pilot.click('#model-cancel')
+                    self.assertIsNone(job.followup)
+                    self.assertIs(app.screen, app.screen_stack[0])
+                finally:
+                    release.set()
+                    await app.workers.wait_for_complete()
+
     async def test_hide_open_another_job_reopen_output_and_confirm_cancellation(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             service = JobsService()
@@ -75,12 +156,17 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     alpha = await begin(pilot, app, 'alpha')
                     await wait_for(pilot, service.started['alpha'].is_set)
                     await pilot.press('escape')
-                    self.assertFalse(app.check_action('quit', ()))
+                    for shortcut in ('q', 'ctrl+q'):
+                        await pilot.press(shortcut)
+                        self.assertEqual(app.screen.heading, 'Jobs still running')
+                        self.assertIn('won’t restore these jobs or their output', app.screen.message)
+                        self.assertTrue(app.jobs_active())
+                        await pilot.press('escape')
                     self.assertIs(app.screen, app.screen_stack[0])
                     beta = await begin(pilot, app, 'beta')
                     await wait_for(pilot, service.started['beta'].is_set)
                     await pilot.click('#job-hide')
-                    self.assertIn('2 active', str(app.query_one('#jobs', Button).label))
+                    self.assertEqual(str(app.query_one('#jobs', Button).label), 'Jobs… (2)')
                     app.perform('stop', record=app.records[0])
                     await wait_for(pilot, lambda: isinstance(app.screen, JobDetails))
                     await pilot.pause()
@@ -96,7 +182,7 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.press('escape')
                     await pilot.press('j')
                     self.assertIsInstance(app.screen, JobsMenu)
-                    self.assertIn('alpha · Cancelled', app.screen.labels)
+                    self.assertIn('Update · alpha · Cancelled', app.screen.labels)
                     await pilot.press('enter')
                     self.assertIs(app.screen.job, beta)
                     await wait_for(pilot, lambda: 'beta: building the sandbox' in output(app.screen))
@@ -104,7 +190,8 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.press('escape')
                     selected = app.selected_name()
                     service.finish['beta'].set()
-                    await wait_for(pilot, lambda: beta.result == 'Failed' and app.completed_rebuilds == 2)
+                    await wait_for(pilot, lambda: beta.result == 'Failed' and not app.job_completions)
+                    self.assertEqual(str(app.query_one('#jobs', Button).label), 'Jobs… (0)')
                     self.assertIs(app.screen, app.screen_stack[0])
                     self.assertEqual(app.selected_name(), selected)
                     await pilot.click('#jobs')

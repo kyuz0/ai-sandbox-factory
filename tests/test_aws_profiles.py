@@ -10,7 +10,8 @@ from test_tui import FakeService
 from ai_sandbox_factory import aws_profiles, sandbox
 from ai_sandbox_factory.aws_ui import AWSProfilePicker, AWSProfileTargets
 from ai_sandbox_factory.sandbox_options import write_json
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, DEFAULT_SETTINGS, SettingsForm, UpdateOperation, preset
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, DEFAULT_SETTINGS, SettingsForm, preset
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from ai_sandbox_factory.tui_widgets import Checkbox
 
 
@@ -163,7 +164,7 @@ class AWSProfileTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(sandbox, 'aws_installation', side_effect=[('restart', {}), ('ready', {})]):
             async with app.run_test(size=(80, 24)) as pilot:
                 await app.workers.wait_for_complete()
-                for expected in (Confirm, UpdateOperation):
+                for expected in (Confirm, JobDetails):
                     app.perform_action('aws-access', record=record)
                     await pilot.pause()
                     app.screen.query_one('#aws-choice', Select).value = self.original['profile_id']

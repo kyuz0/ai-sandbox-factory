@@ -8,7 +8,8 @@ from unittest.mock import patch
 from textual.widgets import Button, Collapsible, Footer, Input, OptionList, Select, Static
 from ai_sandbox_factory import editor_settings
 from ai_sandbox_factory.editor_ui import EditorFields, EditorScreen, OpenWith
-from ai_sandbox_factory.sandbox_tui import Cockpit, Operation
+from ai_sandbox_factory.sandbox_tui import Cockpit
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from ai_sandbox_factory.tui_widgets import Checkbox
 from test_tui import FakeService
 
@@ -132,8 +133,8 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.click('#editor-save')
                 await self.ready(pilot)
                 stop.assert_called_once_with(self.state)
-            self.assertIsInstance(self.app.screen, Operation)
-            self.assertFalse(self.app.screen.failed)
+            self.assertIsInstance(self.app.screen, JobDetails)
+            self.assertEqual(self.app.screen.job.result, 'Complete')
             self.assertEqual(self.app.service.calls, [])
             value = editor_settings.load(self.state)
             await pilot.press('escape')

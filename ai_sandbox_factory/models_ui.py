@@ -248,60 +248,67 @@ class HostedProviders(Vertical):
             self.changes[value['provider']] = value
             self.call_later(self.render_rows)
 
-    @work(exclusive=True,group='hosted-change')
-    async def save(self,value):
-        self.busy = True
-        self.show_message('Saving connection…')
-        try:
-            before = self.saved.get(value['provider'])
-            routing = hosted_models.connection(value)
-            credentials_only = before is not None and all(before.get(key) == val for key, val in routing.items())
-            reply = await asyncio.to_thread(self.app.service.hosted_save,self.sandbox_name,value)
-            self.saved[value['provider']] = reply
-            mode = editor_settings.load(self.app.state_root / self.sandbox_name)['mode']
-            self.show_message('Credentials saved for subsequent requests.' if credentials_only else
+    def save(self,value):
+        app, name = self.app, self.sandbox_name
+        before = self.saved.get(value['provider'])
+        routing = hosted_models.connection(value)
+        credentials_only = before is not None and all(before.get(key) == val for key, val in routing.items())
+        def save(log):
+            reply = app.service.hosted_save(name, value)
+            mode = editor_settings.load(app.state_root / name)['mode']
+            message = ('Credentials saved for subsequent requests.' if credentials_only else
                 settings_effects.bullets(['Connection saved.', settings_effects.reconnect(mode)[0], 'Choose a model for the chat.']))
-            await self.render_rows()
+            log(message)
+            return reply, message
+        async def saved(result):
+            reply, message = result
+            if self.is_mounted:
+                self.saved[value['provider']] = reply
+                self.show_message(message)
+                await self.render_rows()
             if not credentials_only:
-                self.app.push_screen(ModelDialog(self.sandbox_name,value['provider']))
-        except (ValueError, OSError, subprocess.SubprocessError) as error:
-            self.show_message(str(error))
-        finally:
-            self.busy = False
-            self.query_one('#hosted-add',Button).disabled = False
+                app.push_screen(ModelDialog(name, value['provider']))
+        app.start_task(name, 'Save ' + hosted_models.PROVIDERS[value['provider']] + ' connection', save,
+                       working='Saving connection', on_success=saved,
+                       followup_label='Choose a chat model' if not credentials_only else 'Return to connections')
 
-    @work(exclusive=True,group='hosted-change')
-    async def remove(self,provider):
-        self.busy = True
-        try:
-            await asyncio.to_thread(self.app.service.hosted_remove,self.sandbox_name,provider)
-            self.saved.pop(provider,None)
-            await self.render_rows()
-            mode = editor_settings.load(self.app.state_root / self.sandbox_name)['mode']
-            self.show_message(settings_effects.bullets(['Connection removed.', settings_effects.reconnect(mode)[0], 'Select another model in affected chats.']))
-        except (ValueError, OSError, subprocess.SubprocessError) as error: self.show_message(str(error))
-        finally:
-            self.busy = False
-            self.query_one('#hosted-add',Button).disabled = False
+    def remove(self,provider):
+        app, name = self.app, self.sandbox_name
+        def remove(log):
+            app.service.hosted_remove(name, provider)
+            mode = editor_settings.load(app.state_root / name)['mode']
+            message = settings_effects.bullets(['Connection removed.', settings_effects.reconnect(mode)[0], 'Select another model in affected chats.'])
+            log(message)
+            return message
+        async def removed(message):
+            if self.is_mounted:
+                self.saved.pop(provider, None)
+                self.show_message(message)
+                await self.render_rows()
+        app.start_task(name, 'Remove ' + hosted_models.PROVIDERS[provider] + ' connection', remove,
+                       working='Removing connection', on_success=removed,
+                       followup_label='Return to connections')
 
 
 class ModelDialog(EntryDialog):
     BINDINGS = [('escape','cancel','Cancel')]
+    LATER = object()
     DEFAULT_CSS = '''
     ModelDialog { align: center middle; }
-    ModelDialog #model-results { height: 8; margin-bottom: 1; }
+    ModelDialog #model-results { height: auto; max-height: 8; margin-bottom: 1; }
     ModelDialog .model-dialog { width: 96; max-width: 94%; height: 94%; max-height: 44; padding: 1 2; background: #34383d; border: solid #f2b544; }
     ModelDialog .plugin-model-dialog { height: 26; max-height: 94%; }
-    ModelDialog .plugin-model-dialog #model-results { height: auto; max-height: 8; }
     ModelDialog .model-fields { height: 1fr; min-height: 1; }
     ModelDialog #model-error.error { color: #ff9184; text-style: bold; }
     ModelDialog Static { height: auto; }
     '''
 
-    def __init__(self, name, provider, *, plugin_label=None, optional=False, approval_model=None):
+    def __init__(self, name, provider, *, plugin_label=None, optional=False, approval_model=None,
+                 offer_later=False):
         super().__init__()
         self.sandbox_name, self.provider = name,provider
         self.plugin_label, self.optional = plugin_label, optional
+        self.offer_later = offer_later
         self.approval_model = approval_model
         self.models = []; self.filtered = []; self.busy = False
 
@@ -310,10 +317,10 @@ class ModelDialog(EntryDialog):
         with Vertical(classes=classes):
             yield Label('Choose a model · ' + (self.plugin_label or hosted_models.PROVIDERS[self.provider]),
                         classes='title', markup=False)
+            with Vertical(classes='setting'):
+                yield Label('Search models')
+                yield Input(id='model-search')
             with VerticalScroll(classes='model-fields'):
-                with Vertical(classes='setting'):
-                    yield Label('Search models' if self.plugin_label else 'Search Pi’s model catalogue')
-                    yield Input(id='model-search')
                 yield OptionList(id='model-results')
                 yield Static('',id='model-details',markup=False,classes='setting')
                 if not self.plugin_label and self.provider == 'azure':
@@ -338,10 +345,14 @@ class ModelDialog(EntryDialog):
             if self.approval_model is None:
                 yield Static('Default for new conversations only.',classes='section-intro')
             yield Static('Loading catalogue…',id='model-error',markup=False)
+            if self.offer_later:
+                yield Static('Later keeps this choice in Jobs. Skip keeps the current default.', classes='setting-help')
             with Horizontal(classes='buttons dialog-actions'):
                 if self.plugin_label:
                     yield Button('Refresh catalogue', id='model-refresh')
                     yield Static('', classes='action-spacer')
+                if self.offer_later:
+                    yield Button('Later', id='model-later')
                 yield Button('Skip' if self.optional else 'Cancel',id='model-cancel')
                 yield Button('Use as default',id='model-save',variant='primary',disabled=True)
 
@@ -350,7 +361,32 @@ class ModelDialog(EntryDialog):
         if self.approval_model is not None:
             self.query_one(ReviewerFields).load()
     def action_cancel(self):
-        if not self.busy: self.dismiss(None)
+        if not self.busy:
+            self.dismiss(self.LATER if self.offer_later else None)
+
+    def refresh_catalogue(self):
+        app, name, provider = self.app, self.sandbox_name, self.provider
+        plugin = self.plugin_label
+        request = app.service.plugin_model if plugin else app.service.hosted_request
+        def refresh(log):
+            reply = request(name, 'catalogue', provider=provider, refresh=True)
+            log(f'Refreshed catalogue: {len(reply["models"])} models.')
+            for model in reply['models']:
+                log(model['id'])
+            if reply.get('warning'):
+                log(reply['warning'])
+            return reply
+        def refreshed(reply):
+            if self.is_mounted and app.screen is self:
+                self.models = reply['models']
+                self.filter_models()
+                status = self.query_one('#model-error', Static)
+                status.remove_class('error')
+                status.update(reply.get('warning', ''))
+            else:
+                app.push_screen(ModelDialog(name, provider, plugin_label=plugin))
+        app.start_task(name, 'Refresh model catalogue', refresh, working='Refreshing catalogue',
+                       on_success=refreshed, followup_label='Review model catalogue')
 
     @work(exclusive=True,group='catalogue')
     async def load(self,refresh=False):
@@ -383,7 +419,8 @@ class ModelDialog(EntryDialog):
         empty = ('No models found. Check your provider key and refresh the catalogue.' if self.plugin_label and not self.models
                  else 'No models match your search.' if self.plugin_label
                  else 'No matching model. Refresh the catalogue or add the model to Pi’s models.json.')
-        self.query_one('#model-details',Static).update('Select a model to see its limits.' if self.filtered else empty)
+        self.query_one('#model-details',Static).update('Select a model to see its limits and set it as the default.'
+                                                      if self.filtered else empty)
 
     @on(OptionList.OptionHighlighted,'#model-results')
     def highlighted(self,event):
@@ -397,35 +434,42 @@ class ModelDialog(EntryDialog):
     def pressed(self,event):
         event.stop()
         if self.busy: return
-        if event.button.id == 'model-cancel': self.action_cancel()
-        elif event.button.id == 'model-refresh': self.load(True)
+        if event.button.id == 'model-cancel': self.dismiss(None)
+        elif event.button.id == 'model-later': self.action_cancel()
+        elif event.button.id == 'model-refresh': self.refresh_catalogue()
         elif event.button.id in ('model-save','model-test'): self.apply(event.button.id == 'model-test')
 
-    @work(exclusive=True,group='model-save')
-    async def apply(self,test):
+    def apply(self,test):
         index = self.query_one('#model-results',OptionList).highlighted
-        if index is None: return
-        self.busy = True
-        status = self.query_one('#model-error', Static)
-        status.remove_class('error')
-        status.update('Testing…' if test else 'Saving…')
-        try:
-            model = self.filtered[index]['id']
-            fields = {}
-            if not self.plugin_label and self.provider == 'azure': fields['deployment'] = self.query_one('#model-deployment',Input).value.strip()
-            if not self.plugin_label and self.provider == 'amazon-bedrock': fields['profile_id'] = self.query_one('#model-profile',Input).value.strip()
-            # Test uses the same deployment/profile mapping as selection, without changing the default.
+        if index is None:
+            return
+        app, name, provider = self.app, self.sandbox_name, self.provider
+        model = self.filtered[index]['id']
+        plugin = self.plugin_label
+        fields = {}
+        if not plugin and provider == 'azure':
+            fields['deployment'] = self.query_one('#model-deployment',Input).value.strip()
+        if not plugin and provider == 'amazon-bedrock':
+            fields['profile_id'] = self.query_one('#model-profile',Input).value.strip()
+        def apply(log):
             if test:
-                await asyncio.to_thread(self.app.service.hosted_test,self.sandbox_name,self.provider,model,**fields)
-                status.update('The model responded successfully.')
+                app.service.hosted_test(name, provider, model, **fields)
+                log('The model responded successfully.')
+            elif plugin:
+                app.service.plugin_model(name, 'select', provider=provider, model=model)
+                log('Selected chat model: ' + model)
             else:
-                if self.plugin_label:
-                    await asyncio.to_thread(self.app.service.plugin_model, self.sandbox_name, 'select',
-                                            provider=self.provider, model=model)
+                app.service.hosted_select(name, provider, model, **fields)
+                log('Selected chat model: ' + model)
+            return model
+        def applied(value):
+            if self.is_mounted and app.screen is self:
+                if test:
+                    status = self.query_one('#model-error', Static)
+                    status.remove_class('error')
+                    status.update('The model responded successfully.')
                 else:
-                    await asyncio.to_thread(self.app.service.hosted_select,self.sandbox_name,self.provider,model,**fields)
-                self.dismiss(model)
-        except (ValueError, OSError, subprocess.SubprocessError) as error:
-            status.add_class('error')
-            status.update(str(error))
-        finally: self.busy = False
+                    self.dismiss(value)
+        app.start_task(name, ('Test ' if test else 'Select ') + model, apply,
+                       working='Testing model' if test else 'Selecting model',
+                       on_success=applied, followup_label='Return to model selection')

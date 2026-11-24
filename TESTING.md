@@ -1455,13 +1455,19 @@ Clicking a gap must leave the
 selection unchanged. Check that every sandbox is reachable by keyboard. Render `tests/render_dashboard.py`
 at its three built-in sizes, in colour and with `--mono`.
 
-`test_sandbox_jobs.py` covers mouse and keyboard access to row actions, submenu
-navigation, reacting to state changes, and recovering failure output after hiding
-the details. Review the menu, jobs list, output, and cancellation confirmation at
-all three sizes. Repeat with `--mono`.
+`test_tui.py` covers access to row actions, submenu navigation, creation retry,
+and cancellation. `test_sandbox_jobs.py`, `test_chat_jobs.py`,
+`test_dedicated_jobs.py`, `test_job_progress.py`, and `test_operation_locks.py`
+exercise hidden completion, focus, post-creation model choice, exact diagnostics,
+stage reporting, and cross-process conflicts. `test_sandbox.ListTests` kills a
+disposable creation process, then checks that inventory identifies the interrupted
+creation and that deletion preserves its workspace. Check each job screen at the three
+terminal sizes and repeat the render with `--mono` or `--monochrome`.
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python tests/render_sandbox_jobs.py OUTPUT_DIR
+PYTHONPATH=.:tests .venv/bin/python tests/render_tui.py OUTPUT_DIR --only \
+  creation-running creation-confirm creation-failed creation-cleanup-error creation-choose-model
 ```
 
 On Linux with rootless Podman, run the two-sandbox check. It uses a temporary
@@ -1472,9 +1478,12 @@ PYTHONPATH=.:tests .venv/bin/python tests/sandbox_jobs_integration.py
 ```
 
 The check starts a second sandbox from the same TUI while the first rebuild
-waits, verifies that a separate CLI cannot stop the sandbox being rebuilt, and
-reopens the output for both jobs. It checks that cancellation preserves the first
-container and that the second starts with the rebuilt image and its project files.
+waits. It checks that cancellation preserves the first container, that the
+second starts with the rebuilt image, and that each job keeps its own output.
+It also hides a real creation during image build and reopens it with **View job**
+in the **Creating** row. It checks that Quit explains the active job and that
+completion leaves the other sandbox's action menu open. A separate CLI cannot
+stop a sandbox while Factory rebuilds or creates it.
 
 Run `node --test tests/test_editor_watch_fallback.cjs` for watcher events,
 resource-error selection, abort, close and encoding. For the real browser test,

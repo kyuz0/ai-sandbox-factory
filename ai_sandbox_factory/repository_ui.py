@@ -372,11 +372,41 @@ class PublicKey(ModalScreen):
     def on_mount(self):
         self.load_key()
 
-    @work(thread=True, exit_on_error=False)
     def load_key(self):
         app = self.app
+        if self.generate:
+            name = self.sandbox_name
+            def generate(log):
+                public = app.service.ssh_key(name, True)
+                log(public)
+                return public
+            def generated(public):
+                if self.is_mounted and app.screen is self:
+                    self.loaded(public, '')
+                else:
+                    screen = PublicKey(name)
+                    screen.preloaded_key = public
+                    app.push_screen(screen)
+            def failed(error):
+                if self.is_mounted and app.screen is self:
+                    self.loaded('', error)
+            job = app.start_task(name, 'Generate SSH key', generate, working='Generating SSH key',
+                                 on_success=generated, followup_label='Show public key',
+                                 on_failure=failed, failure_label='Return to SSH key')
+            self.busy = False
+            self.query_one('#key-close', Button).disabled = False
+            if job is None:
+                self.loaded('', 'SSH key generation did not start. Open Jobs to check this sandbox’s current operation.')
+        elif hasattr(self, 'preloaded_key'):
+            self.loaded(self.preloaded_key, '')
+        else:
+            self.read_key()
+
+    @work(thread=True, exit_on_error=False)
+    def read_key(self):
+        app = self.app
         try:
-            public = app.service.ssh_key(self.sandbox_name, self.generate)
+            public = app.service.ssh_key(self.sandbox_name, False)
             app.call_from_thread(self.loaded, public, '')
         except Exception as error:
             app.call_from_thread(self.loaded, '', str(error))

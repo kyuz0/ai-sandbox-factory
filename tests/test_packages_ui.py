@@ -4,7 +4,8 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Static, TabbedContent, TextArea, Tabs
 from ai_sandbox_factory import registry
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, InstallPackage, Operation, PackageRow, PackagesScreen, ProfileDetails
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, InstallPackage, PackageRow, PackagesScreen, ProfileDetails
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from test_tui import FakeService
 from tui_geometry import check_input_layout
 import test_tui
@@ -41,7 +42,7 @@ class PackageUITests(unittest.TestCase):
                 update.focus(); update.scroll_visible(animate=False); await pilot.pause()
                 await pilot.press('enter'); await self.ready(app, pilot)
                 self.assertEqual(service.calls[-1], ['provider', 'update', 'company'])
-                self.assertIsInstance(app.screen, Operation)
+                self.assertIsInstance(app.screen, JobDetails)
                 await pilot.press('escape'); await pilot.pause()
                 self.assertIs(app.screen, listing)
                 self.assertEqual(listing.query_one('#package-kind', TabbedContent).active, 'provider')

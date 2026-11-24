@@ -216,12 +216,16 @@ class AWSProfileChoices(Vertical):
 
         def chosen(selected):
             if selected:
-                from .sandbox_tui import Operation
                 service = self.app.service
-                self.app.push_screen(Operation('Updating AWS access',
-                    lambda log: aws_profiles.apply_selected(service, profile, selected, log),
-                    back_label='Back to profiles', done_on_success=True, success_message='Selected sandboxes updated.'),
-                    lambda _: self.show_profile())
+                def apply(log):
+                    aws_profiles.apply_selected(service, profile, selected, log)
+                    log('Selected sandboxes updated.')
+                def refreshed(_):
+                    if self.is_mounted:
+                        self.show_profile()
+                self.app.start_task('AWS access profiles', 'Update AWS access', apply,
+                                    working='Updating AWS access', targets=set(selected),
+                                    on_success=refreshed, followup_label='Return to AWS profiles')
 
         self.app.push_screen(AWSProfileTargets(profile, targets), chosen)
 

@@ -175,7 +175,6 @@ class EditorFields(Vertical):
 
 
 class EditorScreen(Screen):
-    DEFAULT_CSS = 'EditorScreen > .form, EditorScreen > .wizard-actions { max-width: 80; }'
     BINDINGS = [('escape', 'back', 'Back')]
 
     def __init__(self, name):
@@ -228,15 +227,23 @@ class EditorScreen(Screen):
                 if value == editor_settings.load(state):
                     self.action_back()
                     return
-                from .sandbox_tui import Operation
+                active = self.app.active_job(self.sandbox_name)
+                if active:
+                    self.app.show_job(active)
+                    return
                 was_running = browser_editor.active(state)
+                message = ('Choose Open, then select your saved chat from the history.'
+                           if was_running else 'Editor settings saved.')
                 def apply(log):
                     browser_editor.stop(state)
                     editor_settings.save(state, value)
                     log('Editor settings saved.')
-                self.app.pop_screen()
-                self.app.push_screen(Operation('Saving editor settings', apply, done_on_success=True,
-                    success_message='Choose Open, then select your saved chat from the history.' if was_running else 'Editor settings saved.'))
+                    if was_running:
+                        log(message)
+                app = self.app
+                app.pop_screen()
+                app.start_task(self.sandbox_name, 'Save editor settings', apply,
+                               working='Saving editor settings')
             except (ValueError, OSError) as error:
                 feedback = self.query_one('#editor-error', Feedback)
                 feedback.update('' if isinstance(error, EditorFieldError) else str(error))

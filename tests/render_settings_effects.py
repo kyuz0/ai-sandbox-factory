@@ -12,7 +12,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Input, OptionList
 from ai_sandbox_factory import sandbox, settings_effects
 from ai_sandbox_factory.sandbox_tui import (
-    Cockpit, DEFAULT_SETTINGS, ApplySettingsReview, Operation, NetworkForm,
+    Cockpit, DEFAULT_SETTINGS, ApplySettingsReview,
     SSHScreen, AdvisorsScreen, ModelsScreen, SettingsForm, preset,
 )
 from ai_sandbox_factory.editor_ui import EditorScreen
@@ -53,17 +53,21 @@ async def render(size):
             memory=copy.deepcopy(draft);memory['memory']='16g'
             await shot('review-memory-only',ApplySettingsReview(draft,memory,'pi'))
             for name, message in [('configuration',settings_effects.REOPEN),('network',settings_effects.NETWORK),('folders',settings_effects.FOLDER),('models',settings_effects.MODELS),('ssh',settings_effects.bullets(settings_effects.reconnect()+['Unlock the SSH key before connecting.']))]:
-                await shot('complete-'+name, Operation('Updated demo', lambda log: log('Settings saved.'), success_message=message))
-            def fail(log): raise ValueError('Example validation failed; saved settings were not applied.')
-            await shot('failed', Operation('Updating demo', fail, success_message=settings_effects.REOPEN))
+                app.start_settings_job('demo', 'Updated demo', lambda log, update: log('Settings saved.'), success_message=message)
+                await shot('complete-' + name)
+                await app.pop_screen()
+            def fail(log, update): raise ValueError('Example validation failed; saved settings were not applied.')
+            app.start_settings_job('demo', 'Updating demo', fail, success_message=settings_effects.REOPEN)
+            await shot('failed')
+            await app.pop_screen()
             await shot('configuration-intro', SettingsForm(draft, editing=True))
-            await shot('network-intro', NetworkForm('demo','example.com:443',config))
+            await shot('network-intro', SettingsForm({**draft, 'allowlist': 'example.com:443'}, editing=True, setting='network-settings'))
             await shot('ssh-intro', SSHScreen(record))
             await shot('advisors-intro', AdvisorsScreen(record))
             await shot('models-intro', ModelsScreen(record))
             await app.push_screen(ModelDialog('demo','openrouter')); await pilot.pause(); await app.workers.wait_for_complete()
             app.screen.query_one('#model-results',OptionList).highlighted=0
-            await shot('model-default', focus='#model-save');
+            await shot('model-default', focus='#model-search')
             app.screen.query_one('.model-fields',VerticalScroll).scroll_end(animate=False);await pilot.pause();await shot('model-default-bottom'); await app.pop_screen()
             await shot('editor-intro', EditorScreen('demo'))
             await app.push_screen(EditorScreen('demo')); await pilot.pause()

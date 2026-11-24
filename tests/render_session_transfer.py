@@ -56,9 +56,14 @@ async def check(output, size, monochrome):
             async with app.run_test(size=size) as pilot:
                 await pilot.pause()
                 await app.workers.wait_for_complete()
+                async def ready():
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    app.poll_jobs()
+                    await pilot.pause()
+
                 await app.push_screen(ContinueChat('source'))
-                await app.workers.wait_for_complete()
-                await pilot.pause()
+                await ready()
                 assert app.screen.query_one('#copy-next', Button).disabled
                 app.screen.query_one('#copy-chat', Select).focus()
 
@@ -79,14 +84,14 @@ async def check(output, size, monochrome):
                 assert not app.screen.query_one('#copy-next', Button).disabled
                 await shot('selected')
                 app.screen.query_one('#copy-next', Button).press()
-                await app.workers.wait_for_complete()
+                await ready()
                 await shot('preview')
                 assert 'Claude Code → Pi' in str(app.screen.query_one('#copy-preview', Static).render())
                 app.screen.failed('The destination sandbox is running. Stop it before copying the chat.')
                 await shot('error')
                 app.screen.query_one('#copy-error').update('')
                 app.screen.query_one('#copy-next', Button).press()
-                await app.workers.wait_for_complete()
+                await ready()
                 await shot('complete')
                 assert 'Created a new chat in destination' in str(app.screen.query_one('#copy-preview', Static).render())
 

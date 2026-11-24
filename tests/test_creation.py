@@ -7,8 +7,9 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
-from ai_sandbox_factory import creation, host_platform, sandbox
+from ai_sandbox_factory import creation, host_platform, operation_locks, sandbox
 from ai_sandbox_factory.sandbox_tui import Service
 
 
@@ -17,6 +18,9 @@ class CreationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        locks = patch('ai_sandbox_factory.operation_locks.private_runtime_dir', return_value=self.root)
+        locks.start()
+        self.addCleanup(locks.stop)
         self.service = Service(self.root / 'state')
         self.state = self.service.state / 'demo'
         self.draft = {'name': 'demo'}
@@ -185,12 +189,15 @@ except KeyboardInterrupt:
         workspace = self.root / 'project'
         workspace.mkdir()
         draft = preset('base', DEFAULT_SETTINGS)
-        draft.update(name='demo', workspace=str(workspace), engine='podman')
-        with patch.dict(os.environ, {'PATH': str(self.root)}):
+        name = 'no-podman-' + uuid4().hex[:12]
+        draft.update(name=name, workspace=str(workspace), engine='podman')
+        # The parent and real CLI child must resolve the same lock path.
+        with patch.object(operation_locks, 'private_runtime_dir', host_platform.private_runtime_dir), \
+                patch.dict(os.environ, {'PATH': str(self.root)}):
             with self.assertRaisesRegex(ValueError, 'Creation failed'):
                 self.service.create(draft, None, self.logs.append, cancellation=creation.Creation())
         self.assertIn('Podman was not found', '\n'.join(self.logs))
-        self.assertFalse(self.state.exists())
+        self.assertFalse((self.service.state / name).exists())
 
     def test_unconfirmed_stop_preserves_state_without_cleanup(self):
         job = creation.Creation()

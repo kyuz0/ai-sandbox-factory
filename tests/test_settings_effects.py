@@ -7,7 +7,7 @@ from unittest.mock import patch
 from textual.widgets import Button
 from ai_sandbox_factory import settings_effects
 from ai_sandbox_factory.sandbox_options import DEFAULTS
-from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ApplySettingsReview, Operation
+from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, ApplySettingsReview
 from test_tui import FakeService
 
 
@@ -66,16 +66,16 @@ class SettingsEffectsTests(unittest.TestCase):
                             self.assertLess(button.region.bottom,size[1])
                         await pilot.press('escape');await pilot.pause()
                         self.assertNotIsInstance(app.screen,ApplySettingsReview)
-                        await app.push_screen(Operation('Updated example',lambda log:log('Applied.'),success_message=settings_effects.REOPEN))
+                        app.start_settings_job('example', 'Updated example', lambda log, update: log('Applied.'), success_message=settings_effects.REOPEN)
                         await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()
                         self.assertTrue(app.screen.query_one('#operation-next').display)
-                        self.assertLess(app.screen.query_one('#operation-back',Button).region.bottom,size[1])
+                        self.assertLess(app.screen.query_one('#job-hide',Button).region.bottom,size[1])
                         self.assertLessEqual(app.screen.query_one('#operation-next').region.bottom,app.screen.query_one('#operation-log').region.y)
                         await app.pop_screen()
-                        def fail(log):
+                        def fail(log, update):
                             raise ValueError('Settings were not applied')
-                        await app.push_screen(Operation('Updating example',fail,success_message=settings_effects.REOPEN))
+                        app.start_settings_job('example', 'Updating example', fail, success_message=settings_effects.REOPEN)
                         await pilot.pause();await app.workers.wait_for_complete();await pilot.pause()
-                        self.assertTrue(app.screen.failed)
+                        self.assertEqual(app.screen.job.result, 'Failed')
                         self.assertFalse(app.screen.query_one('#operation-next').display)
         asyncio.run(check())

@@ -429,6 +429,48 @@ class ListTests(unittest.TestCase):
         (folder / 'config.json').write_text(json.dumps(config))
         return folder
 
+    def test_list_and_remove_interrupted_creation_after_process_dies(self):
+        from ai_sandbox_factory import creation
+        from uuid import uuid4
+
+        worker_code = '''
+import sys
+from pathlib import Path
+from ai_sandbox_factory import creation, operation_locks
+state = Path(sys.argv[1])
+with operation_locks.sandbox(state.name, 'create'):
+    state.mkdir()
+    (state / creation.MARKER).write_text('a' * 48)
+    print('reserved', flush=True)
+    sys.stdin.read()
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / ('interrupted-' + uuid4().hex[:12])
+            project = root / 'project.txt'
+            project.write_text('preserve this workspace')
+            with subprocess.Popen([sys.executable, '-c', worker_code, str(state)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True) as process:
+                try:
+                    self.assertEqual(process.stdout.readline().strip(), 'reserved')
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        sandbox.list_sandboxes(root, structured=True)
+                    self.assertEqual(json.loads(output.getvalue())[0]['creation'], 'running')
+                finally:
+                    process.kill()
+                    process.wait()
+            self.assertTrue((state / creation.MARKER).is_file())
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sandbox.list_sandboxes(root, structured=True)
+            self.assertEqual(json.loads(output.getvalue())[0]['creation'], 'interrupted')
+            result = subprocess.run([sys.executable, str(sandbox.ROOT.parent / 'sandbox.py'),
+                                    '--state-dir', tmp, 'delete', state.name], check=True, capture_output=True, text=True)
+            self.assertIn('Deleted incomplete creation state', result.stdout)
+            self.assertFalse(state.exists())
+            self.assertEqual(project.read_text(), 'preserve this workspace')
+
     def test_list_shows_sorted_saved_sandboxes_and_both_container_states_read_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

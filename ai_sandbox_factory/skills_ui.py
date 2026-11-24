@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 
 from rich.text import Text
-from textual import on, work
+from textual import on
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.message import Message
@@ -16,6 +16,17 @@ from .tui_widgets import Checkbox, Feedback
 
 def saved_skills_summary(count):
     return f'{count} saved'
+
+
+class SkillDiscovery:
+    """Keep validated source files available until their review is opened."""
+    def __init__(self, staging, rows):
+        self.staging, self.rows = staging, rows
+
+    def close(self):
+        if self.staging is not None:
+            self.staging.cleanup()
+            self.staging = None
 
 
 class SkillSelection(Vertical):
@@ -172,13 +183,16 @@ class SkillLibrary(Vertical):
             self.app.push_screen(Confirm('Remove this skill from the library? Saved sandboxes keep their copies.', 'Remove', confirm_by_default=False),
                                  lambda yes: self.remove_entry(key) if yes else None)
 
-    @work(thread=True, exit_on_error=False)
     def remove_entry(self, key):
-        try:
+        app = self.app
+        def remove(log):
             skill_library.remove(key)
-        except (ValueError, OSError) as error:
-            self.app.call_from_thread(self.query_one('#library-error', Feedback).update, 'Error: ' + str(error))
-        self.app.call_from_thread(self.refresh_library)
+            log('Skill removed from the library. Saved sandboxes keep their copies.')
+        def refreshed(_):
+            if self.is_mounted:
+                self.call_later(self.refresh_library)
+        app.start_task('Skill library', 'Remove library skill', remove,
+                       working='Removing skill', on_success=refreshed, followup_label='Return to skill library')
 
 
 class ImportSkills(Screen):
@@ -281,38 +295,75 @@ class ImportSkills(Screen):
         if event.button.id == 'skill-import-cancel':
             self.action_back()
         elif event.button.id == 'skill-discover':
-            self.set_busy(True)
             self.query_one('#skill-import-error', Feedback).update('')
             self.query_one('#skill-import-status', Static).display = True
             self.query_one('#skill-import-status', Static).update('Fetching source and validating skills…')
             self.discover(self.query_one('#skill-source', Input).value.strip(), self.query_one('#skill-ref', Input).value.strip() or None)
         elif event.button.id == 'skill-import-save':
             selected = [row for row, checkbox, _, _ in self.candidates if not row.get('error') and checkbox.value]
-            self.set_busy(True)
             self.install_selected(selected)
 
-    @work(thread=True, exit_on_error=False)
     def install_selected(self, selected):
-        try:
-            skill_library.install(selected)
-            self.app.call_from_thread(self.dismiss, None)
-        except (ValueError, OSError) as error:
-            self.app.call_from_thread(self.install_failed, str(error))
+        app = self.app
+        source = self.query_one('#skill-source', Input).value.strip() if self.is_mounted else self.source
+        ref = self.query_one('#skill-ref', Input).value.strip() if self.is_mounted else self.ref
+        # Keep the validated files alive if the source screen is closed mid-job.
+        staging = self.staging
+        self.staging = None
+        def install(log):
+            try:
+                skill_library.install(selected)
+                log(f'Added {len(selected)} selected skills to the library.')
+            finally:
+                if staging:
+                    staging.cleanup()
+        def installed(_):
+            if self.is_mounted and app.screen is self:
+                self.dismiss(None)
+        async def failed(error):
+            if self.is_mounted and app.screen is self:
+                await self.show_failure(error)
+            else:
+                screen = ImportSkills(source, ref, {row['id'] for row in selected})
+                await app.push_screen(screen)
+                await screen.show_failure(error)
+        job = app.start_task('Skill library', 'Add selected skills', install,
+                             working='Adding skills', on_success=installed,
+                             followup_label='Return to skill library', on_failure=failed,
+                             failure_label='Review skill import error')
+        if job is None:
+            self.staging = staging
 
-    def install_failed(self, error):
-        self.query_one('#skill-import-error', Feedback).update('Error: ' + error)
-        self.set_busy(False)
-
-    @work(thread=True, exclusive=True, exit_on_error=False)
     def discover(self, source, ref):
-        try:
-            if self.staging:
-                self.staging.cleanup()
-            self.staging = tempfile.TemporaryDirectory(prefix='factory-skill-import-')
-            rows = skill_library.discover(source, Path(self.staging.name) / 'source', ref)
-            self.app.call_from_thread(self.show_candidates, rows)
-        except Exception as error:
-            self.app.call_from_thread(self.show_failure, str(error))
+        app = self.app
+        preselect = set(self.preselect)
+        def discover(log):
+            staging = tempfile.TemporaryDirectory(prefix='factory-skill-import-')
+            try:
+                log('Fetching ' + source + ' and validating skills…')
+                rows = skill_library.discover(source, Path(staging.name) / 'source', ref)
+                log(f'Found {len(rows)} skills; {sum(not row.get("error") for row in rows)} are valid.')
+                return SkillDiscovery(staging, rows)
+            except BaseException:
+                staging.cleanup()
+                raise
+        async def review(result):
+            screen = self if self.is_mounted and app.screen is self else ImportSkills(source, ref or '', preselect)
+            if screen is not self:
+                await app.push_screen(screen)
+            if screen.staging:
+                screen.staging.cleanup()
+            screen.staging, result.staging = result.staging, None
+            await screen.show_candidates(result.rows)
+        async def failed(error):
+            screen = self if self.is_mounted and app.screen is self else ImportSkills(source, ref or '', preselect)
+            if screen is not self:
+                await app.push_screen(screen)
+            await screen.show_failure(error)
+        app.start_task('Skill library', 'Find and validate skills', discover,
+                       working='Fetching and validating skills', on_success=review,
+                       followup_label='Review validated skills', on_failure=failed,
+                       failure_label='Edit skill source')
 
     async def show_candidates(self, rows):
         self.rows = rows

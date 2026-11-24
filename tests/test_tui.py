@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox
-from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, Operation, UpdateOperation, DEFAULT_SETTINGS, Service, SettingsMenu, MoreActions, SandboxTable
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
+from ai_sandbox_factory.sandbox_tui import Cockpit, Confirm, NewSandbox, SettingsForm, CreationRequest, DEFAULT_SETTINGS, Service, SettingsMenu, MoreActions, SandboxTable
 from textual.widgets import Input, Button, Collapsible, DataTable, Checkbox, TextArea, OptionList, Static, Label
 from textual_fspicker.parts import DirectoryNavigation
 from tui_geometry import check_table_layout
@@ -227,8 +228,7 @@ class TUITests(unittest.TestCase):
                 self.assertEqual(type(app.screen).__name__,'SettingsMenu')
 
     async def test_update_requires_confirmation_and_reports_failure(self):
-        from contextlib import nullcontext
-        import subprocess
+        from textual.widgets import RichLog
         app=Cockpit(self.root,FakeService([]))
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot)
@@ -236,8 +236,10 @@ class TUITests(unittest.TestCase):
                 app.show_update('2099.1.1.1')
             await pilot.pause()
             dashboard_positions = {selector: app.query_one(selector).region for selector in ('#search', '#sandboxes', '#new')}
-            failure = subprocess.CalledProcessError(1, ['pipx'], stderr='Could not connect to the repository.')
-            with patch.object(app,'suspend',return_value=nullcontext()), patch('ai_sandbox_factory.sandbox_tui.subprocess.run',side_effect=failure) as run:
+            def failed_upgrade(log):
+                log('Could not connect to the repository.')
+                raise ValueError('pipx exited with status 1. Run pipx upgrade ai-sandbox-factory to retry.')
+            with patch('ai_sandbox_factory.updates.upgrade',side_effect=failed_upgrade) as run:
                 await pilot.click('#application-update-run');await pilot.pause()
                 self.assertIsInstance(app.screen,Confirm)
                 upgrade = app.screen.query_one('#yes', Button)
@@ -257,12 +259,16 @@ class TUITests(unittest.TestCase):
                 await pilot.click('#application-update-run');await pilot.pause()
                 run.assert_not_called()
                 await pilot.press('enter');await pilot.pause()
-                run.assert_called_once_with(('pipx','upgrade','ai-sandbox-factory'),check=True, stderr=subprocess.PIPE, text=True, errors='replace')
-                self.assertEqual(app.screen.heading, 'Factory upgrade failed')
-                self.assertIn('pipx exited with status 1.', app.screen.message)
-                self.assertIn(failure.stderr, app.screen.message)
-                self.assertIn('pipx upgrade ai-sandbox-factory', app.screen.message)
-                self.assertEqual(app.focused.id, 'close-update-details')
+                await app.workers.wait_for_complete()
+                await pilot.pause(0.2)
+                run.assert_called_once()
+                self.assertEqual(app.screen.job.title, 'Upgrade Factory')
+                self.assertEqual(app.screen.job.result, 'Failed')
+                self.assertIn('pipx exited with status 1.', app.screen.job.error)
+                self.assertIn('pipx upgrade ai-sandbox-factory', app.screen.job.error)
+                self.assertIn('Could not connect to the repository.', '\n'.join(
+                    line.text for line in app.screen.query_one(RichLog).lines))
+                self.assertEqual(app.focused.id, 'job-hide')
                 await pilot.press('escape');await pilot.pause()
                 self.assertEqual({selector: app.query_one(selector).region for selector in dashboard_positions}, dashboard_positions)
                 self.assertIn('Update available · v2099.1.1.1', str(app.query_one('#application-update-message').render()))
@@ -300,7 +306,7 @@ class TUITests(unittest.TestCase):
                     self.assertFalse(warning.display)
 
     async def test_successful_update_relaunches_and_source_install_disables_button(self):
-        from contextlib import nullcontext
+        from threading import Event
         from ai_sandbox_factory import updates
         app=Cockpit(self.root,FakeService([]))
         async with app.run_test(size=(100,36)) as pilot:
@@ -315,8 +321,22 @@ class TUITests(unittest.TestCase):
             self.assertIn('git pull --ff-only', app.screen.message)
             self.assertIn('python -m pip install --upgrade', app.screen.message)
             await pilot.click('#close-update-details');await pilot.pause()
-            with patch.object(app,'suspend',return_value=nullcontext()), patch('ai_sandbox_factory.sandbox_tui.subprocess.run'), patch.object(app,'exit') as finish:
-                app.upgrade(True)
+            release = Event()
+            with patch('ai_sandbox_factory.updates.upgrade', side_effect=lambda log: release.wait()), \
+                    patch.object(app,'exit') as finish:
+                try:
+                    app.upgrade(True)
+                    await pilot.pause()
+                    await pilot.press('escape')
+                    self.assertIs(app.screen, app.screen_stack[0])
+                    release.set()
+                    await app.workers.wait_for_complete()
+                    await pilot.pause(0.2)
+                    finish.assert_not_called()
+                    await pilot.press('j', 'enter')
+                    await pilot.click('#job-continue')
+                finally:
+                    release.set()
                 finish.assert_called_once_with(result=updates.RELAUNCH)
 
     async def test_new_shortcut_works_while_search_has_focus(self):
@@ -380,25 +400,20 @@ class TUITests(unittest.TestCase):
         service = FakeService(self.records)
         service.advisors = lambda name, settings, log, update=None: service.calls.append(['advisors', name])
         app = Cockpit(self.root, service)
-        # Hold the worker until Textual has removed the settings screen.
-        with patch.object(Operation, 'on_mount', return_value=None):
-            async with app.run_test(size=(100, 36)) as pilot:
-                await self.ready(app, pilot)
-                screen = AdvisorsScreen(self.records[0])
-                await app.push_screen(screen)
-                await pilot.pause()
-                screen.query_one('#advisor-codex', Checkbox).value = True
-                await pilot.click('#advisor-apply')
-                await pilot.pause()
-                await pilot.click('#yes')
-                await self.ready(app, pilot)
-                self.assertIsNone(screen.parent)
-                operation = app.screen
-                self.assertIsInstance(operation, Operation)
-                operation.execute()
-                await self.ready(app, pilot)
-                self.assertFalse(operation.failed)
-                self.assertEqual(service.calls, [['advisors', 'alpha']])
+        async with app.run_test(size=(100, 36)) as pilot:
+            await self.ready(app, pilot)
+            screen = AdvisorsScreen(self.records[0])
+            await app.push_screen(screen)
+            await pilot.pause()
+            screen.query_one('#advisor-codex', Checkbox).value = True
+            await pilot.click('#advisor-apply')
+            await pilot.pause()
+            await pilot.click('#yes')
+            await self.ready(app, pilot)
+            self.assertIsNone(screen.parent)
+            self.assertIsInstance(app.screen, JobDetails)
+            self.assertTrue(app.screen.succeeded)
+            self.assertEqual(service.calls, [['advisors', 'alpha']])
 
     async def test_models_without_provider_plugins(self):
         from ai_sandbox_factory.sandbox_tui import ModelsScreen
@@ -804,7 +819,7 @@ class TUITests(unittest.TestCase):
             await pilot.press('enter');await pilot.pause();self.assertFalse(service.calls)
             await self.delete_menu(app,pilot);await pilot.click('#yes');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['delete','beta']])
-            await pilot.click('#operation-back');await self.ready(app,pilot)
+            await pilot.click('#job-hide');await self.ready(app,pilot)
             self.assertEqual([r['name'] for r in app.records],['alpha'])
             await pilot.press('q')
 
@@ -859,6 +874,7 @@ class TUITests(unittest.TestCase):
             await self.ready(app, pilot)
             self.assertIn('already exists', str(app.screen.query_one('#chat-transfer-error').render()))
             self.assertEqual(app.focused.id, field.id)
+            field = app.screen.query_one('#chat-transfer-path', Input)
             field.value = str(self.root / 'saved.zip')
             await pilot.press('enter')
             await self.ready(app, pilot)
@@ -1104,7 +1120,7 @@ class TUITests(unittest.TestCase):
             app.screen.query_one('#new-advisor-claude',Checkbox).value=True
             with patch('ai_sandbox_factory.sandbox.choose_engine',return_value='podman'):
                 await pilot.click('#apply');await self.ready(app,pilot)
-            self.assertIsInstance(app.screen,Operation)
+            self.assertIsInstance(app.screen,JobDetails)
             draft=service.calls[0][1]
             self.assertEqual(draft['name'],'my-agent');self.assertEqual(draft['workspace'],str(workspace))
             self.assertEqual(draft['allowlist'],'local-model.internal:8002\nlocal-model.internal:8003')
@@ -1144,33 +1160,34 @@ class TUITests(unittest.TestCase):
             await pilot.click('#apply')
             await self.ready(app, pilot)
             operation = app.screen
-            self.assertTrue(operation.failed)
+            self.assertEqual(operation.job.result, 'Failed')
             self.assertIn('Install rootless Podman',
                           '\n'.join(line.text for line in operation.query_one(RichLog).lines))
-            back = operation.query_one('#operation-back', Button)
-            retry = operation.query_one('#operation-retry', Button)
-            self.assertEqual(str(back.label), 'Back to configuration')
+            edit = operation.query_one('#job-edit', Button)
+            retry = operation.query_one('#job-retry', Button)
+            self.assertEqual(str(edit.label), 'Edit configuration')
             self.assertEqual(str(retry.label), 'Retry creation')
             self.assertLessEqual(retry.region.bottom, operation.query_one(Footer).region.y)
-            self.assertEqual(retry.region.right, operation.query_one('.wizard-actions').content_region.right)
-            await pilot.press('escape')
-            self.assertIs(app.screen, form)
+            await pilot.click('#job-edit')
+            await pilot.pause()
+            form = app.screen
+            self.assertIsInstance(form, SettingsForm)
             self.assertEqual(form.query_one('#model-ports', Input).value, '8002-8003')
-            self.assertEqual(new.query_one('#workspace', Input).value, str(workspace))
+            self.assertEqual(form.draft['workspace'], str(workspace))
             form.query_one('#model-ports', Input).value = '8004'
 
             await pilot.click('#apply')
             await self.ready(app, pilot)
-            self.assertTrue(await pilot.click('#operation-retry'))
+            self.assertTrue(await pilot.click('#job-retry'))
             await self.ready(app, pilot)
             self.assertEqual(attempts[1][:2], attempts[2][:2])
             self.assertEqual(attempts[2][0]['local_model_ports'], '8004')
             self.assertIsNot(attempts[1][2], attempts[2][2])
-            self.assertFalse(app.screen.failed)
-            self.assertEqual(str(app.screen.query_one('#operation-back', Button).label), 'Done')
-            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Done')
-            self.assertFalse(app.screen.query_one('#operation-retry', Button).display)
-            await pilot.click('#operation-back')
+            self.assertTrue(app.screen.succeeded)
+            self.assertEqual(str(app.screen.query_one('#job-hide', Button).label), 'Back')
+            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Back')
+            self.assertFalse(app.screen.query_one('#job-retry', Button).display)
+            await pilot.click('#job-hide')
             await self.ready(app, pilot)
             self.assertEqual(len(app.screen_stack), 1)
 
@@ -1187,9 +1204,9 @@ class TUITests(unittest.TestCase):
             self.assertIsInstance(app.screen,Confirm);await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][0:2],['update','beta'])
             self.assertEqual(service.calls[0][2]['local_model_ports'],'8080')
-            self.assertEqual(app.screen.title, 'Updated beta')
-            self.assertEqual(str(app.screen.query_one('#operation-back', Button).label), 'Done')
-            await pilot.click('#operation-back');await self.ready(app,pilot)
+            self.assertEqual(app.screen.job.title, 'Update settings · beta')
+            self.assertEqual(str(app.screen.query_one('#job-hide', Button).label), 'Back')
+            await pilot.click('#job-hide');await self.ready(app,pilot)
             app.query_one(DataTable).move_cursor(row=1);await pilot.pause()
             await self.settings_page(app,pilot,action="models")
             local = app.screen.query_one('#live-local-provider', Collapsible)
@@ -1303,121 +1320,68 @@ class TUITests(unittest.TestCase):
             await pilot.press('enter');await self.ready(app,pilot)
             self.assertEqual(service.calls,[['start','beta'],['open','beta','--editor','browser']])
 
-    async def test_creation_cancel_button_escape_cleanup_failure_and_no_success_callback(self):
+    async def test_creation_cancel_distinguishes_cleanup_failure_at_all_sizes(self):
         import threading
-        from ai_sandbox_factory.creation import Creation, Cancelled
-        from textual.widgets import Static, Footer
-        for size in ((80,24),(120,40),(220,50)):
+        from ai_sandbox_factory.creation import Cancelled
+        from textual.widgets import Footer, RichLog
+
+        for size in ((80, 24), (120, 40), (220, 50)):
             for failure in (False, True):
-                app=Cockpit(self.root,FakeService(self.records))
-                control=Creation()
-                release=threading.Event()
-                success=[]
-                def task(log):
+                service = FakeService(self.records)
+                app = Cockpit(self.root, service)
+                release = threading.Event()
+                def create(draft, keys, log, cancellation):
                     for step in range(35):
                         log(f'Step {step}: building fixture image with a long message to exercise wrapping in narrow terminals…')
-                    release.wait(10)
-                    if failure: raise ValueError('Creation stopped, but cleanup failed. Saved state was retained; use Delete on this sandbox to retry. Container engine unavailable.')
+                    release.wait()
+                    if failure:
+                        cancellation.retry_blocked = True
+                        raise ValueError('Creation stopped, but cleanup failed. Container engine unavailable.')
                     raise Cancelled('Creation cancelled. Containers removed; workspace preserved.')
+                service.create = create
                 async with app.run_test(size=size) as pilot:
-                    await self.ready(app,pilot)
-                    operation=Operation('Creating fixture',task,cancellation=control,on_success=lambda:success.append(True))
-                    await app.push_screen(operation)
-                    await pilot.pause()
-                    button=operation.query_one('#operation-back',Button)
-                    self.assertFalse(button.disabled)
-                    self.assertEqual(str(button.label),'Cancel creation')
-                    self.assertLessEqual(button.region.bottom,operation.query_one(Footer).region.y)
+                    await self.ready(app, pilot)
+                    job = app.start_creation(CreationRequest({'name': 'fixture', 'workspace': str(self.root)}, {}, None, False))
+                    try:
+                        await pilot.pause()
+                        details = app.screen
+                        button = details.query_one('#job-cancel', Button)
+                        self.assertFalse(button.disabled)
+                        self.assertEqual(str(button.label), 'Cancel creation')
+                        self.assertLessEqual(button.region.bottom, details.query_one(Footer).region.y)
+                        await pilot.click('#job-cancel')
+                        self.assertEqual(str(app.focused.label), 'Keep creating')
+                        await pilot.click('#yes')
+                        await pilot.pause()
+                        self.assertTrue(job.creation.requested.is_set())
+                        self.assertTrue(button.disabled)
+                        self.assertIn('Cancelling', str(details.query_one('#operation-status', Static).render()))
+                    finally:
+                        release.set()
+                        await self.ready(app, pilot)
+                    self.assertEqual(job.result, 'Failed' if failure else 'Cancelled')
+                    self.assertIsNone(job.followup)
+                    self.assertFalse(button.display)
+                    if failure:
+                        self.assertIn('Delete sandbox…', job.notice)
+                        self.assertIn('Container engine unavailable.', job.error)
+                    else:
+                        self.assertIn('workspace preserved', '\n'.join(job.read(0)[0]))
+                    output = details.query_one(RichLog)
+                    self.assertLessEqual(output.virtual_size.width, output.scrollable_content_region.width)
                     await pilot.press('escape')
-                    self.assertFalse(control.requested.is_set())
-                    await pilot.click('#operation-back')
-                    await pilot.pause()
-                    self.assertTrue(control.requested.is_set())
-                    self.assertTrue(button.disabled)
-                    self.assertIn('Cancelling',str(operation.query_one('#operation-status',Static).render()))
-                    await pilot.press('escape','q')
-                    self.assertIs(app.screen,operation)
-                    release.set()
-                    await self.ready(app,pilot)
-                    self.assertEqual(operation.failed,failure)
-                    self.assertEqual(operation.cancelled,not failure)
-                    self.assertEqual(success,[])
-                    self.assertFalse(button.disabled)
-                    self.assertEqual(str(button.label),'Back to sandboxes')
-                    summary=str(operation.query_one('#operation-status',Static).render())
-                    self.assertIn('Delete sandbox…' if failure else 'project files and build cache preserved',summary)
-                    self.assertLessEqual(operation.query_one('#operation-log').region.bottom,
-                                         operation.query_one('.wizard-actions').region.y)
-                    output=operation.query_one('#operation-log')
-                    self.assertLessEqual(output.virtual_size.width,output.scrollable_content_region.width)
-                    self.assertEqual(operation.title,'Cleanup failed: fixture' if failure else 'Creation cancelled: fixture')
-                    await pilot.press('escape')
-                    await self.ready(app,pilot)
-                    self.assertEqual(len(app.screen_stack),1)
-
-    async def test_update_cancel_confirmation_and_preserved_sandbox(self):
-        import threading
-        from textual.widgets import Footer, Static
-        from ai_sandbox_factory.updating import UpdateCancelled
-
-        app = Cockpit(self.root, FakeService(self.records))
-        success = []
-        starts = []
-        release = threading.Event()
-
-        def task(log, update):
-            starts.append(True)
-            release.wait(10)
-            raise UpdateCancelled()
-
-        async with app.run_test(size=(80, 24)) as pilot:
-            await self.ready(app, pilot)
-            screen = UpdateOperation('Updating fixture', task, on_success=lambda: success.append(True))
-            await app.push_screen(screen)
-            try:
-                await pilot.pause()
-                button = screen.query_one('#operation-back', Button)
-                self.assertFalse(button.disabled)
-                self.assertEqual(str(button.label), 'Cancel update')
-                self.assertLessEqual(button.region.bottom, screen.query_one(Footer).region.y)
-                await pilot.press('escape')
-                await pilot.pause()
-                self.assertIsInstance(app.screen, Confirm)
-                self.assertFalse(app.check_action('quit', ()))
-                self.assertEqual(str(app.screen.query_one('#cancel', Button).label), 'Keep updating')
-                await pilot.press('enter')
-                await pilot.pause()
-                self.assertIs(app.screen, screen)
-                self.assertTrue(screen.update.can_cancel)
-                await pilot.click('#operation-back')
-                await pilot.pause()
-                await pilot.click('#yes')
-                await pilot.pause()
-                self.assertFalse(screen.update.can_cancel)
-            finally:
-                release.set()
-                await self.ready(app, pilot)
-            self.assertTrue(screen.cancelled)
-            self.assertFalse(screen.failed)
-            self.assertFalse(button.disabled)
-            self.assertEqual(str(button.label), 'Back to sandboxes')
-            self.assertIn('current sandbox preserved', str(screen.query_one('#operation-status', Static).render()))
-            self.assertEqual(starts, [True])
-            self.assertEqual(success, [])
-            await pilot.press('escape')
-            await self.ready(app, pilot)
-            self.assertEqual(len(app.screen_stack), 1)
+                    self.assertIs(app.screen, app.screen_stack[0])
 
     async def test_missing_model_is_completed_with_warning(self):
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot)
-            app.push_screen(Operation('Opening sandbox',lambda log:log('Model status: Not connected. The sandbox is ready.')))
+            app.start_task('alpha', 'Open editor', lambda log: log('Model status: Not connected. The sandbox is ready.'))
             await pilot.pause();await self.ready(app,pilot)
             self.assertTrue(app.screen.finished)
-            self.assertFalse(app.screen.failed)
-            self.assertTrue(app.screen.model_disconnected)
-            self.assertTrue(app.screen.query_one('#operation-status').has_class('disconnected'))
+            self.assertTrue(app.screen.succeeded)
+            self.assertTrue(app.screen.job.model_disconnected)
+            self.assertIn('Model not connected', str(app.screen.query_one('#operation-status').render()))
             await pilot.press('escape');await self.ready(app,pilot)
             self.assertEqual(len(app.screen_stack),1)
             await pilot.press('q')
@@ -1445,7 +1409,7 @@ class TUITests(unittest.TestCase):
             await pilot.click('#apply');await self.ready(app,pilot)
             self.assertEqual(service.calls[0][:2],['network','beta'])
             self.assertEqual(service.calls[0][-4:],['--website-groups','dev-python','dev-npmjs','dev-github'])
-            self.assertIsInstance(app.screen,Operation)
+            self.assertIsInstance(app.screen,JobDetails)
 
     async def test_context_menu_keeps_the_clicked_identity_when_selection_changes(self):
         service = FakeService(self.records)
@@ -1630,7 +1594,7 @@ class TUITests(unittest.TestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             table = app.query_one(DataTable)
-            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Show Alerts (2)')
+            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Alerts (2)')
             self.assertEqual(table.get_cell('beta', 'alerts'), '')
             cell = table.get_cell_coordinate('alpha', 'alerts')
             region = table._get_cell_region(cell)
@@ -1669,7 +1633,7 @@ class TUITests(unittest.TestCase):
             service.records[0]['ssh_key_state'] = 'loaded'
             app.poll_ssh_status()
             await self.ready(app, pilot)
-            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Show Alerts (1)')
+            self.assertEqual(str(table.get_cell('alpha', 'alerts')).strip(), 'Alerts (1)')
             self.assertEqual(app.selected_name(), 'beta')
             self.assertEqual(service.calls, [])
 
@@ -1742,7 +1706,7 @@ class TUITests(unittest.TestCase):
             self.assertEqual(settings_effects.configuration_changes(form.draft, service.calls[0][2]),
                              ['Approvals & sandbox'])
             service.search_status.assert_not_called()
-            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Done')
+            self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Back')
             await pilot.press('escape')
             self.assertEqual(len(app.screen_stack), 1)
 
@@ -1780,7 +1744,7 @@ class TUITests(unittest.TestCase):
             self.assertTrue(await pilot.click('#package-add'))
             await self.ready(app,pilot)
             self.assertEqual(service.calls[-1],['profile','add','reporting',str(self.root),'--subdir','profiles/reporting'])
-            self.assertIsInstance(app.screen,Operation)
+            self.assertIsInstance(app.screen,JobDetails)
 
     async def test_saved_unregistered_provider_remains_in_configuration(self):
         from ai_sandbox_factory import registry

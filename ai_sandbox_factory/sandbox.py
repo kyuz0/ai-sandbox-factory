@@ -496,6 +496,10 @@ def describe_containers(config, states, state=None):
 
 
 def list_sandboxes(state_root, structured=False):
+    from . import creation
+    reservations = {path.parent.name: ('running' if operation_locks.in_use(path.parent.name) else 'interrupted')
+                    for path in state_root.glob('*/' + creation.MARKER)
+                    if SANDBOX_NAME.fullmatch(path.parent.name) and creation.saved_reservation(path.parent)}
     configs = []
     for path in sorted(state_root.glob('*/config.json')):
         try:
@@ -512,6 +516,8 @@ def list_sandboxes(state_root, structured=False):
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             print(f'Warning: cannot read sandbox configuration for {path.parent.name}', file=sys.stderr)
             configs.append(({'name': path.parent.name}, '-'))
+    configured = {config['name'] for config, _ in configs}
+    configs.extend(({'name': name}, '-') for name in sorted(reservations.keys() - configured))
     if not configs:
         print('[]' if structured else f'No saved sandboxes in {state_root}')
         return
@@ -560,11 +566,16 @@ def list_sandboxes(state_root, structured=False):
         if config.get('network') == 'unrestricted' and states[1] == 'missing':
             states[1] = 'not used'
         sandbox_name = config['name']
+        reservation = reservations.get(sandbox_name)
+        if reservation:
+            states[0] = 'creating' if reservation == 'running' else 'creation interrupted'
         entry = dict(name=sandbox_name, profile=profile, engine=engine, dev=states[0],
                      proxy=states[1], workspace=config.get('workspace'), config=config,
                      activity=activity.load(state_root / sandbox_name),
                      primary_agent=config.get('primary_agent', 'pi'))
         if structured:
+            if reservation:
+                entry['creation'] = reservation
             entry['containers'] = (describe_containers(config, owned[engine].get(sandbox_name, {}), state_root / sandbox_name)
                                    if engine in owned else None)
             if states[0] == 'running' and isinstance(config.get('ssh'), dict) and sandbox_ssh.enabled(config):
@@ -1864,9 +1875,18 @@ def sandbox_command(args, state, parser):
             if not args.open and (config.get('local_model_ports') or config.get('model_providers')):
                 initialize_models(config, state)
         return
-    if args.command == 'delete' and not (state / 'config.json').exists():
-        delete_incomplete(state)
-        return
+    if args.command == 'delete':
+        from . import creation
+        reservation = creation.saved_reservation(state)
+        if reservation and not os.path.lexists(state / creation.READY):
+            if not creation.owns(state, reservation):
+                raise ValueError('Creation ownership changed; no resources were removed.')
+            shutil.rmtree(state)
+            print(f'Deleted incomplete creation state for {state.name}. You can create it again.')
+            return
+        if not (state / 'config.json').exists():
+            delete_incomplete(state)
+            return
     config = json.loads((state / 'config.json').read_text())
     native = primary_workspace.agent(config) != 'pi'
     if native and args.command in ('configure', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
@@ -1917,31 +1937,41 @@ def sandbox_command(args, state, parser):
     elif args.command == 'update':
         apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
     elif args.command == 'recreate':
+        from .job_progress import Progress
         if native and (args.profile or args.subagents is not None):
             raise ValueError('Profiles and Pi subagent settings apply to Pi sandboxes.')
+        building = native or args.profile or args.subagents is not None or args.browser is not None
+        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + [
+            'Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers']
+        progress = Progress(labels)
         if args.subagents is not None:
             config['subagents'] = args.subagents
         if args.browser is not None:
             config['options'] = options({**config.get('options', {}), 'browser': args.browser})
-        building = native or args.profile or args.subagents is not None or args.browser is not None
-        if native:
-            config['common'] = snapshot_profile(common_profile(), state)
-        elif building:
-            profile = config.get('profile')
-            if args.profile or not profile:
-                profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)
-            updated = dict(config, profile=profile, common=snapshot_profile(common_profile(), state))
-            if 'model_providers' in config:
-                updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
-            config = updated
+        if building:
+            with progress.stage('Prepare sandbox sources'):
+                if native:
+                    config['common'] = snapshot_profile(common_profile(), state)
+                else:
+                    profile = config.get('profile')
+                    if args.profile or not profile:
+                        profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)
+                    updated = dict(config, profile=profile, common=snapshot_profile(common_profile(), state))
+                    if 'model_providers' in config:
+                        updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
+                    config = updated
         with image_graph(config):
             if building:
-                build(config)
+                with progress.stage('Build sandbox images'):
+                    build(config)
             if not updating.begin_apply(args.apply_gate):
                 return
-            activity.save_config(state, config)
-            down(config, remove=True)
-            up(config, state)
+            with progress.stage('Save sandbox configuration'):
+                activity.save_config(state, config)
+            with progress.stage('Stop sandbox containers'):
+                down(config, remove=True)
+            with progress.stage('Start sandbox containers'):
+                up(config, state)
     elif args.command == 'browser-editor':
         from . import browser_editor
         if not args.stop and not args.background:

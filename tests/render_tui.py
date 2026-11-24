@@ -13,7 +13,6 @@ else:
     os.environ.pop('NO_COLOR', None)
 os.environ['TEXTUAL_COLOR_SYSTEM'] = 'truecolor'
 import asyncio, copy, json, subprocess, sys, tempfile
-from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 root = Path(__file__).resolve().parents[1]
@@ -22,12 +21,14 @@ from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout, check_table_layout
 from test_hosted_models_ui import ModelService
 from ai_sandbox_factory import sandbox, registry, host_platform
+from ai_sandbox_factory.sandbox_jobs import CreationJob, Job, RebuildJob
+from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
 from ai_sandbox_factory import aws_profiles
 from ai_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
 from ai_sandbox_factory.creation import Creation
 from ai_sandbox_factory.settings_catalog import EDIT_FORMS
 from ai_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
-from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, Operation, CreationOperation, UpdateOperation, settings_effects, web_access
+from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, settings_effects, web_access
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
 from ai_sandbox_factory.tui_widgets import Checkbox
@@ -978,12 +979,13 @@ async def capture(size):
                         await shot('home-update-confirm')
                         await pilot.pause()
                         await pilot.press('escape')
-                        with patch.object(app, 'suspend', return_value=nullcontext()), \
-                                patch('ai_sandbox_factory.sandbox_tui.subprocess.run',
-                                      side_effect=subprocess.CalledProcessError(1, ['pipx', 'upgrade', 'ai-sandbox-factory'],
-                                                                              stderr='Could not connect to the repository.')):
+                        def failed_upgrade(log):
+                            log('Could not connect to the repository.')
+                            raise ValueError('pipx exited with status 1. To retry from a terminal, run pipx upgrade ai-sandbox-factory.')
+                        with patch('ai_sandbox_factory.updates.upgrade', side_effect=failed_upgrade):
                             app.upgrade(True)
-                        await shot('home-update-failed', focus='#close-update-details')
+                            await app.workers.wait_for_complete()
+                        await shot('home-update-failed', focus='#job-hide')
                         await pilot.press('escape')
                         await pilot.pause()
                     with patch('ai_sandbox_factory.updates.pipx_install', return_value=False):
@@ -1266,12 +1268,16 @@ async def capture(size):
                         await pilot.click('#apply')
                         await shot('settings-ux-model-error')
                         await app.pop_screen()
-                    await shot('settings-ux-created', CreationOperation(
-                        root / 'new-demo', lambda log: log('Sandbox ready.'), Creation(), retry=lambda: None,
-                        on_success=None, success_message=settings_effects.open_client('browser')))
-                    await shot('settings-ux-updated', Operation(
-                        'Updating demo', lambda log: log('Sandbox ready.'), done_on_success=True,
-                        completed_title='Updated demo', success_message=settings_effects.REOPEN))
+                    created = CreationJob('new-demo')
+                    created.run(lambda log: log('Sandbox ready.'))
+                    created.notice = settings_effects.open_client('browser')
+                    await shot('settings-ux-created', JobDetails(created))
+                    created.close()
+                    updated = Job('demo', 'Update settings · demo', 'Applying changes')
+                    updated.run(lambda log: log('Sandbox ready.'))
+                    updated.notice = settings_effects.REOPEN
+                    await shot('settings-ux-updated', JobDetails(updated))
+                    updated.close()
                     return
                 if args.only and any(name.startswith('model-settings-') for name in args.only):
                     for context in ('create', 'defaults', 'existing'):
@@ -1461,68 +1467,72 @@ async def capture(size):
                 await shot('copy-web', CopyWebAccess([record]))
                 await shot('repository', RepositorySetup())
                 await shot('public-key', PublicKey('demo'))
-                await shot('operation', Operation('Creating sandbox', lambda log: log('Sandbox ready.')))
+                standalone = Job('demo', 'Create sandbox · demo', 'Creating sandbox')
+                standalone.run(lambda log: log('Sandbox ready.'))
+                await shot('operation', JobDetails(standalone))
+                standalone.close()
                 if not args.only or any(name.startswith('update-operation-') for name in args.only):
-                    for phase in ('preparing', 'confirm', 'applying', 'cancelling', 'cancelled', 'complete', 'failed'):
-                        screen = UpdateOperation('Updating example-project', lambda log, update: None,
-                                                 done_on_success=True, completed_title='Updated example-project')
-                        with patch.object(Operation, 'execute'):
-                            await app.push_screen(screen)
+                    for phase in ('preparing', 'confirm', 'cancelling', 'applying', 'cancelled', 'complete', 'failed'):
+                        if args.only and 'update-operation-' + phase not in args.only:
+                            continue
+                        job = RebuildJob('example-project')
+                        job.set_progress(2, 5, 'Build sandbox images')
                         for index in range(24):
-                            screen.write_log(f'STEP {index + 1}/24: building the updated image and checking cached dependencies')
-                        if phase == 'confirm':
-                            screen.action_cancel()
-                        elif phase == 'applying':
-                            with patch.object(type(screen.update), 'applying', True):
-                                screen.check_phase()
-                        elif phase in ('cancelling', 'cancelled'):
-                            screen.confirm_cancel(True)
+                            job.write(f'STEP {index + 1}/24: building the updated image and checking cached dependencies')
+                        if phase in ('cancelling', 'cancelled'):
+                            job.cancel()
                         if phase in ('cancelled', 'complete', 'failed'):
-                            screen.cancelled = phase == 'cancelled'
-                            screen.failed = phase == 'failed'
-                            if screen.failed:
-                                screen.write_log('Error: The container engine could not build the replacement image.')
-                            if phase == 'complete':
-                                screen.write_log('Finished.')
-                            screen.complete()
-                        if app.screen is screen and not screen.query_one('#operation-back', Button).disabled:
-                            screen.query_one('#operation-back', Button).focus()
-                        await shot('update-operation-' + phase)
-                        if phase == 'confirm':
+                            job.result = phase.capitalize()
+                            if phase == 'failed':
+                                job.write('Error: The container engine could not build the replacement image.')
+                            elif phase == 'complete':
+                                job.write('Update complete.')
+                        with patch.object(type(job.update), 'applying', phase == 'applying'):
+                            await app.push_screen(JobDetails(job))
+                            if phase == 'confirm':
+                                await pilot.click('#job-cancel')
+                            await shot('update-operation-' + phase)
+                            if phase == 'confirm':
+                                await app.pop_screen()
+                            await app.pop_screen()
+                        job.close()
+                if not args.only or any(name.startswith('creation-') for name in args.only):
+                    for status in ('running', 'confirm', 'cancelling', 'cancelled', 'cleanup-error', 'complete',
+                                   'failed', 'choose-model'):
+                        if args.only and 'creation-' + status not in args.only:
+                            continue
+                        job = CreationJob('example-project-with-a-long-name')
+                        job.set_progress(4, 6, 'Build sandbox images')
+                        for index in range(35):
+                            job.write(f'STEP {index + 1}/39: preparing sandbox dependencies and cached image layers')
+                        if status in ('cancelling', 'cancelled', 'cleanup-error'):
+                            job.cancel()
+                            job.write('Stopping creation…')
+                        if status == 'cancelled':
+                            job.result = 'Cancelled'
+                            job.write('Creation cancelled. Project files and build cache preserved.')
+                        elif status in ('complete', 'choose-model'):
+                            job.result = 'Complete'
+                            job.write(job.completion_message)
+                            if status == 'choose-model':
+                                job.followup = ('Choose a model', lambda: None)
+                        elif status in ('failed', 'cleanup-error'):
+                            job.result = 'Failed'
+                            if status == 'cleanup-error':
+                                job.notice = 'From the sandbox list, choose Actions… → Delete sandbox… to finish cleanup.'
+                                job.write('Error: Creation stopped, but cleanup failed. Container engine unavailable.')
+                            else:
+                                job.write('Error: Podman was not found. Install rootless Podman.')
+                                job.edit = job.retry = lambda: None
+                        await app.push_screen(JobDetails(job))
+                        if status == 'confirm':
+                            await pilot.click('#job-cancel')
+                        focus = '#job-retry' if status == 'failed' else '#job-continue' if status == 'choose-model' else None
+                        await shot('creation-' + status, focus=focus)
+                        if status == 'confirm':
                             await app.pop_screen()
                         await app.pop_screen()
-                if not args.only or any(name.startswith('creation-') for name in args.only):
-                    for state_name in ('running', 'cancelling', 'cancelled', 'cleanup-error', 'complete', 'failed'):
-                        controller = Creation()
-                        name = 'example-project-with-a-long-name'
-                        screen = CreationOperation(root / name, lambda log: None, controller,
-                                                   retry=lambda: None, on_success=None)
-                        with patch.object(Operation, 'execute'):
-                            await app.push_screen(screen)
-                        output = screen.query_one(RichLog)
-                        for index in range(35):
-                            output.write(f'STEP {index + 1}/39: preparing sandbox dependencies and cached image layers')
-                        if state_name in ('cancelling', 'cancelled', 'cleanup-error'):
-                            screen.action_cancel()
-                            output.write('Stopping creation…')
-                        if state_name in ('cancelled', 'cleanup-error', 'complete', 'failed'):
-                            screen.failed = state_name in ('cleanup-error', 'failed')
-                            screen.cancelled = state_name == 'cancelled'
-                            if state_name == 'failed':
-                                screen.result = 'Podman was not found. Install rootless Podman.'
-                            elif state_name == 'cleanup-error':
-                                screen.result = ('Creation stopped, but cleanup failed. Saved state was retained. '
-                                                 'Choose Actions… → Delete sandbox… from the sandbox list. Container engine unavailable.')
-                            elif state_name == 'cancelled':
-                                screen.result = ('Creation cancelled. Runtime containers and private state removed; '
-                                                 'project files and build cache preserved.')
-                            else:
-                                screen.result = 'Sandbox ready.'
-                            screen.write_log(('Error: ' if screen.failed else '') + screen.result)
-                            screen.complete()
-                        focus = '#operation-retry' if state_name == 'failed' else '#operation-back'
-                        await shot('creation-' + state_name, focus=focus if state_name != 'cancelling' else None)
-                        await app.pop_screen()
+                        job.close()
                     if args.only and all(name.startswith(('creation-', 'home')) for name in args.only):
                         return
 
@@ -1632,7 +1642,10 @@ async def capture(size):
 
                 def fail(log):
                     raise ValueError('Unable to start the sandbox. Check the container engine and retry.')
-                await shot('operation-error', Operation('Starting sandbox', fail))
+                failed = Job('demo', 'Start sandbox · demo', 'Starting sandbox')
+                failed.run(fail)
+                await shot('operation-error', JobDetails(failed))
+                failed.close()
                 app.service.populated = True
                 await shot('models-configured', ModelsScreen(record))
                 await app.push_screen(ModelDialog('demo', 'azure'))

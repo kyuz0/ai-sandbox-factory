@@ -1,7 +1,6 @@
 """Model credential selection shared by hosted and plugin providers."""
-import asyncio
 from rich.text import Text
-from textual import on, work
+from textual import on
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static
@@ -157,13 +156,18 @@ class CredentialFields(Vertical):
             self.app.push_screen(Confirm(f'Forget {label} on this computer?\nExisting sandbox connections keep their keys.', 'Forget', confirm_by_default=False),
                                  lambda yes: self.forget(ref) if yes else None)
 
-    @work(exclusive=True)
-    async def forget(self, ref):
-        try:
-            await asyncio.to_thread(provider_credentials.forget, ref)
-            self.refresh_choices()
-        except (ValueError, OSError) as error:
-            self.query_one('#credential-error', Feedback).update(str(error))
+    def forget(self, ref):
+        app = self.app
+        label = self.saved[ref]['label']
+        def forget(log):
+            provider_credentials.forget(ref)
+            log('Forgot saved key “' + label + '”. Existing sandbox connections keep their keys.')
+        def forgotten(_):
+            if self.is_mounted:
+                self.refresh_choices()
+        app.start_task('Saved API keys', 'Forget saved key “' + label + '”', forget,
+                       working='Forgetting saved key', on_success=forgotten,
+                       followup_label='Return to saved keys')
 
 
 class CredentialDialog(EntryDialog):

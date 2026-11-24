@@ -16,14 +16,13 @@ import shutil
 from rich.style import Style
 from rich.text import Text
 from typing import NamedTuple, Optional
+from inspect import isawaitable
 
 from . import sandbox, editor_settings, sandbox_ssh, prompt_library
 from . import chat_history
-from .sandbox_jobs import RebuildJob
+from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
 from .chat_history_ui import ChatTransfer, DeleteSandbox, EXPORT, IMPORT
-from .creation import Creation, Cancelled
-from .updating import Update, UpdateCancelled
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
@@ -224,13 +223,27 @@ class Service:
         return json.loads(result.stdout)
 
     def run(self, args, log):
-        log('› ' + ' '.join(str(x) for x in args))
+        from . import operation_locks
+        visible = list(args)
+        for index, value in enumerate(visible):
+            if value == '--creation-token' and index + 1 < len(visible):
+                visible[index + 1] = '[redacted]'
+            elif str(value).startswith('--creation-token='):
+                visible[index] = '--creation-token=[redacted]'
+        log('› ' + ' '.join(str(x) for x in visible))
+        last_output = ''
+        inherited = operation_locks.factory_child(args[1]) if len(args) > 1 else {}
         with subprocess.Popen(self.command(*args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              text=True, errors='replace') as process:
+                              text=True, errors='replace', **inherited) as process:
             for line in process.stdout:
-                log(safe_text(line.rstrip()))
-            if process.wait():
-                raise ValueError('Command failed. See the output above.')
+                line = safe_text(line.rstrip())
+                if line:
+                    last_output = line
+                log(line)
+            code = process.wait()
+            if code:
+                raise ValueError(f'{args[0]} command exited with status {code}: '
+                                 + (last_output or 'No diagnostic output was returned; inspect the command log.'))
 
     def run_update(self, args, log, update):
         if update is None:
@@ -284,6 +297,16 @@ class Service:
     def create(self, draft, key, log, cancellation=None, *, creation_token=None):
         if cancellation is not None:
             return cancellation.run(self, draft, key, log)
+        from .job_progress import Progress
+        pending = draft.get('_hosted_changes', {})
+        imports = draft.get('_advisor_imports', [])
+        labels = ['Save sandbox configuration', 'Save connection and editor settings']
+        if creation_token:
+            labels.append('Check sandbox resource ownership')
+        labels += ['Build sandbox images', 'Start sandbox containers', 'Configure sandbox services']
+        labels += ['Save ' + hosted_models.PROVIDERS[value['provider']] + ' connection' for value in pending.values()]
+        labels += ['Import ' + provider + ' advisor sign-in' for provider in imports]
+        progress = Progress(labels)
         name = draft['name']
         state = self.state / name
         if state.exists() and not creation_token:
@@ -347,25 +370,32 @@ class Service:
             args += ['--subagents' if draft['subagents'] else '--no-subagents']
             for provider in draft.get('advisors', {}).get('providers', []):
                 args += ['--advisor', provider]
-            self.run(args, log)
-        pending = draft.get('_hosted_changes', {})
-        if pending:
-            config = self.config(name)
-            config['hosted_connections'] = {p: hosted_models.connection(v) for p,v in pending.items()}
-            activity.save_config(state, config)
-            (state / 'squid.conf').write_text(sandbox.network_policy(config, sandbox.parse_rules(draft['allowlist'])))
-        editor_settings.save(state, draft.get('editor', editor_settings.DEFAULTS))
+            with progress.stage('Save sandbox configuration'):
+                self.run(args, log)
+        with progress.stage('Save connection and editor settings'):
+            if pending:
+                config = self.config(name)
+                config['hosted_connections'] = {p: hosted_models.connection(v) for p,v in pending.items()}
+                activity.save_config(state, config)
+                (state / 'squid.conf').write_text(sandbox.network_policy(config, sandbox.parse_rules(draft['allowlist'])))
+            editor_settings.save(state, draft.get('editor', editor_settings.DEFAULTS))
         if creation_token:
             from .creation import prepare_resources
-            prepare_resources(state, creation_token)
-        self.run(['build', name], log)
-        self.run(['up', name], log)
-        self.setup(name, draft, key, log)
+            with progress.stage('Check sandbox resource ownership'):
+                prepare_resources(state, creation_token)
+        with progress.stage('Build sandbox images'):
+            self.run(['build', name], log)
+        with progress.stage('Start sandbox containers'):
+            self.run(['up', name], log)
+        with progress.stage('Configure sandbox services'):
+            self.setup(name, draft, key, log)
         for value in pending.values():
-            self.hosted_save(name, value)
-            log(hosted_models.PROVIDERS[value['provider']] + ' connection saved.')
-        for provider in draft.get('_advisor_imports', []):
-            self.run(['advisor-import', name, provider], log)
+            with progress.stage('Save ' + hosted_models.PROVIDERS[value['provider']] + ' connection'):
+                self.hosted_save(name, value)
+                log(hosted_models.PROVIDERS[value['provider']] + ' connection saved.')
+        for provider in imports:
+            with progress.stage('Import ' + provider + ' advisor sign-in'):
+                self.run(['advisor-import', name, provider], log)
         if draft.get('advisors', {}).get('providers'):
             log(f'Advisors added. Open {ADVISORS_PATH} to sign in or check the copied sign-ins.')
 
@@ -681,25 +711,18 @@ class WebsiteGroups(Vertical):
             confirm_by_default=True, cancel_label='Keep saved list' if latest else 'Cancel'),
             lambda yes: self.download_curlie() if yes else None)
 
-    @work(exit_on_error=False)
-    async def download_curlie(self):
-        button = self.query_one('#refresh-curlie', Button)
-        button.disabled = True
-        button.label = 'Downloading…'
-        try:
-            self.available_list = await asyncio.to_thread(curlie_catalog.refresh, force=True, log=lambda _: None)
-            if self.is_mounted:
+    def download_curlie(self):
+        app, owner = self.app, self.screen
+
+        def loaded(version):
+            if app.screen is owner:
+                self.available_list = version
                 self.query_one('#use-newer-curlie', Checkbox).value = False
-                self.notify('The saved Curlie list is ready for new sandboxes.')
-        except ValueError as error:
-            message = str(error)
-            if self.available_list:
-                message += ' You can still use the saved list.'
-            self.query_one('#curlie-error', Feedback).update(message)
-        finally:
-            if self.is_mounted:
-                button.disabled = False
                 self.show_curlie_status()
+
+        app.start_task(None, 'Download Curlie website list', lambda log: curlie_catalog.refresh(force=True, log=log),
+                       working='Downloading website list', on_success=loaded, followup_label='Return to website groups',
+                       targets=('factory:curlie',), success_message='The saved list is ready for new sandboxes.')
 
     def curlie_revision(self):
         if not self.available_list or not self.uses_curlie():
@@ -1214,9 +1237,10 @@ def confirm_aws_installation(name, effect, *, restricted=False):
 class FactoryUpdateDetails(ModalScreen[None]):
     BINDINGS = [('escape', 'close', 'Close')]
 
-    def __init__(self, title, message):
+    def __init__(self, title, message, *, close_label='Close'):
         super().__init__()
         self.heading, self.message = title, message
+        self.close_label = close_label
 
     def compose(self):
         with Vertical(id='confirm-box'):
@@ -1224,7 +1248,7 @@ class FactoryUpdateDetails(ModalScreen[None]):
             with VerticalScroll(id='factory-update-details'):
                 yield Static(self.message, markup=False)
             with Horizontal(classes='dialog-actions'):
-                yield Button('Close', id='close-update-details')
+                yield Button(self.close_label, id='close-update-details')
 
     def on_mount(self):
         self.query_one('#close-update-details', Button).focus()
@@ -1301,6 +1325,13 @@ class MoreActions(ModalScreen[Optional[str]]):
         super().__init__()
         running = record['dev'] == 'running'
         self.sandbox_name = record['name']
+        if record.get('creation'):
+            self.actions = ([('Delete sandbox…', 'delete')] if record['creation'] == 'interrupted'
+                            else [('Refresh sandbox list', 'refresh-creation')])
+            self.groups = [self.actions]
+            self.pages = {}
+            self.page = None
+            return
         native = coding_agent(record.get('config', {})) != 'pi'
         opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
@@ -1320,7 +1351,7 @@ class MoreActions(ModalScreen[Optional[str]]):
         if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
             related.append(('Getting started…', 'profile-guide'))
         if count := len(sandbox_alerts(record)):
-            related.append((f'Show Alerts ({count})', 'alerts'))
+            related.append((f'Alerts ({count})', 'alerts'))
         self.groups = [opening, lifecycle, related, [('Delete sandbox…', 'delete')]]
         self.actions = [item for group in self.groups for item in group]
         self.page = None
@@ -1561,12 +1592,15 @@ class FoldersScreen(Screen):
         elif event.button.id == 'folders-apply':
             try:
                 selected = self.query_one(FolderFields).collect()
-                service = self.app.service
+                app, name = self.app, self.record['name']
+                service = app.service
                 def apply():
-                    self.app.pop_screen()
-                    self.app.push_screen(UpdateOperation('Updating folders', lambda log, update: service.update_settings(self.record['name'], selected, log, update),
-                        done_on_success=True,
-                        success_message=settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], self.app.state_root / self.record['name']))) if selected['extra_folders'] != self.record['config'].get('extra_folders', []) else settings_effects.FOLDER))
+                    config = self.record['config']
+                    message = (settings_effects.bullets(settings_effects.reconnect(settings_client(config, app.state_root / name)))
+                               if selected['extra_folders'] != config.get('extra_folders', []) else settings_effects.FOLDER)
+                    app.pop_screen()
+                    app.start_settings_job(name, 'Update folders · ' + name,
+                        lambda log, update: service.update_settings(name, selected, log, update), success_message=message)
                 if selected['extra_folders'] != self.record['config'].get('extra_folders', []):
                     notes = ['This recreates the sandbox and interrupts running processes.',
                              *settings_effects.editor_migration(self.record['config'])]
@@ -1590,6 +1624,14 @@ class SandboxAlert(NamedTuple):
 
 
 def sandbox_alerts(record):
+    if record.get('creation') == 'interrupted':
+        return [SandboxAlert('Creation interrupted',
+            'Delete the incomplete sandbox before trying again. The host workspace is kept.',
+            'Delete sandbox…', 'delete', True)]
+    if record.get('creation') == 'running':
+        return [SandboxAlert('Creation in progress',
+            'Another Factory process is still creating this sandbox. Refresh to check it again.',
+            'Refresh sandbox list', 'refresh-creation', True)]
     alerts = []
     ssh_alert = {
         'locked': SandboxAlert('SSH key locked',
@@ -1630,7 +1672,8 @@ class SandboxTable(DataTable):
         style = Style(color='#17191b' if primary else '#f1f3f5',
                       bgcolor='#f2b544' if primary else '#494f57', bold=True,
                       meta={'sandbox_action': True})
-        return Text.assemble(' ', ('  ' + label + '  ', style), no_wrap=True)
+        padded = f'{label:^8}' if primary else label
+        return Text.assemble(' ', ('  ' + padded + '  ', style), no_wrap=True)
 
     def on_click(self, event: events.Click):
         # Textual normally activates an already-selected cell on click. Keep all
@@ -1785,15 +1828,15 @@ class SSHScreen(Screen):
                 if settings == old and not identity_changed:
                     self.notify('No SSH or Git settings changed.')
                     return
-                service = self.app.service
-                back_label = ('Back to connectors' if isinstance(self.app.screen_stack[-2], ConnectorSettings)
-                              else 'Back to sandboxes')
+                app, service = self.app, self.app.service
                 def apply(yes):
                     if not yes: return
-                    self.app.pop_screen()
-                    self.app.push_screen(UpdateOperation('SSH & Git settings · ' + name, lambda log, update: service.ssh_settings(name, settings, log, identity, update),
-                        done_on_success=True, back_label=back_label,
-                        success_message=settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], self.app.state_root / name)) + (['Unlock the SSH key before connecting.'] if settings['hosts'] else []) + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))))
+                    message = settings_effects.bullets(settings_effects.reconnect(settings_client(self.record['config'], app.state_root / name))
+                        + (['Unlock the SSH key before connecting.'] if settings['hosts'] else [])
+                        + (['Identity applies to future commits; repository-local settings take precedence.'] if identity_changed else []))
+                    app.pop_screen()
+                    app.start_settings_job(name, 'SSH & Git settings · ' + name,
+                        lambda log, update: service.ssh_settings(name, settings, log, identity, update), success_message=message)
                 notes = ['Active sandbox processes restart.', 'Workspace and private key are preserved.',
                          *settings_effects.editor_migration(self.record['config'])]
                 self.app.push_screen(Confirm('Apply SSH & Git settings?\n' + settings_effects.bullets(notes), 'Apply', confirm_by_default=True), apply)
@@ -1807,7 +1850,6 @@ class SSHScreen(Screen):
 
 class AdvisorsScreen(Screen):
     DEFAULT_CSS = """
-    AdvisorsScreen > .form, AdvisorsScreen > .wizard-actions { max-width: 100; }
     AdvisorsScreen Input, AdvisorsScreen Select { max-width: 54; }
     AdvisorsScreen #advisor-calls { max-width: 14; }
     AdvisorsScreen .model-error { color: $error; height: auto; }
@@ -1928,17 +1970,17 @@ class AdvisorsScreen(Screen):
                 self.notify(str(error), severity='error')
                 return
             imports = self.query_one(AdvisorChoices).imports()
-            service = self.app.service
+            app, service = self.app, self.app.service
             def apply(yes):
                 if not yes:
                     return
-                self.app.pop_screen()
+                app.pop_screen()
                 def setup(log, update):
                     service.advisors(name, settings, log, update)
                     for provider in imports:
                         service.run(['advisor-import', name, provider], log)
-                self.app.push_screen(UpdateOperation(ADVISORS_LABEL + ' · ' + name, setup, done_on_success=True,
-                    success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(self.app.state_root / name)['mode']))))
+                app.start_settings_job(name, ADVISORS_LABEL + ' · ' + name, setup,
+                    success_message=settings_effects.bullets(settings_effects.reconnect(editor_settings.load(app.state_root / name)['mode'])))
             notes = ['Active sandbox processes restart.', 'Workspace and private home are preserved.',
                      *settings_effects.editor_migration(self.record['config'])]
             if imports:
@@ -2064,15 +2106,16 @@ class ModelsScreen(Screen):
             else:
                 service.assign_provider_key(name, provider, choice, log)
 
-        def saved():
-            self.load_key_status()
-            self.refresh_approval_models()
+        app = self.app
+        def saved(_):
+            if app.screen is self:
+                self.load_key_status()
+                self.refresh_approval_models()
             if choose_model:
-                self.app.pop_screen()
-                self.open_plugin_model(provider, optional=True)
+                app.push_screen(ModelDialog(name, provider, plugin_label=label or provider, optional=True))
 
-        self.app.push_screen(Operation('API key · ' + (label or provider), task, done_on_success=True,
-                                      on_success=saved))
+        app.start_task(name, 'API key · ' + (label or provider), task,
+                       on_success=saved, followup_label='Choose a model' if choose_model else 'View model settings')
 
     def open_plugin_model(self, provider, *, optional=False):
         label = self.providers[provider].get('description') or provider
@@ -2127,13 +2170,14 @@ class ModelsScreen(Screen):
         self.run_discovery(selected, action.removeprefix('provider-'), key)
 
     def run_discovery(self, provider, action, key=None):
-        service=self.app.service
-        def task(log):
-            service.provider(self.record['name'], provider, action, key, log)
+        app, name = self.app, self.record['name']
+        service = app.service
         self.app.pop_screen()
         label = LOCAL_MODELS_LABEL if provider == 'local' else self.providers[provider].get('description', provider)
-        self.app.push_screen(Operation(label, task,
-            success_message=settings_effects.bullets([settings_effects.reconnect(editor_settings.load(self.app.state_root / self.record['name'])['mode'])[0], 'Select a model in the chat.']) if action in ('auth', 'refresh') else ''))
+        notice = settings_effects.bullets([settings_effects.reconnect(editor_settings.load(app.state_root / name)['mode'])[0],
+                                           'Select a model in the chat.']) if action in ('auth', 'refresh') else ''
+        app.start_task(name, label, lambda log: service.provider(name, provider, action, key, log),
+                       working='Checking model connections', success_message=notice)
     def action_back(self):self.app.pop_screen()
 
 
@@ -2297,9 +2341,8 @@ class PackagesScreen(Screen):
 
     def run_package_action(self, kind, action, name):
         service = self.app.service
-        self.app.push_screen(Operation(action.capitalize() + ' ' + kind + ' · ' + name,
-                                       lambda log: service.run([kind, action, name], log),
-                                       back_label='Back to Library'))
+        self.app.start_task(None, action.capitalize() + ' ' + kind + ' · ' + name,
+                            lambda log: service.run([kind, action, name], log), targets=(f'{kind}:{name}',))
 
     @on(Button.Pressed)
     def pressed(self, event):
@@ -2418,264 +2461,13 @@ class InstallPackage(Screen):
         args=[self.kind,'add',name,source]
         if ref:args+=['--ref',ref]
         if subdir:args+=['--subdir',subdir]
-        service=self.app.service
-        self.app.pop_screen()
-        self.app.push_screen(Operation('Install '+self.kind+' · '+name,lambda log:service.run(args,log),
-                                       back_label='Back to Library'))
+        app, kind = self.app, self.kind
+        service = app.service
+        app.pop_screen()
+        app.start_task(None, f'Install {kind} · {name}', lambda log: service.run(args, log),
+                       targets=(f'{kind}:{name}',))
 
     def action_back(self):self.app.pop_screen()
-
-
-class OperationLog(RichLog):
-    """Wrap output to the panel, rather than Rich's default console width."""
-
-    def write(self, content, width=None, expand=True, shrink=True, scroll_end=None, animate=False):
-        return super().write(content, width, expand, shrink, scroll_end, animate)
-
-
-class Operation(Screen):
-    BINDINGS = [Binding('escape', 'back', 'Back'), Binding('escape', 'done', 'Done')]
-
-    def __init__(self, title, task, *, back_label='Back to sandboxes', on_success=None, cancellation=None,
-                 success_message='', done_on_success=False, completed_title=None):
-        super().__init__()
-        self.title, self.operation_task, self.finished = title, task, False
-        self.back_label = back_label
-        self.on_success = on_success
-        self.failed = False
-        self.model_disconnected = False
-        self.cancellation = cancellation
-        self.cancelled = False
-        self.result = ''
-        self.success_message = success_message
-        self.done_on_success = done_on_success
-        self.completed_title = completed_title
-
-    @property
-    def succeeded(self):
-        return self.finished and not self.failed and not self.cancelled
-
-    def compose(self):
-        yield Header()
-        with Vertical(id='operation-body'):
-            yield Static(self.title, id='operation-title', markup=False, classes='title')
-            yield Static('●  Running', id='operation-status')
-            yield Static('', id='operation-next', markup=False)
-            yield OperationLog(id='operation-log', markup=False, wrap=True, min_width=1)
-        with Horizontal(classes='wizard-actions'):
-            yield from self.compose_actions()
-        yield Footer()
-
-    def compose_actions(self):
-        yield Button('Cancel creation' if self.cancellation else 'Working…', id='operation-back', disabled=not bool(self.cancellation))
-
-    def on_mount(self):
-        self.query_one('#operation-next').display = False
-        self.query_one(RichLog).border_title = 'Output'
-        self.execute()
-
-    def write_log(self, message):
-        content = safe_text(message)
-        self.query_one(RichLog).write(Text(content, style='bold') if content.startswith('Error: ') else content)
-
-    @work(thread=True, exit_on_error=False)
-    def execute(self):
-        def log(message):
-            if 'Model status: Not connected.' in str(message):
-                self.model_disconnected = True
-            self.app.call_from_thread(self.write_log, message)
-        try:
-            self.operation_task(log)
-            if not self.done_on_success:
-                log('Finished.')
-        except (Cancelled, UpdateCancelled) as error:
-            self.cancelled = True
-            self.result = str(error)
-            if self.result:
-                log(self.result)
-        except Exception as error:
-            self.failed = True
-            self.result = str(error)
-            log('Error: ' + str(error))
-        finally:
-            self.operation_task = None  # Release the completed task.
-            self.app.call_from_thread(self.complete)
-
-    def complete(self):
-        self.finished = True
-        cleanup_failed = self.failed and self.result.startswith('Creation stopped, but cleanup failed')
-        if self.cancellation and self.title.startswith('Creating '):
-            name = self.title.removeprefix('Creating ')
-            prefix = ('Cleanup failed: ' if cleanup_failed else 'Creation failed: ' if self.failed else
-                      'Creation cancelled: ' if self.cancelled else 'Created ')
-            self.title = prefix + name
-            self.query_one('#operation-title', Static).update(self.title)
-        elif self.succeeded and self.completed_title:
-            self.title = self.completed_title
-            self.query_one('#operation-title', Static).update(self.title)
-        self.refresh_bindings()
-        button = self.query_one('#operation-back', Button)
-        done = self.succeeded and self.done_on_success
-        button.disabled, button.label = False, 'Done' if done else self.back_label
-        button.refresh(layout=True)
-        button.focus()
-        if done:
-            button.variant = 'primary'
-        status = self.query_one('#operation-status', Static)
-        status.update('●  Failed · see output below' if self.failed else '●  Cancelled' if self.cancelled else
-                      '●  Complete · model not connected' if self.model_disconnected else '●  Complete')
-        if self.cancelled and self.cancellation:
-            status.update('●  Cancelled · project files and build cache preserved')
-        elif cleanup_failed:
-            status.update('●  From sandboxes, choose Actions… → Delete sandbox… to finish cleanup')
-        status.add_class('failed' if self.failed else 'cancelled' if self.cancelled else 'disconnected' if self.model_disconnected else 'complete')
-        output = self.query_one(RichLog)
-        if self.succeeded and self.success_message:
-            message = self.query_one('#operation-next', Static)
-            message.update(self.success_message() if callable(self.success_message) else self.success_message)
-            message.display = True
-        self.call_after_refresh(output.scroll_end, animate=False)
-        if self.succeeded and self.on_success:
-            callback, self.on_success = self.on_success, None
-            self.app.call_later(callback)
-
-    @on(Button.Pressed, '#operation-back')
-    def back(self, event):
-        event.stop()
-        if self.finished:
-            self.action_back()
-        else:
-            self.action_cancel()
-
-    def check_action(self, action, parameters):
-        if action == 'back':
-            return self.finished and not (self.succeeded and self.done_on_success)
-        if action == 'done':
-            return self.succeeded and self.done_on_success
-        return True
-
-    def action_done(self):
-        self.action_back()
-
-    def action_back(self):
-        if self.finished:
-            self.app.pop_screen()
-            self.app.refresh_inventory()
-
-    def action_cancel(self):
-        if self.cancellation and self.cancellation.cancel():
-            button = self.query_one('#operation-back', Button)
-            button.disabled, button.label = True, 'Cancelling…'
-            self.query_one('#operation-status', Static).update('●  Cancelling · stopping creation and removing containers')
-            self.refresh_bindings()
-
-
-class UpdateOperation(Operation):
-    BINDINGS = [*Operation.BINDINGS, Binding('escape', 'cancel', show=False)]
-
-    def __init__(self, title, task, **completion):
-        self.update = Update()
-        self.confirmation = None
-        super().__init__(title, lambda log: task(log, self.update), **completion)
-
-    def compose_actions(self):
-        yield Button('Cancel update', id='operation-back')
-
-    def on_mount(self):
-        self.query_one('#operation-status', Static).update('●  Preparing update')
-        self.phase_timer = self.set_interval(0.15, self.check_phase)
-
-    def check_phase(self):
-        if self.update.applying:
-            self.phase_timer.stop()
-            self.close_confirmation()
-            self.query_one('#operation-back', Button).disabled = True
-            self.query_one('#operation-status', Static).update('●  Applying changes · please wait for the sandbox update to finish')
-            self.refresh_bindings()
-
-    def close_confirmation(self):
-        if self.confirmation is not None and self.app.screen is self.confirmation:
-            self.confirmation.dismiss(False)
-
-    def check_action(self, action, parameters):
-        if action == 'cancel':
-            return not self.finished and self.update.can_cancel
-        return super().check_action(action, parameters)
-
-    def action_cancel(self):
-        if not self.update.can_cancel:
-            self.check_phase()
-            return
-        self.confirmation = Confirm('Cancel this update? The sandbox will keep its current settings and containers.',
-                                    'Cancel update', confirm_by_default=False, cancel_label='Keep updating')
-        self.app.push_screen(self.confirmation, self.confirm_cancel)
-
-    def confirm_cancel(self, confirmed):
-        self.confirmation = None
-        if confirmed and not self.finished and self.update.cancel():
-            self.query_one('#operation-back', Button).disabled = True
-            self.query_one('#operation-status', Static).update('●  Cancelling update')
-            self.refresh_bindings()
-        elif not self.finished:
-            self.check_phase()
-
-    def complete(self):
-        self.phase_timer.stop()
-        self.close_confirmation()
-        super().complete()
-        if self.failed or self.cancelled:
-            result = 'Update cancelled' if self.cancelled else 'Update failed'
-            self.title = result + ' · ' + self.title.removeprefix('Updating ')
-            self.query_one('#operation-title', Static).update(self.title)
-        if self.cancelled:
-            self.query_one('#operation-status', Static).update('●  Update cancelled · current sandbox preserved')
-        button = self.query_one('#operation-back', Button)
-        button.focus()
-
-
-class CreationOperation(Operation):
-    def __init__(self, state, task, cancellation, *, retry, on_success, success_message=''):
-        super().__init__('Creating ' + state.name, task, cancellation=cancellation, on_success=on_success,
-                         done_on_success=True, success_message=success_message)
-        self.state = state
-        self.retry = retry
-        self.return_to_form = False
-
-    def compose_actions(self):
-        yield from super().compose_actions()
-        retry = Button('Retry creation', id='operation-retry', variant='primary')
-        retry.display = False
-        yield retry
-
-    def complete(self):
-        self.return_to_form = (self.failed and not self.cancellation.retry_blocked
-                               and not self.cancellation.requested.is_set())
-        if self.return_to_form:
-            self.back_label = 'Back to configuration'
-            self.query_one('#operation-retry', Button).display = not os.path.lexists(self.state)
-        super().complete()
-
-    @on(Button.Pressed, '#operation-retry')
-    def retry_pressed(self, event):
-        event.stop()
-        if self.finished and self.return_to_form and event.button.display:
-            self.app.pop_screen()
-            self.retry()
-
-    def leave_wizard(self):
-        self.app.pop_screen()  # Creation output
-        self.app.pop_screen()  # Review sandbox
-        if isinstance(self.app.screen, NewSandbox):
-            self.app.pop_screen()
-
-    def action_back(self):
-        if not self.finished:
-            return
-        if self.return_to_form:
-            self.app.pop_screen()
-        else:
-            self.leave_wizard()
-            self.app.action_refresh_inventory()
 
 
 class CreateFromSandbox(EntryDialog):
@@ -2752,6 +2544,13 @@ class CreateFromSandbox(EntryDialog):
         except (OSError, ValueError, KeyError) as error:
             self.query_one('#copy-error', Static).update(safe_text(error))
             button.disabled = False
+
+
+class CreationRequest(NamedTuple):
+    draft: dict
+    keys: dict
+    provider_label: str | None
+    guide: bool
 
 
 class NewSandbox(Screen):
@@ -2900,7 +2699,8 @@ class NewSandbox(Screen):
                 draft.update({k: v for k, v in self.connector_draft.items() if k != 'git_identity'})
                 if 'git_identity' in self.connector_draft:
                     draft['options']['git_identity'] = self.connector_draft['git_identity']
-                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys), self.remember_connectors)
+                self.app.push_screen(SettingsForm(draft, search_keys=self.search_keys, on_create=self.start_creation),
+                                     self.remember_connectors)
             except (OSError, ValueError) as error:
                 feedback = self.query_one('#new-error', Feedback)
                 feedback.update(str(error))
@@ -2910,6 +2710,11 @@ class NewSandbox(Screen):
     def remember_connectors(self, values):
         if values is not None:
             self.connector_draft = values
+
+    def start_creation(self, request):
+        app = self.app
+        self.dismiss()
+        app.call_later(app.start_creation, request)
 
     def action_back(self):
         self.app.pop_screen()
@@ -2951,7 +2756,7 @@ class PrimarySignIn(ModalScreen):
                 if yes:
                     self.dismiss()
                     self.app.operation('Copying sign-in', ['primary-import', name],
-                                       success_message='Sign-in copied. Choose Open to use it.', done_on_success=True)
+                                       success_message='Sign-in copied. Choose Open to use it.')
             confirmation = Confirm('Replace the saved sign-in with the account signed in on this computer?',
                                    'Copy sign-in', confirm_by_default=True)
             confirmation.add_class('sign-in-confirm')
@@ -2964,9 +2769,11 @@ class PrimarySignIn(ModalScreen):
 class SettingsForm(Screen):
     BINDINGS = [Binding('escape', 'back', 'Back'), Binding('escape', 'cancel_edit', 'Cancel')]
 
-    def __init__(self, draft, editing=False, defaults=False, search_keys=None, section=None, setting=None):
+    def __init__(self, draft, editing=False, defaults=False, search_keys=None, section=None, setting=None,
+                 on_create=None):
         super().__init__(classes='settings-review' if not editing and not defaults else None)
         self.draft, self.editing, self.defaults_mode = draft, editing, defaults
+        self.on_create = on_create
         self.provider_key_choices = dict(draft.get('_provider_credential_choices', {}))
         self.local_key_choices = dict(draft.get('_local_model_keys', {}))
         self.setting = setting
@@ -3699,9 +3506,10 @@ class SettingsForm(Screen):
             if search_change:
                 effects.append(f'Reopen {PRIMARY_AGENTS[self.primary]} CLI or reload the VS Code window to apply web-search changes.')
             message = settings_effects.bullets(effects)
-        self.app.push_screen(Operation('Updating network rules · ' + name, apply,
-            success_message=message, done_on_success=True,
-            on_success=(lambda: self.app.launch_client(name, mode)) if reopen else None))
+        app = self.app
+        app.start_task(name, 'Update network rules · ' + name, apply,
+                       success_message=message, followup_label='Reopen editor',
+                       on_success=(lambda _: app.launch_client(name, mode)) if reopen else None)
 
     def native_web_search_change(self):
         if not (key := WEB_SEARCH_OPTIONS.get(self.primary)):
@@ -3914,10 +3722,11 @@ class SettingsForm(Screen):
                     if mode == options(self.draft.get('options'))['native_approval']:
                         self.notify('No changes to save.')
                         return
-                    await asyncio.to_thread(self.app.service.update_settings, self.draft['name'],
-                                            {'native_approval': mode}, lambda _: None)
-                    self.app.pop_screen()
-                    self.notify('Approval mode saved. Restart the sandbox to use it.')
+                    app, name = self.app, self.draft['name']
+                    self.dismiss()
+                    app.start_task(name, 'Save approval mode · ' + name, lambda log:
+                        app.service.update_settings(name, {'native_approval': mode}, log),
+                        success_message='Approval mode saved. Restart the sandbox to use it.')
                     return
                 if self.setting == 'approval-settings':
                     previous = options(self.draft.get('options'))
@@ -3930,10 +3739,11 @@ class SettingsForm(Screen):
                         if model == previous['approval_model']:
                             self.notify('No changes to apply.')
                             return
-                        name = self.draft['name']
-                        await asyncio.to_thread(self.app.service.save_approval_model, name, model, lambda _: None)
-                        self.app.pop_screen()
-                        self.notify('Approval model saved. Reopen Pi to use it.')
+                        app, name = self.app, self.draft['name']
+                        self.dismiss()
+                        app.start_task(name, 'Save approval model · ' + name, lambda log:
+                            app.service.save_approval_model(name, model, log),
+                            success_message='Approval model saved. Reopen Pi to use it.')
                         return
                 if self.setting == 'network-settings':
                     mode = self.query_one('#network', Select).value
@@ -3942,9 +3752,21 @@ class SettingsForm(Screen):
                         if mode == 'allowlist' and (self.primary not in WEB_SEARCH_OPTIONS or self.network_rules_changed()):
                             self.apply_network_rules()
                         elif change := self.native_web_search_change():
-                            await asyncio.to_thread(self.app.service.update_settings, self.draft['name'], change, lambda _: None)
-                            self.app.pop_screen()
-                            self.notify(f'Web search saved. Reopen {PRIMARY_AGENTS[self.primary]} CLI or reload the VS Code window to apply it.')
+                            app, name = self.app, self.draft['name']
+                            agent = self.primary
+
+                            async def failed(message):
+                                form = self
+                                if app.screen is not self:
+                                    form = SettingsForm(self.draft, editing=True, setting='network-settings')
+                                    await app.push_screen(form)
+                                    form.query_one('#' + agent + '-web-search', Checkbox).value = change[WEB_SEARCH_OPTIONS[agent]]
+                                form.query_one('#form-error', Feedback).update(message)
+
+                            app.start_task(name, 'Save web search setting · ' + name, lambda log:
+                                app.service.update_settings(name, change, log), success_message=(
+                                f'Web search saved. Reopen {PRIMARY_AGENTS[agent]} CLI or reload the VS Code window to apply it.'),
+                                on_failure=failed, failure_label='Edit web search settings')
                         else:
                             self.notify('No changes to apply.')
                         return
@@ -3961,11 +3783,11 @@ class SettingsForm(Screen):
                     self.app.check_dependencies()
                     self.notify('Defaults saved for future sandboxes.')
                 elif self.editing and draft.get('_communication_keys') and not key and self.configuration_unchanged(draft):
-                    service = self.app.service
-                    self.app.pop_screen()
-                    self.app.push_screen(Operation('Saving Slack credentials', lambda log:
+                    app, service = self.app, self.app.service
+                    app.pop_screen()
+                    app.start_task(draft['name'], 'Save Slack credentials', lambda log:
                         service.save_communication_keys(draft['name'], draft['_communication_keys'], log),
-                        success_message='Slack credentials are ready for the next tool call.', done_on_success=True))
+                        success_message='Slack credentials are ready for the next tool call.')
                 elif self.editing:
                     mode = None if self.native else editor_settings.load(self.app.state_root / draft['name'])['mode']
                     self.app.push_screen(ApplySettingsReview(self.draft, draft, mode),
@@ -3999,98 +3821,16 @@ class SettingsForm(Screen):
             self.local_key_choices = choices
 
     def submit(self, draft, key):
-        service = self.app.service
-        editing = self.editing
-        cancellation = None if editing else Creation()
-        editor = (editor_settings.load(self.app.state_root / draft['name']) if editing else draft.get('editor', editor_settings.DEFAULTS))
-        plugin_choices = list(draft.get('_provider_credential_choices', {}))
-        hosted_choices = draft.get('_hosted_changes')
-        choose_default = hosted_choices or plugin_choices
-        opened = False
-        def task(log, update=None):
-            nonlocal opened
-            if draft.get('mkdir'):
-                Path(draft['workspace']).mkdir(parents=True, exist_ok=True)
-            if editing:
-                service.update(draft['name'], draft, key, log, update)
-            else:
-                service.create(draft, key, log, cancellation=cancellation)
-            if editing and not self.native and draft.get('open_editor') and editor['mode'] != 'pi' and not choose_default:
-                try:
-                    service.run(['open', draft['name']], log)
-                    opened = True
-                except (OSError, ValueError) as error:
-                    log(f'Sandbox {"updated" if editing else "created"}, but the editor could not open: {error}')
-                    log('Use Open on the sandbox list to try again.')
-        if editing:
-            self.app.pop_screen()
-        def open_after_models():
-            if not draft.get('open_editor'):
-                return
-            if self.native:
-                if not editing and draft.get('primary_auth') == 'login' and editor['mode'] != 'pi':
-                    self.app.interactive('primary-login', draft['name'])
-                self.app.launch_client(draft['name'], editor['mode'])
-            elif editor['mode'] == 'pi': self.app.interactive('pi', draft['name'])
-            else: self.app.push_screen(Operation('Opening '+draft['name'], lambda log: service.run(['open',draft['name']],log)))
-        def choose_models():
-            if editing:
-                self.app.pop_screen()
-            else:
-                operation.leave_wizard()
-                self.app.refresh_inventory()
-            if len(plugin_choices) == 1 and not hosted_choices:
-                provider = plugin_choices[0]
-                label = self.provider_forms.get(provider, {}).get('description') or provider
-                self.app.push_screen(ModelDialog(draft['name'], provider, plugin_label=label, optional=True,
-                    approval_model=draft['options'].get('approval_model', 'current')
-                    if not editing and draft['options']['approval'] in ('automatic', 'assisted') else None),
-                                     lambda _: open_after_models())
-            else:
-                self.app.push_screen(ModelsScreen({'name':draft['name'],'config':service.config(draft['name'])},finished=open_after_models))
-        def after_ssh(ready=True):
-            if not ready:
-                operation.query_one('#operation-next', Static).update(
-                    'Finish setting up the SSH key in Settings → Connectors → SSH & Git.')
-                operation.query_one('#operation-next', Static).display = True
-            elif choose_default:
-                choose_models()
-            else:
-                open_after_models()
-
-        def finish_creation():
-            method = draft.get('_ssh_key', 'later')
-            if method == 'generate':
-                from .repository_ui import PublicKey
-                self.app.push_screen(PublicKey(draft['name'], generate=True), after_ssh)
-            elif method == 'import':
-                args = ['ssh-import-key', draft['name'], '--key-file', draft['_ssh_key_file'],
-                        '--duration', draft['_ssh_key_duration']]
-                with self.app.suspend():
-                    result = subprocess.run(service.command(*args), check=False)
-                after_ssh(result.returncode == 0)
-            else:
-                after_ssh()
-
-        if editing:
-            operation = UpdateOperation('Updating ' + draft['name'], task,
-                done_on_success=True, completed_title='Updated ' + draft['name'],
-                success_message=lambda: settings_effects.bullets(settings_effects.reconnect(
-                    None if self.native else editor['mode'], opened=opened or (self.native and draft['open_editor']))),
-                on_success=choose_models if choose_default else open_after_models
-                if draft.get('open_editor') and (self.native or editor['mode'] == 'pi') else None)
-        else:
-            next_steps = [] if draft.get('open_editor') else [
-                'Choose Open to start ' + PRIMARY_AGENTS[self.primary] + '.' if self.native else settings_effects.open_client(editor['mode'])]
-            if self.guide:
-                client = 'Pi' if editor['mode'] == 'pi' else 'FrostPi'
-                next_steps.append(f'Type /profile-guide in {client} for first steps.')
-            operation = CreationOperation(self.app.state_root / draft['name'], task, cancellation,
-                retry=lambda: self.submit(draft, key),
-                success_message=settings_effects.bullets(next_steps) if self.guide else '\n'.join(next_steps),
-                on_success=finish_creation if choose_default or draft.get('open_editor')
-                or draft.get('_ssh_key', 'later') != 'later' else None)
-        self.app.push_screen(operation)
+        app = self.app
+        choices = list(draft.get('_provider_credential_choices', {}))
+        provider_label = self.provider_forms.get(choices[0], {}).get('description') if len(choices) == 1 else None
+        if not self.editing:
+            self.dismiss()
+            app.call_later(self.on_create or app.start_creation,
+                           CreationRequest(draft, key, provider_label, bool(self.guide)))
+            return
+        self.dismiss()
+        app.call_later(app.update_configuration, draft, key, provider_label)
 
     def check_action(self, action, parameters):
         if action == 'back':
@@ -4130,7 +3870,7 @@ class Cockpit(App):
                 Binding('n', 'new', 'New', show=False), Binding('r', 'refresh_inventory', 'Refresh'),
                 Binding('a', 'sandbox_actions', 'Actions'), Binding('shift+f10', 'sandbox_actions', show=False),
                 Binding('j', 'jobs', 'Jobs'),
-                Binding('slash', 'search', 'Search'), Binding('d', 'defaults', 'Defaults'), Binding('q', 'quit', 'Quit')]
+                Binding('slash', 'search', show=False), Binding('d', 'defaults', 'Defaults'), Binding('q', 'quit', 'Quit')]
     CSS = '''
     Screen { background: #171a1d; }
     Header { background: #f2b544; color: #171a1d; }
@@ -4454,6 +4194,7 @@ class Cockpit(App):
     #sandboxes > .datatable--even-row, #sandboxes > .datatable--odd-row {
         background: $surface-darken-1 40%;
     }
+    #sandboxes:focus > .datatable--cursor { background: $primary 35%; color: $foreground; }
     #details { height: auto; min-height: 3; padding: 1 0; text-wrap: nowrap; text-overflow: ellipsis; }
     #ssh-key-feedback { height: auto; }
     #ssh-duration-error, #ssh-key-feedback.error, SSHDestinationFields Feedback, CreateSSHFields Feedback { color: #ef9a91; }
@@ -4554,8 +4295,10 @@ class Cockpit(App):
         self.state_root = Path(state_root)
         self.service = service or Service(self.state_root)
         self.records = []
-        self.rebuild_jobs = []
-        self.completed_rebuilds = 0
+        self.jobs = []
+        self.job_completions = {}
+        self._dashboard_jobs = ()
+        self.upgrade_job = None
         self.sort_field = "started"
         self.sort_reverse = True
         self.defaults = load_defaults()
@@ -4604,17 +4347,17 @@ class Cockpit(App):
             with Horizontal(classes='buttons'):
                 yield Button('Settings', id='settings')
                 yield Button('Actions…', id='more')
-                yield Button('Jobs…', id='jobs')
+                yield Button('Jobs… (0)', id='jobs')
         yield Footer()
 
     def on_mount(self):
         self.screen.AUTO_FOCUS = '#new'
         self.query_one('#new', Button).focus()
-        for key, label in [('name', 'Name'), ('open', ''), ('alerts', 'Alerts'), ('dev', 'Status'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
+        for key, label in [('name', 'Name'), ('open', ''), ('dev', 'Status'), ('alerts', 'Alerts'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
             self.query_one('#sandboxes', DataTable).add_column(label, key=key)
         self.action_refresh_inventory()
         self.set_interval(15, self.poll_ssh_status)
-        self.set_interval(0.2, self.poll_rebuilds)
+        self.set_interval(0.15, self.poll_jobs)
         self.check_update()
         self.resize_banner()
 
@@ -4653,8 +4396,11 @@ class Cockpit(App):
         self.query_one('#application-update').display = True
 
     def confirm_update(self):
-        if self.rebuilds_active():
-            self.notify('Wait for sandbox updates to finish before upgrading Factory.')
+        if self.upgrade_pending():
+            self.show_job(self.upgrade_job)
+            return
+        if self.jobs_active():
+            self.notify('Wait for running jobs to finish before upgrading Factory.')
             return
         self.push_screen(Confirm(
             f'Upgrade AI Sandbox Factory to {self.available_version}?\n'
@@ -4662,23 +4408,13 @@ class Cockpit(App):
             'Running sandboxes keep their installed software.', 'Upgrade', confirm_by_default=True), self.upgrade)
 
     def upgrade(self, confirmed):
-        if not confirmed:
-            return
-        try:
-            with self.suspend():
-                subprocess.run(updates.UPGRADE_COMMAND, check=True, stderr=subprocess.PIPE, text=True, errors='replace')
-        except (OSError, subprocess.SubprocessError) as error:
-            if isinstance(error, subprocess.CalledProcessError):
-                detail = f'pipx exited with status {error.returncode}.'
-                diagnostic = safe_text(error.stderr or '').strip()
-            else:
-                detail = 'Could not run pipx.'
-                diagnostic = safe_text(error)
-            message = '\n\n'.join(filter(None, (detail, diagnostic,
-                'To retry from a terminal, run:\npipx upgrade ai-sandbox-factory')))
-            self.push_screen(FactoryUpdateDetails('Factory upgrade failed', message))
-        else:
-            self.exit(result=updates.RELAUNCH)
+        if confirmed and not self.jobs_active():
+            self.upgrade_job = self.start_task(None, 'Upgrade Factory', updates.upgrade,
+                working='Installing Factory update', on_success=lambda _: self.exit(result=updates.RELAUNCH),
+                followup_label='Restart Factory', success_message='Restart Factory to use the new version.')
+
+    def upgrade_pending(self):
+        return self.upgrade_job is not None and self.upgrade_job.result != 'Failed'
 
     def poll_ssh_status(self):
         if (self.screen is self.screen_stack[0] and any('ssh_key_state' in record for record in self.records)
@@ -4723,7 +4459,10 @@ class Cockpit(App):
         selected = self.selected_name()
         table.clear()
         text = self.query_one('#search', Input).value.casefold()
-        for record in self.sorted_records():
+        creating = {job.name: job.preview for job in self.jobs
+                    if isinstance(job, CreationJob) and job.result is None and job.preview is not None}
+        rows = [*creating.values(), *(record for record in self.sorted_records() if record['name'] not in creating)]
+        for record in rows:
             agent = coding_agent(record['config'])
             if text not in (record['name'] + ' ' + record['profile'] + ' ' + PRIMARY_AGENTS[agent]
                             + ' ' + (record.get('workspace') or '')).casefold():
@@ -4736,12 +4475,14 @@ class Cockpit(App):
             name = safe_text(record['name'])
             if self.size.width < 100 and len(name) > 32:
                 name = name[:31] + '…'
+            active = self.active_job(record['name'])
+            action = 'View job' if active else '' if record.get('creation') else 'Open'
             alert_count = len(sandbox_alerts(record))
             cells = (
                 name,
-                SandboxTable.action_cell('Open', primary=True),
-                SandboxTable.action_cell(f'Show Alerts ({alert_count})') if alert_count else '',
+                SandboxTable.action_cell(action, primary=True) if action else '',
                 safe_text(record['dev'].capitalize()),
+                SandboxTable.action_cell(f'Alerts ({alert_count})') if alert_count else '',
                 *(activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')),
                 (safe_text(', '.join(sources)) or 'Not configured') if agent == 'pi' else PRIMARY_AGENTS[agent],
                 'Restricted' if config.get('network', 'allowlist') == 'allowlist' else 'Unrestricted',
@@ -4802,6 +4543,9 @@ class Cockpit(App):
 
     def selected(self):
         name = self.selected_name()
+        job = self.active_job(name)
+        if isinstance(job, CreationJob) and job.preview is not None:
+            return job.preview
         return next((r for r in self.records if r['name'] == name), None)
 
     @on(Input.Changed, '#search')
@@ -4817,6 +4561,9 @@ class Cockpit(App):
         action = event.cell_key.column_key.value
         if action in ('open', 'alerts') and event.value:
             name = event.cell_key.row_key.value
+            if action == 'open' and (job := self.active_job(name)):
+                self.show_job(job)
+                return
             record = next((item for item in self.records if item['name'] == name), None)
             if record:
                 self.perform(action, record=record)
@@ -4832,6 +4579,9 @@ class Cockpit(App):
 
     def show_sandbox_actions(self, name):
         from .browser_editor import runtime
+        if isinstance(job := self.active_job(name), CreationJob):
+            self.show_job(job)
+            return
         record = next((row for row in self.records if row['name'] == name), None)
         if record is not None:
             self.push_screen(MoreActions(record, browser_running=bool(runtime(self.state_root / name))),
@@ -4851,46 +4601,240 @@ class Cockpit(App):
         self.perform(choice, record=record)
 
     def action_jobs(self):
-        self.push_screen(JobsMenu(self.rebuild_jobs), self.show_job)
+        self.push_screen(JobsMenu(self.jobs), self.show_job)
 
     def show_job(self, job):
-        if job is not None:
+        if job is not None and not (isinstance(self.screen, JobDetails) and self.screen.job is job):
             self.push_screen(JobDetails(job))
 
-    def rebuilds_active(self):
-        return any(job.result is None for job in self.rebuild_jobs)
+    def jobs_active(self):
+        return any(job.result is None for job in self.jobs)
 
-    def poll_rebuilds(self):
-        if not self.rebuild_jobs or not self.screen_stack:
+    def poll_jobs(self):
+        if not self.screen_stack:
             return
         button = next(iter(self.screen_stack[0].query('#jobs').results(Button)), None)
         if button is None:
             return
-        completed = sum(job.result is not None for job in self.rebuild_jobs)
-        active = len(self.rebuild_jobs) - completed
-        label = f'Jobs… ({active} active)' if active else f'Jobs… ({completed})'
+        active = sum(job.result is None for job in self.jobs)
+        label = f'Jobs… ({active})' + (' · To review' if any(job.followup for job in self.jobs) else '')
         if str(button.label) != label:
             button.label = label
-        if completed != self.completed_rebuilds:
-            self.completed_rebuilds = completed
+            button.refresh(layout=True)
+        rows = tuple(job for job in self.jobs if job.result is None and job.targets)
+        if rows != self._dashboard_jobs:
+            self._dashboard_jobs = rows
+            self.render_records()
+        finished = [job for job in self.job_completions if job.result is not None]
+        if finished:
             self.refresh_inventory()
+        for job in finished:
+            original_view, completed_callback = self.job_completions.pop(job)
+            visible = self.screen is original_view
+            if completed_callback:
+                completed_callback(job)
+            if visible and job.followup:
+                self.resume_job(job)
+            elif not visible:
+                self.notify(f'{job.title} · {job.followup[0] if job.followup else job.status}',
+                            severity='error' if job.result == 'Failed' else 'information')
+
+    def resume_job(self, job):
+        if job.followup:
+            label, resume = job.followup
+            job.followup = None
+            if isinstance(self.screen, JobDetails) and self.screen.job is job:
+                self.pop_screen()
+            context = self.screen
+            async def dispatch():
+                if self.screen is not context:
+                    job.followup = (label, resume)
+                    return
+                try:
+                    result = resume()
+                    if isawaitable(result):
+                        await result
+                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+                    job.notice = f'Could not continue with {label.lower()}: {error}'
+                    job.write(job.notice)
+                    job.followup = (label, resume)
+                    self.show_job(job)
+            self.call_later(dispatch)
+
+    def start_job(self, job, task, completed=None):
+        if self.upgrade_pending():
+            job.close()
+            self.notify('Finish upgrading and restart Factory before starting another job.')
+            self.show_job(self.upgrade_job)
+            return None
+        conflict = next((active for name in job.targets if (active := self.active_job(name))), None)
+        if conflict:
+            job.close()
+            self.notify(f'{conflict.title} is already running. Open Jobs to see its progress.')
+            self.show_job(conflict)
+            return None
+        self.jobs.append(job)
+        view = JobDetails(job)
+        self.job_completions[job] = (view, completed)
+        self.push_screen(view)
+        def run():
+            job.run(task)
+            if self.is_running:
+                self.call_from_thread(self.poll_jobs)
+        self.run_worker(run, thread=True, exit_on_error=False)
+        self.poll_jobs()
+        return job
+
+    def start_task(self, name, title, task, *, working='Working', on_success=None,
+                   followup_label='Continue', on_failure=None, failure_label='Try again', targets=None,
+                   success_message=''):
+        job = Job(name, title, working)
+        if targets is not None:
+            job.targets = targets
+
+        def completed(finished):
+            if finished.result == 'Complete':
+                finished.notice = success_message
+            if finished.result == 'Complete' and on_success:
+                async def resume():
+                    result = on_success(finished.value)
+                    if isawaitable(result):
+                        await result
+                    finished.value = None
+                finished.followup = (followup_label, resume)
+            elif finished.result == 'Failed' and on_failure:
+                finished.followup = (failure_label, lambda: on_failure(finished.error))
+
+        return self.start_job(job, task, completed)
 
     def start_rebuild(self, name, args):
-        if self.rebuild_for(name):
-            self.notify(f'{name} is already updating. Open Jobs to see its progress.')
-            return
-        job = RebuildJob(name)
-        self.rebuild_jobs.append(job)
-        self.run_worker(lambda: job.run(lambda log, update: self.service.run_update(args, log, update)),
-                        thread=True, exit_on_error=False)
-        self.poll_rebuilds()
-        self.show_job(job)
+        return self.start_job(RebuildJob(name), lambda log, update: self.service.run_update(args, log, update))
 
-    def rebuild_for(self, name):
-        return next((job for job in self.rebuild_jobs if job.name == name and job.result is None), None)
+    def start_settings_job(self, name, title, task, *, success_message=''):
+        def completed(job):
+            if job.result == 'Complete':
+                job.notice = success_message
+        return self.start_job(RebuildJob(name, title), task, completed)
+
+    def start_creation(self, request):
+        draft = request.draft
+        name = draft['name']
+        agent = coding_agent(draft)
+        job = CreationJob(name, preview={
+            'name': name, 'dev': 'creating', 'proxy': 'pending',
+            'engine': draft.get('engine') or 'auto', 'workspace': draft.get('workspace'),
+            'profile': str(draft.get('profile') or PRIMARY_AGENTS[agent]),
+            'config': {'primary_agent': agent, 'network': draft.get('network', 'allowlist')},
+        })
+
+        def create_sandbox(log):
+            if draft.get('mkdir'):
+                Path(draft['workspace']).mkdir(parents=True, exist_ok=True)
+            self.service.create(draft, request.keys, log, cancellation=job.creation)
+
+        def completed(finished):
+            if finished.result == 'Complete':
+                self.prepare_job_setup(finished, draft, request.provider_label, creating=True, guide=request.guide)
+            elif finished.result == 'Failed' and not job.creation.retry_blocked:
+                finished.edit = lambda: self.push_screen(SettingsForm(draft, search_keys=request.keys))
+                if not os.path.lexists(self.state_root / name):
+                    finished.retry = lambda: self.start_creation(request)
+            elif finished.result == 'Failed' and finished.error.startswith('Creation stopped, but cleanup failed'):
+                finished.notice = 'From the sandbox list, choose Actions… → Delete sandbox… to finish cleanup.'
+
+        return self.start_job(job, create_sandbox, completed)
+
+    def update_configuration(self, draft, key, provider_label):
+        name = draft['name']
+        return self.start_job(RebuildJob(name, 'Update settings · ' + name),
+                              lambda log, update: self.service.update(name, draft, key, log, update),
+                              lambda job: self.prepare_job_setup(job, draft, provider_label)
+                              if job.result == 'Complete' else None)
+
+    def prepare_job_setup(self, job, draft, provider_label, *, creating=False, guide=False):
+        name = job.name
+        agent = coding_agent(draft)
+        mode = (draft.get('editor', editor_settings.DEFAULTS) if creating else
+                editor_settings.load(self.state_root / name))['mode']
+        open_requested = draft.get('open_editor')
+        login = creating and draft.get('primary_auth') == 'login' and agent != 'pi' and mode != 'pi'
+        providers = tuple(draft.get('_provider_credential_choices', {}))
+        hosted = bool(draft.get('_hosted_changes'))
+        approval = options(draft.get('options'))
+        approval_model = (approval['approval_model'] if creating and approval['approval'] in
+                          ('automatic', 'assisted') else None)
+        if creating:
+            if not open_requested:
+                job.notice = ('Choose Open to start ' + PRIMARY_AGENTS[agent] + '.' if agent != 'pi' else
+                              settings_effects.open_client(mode))
+            if guide:
+                client = 'Pi' if mode == 'pi' else 'FrostPi'
+                job.notice = '\n'.join(filter(None, (job.notice, f'Type /profile-guide in {client} for first steps.')))
+        else:
+            job.notice = settings_effects.bullets(settings_effects.reconnect(mode if agent == 'pi' else None))
+
+        def open_client():
+            if login:
+                self.interactive('primary-login', name)
+            if agent == 'pi' and mode == 'pi':
+                self.interactive('pi', name)
+            elif agent == 'pi':
+                def opened(editor_job):
+                    if editor_job.result == 'Complete' and not creating:
+                        job.notice = settings_effects.bullets(settings_effects.reconnect(mode, opened=True))
+                self.start_job(Job(name, 'Open editor · ' + name, 'Opening editor'),
+                               lambda log: self.service.run(['open', name], log), opened)
+            else:
+                self.launch_client(name, mode)
+
+        def after_models(choice=None):
+            if choice is ModelDialog.LATER:
+                job.followup = ('Choose a model', choose_model)
+            elif open_requested:
+                open_client()
+
+        def choose_model():
+            if len(providers) == 1 and not hosted:
+                provider = providers[0]
+                self.push_screen(ModelDialog(name, provider, plugin_label=provider_label or provider,
+                                             optional=True, approval_model=approval_model, offer_later=True),
+                                 after_models)
+            else:
+                self.push_screen(ModelsScreen({'name': name, 'config': self.service.config(name)},
+                                              finished=after_models))
+
+        def after_ssh(ready=True):
+            if not ready:
+                job.notice = 'Finish setting up the SSH key in Settings → Connectors → SSH & Git.'
+                self.show_job(job)
+            elif providers or hosted:
+                choose_model()
+            elif open_requested:
+                open_client()
+
+        method = draft.get('_ssh_key') if creating else None
+        if method == 'generate':
+            from .repository_ui import PublicKey
+            job.followup = ('Set up SSH key', lambda: self.push_screen(PublicKey(name, generate=True), after_ssh))
+        elif method == 'import':
+            args = ['ssh-import-key', name, '--key-file', draft['_ssh_key_file'], '--duration', draft['_ssh_key_duration']]
+
+            def import_key():
+                with self.suspend():
+                    result = subprocess.run(self.service.command(*args), check=False)
+                after_ssh(result.returncode == 0)
+
+            job.followup = ('Import SSH key', import_key)
+        elif providers or hosted:
+            job.followup = ('Choose a model', choose_model)
+        elif open_requested:
+            job.followup = ('Sign in' if login else 'Open editor' if mode != 'pi' else 'Open terminal', open_client)
+
+    def active_job(self, name):
+        return next((job for job in self.jobs if name in job.targets and job.result is None), None)
 
     def on_unmount(self):
-        for job in self.rebuild_jobs:
+        for job in self.jobs:
             if job.result:
                 job.close()
 
@@ -4908,23 +4852,28 @@ class Cockpit(App):
         details.update(safe_text(text))
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
         for action in ('settings', 'more'):
-            self.query_one('#' + action, Button).disabled = record is None
+            self.query_one('#' + action, Button).disabled = record is None or (action == 'settings' and bool(record.get('creation')))
 
     @on(Button.Pressed)
     def pressed(self, event):
+        if self.screen_stack[0] not in event.button.ancestors:
+            return
         event.stop()
         self.perform(event.button.id)
 
     def action_quit(self):
-        if not self.check_action('quit', ()):
-            self.notify('Wait for the current operation to finish before closing Factory.')
+        if self.jobs_active():
+            if isinstance(self.screen, FactoryUpdateDetails) and self.screen.heading == 'Jobs still running':
+                return
+            self.push_screen(FactoryUpdateDetails('Jobs still running',
+                'Wait for jobs to finish before quitting. Open Jobs… from the sandbox list to check progress '
+                'or cancel a job that offers it.\n\n'
+                'If you close the terminal, reopening Factory won’t restore these jobs or their output.',
+                close_label='Keep Factory open'))
             return
         self.exit()
 
     def check_action(self, action, parameters):
-        if action == 'quit':
-            return not self.rebuilds_active() and not any(
-                isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
         if action in ('new', 'search', 'refresh_inventory', 'defaults', 'sandbox_actions', 'jobs'):
             return self.screen is self.screen_stack[0]
         return True
@@ -4999,9 +4948,16 @@ class Cockpit(App):
             self.notify('Choose a sandbox first.')
             return
         name, config = record['name'], record['config']
-        running_job = self.rebuild_for(name)
+        running_job = self.active_job(name)
         if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'alerts'):
             self.show_job(running_job)
+            return
+        if action == 'refresh-creation':
+            self.action_refresh_inventory()
+            return
+        if record.get('creation') and action not in ('more', 'alerts', 'delete'):
+            self.push_screen(SandboxAlerts(record),
+                             lambda choice: self.perform(choice, record=record) if choice else None)
             return
         native = coding_agent(config) != 'pi'
         if action == 'primary-sign-in' and native:
@@ -5032,7 +4988,6 @@ class Cockpit(App):
                              lambda choice: self.perform(choice, record=record) if choice else None)
         elif action == 'aws-access':
             saved_access = self.service.config(name).get('aws_access') or {}
-            back_label = 'Back to connectors' if isinstance(self.screen, ConnectorSettings) else 'Back to sandboxes'
 
             def change(value):
                 if value is None or value == saved_access:
@@ -5053,9 +5008,8 @@ class Cockpit(App):
                                'AWS access is ready. Choose Open to resume work.' if effect == 'restart' else
                                'AWS access saved for the next start.' if effect in ('replace', 'prepare') else
                                'AWS access updated.')
-                    self.push_screen(UpdateOperation('Updating AWS access', lambda log, update:
-                        self.service.update_settings(name, changes, log, update),
-                        success_message=success, done_on_success=True, back_label=back_label))
+                    self.start_settings_job(name, 'Update AWS access · ' + name, lambda log, update:
+                        self.service.update_settings(name, changes, log, update), success_message=success)
 
                 if effect in ('restart', 'replace', 'gateway'):
                     self.push_screen(confirm_aws_installation(name, effect,
@@ -5085,7 +5039,8 @@ class Cockpit(App):
             self.push_screen(SettingsForm(self.configuration_draft(record), editing=True, setting=action))
         elif action in ('preview-models', 'refresh-models'):
             mode = 'preview' if action == 'preview-models' else 'refresh'
-            self.push_screen(Operation('Local models · ' + name, lambda log: self.service.models(name, mode, log)))
+            self.start_task(name, 'Local models · ' + name, lambda log: self.service.models(name, mode, log),
+                            working='Checking local models')
         elif action in ('export-chats', 'import-chats'):
             self.push_screen(ChatTransfer(name, importing=(action == 'import-chats'), agent=coding_agent(config)))
         elif action == 'copy-chat':
@@ -5106,7 +5061,9 @@ class Cockpit(App):
                 result = subprocess.run([config['engine'], 'logs', '--tail', '100', sandbox.names(config)[0]],
                                         capture_output=True, text=True)
                 log(result.stdout + result.stderr)
-            self.push_screen(Operation('Container logs · ' + name, logs))
+                if result.returncode:
+                    raise ValueError(f'{config["engine"]} logs exited with status {result.returncode}.')
+            self.start_task(name, 'Container logs · ' + name, logs, working='Reading container logs')
         elif action == 'rebuild':
             profile = config.get('profile', {})
             source = profile.get('registry_name', profile.get('name', 'base'))
@@ -5124,7 +5081,7 @@ class Cockpit(App):
             self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),
                 lambda yes: self.start_rebuild(name, args) if yes else None)
         elif action == 'start':
-            self.push_screen(Operation('Starting ' + name, lambda log: self.service.start(name, log)))
+            self.start_task(name, 'Start sandbox · ' + name, lambda log: self.service.start(name, log), working='Starting sandbox')
         elif action == 'stop':
             self.operation('Stopping ' + name, ['down', name])
 
@@ -5134,7 +5091,7 @@ class Cockpit(App):
         elif mode == 'pi':
             self.interactive('pi', name)
         else:
-            self.push_screen(Operation('Opening ' + name, lambda log: self.open_ready(name, log, mode)))
+            self.start_task(name, 'Open editor · ' + name, lambda log: self.open_ready(name, log, mode), working='Opening editor')
 
     def open_ready(self, name, log, mode=None):
         self.service.start(name, log)
@@ -5143,10 +5100,24 @@ class Cockpit(App):
             args += ['--editor', mode]
         self.service.run(args, log)
 
-    def operation(self, title, args, **completion):
-        self.push_screen(Operation(title, lambda log: self.service.run(args, log), **completion))
+    def operation(self, title, args, *, success_message=''):
+        command, name, *_ = args
+        if command == 'delete':
+            def completed(job):
+                if job.result == 'Complete':
+                    for previous in self.jobs:
+                        if name in previous.targets and previous.result is not None:
+                            previous.discard_followup()
+
+            return self.start_job(Job(name, title, 'Deleting sandbox'),
+                                  lambda log: self.service.run(args, log), completed)
+        return self.start_task(name, title, lambda log: self.service.run(args, log), success_message=success_message)
 
     def interactive(self, command, name):
+        if self.upgrade_pending():
+            self.notify('Finish upgrading and restart Factory before opening a sandbox session.')
+            self.show_job(self.upgrade_job)
+            return
         with self.suspend():
             if command in ('pi', 'open', 'primary-login'):
                 result = subprocess.run(self.service.command(command, name), check=False)

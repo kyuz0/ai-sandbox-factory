@@ -1,4 +1,5 @@
 """Stop update preparation without interrupting changes to an existing sandbox."""
+import os
 import queue
 from pathlib import Path
 import shutil
@@ -6,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 
-from . import host_platform
+from . import host_platform, job_progress
 
 
 class UpdateCancelled(Exception):
@@ -29,7 +30,9 @@ def begin_apply(gate):
 
 
 class Update:
-    def __init__(self):
+    def __init__(self, progress=None):
+        self.progress = progress
+        self._progress_channel = None
         self._lock = threading.Lock()
         self._requested = threading.Event()
         self._gate = None
@@ -64,6 +67,7 @@ class Update:
             directory = Path(tempfile.mkdtemp(prefix='pi-sandbox-update-'))
             self._gate = directory / 'apply'
         retain_gate = False
+        self._progress_channel = job_progress.Channel(self.progress)
         try:
             self._run(command + ['--apply-gate', str(self._gate)], log)
         except StopFailed:
@@ -71,6 +75,8 @@ class Update:
             retain_gate = True
             raise
         finally:
+            self._progress_channel.poll()
+            self._progress_channel.close()
             with self._lock:
                 self._applied = not self._requested.is_set() and self._gate.exists()
                 self._finished = True
@@ -78,7 +84,8 @@ class Update:
                 shutil.rmtree(directory)
 
     def _run(self, command, log):
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        environment = dict(os.environ, **{job_progress.ENVIRONMENT: str(self._progress_channel.path)})
+        process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, errors='replace',
                                    start_new_session=True)
         lines = queue.Queue()
@@ -99,7 +106,9 @@ class Update:
         threading.Thread(target=read, daemon=True).start()
         stopped = False
         output_closed = False
+        last_output = ''
         while not output_closed or process.poll() is None:
+            self._progress_channel.poll()
             if self._requested.is_set() and not stopped:
                 stop()
                 stopped = True
@@ -110,6 +119,8 @@ class Update:
             if line is None:
                 output_closed = True
             else:
+                if line:
+                    last_output = line
                 log(line)
         with self._lock:
             if not self._requested.is_set():
@@ -121,4 +132,4 @@ class Update:
             raise UpdateCancelled()
         code = process.wait()
         if code:
-            raise ValueError(f'Update command exited with status {code}. See the output above.')
+            raise ValueError(f'Update command exited with status {code}: {last_output or "No diagnostic output was returned; inspect the update log."}')

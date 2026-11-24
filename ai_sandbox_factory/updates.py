@@ -2,6 +2,7 @@
 import json
 from importlib import metadata
 from pathlib import Path
+import subprocess
 import sys
 import urllib.request
 
@@ -22,6 +23,21 @@ def installed_version():
 
 def pipx_install():
     return (Path(sys.prefix) / 'pipx_metadata.json').is_file()
+
+
+def upgrade(log):
+    log('› ' + ' '.join(UPGRADE_COMMAND))
+    try:
+        with subprocess.Popen(UPGRADE_COMMAND, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, errors='replace') as process:
+            for line in process.stdout:
+                log(line.rstrip())
+            code = process.wait()
+    except OSError as error:
+        raise ValueError(f'Could not run pipx: {error}') from error
+    if code:
+        raise ValueError(f'pipx exited with status {code}. See Output for details.\n'
+                         'To retry from a terminal, run pipx upgrade ai-sandbox-factory.')
 
 
 def available_update(current=None):

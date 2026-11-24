@@ -120,7 +120,7 @@ a chat's format, Factory shows the reason alongside the list of chats.
 
 Factory reports missing host dependencies at startup. The first build downloads
 Pi, FrostPi and their dependencies. If creation fails, use
-**Retry creation** to keep your settings or **Back to configuration** to edit
+**Retry creation** to keep your settings or **Edit configuration** to edit
 them. If cleanup fails, select the failed sandbox and choose **Actions… →
 Delete sandbox…**.
 
@@ -128,22 +128,41 @@ Delete sandbox…**.
 saved settings. Cancellation and failure cleanup keep your project files and
 the build cache.
 
+## Work while a job runs
+
+Creation, rebuilds, settings updates, chat transfers, and other long operations
+run as jobs. Press **Esc** or choose **Hide details** to leave the output view and
+work on another sandbox. A new sandbox shows **Creating** in the list. Choose
+**View job** in its row to reopen the details. The **Jobs…** button counts running
+jobs. Choose it or press **J** to see running and finished jobs and their output.
+Builds that share image layers take turns.
+
+Factory keeps running while jobs are active. Wait for them or cancel the jobs that
+offer cancellation before quitting. Closing the terminal can interrupt a job, and
+reopening Factory starts a new job list. If the sandbox list shows **Creation
+interrupted**, choose **Actions… → Delete sandbox…** before trying again. Factory
+keeps your host workspace.
+
+A count such as **Step 4 of 6 · Build sandbox images** identifies the step running
+now. Its duration depends on the work, such as whether the images are cached.
+
+If you stay on a creation job, Factory can open the model picker or the editor
+you selected when setup finishes. If you leave the job, open it from **Jobs…**
+to find the next action. In the model picker, **Later** keeps the choice pending
+and **Skip** keeps the current default.
+
 ## Update Factory and sandboxes
 
 `ai-sandbox-factory --version` shows the installed Factory version. With pipx,
-use **Upgrade now** or `pipx upgrade ai-sandbox-factory`. For a source checkout,
-pull the changes and reinstall the package.
+use **Upgrade now** or `pipx upgrade ai-sandbox-factory`. If you hide the Factory
+upgrade job, reopen it from **Jobs…** and choose **Restart Factory** when it finishes.
+For a source checkout, pull the changes and reinstall the package.
 
 Update a Pi sandbox with **Actions… → Update sources and recreate…**. For Codex,
-Claude, and Antigravity, choose **Rebuild sandbox…**. Choose **Hide details** or
-press **Esc** to return to the sandbox list while the update runs. You can work on
-another sandbox from the same list.
-
-Open **Jobs…** or press **J** to check progress and reopen a job's output.
-Factory keeps finished jobs and their output until you close it. Builds that
-share image layers take turns. Use **Cancel update** while Factory prepares the
-image to keep the current sandbox as it is. Once the job shows **Applying
-changes**, let it finish, then reopen the editor to resume your saved chat.
+Claude, and Antigravity, choose **Rebuild sandbox…**. Use **Cancel update** while
+Factory prepares the image to keep the current sandbox as it is. Once Factory
+begins applying the update, let it finish, then reopen the editor to resume your
+saved chat.
 
 Updated images use Debian 13 and Python 3.13. If your project contains a virtual
 environment created with Python 3.11, recreate that environment from your project's

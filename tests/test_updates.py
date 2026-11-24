@@ -1,4 +1,5 @@
 import io
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,15 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(updates.UPGRADE_COMMAND,('pipx','upgrade','ai-sandbox-factory'))
         with patch.object(updates.Path,'is_file',return_value=True):
             self.assertTrue(updates.pipx_install())
+
+    def test_upgrade_retains_stdout_and_stderr_when_the_command_fails(self):
+        command = (sys.executable, '-c', 'import sys; print("Installing", flush=True); '
+                   'print("Connection refused", file=sys.stderr); sys.exit(3)')
+        output = []
+        with patch.object(updates, 'UPGRADE_COMMAND', command):
+            with self.assertRaisesRegex(ValueError, 'pipx exited with status 3'):
+                updates.upgrade(output.append)
+        self.assertEqual(output[1:], ['Installing', 'Connection refused'])
 
     def test_relaunch_preserves_inventory(self):
         from ai_sandbox_factory import sandbox_tui

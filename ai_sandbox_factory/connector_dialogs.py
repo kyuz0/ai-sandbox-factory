@@ -252,8 +252,6 @@ class ConnectorSettings(ModalScreen):
         def selected(requests):
             if requests is None:
                 return
-            from .sandbox_tui import UpdateOperation
-
             chosen = list(current)
             updated = dict(operations)
             if requests:
@@ -269,11 +267,10 @@ class ConnectorSettings(ModalScreen):
                 changes['expected_connector_routes'] = {connector.id: dict(connector.routes)}
                 changes['expected_connector_instructions'] = {connector.id: connector.reviewed_instructions}
             service = self.app.service
-            self.app.push_screen(UpdateOperation(
-                'Updating ' + connector.title,
+            self.app.start_settings_job(
+                self.sandbox_name, 'Update ' + connector.title,
                 lambda log, update: service.update_settings(self.sandbox_name, changes, log, update),
-                done_on_success=True, back_label='Back to connectors',
-                success_message=connector.title + (' access saved.' if requests else ' disconnected.')))
+                success_message=connector.title + (' access saved.' if requests else ' disconnected.'))
 
         self.app.push_screen(ExternalConnectorDialog(connector, enabled=enabled,
                                                     enabled_operations=operations.get(connector.id)), selected)

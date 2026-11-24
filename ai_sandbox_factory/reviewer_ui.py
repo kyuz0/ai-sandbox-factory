@@ -169,15 +169,25 @@ class ReviewerFields(Vertical):
 
     async def select_model(self, model):
         if self.save_on_choice and model is not None and model != self.selected:
-            self.disabled = True
-            try:
-                await asyncio.to_thread(self.app.service.save_approval_model, self.sandbox_name, model, lambda _: None)
-                self.notify('Approval model saved.')
-            except (ValueError, OSError, subprocess.SubprocessError) as error:
-                self.status = str(error)
-                model = None
-            finally:
-                self.disabled = False
+            app, name = self.app, self.sandbox_name
+            self.update_controls()
+            def save(log):
+                app.service.save_approval_model(name, model, log)
+                log('Approval model saved: ' + model)
+                return model
+            def saved(value):
+                if self.is_mounted:
+                    self.selected = value
+                    self.status = ''
+                    self.update_controls()
+            def failed(error):
+                if self.is_mounted:
+                    self.status = error
+                    self.update_controls()
+            app.start_task(name, 'Save approval model', save, working='Saving approval model',
+                           on_success=saved, followup_label='Return to approval settings',
+                           on_failure=failed, failure_label='Review approval model error')
+            return
         if model is not None:
             self.selected = model
             self.status = ''

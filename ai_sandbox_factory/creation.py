@@ -2,13 +2,14 @@
 import json
 from pathlib import Path
 import queue
+import re
 import secrets
 import shutil
 import subprocess
 import sys
 import threading
 
-from . import host_platform
+from . import host_platform, job_progress, operation_locks
 from .sandbox_options import SANDBOX_NAME, SANDBOX_NAME_ERROR
 
 MARKER = '.creation-token'
@@ -27,6 +28,18 @@ def owns(state, token):
     marker = state / MARKER
     return (not state.is_symlink() and marker.is_file() and not marker.is_symlink()
             and marker.read_text() == token)
+
+
+def saved_reservation(state):
+    marker = state / MARKER
+    if state.is_symlink() or marker.is_symlink() or not marker.is_file():
+        return None
+    try:
+        with marker.open() as handle:
+            token = handle.read(49)
+    except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError):
+        return None
+    return token if re.fullmatch(r'[0-9a-f]{48}', token) else None
 
 
 def reserved(state, token):
@@ -61,7 +74,9 @@ def prepare_resources(state, token):
 
 
 class Creation:
-    def __init__(self):
+    def __init__(self, progress=None):
+        self.progress = progress
+        self._progress_channel = None
         self.requested = threading.Event()
         self.lock = threading.Lock()
         self.finished = False
@@ -75,6 +90,10 @@ class Creation:
             return True
 
     def run(self, service, draft, key, log):
+        with operation_locks.sandbox(draft['name'], 'create'):
+            return self._run_reserved(service, draft, key, log)
+
+    def _run_reserved(self, service, draft, key, log):
         name = draft['name']
         if not SANDBOX_NAME.fullmatch(name):
             raise ValueError(SANDBOX_NAME_ERROR)
@@ -86,7 +105,12 @@ class Creation:
         failure = None
         try:
             (state / MARKER).write_text(token)
-            self._worker(service, draft, key, token, log)
+            self._progress_channel = job_progress.Channel(self.progress)
+            try:
+                self._worker(service, draft, key, token, log)
+                self._progress_channel.poll()
+            finally:
+                self._progress_channel.close()
         except StopFailed:
             self.retry_blocked = True  # The worker may still be running.
             raise
@@ -104,8 +128,10 @@ class Creation:
                         self.cleanup(service, state, token, log)
                     except Exception as error:
                         self.retry_blocked = True
+                        reason = f' Original failure: {failure}' if failure is not None else ''
                         raise ValueError('Creation stopped, but cleanup failed. Saved state was retained. '
-                                         'Choose Actions… → Delete sandbox… from the sandbox list. ' + str(error)) from error
+                                         'Choose Actions… → Delete sandbox… from the sandbox list. '
+                                         + str(error) + reason) from error
                 elif owns(state, token):
                     (state / MARKER).unlink()
                     (state / READY).unlink()
@@ -135,12 +161,14 @@ class Creation:
             return
         process = subprocess.Popen(host_platform.python_command('ai_sandbox_factory.creation'),
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, errors='replace', start_new_session=True)
+                                   text=True, errors='replace', start_new_session=True,
+                                   **operation_locks.factory_child(draft['name']))
         lines = queue.Queue()
 
         def write():
             try:
-                json.dump({'state': str(service.state), 'draft': draft, 'key': key, 'token': token}, process.stdin)
+                json.dump({'state': str(service.state), 'draft': draft, 'key': key, 'token': token,
+                           'progress_path': str(self._progress_channel.path)}, process.stdin)
             except (BrokenPipeError, OSError):
                 pass  # The worker exited or was cancelled before accepting input.
             finally:
@@ -164,7 +192,9 @@ class Creation:
         unsafe_stop = False
         output_closed = False
         try:
+            last_output = ''
             while True:
+                self._progress_channel.poll()
                 if self.requested.is_set() and not stopped:
                     log('Stopping creation…')
                     if not host_platform.stop_process_group(process):
@@ -180,10 +210,13 @@ class Creation:
                 if line is None:
                     output_closed = True
                 else:
+                    if line:
+                        last_output = line
                     log(line)
+            self._progress_channel.poll()
             code = process.wait()
             if code and not self.requested.is_set():
-                raise ValueError('Creation failed. See the output above.')
+                raise ValueError(f'Creation failed: worker exited with status {code}: {last_output or "No diagnostic output was returned; inspect the creation log."}')
         except StopFailed:
             unsafe_stop = True
             raise
@@ -204,6 +237,9 @@ def main():
     value = json.load(sys.stdin)
     service = Service(Path(value['state']))
     draft = value['draft']
+    if value.get('progress_path'):
+        import os
+        os.environ[job_progress.ENVIRONMENT] = value['progress_path']
     try:
         service.create(draft, value['key'], lambda line: print(line, flush=True), creation_token=value['token'])
     except KeyboardInterrupt:
