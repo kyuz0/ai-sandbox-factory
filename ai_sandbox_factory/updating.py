@@ -119,5 +119,6 @@ class Update:
             if not stopped:
                 stop()
             raise UpdateCancelled()
-        if process.wait():
-            raise ValueError('Command failed. See the output above.')
+        code = process.wait()
+        if code:
+            raise ValueError(f'Update command exited with status {code}. See the output above.')

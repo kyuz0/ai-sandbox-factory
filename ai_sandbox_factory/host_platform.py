@@ -104,13 +104,18 @@ def local_path(value):
     return Path(value).expanduser()
 
 
-def control_path(state):
-    # macOS Unix socket names are limited to 104 bytes, including the terminator.
+def private_runtime_dir():
     root = Path('/tmp') / f'psf-{os.getuid()}'
     root.mkdir(mode=0o700, exist_ok=True)
     info = root.lstat()
     if root.is_symlink() or not root.is_dir() or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise ValueError('Editor control directory must be private: ' + str(root))
+        raise ValueError('Factory runtime directory must be private: ' + str(root))
+    return root
+
+
+def control_path(state):
+    # macOS Unix socket names are limited to 104 bytes, including the terminator.
+    root = private_runtime_dir()
     name = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
     return root / (name + '.sock')
 

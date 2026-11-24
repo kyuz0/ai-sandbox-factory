@@ -1204,10 +1204,10 @@ class TUITests(unittest.TestCase):
         app=Cockpit(self.root,FakeService(self.records))
         async with app.run_test(size=(80,24)) as pilot:
             await self.ready(app,pilot);self.assertEqual(app.theme,'cockpit-gold')
-            for name in ['settings','new','create-from','more','packages']:
+            for name in ['settings','new','create-from','more','packages','jobs']:
                 b=app.query_one('#'+name,Button)
                 self.assertLessEqual(b.region.right,80,name);self.assertLessEqual(b.region.bottom,23,name)
-            self.assertEqual(sum(button.display for button in app.query('#home Button')), 6)
+            self.assertEqual(sum(button.display for button in app.query('#home Button')), 7)
             app.save_screenshot(filename='sandbox-home-declutter.svg',path='/tmp')
             await self.settings_page(app,pilot,action="network-settings")
             self.assertLessEqual(app.screen.query_one('#apply',Button).region.bottom,23)

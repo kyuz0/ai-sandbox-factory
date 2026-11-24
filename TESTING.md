@@ -1455,6 +1455,27 @@ Clicking a gap must leave the
 selection unchanged. Check that every sandbox is reachable by keyboard. Render `tests/render_dashboard.py`
 at its three built-in sizes, in colour and with `--mono`.
 
+`test_sandbox_jobs.py` covers mouse and keyboard access to row actions, submenu
+navigation, reacting to state changes, and recovering failure output after hiding
+the details. Review the menu, jobs list, output, and cancellation confirmation at
+all three sizes. Repeat with `--mono`.
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/render_sandbox_jobs.py OUTPUT_DIR
+```
+
+On Linux with rootless Podman, run the two-sandbox check. It uses a temporary
+state directory and deletes its disposable containers and volumes on exit.
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/sandbox_jobs_integration.py
+```
+
+The check starts a second sandbox from the same TUI while the first rebuild
+waits, verifies that a separate CLI cannot stop the sandbox being rebuilt, and
+reopens the output for both jobs. It checks that cancellation preserves the first
+container and that the second starts with the rebuilt image and its project files.
+
 Run `node --test tests/test_editor_watch_fallback.cjs` for watcher events,
 resource-error selection, abort, close and encoding. For the real browser test,
 use a cached Factory image and an extracted copy of the pinned code-server:

@@ -134,10 +134,16 @@ the build cache.
 use **Upgrade now** or `pipx upgrade ai-sandbox-factory`. For a source checkout,
 pull the changes and reinstall the package.
 
-Update a sandbox with **Actions… → Update sources and recreate…**. Use **Cancel
-update** while Factory prepares the image to keep the current sandbox running.
-Once Factory starts applying the update, it finishes before returning to the
-sandbox list. Reopen the editor and resume your saved chat.
+Update a Pi sandbox with **Actions… → Update sources and recreate…**. For Codex,
+Claude, and Antigravity, choose **Rebuild sandbox…**. Choose **Hide details** or
+press **Esc** to return to the sandbox list while the update runs. You can work on
+another sandbox from the same list.
+
+Open **Jobs…** or press **J** to check progress and reopen a job's output.
+Factory keeps finished jobs and their output until you close it. Builds that
+share image layers take turns. Use **Cancel update** while Factory prepares the
+image to keep the current sandbox as it is. Once the job shows **Applying
+changes**, let it finish, then reopen the editor to resume your saved chat.
 
 Updated images use Debian 13 and Python 3.13. If your project contains a virtual
 environment created with Python 3.11, recreate that environment from your project's

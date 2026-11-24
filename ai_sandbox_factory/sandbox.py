@@ -9,6 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
+from . import operation_locks
 from contextlib import closing, contextmanager
 import errno
 import fcntl
@@ -349,11 +350,25 @@ def base_tag(config):
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
+def image_graph(config):
+    agent = primary_workspace.agent(config)
+    # Pi profiles inherit a shared base. Native workspace variants share the
+    # agent's credential image across otherwise distinct workspace tags.
+    key = base_tag(config) if agent == 'pi' else f'{agent}:{config["uid"]}:{config["gid"]}'
+    return operation_locks.image_graph(config['engine'], key)
+
+
 def build(config):
+    with image_graph(config):
+        _build(config)
+
+
+def _build(config):
     host_platform.check_engine(config['engine'], config.get('podman_connection'))
     dev, proxy = image_names(config)
     if primary_workspace.agent(config) != 'pi':
-        run([config['engine'], 'build', '-t', proxy, ROOT / 'containers/proxy'])
+        with operation_locks.proxy_image(config['engine']):
+            run([config['engine'], 'build', '-t', proxy, ROOT / 'containers/proxy'])
         primary_workspace.build(config, dev)
         return
     profile = selected_profile(config)
@@ -382,7 +397,8 @@ def build(config):
                   '--build-arg', f'PI_VERSION={pi}']
     if pendant:
         build_args += ['--build-arg', f'PENDANT_VERSION={pendant[0]}']
-    run([engine, 'build', '-t', proxy, ROOT / 'containers/proxy'])
+    with operation_locks.proxy_image(engine):
+        run([engine, 'build', '-t', proxy, ROOT / 'containers/proxy'])
     with sandbox_extensions.build_contexts(common['path']) as contexts:
         run([engine, 'build', '-t', base, *contexts, *build_args, common['path']])
     if config.get('aws_access'):
@@ -1561,25 +1577,24 @@ def open_selected(config, state, mode=None):
     from . import editor_settings, browser_editor
     mode = mode or editor_settings.load(state)['mode']
     selected = primary_workspace.agent(config)
+    if selected != 'pi' and mode not in editor_settings.modes(selected):
+        raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
+    with operation_locks.sandbox(state.name, 'open'):
+        if selected != 'pi' or mode == 'pi':
+            up(config, state)
+        if mode == 'browser':
+            return browser_editor.open_browser_editor(config, state, background=True)
+        if mode != 'pi':
+            return open_editor(config, state)
+        if selected == 'pi' and (config.get('local_model_ports') or config.get('model_providers')):
+            initialize_models(config, state)
+    # The interactive terminal must not hold the lock for the whole session.
     if selected != 'pi':
         from . import primary_agents
-        if mode not in editor_settings.modes(selected):
-            raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
-        up(config, state)
-        if mode == 'pi':
-            return primary_agents.open_terminal(config, state)
-        return browser_editor.open_browser_editor(config, state, background=True)
-    if mode == 'browser':
-        browser_editor.open_browser_editor(config, state, background=True)
-    elif mode == 'pi':
-        up(config, state)
-        if config.get('local_model_ports') or config.get('model_providers'):
-            initialize_models(config, state)
-        tty = ['-it'] if sys.stdin.isatty() else ['-i']
-        run([config['engine'], 'exec', '--workdir', folders.container_cwd(config),
-             *tty, names(config)[0], 'pi'])
-    else:
-        open_editor(config, state)
+        return primary_agents.open_terminal(config, state)
+    tty = ['-it'] if sys.stdin.isatty() else ['-i']
+    run([config['engine'], 'exec', '--workdir', folders.container_cwd(config),
+         *tty, names(config)[0], 'pi'])
 
 
 def open_editor(config, state):
@@ -1827,6 +1842,17 @@ def main(*, startup_notice=''):
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
+    if args.command in ('create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy',
+                        'configure', 'primary-login', 'primary-import'):
+        with operation_locks.sandbox(args.name, args.command):
+            sandbox_command(args, state, parser)
+        if args.command == 'create' and args.open:
+            open_selected(json.loads((state / 'config.json').read_text()), state)
+        return
+    return sandbox_command(args, state, parser)
+
+
+def sandbox_command(args, state, parser):
     if args.command == 'create':
         if args.open and not args.start:
             parser.error('--open requires --start')
@@ -1835,9 +1861,7 @@ def main(*, startup_notice=''):
             config = json.loads((state / 'config.json').read_text())
             build(config)
             up(config, state)
-            if args.open:
-                open_selected(config, state)
-            elif config.get('local_model_ports') or config.get('model_providers'):
+            if not args.open and (config.get('local_model_ports') or config.get('model_providers')):
                 initialize_models(config, state)
         return
     if args.command == 'delete' and not (state / 'config.json').exists():
@@ -1891,11 +1915,7 @@ def main(*, startup_notice=''):
     elif args.command == 'delete':
         delete(config, state)
     elif args.command == 'update':
-        import fcntl
-        with (state / 'update.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            config = json.loads((state / 'config.json').read_text())
-            apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
+        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
     elif args.command == 'recreate':
         if native and (args.profile or args.subagents is not None):
             raise ValueError('Profiles and Pi subagent settings apply to Pi sandboxes.')
@@ -1903,29 +1923,35 @@ def main(*, startup_notice=''):
             config['subagents'] = args.subagents
         if args.browser is not None:
             config['options'] = options({**config.get('options', {}), 'browser': args.browser})
+        building = native or args.profile or args.subagents is not None or args.browser is not None
         if native:
             config['common'] = snapshot_profile(common_profile(), state)
-            build(config)
-        elif args.profile or args.subagents is not None or args.browser is not None:
+        elif building:
             profile = config.get('profile')
             if args.profile or not profile:
                 profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)
             updated = dict(config, profile=profile, common=snapshot_profile(common_profile(), state))
             if 'model_providers' in config:
                 updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
-            build(updated)
             config = updated
-        if not updating.begin_apply(args.apply_gate):
-            return
-        activity.save_config(state, config)
-        down(config, remove=True)
-        up(config, state)
+        with image_graph(config):
+            if building:
+                build(config)
+            if not updating.begin_apply(args.apply_gate):
+                return
+            activity.save_config(state, config)
+            down(config, remove=True)
+            up(config, state)
     elif args.command == 'browser-editor':
         from . import browser_editor
-        if args.stop:
-            browser_editor.stop(state)
-        else:
+        if not args.stop and not args.background:
             browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
+        else:
+            with operation_locks.sandbox(args.name, 'change the browser editor for'):
+                if args.stop:
+                    browser_editor.stop(state)
+                else:
+                    browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
     elif args.command == 'open':
         open_selected(config, state, args.editor)
     elif args.command == 'configure':
@@ -2044,9 +2070,10 @@ def main(*, startup_notice=''):
             if command[:1] == ['--']:
                 command = command[1:]
             if args.command == 'pi':
-                up(config, state)
-                if config.get('local_model_ports') or config.get('model_providers'):
-                    initialize_models(config, state)
+                with operation_locks.sandbox(args.name, 'start Pi in'):
+                    up(config, state)
+                    if config.get('local_model_ports') or config.get('model_providers'):
+                        initialize_models(config, state)
                 command = ['pi'] + command
             if not command:
                 parser.error('exec requires a command after the sandbox name')

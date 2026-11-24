@@ -1,5 +1,6 @@
 """Container-hosted code-server with configurable browser access and process supervision."""
 import asyncio
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
@@ -15,7 +16,7 @@ import signal
 import subprocess
 import urllib.request
 
-from . import editor_settings, host_platform
+from . import editor_settings, host_platform, operation_locks
 from .sandbox_options import write_json
 
 VERSION = '4.145.2'
@@ -424,13 +425,16 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
     from . import sandbox, folders
     if config['engine'] != 'podman':
         raise ValueError('The browser editor requires rootless Podman')
-    host_platform.check_engine(config['engine'], config.get('podman_connection'))
-    current = sandbox.inspect(config, sandbox.names(config)[0])
-    if not current or not current['State']['Running']:
-        raise ValueError('Start the sandbox before opening its browser editor')
-    container = current['Id']
-    preferences = editor_settings.validate({**editor_settings.load(state), 'mode': 'browser'})
-    with (state / 'browser-editor.lock').open('a+') as lock:
+    with ExitStack() as startup, ExitStack() as editor:
+        if not background:
+            startup.enter_context(operation_locks.sandbox(state.name, 'open the browser editor for'))
+        host_platform.check_engine(config['engine'], config.get('podman_connection'))
+        current = sandbox.inspect(config, sandbox.names(config)[0])
+        if not current or not current['State']['Running']:
+            raise ValueError('Start the sandbox before opening its browser editor')
+        container = current['Id']
+        preferences = editor_settings.validate({**editor_settings.load(state), 'mode': 'browser'})
+        lock = editor.enter_context((state / 'browser-editor.lock').open('a+'))
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -472,6 +476,7 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
         if background:
             start_background(container, folders.container_cwd(config), preferences, state, open_tab, lock.fileno())
         else:
+            startup.close()
             try:
                 asyncio.run(serve(container, folders.container_cwd(config), preferences, state))
             except (KeyboardInterrupt, asyncio.CancelledError):

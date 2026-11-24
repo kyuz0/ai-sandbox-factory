@@ -31,7 +31,8 @@ class UpdateTests(unittest.TestCase):
             state = root / 'fixture'
             state.mkdir()
             config = state / 'config.json'
-            original = {'workspace': tmp, 'engine': 'podman', 'memory': '4g', 'subagents': False}
+            original = {'workspace': tmp, 'engine': 'podman', 'uid': 1000, 'gid': 1000,
+                        'memory': '4g', 'subagents': False}
             config.write_text(json.dumps(original))
             (state / 'allowlist.txt').write_text('')
             (root / 'settings.json').write_text('{"memory":"8g"}')

@@ -19,6 +19,8 @@ from typing import NamedTuple, Optional
 
 from . import sandbox, editor_settings, sandbox_ssh, prompt_library
 from . import chat_history
+from .sandbox_jobs import RebuildJob
+from .sandbox_jobs_ui import JobDetails, JobsMenu
 from .chat_history_ui import ChatTransfer, DeleteSandbox, EXPORT, IMPORT
 from .creation import Creation, Cancelled
 from .updating import Update, UpdateCancelled
@@ -4117,6 +4119,7 @@ class Cockpit(App):
     BINDINGS = [Binding('f2', 'new', 'New sandbox', priority=True),
                 Binding('n', 'new', 'New', show=False), Binding('r', 'refresh_inventory', 'Refresh'),
                 Binding('a', 'sandbox_actions', 'Actions'), Binding('shift+f10', 'sandbox_actions', show=False),
+                Binding('j', 'jobs', 'Jobs'),
                 Binding('slash', 'search', 'Search'), Binding('d', 'defaults', 'Defaults'), Binding('q', 'quit', 'Quit')]
     CSS = '''
     Screen { background: #171a1d; }
@@ -4271,6 +4274,7 @@ class Cockpit(App):
     .action-buttons { height: 1; }
     .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }
+    .job-actions #job-cancel { dock: right; margin-right: 0; }
     .dialog-actions { align-horizontal: right; height: 1; min-height: 1; margin: 1 0 0 0; }
     .dialog-actions Button { min-width: 12; padding: 0 2; }
     .action-spacer { width: 1fr; height: 1; }
@@ -4455,7 +4459,7 @@ class Cockpit(App):
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
     Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
-    ChatTransfer, DeleteSandbox { align: center middle; background: #000000 70%; }
+    ChatTransfer, DeleteSandbox, JobsMenu { align: center middle; background: #000000 70%; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
     .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
@@ -4481,6 +4485,8 @@ class Cockpit(App):
     MoreActions #confirm-box { max-height: 100%; }
     MoreActions #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
     MoreActions #confirm-box .dialog-actions { margin: 0; }
+    JobsMenu #confirm-box > OptionList { max-height: 55vh; }
+    #job-log-error { height: auto; color: #ffb3a7; }
     SandboxAlerts #confirm-box { padding: 1 2; }
     #sandbox-alerts-list { height: auto; max-height: 56vh; margin: 0 0 1 0; }
     .sandbox-alert { height: auto; padding: 1 2; margin: 0 0 1 0; background: #25292e; }
@@ -4537,6 +4543,8 @@ class Cockpit(App):
         self.state_root = Path(state_root)
         self.service = service or Service(self.state_root)
         self.records = []
+        self.rebuild_jobs = []
+        self.completed_rebuilds = 0
         self.sort_field = "started"
         self.sort_reverse = True
         self.defaults = load_defaults()
@@ -4585,6 +4593,7 @@ class Cockpit(App):
             with Horizontal(classes='buttons'):
                 yield Button('Settings', id='settings')
                 yield Button('Actions…', id='more')
+                yield Button('Jobs…', id='jobs')
         yield Footer()
 
     def on_mount(self):
@@ -4594,6 +4603,7 @@ class Cockpit(App):
             self.query_one('#sandboxes', DataTable).add_column(label, key=key)
         self.action_refresh_inventory()
         self.set_interval(15, self.poll_ssh_status)
+        self.set_interval(0.2, self.poll_rebuilds)
         self.check_update()
         self.resize_banner()
 
@@ -4632,6 +4642,9 @@ class Cockpit(App):
         self.query_one('#application-update').display = True
 
     def confirm_update(self):
+        if self.rebuilds_active():
+            self.notify('Wait for sandbox updates to finish before upgrading Factory.')
+            return
         self.push_screen(Confirm(
             f'Upgrade AI Sandbox Factory to {self.available_version}?\n'
             'Runs pipx upgrade ai-sandbox-factory, then restarts this manager.\n'
@@ -4826,6 +4839,50 @@ class Cockpit(App):
             return
         self.perform(choice, record=record)
 
+    def action_jobs(self):
+        self.push_screen(JobsMenu(self.rebuild_jobs), self.show_job)
+
+    def show_job(self, job):
+        if job is not None:
+            self.push_screen(JobDetails(job))
+
+    def rebuilds_active(self):
+        return any(job.result is None for job in self.rebuild_jobs)
+
+    def poll_rebuilds(self):
+        if not self.rebuild_jobs or not self.screen_stack:
+            return
+        button = next(iter(self.screen_stack[0].query('#jobs').results(Button)), None)
+        if button is None:
+            return
+        completed = sum(job.result is not None for job in self.rebuild_jobs)
+        active = len(self.rebuild_jobs) - completed
+        label = f'Jobs… ({active} active)' if active else f'Jobs… ({completed})'
+        if str(button.label) != label:
+            button.label = label
+        if completed != self.completed_rebuilds:
+            self.completed_rebuilds = completed
+            self.refresh_inventory()
+
+    def start_rebuild(self, name, args):
+        if self.rebuild_for(name):
+            self.notify(f'{name} is already updating. Open Jobs to see its progress.')
+            return
+        job = RebuildJob(name)
+        self.rebuild_jobs.append(job)
+        self.run_worker(lambda: job.run(lambda log, update: self.service.run_update(args, log, update)),
+                        thread=True, exit_on_error=False)
+        self.poll_rebuilds()
+        self.show_job(job)
+
+    def rebuild_for(self, name):
+        return next((job for job in self.rebuild_jobs if job.name == name and job.result is None), None)
+
+    def on_unmount(self):
+        for job in self.rebuild_jobs:
+            if job.result:
+                job.close()
+
     def update_details(self):
         record = self.selected()
         text = ('No matching sandboxes. Clear the search or use New sandbox (F2).'
@@ -4849,14 +4906,15 @@ class Cockpit(App):
 
     def action_quit(self):
         if not self.check_action('quit', ()):
-            self.notify('Wait for the current operation to finish before closing the cockpit.')
+            self.notify('Wait for the current operation to finish before closing Factory.')
             return
         self.exit()
 
     def check_action(self, action, parameters):
         if action == 'quit':
-            return not any(isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
-        if action in ('new', 'search', 'refresh_inventory', 'defaults', 'sandbox_actions'):
+            return not self.rebuilds_active() and not any(
+                isinstance(screen, Operation) and not screen.finished for screen in self.screen_stack)
+        if action in ('new', 'search', 'refresh_inventory', 'defaults', 'sandbox_actions', 'jobs'):
             return self.screen is self.screen_stack[0]
         return True
 
@@ -4909,6 +4967,9 @@ class Cockpit(App):
         return value
 
     def perform_action(self, action, *, record=None):
+        if action == 'jobs':
+            self.action_jobs()
+            return
         if action == 'create-from':
             if self.records:
                 self.push_screen(CreateFromSandbox(self.records, self.selected_name()), self.copied_sandbox)
@@ -4927,6 +4988,10 @@ class Cockpit(App):
             self.notify('Choose a sandbox first.')
             return
         name, config = record['name'], record['config']
+        running_job = self.rebuild_for(name)
+        if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'alerts'):
+            self.show_job(running_job)
+            return
         native = coding_agent(config) != 'pi'
         if action == 'primary-sign-in' and native:
             self.push_screen(PrimarySignIn(record))
@@ -5046,9 +5111,7 @@ class Cockpit(App):
             if record.get('dev') == 'running':
                 notes.insert(0, 'Active processes stop after the build.')
             self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),
-                lambda yes: self.push_screen(UpdateOperation('Updating ' + name,
-                    lambda log, update: self.service.run_update(args, log, update),
-                    done_on_success=True, completed_title='Updated ' + name)) if yes else None)
+                lambda yes: self.start_rebuild(name, args) if yes else None)
         elif action == 'start':
             self.push_screen(Operation('Starting ' + name, lambda log: self.service.start(name, log)))
         elif action == 'stop':
