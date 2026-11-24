@@ -1,6 +1,6 @@
 """User-facing effects of the settings update paths, without secret values."""
 from .sandbox_options import options
-from .settings_catalog import CATEGORIES, NETWORK_LABEL, OPEN_LABELS, WEB_SEARCH_LABEL
+from .settings_catalog import CATEGORIES, NETWORK_LABEL, OPEN_LABELS, PI_FEATURES_LABEL, WEB_SEARCH_LABEL
 
 def bullets(items):
     return '\n'.join('• ' + item for item in items)
@@ -42,8 +42,8 @@ OPTION_GROUPS = {
     'protect_credentials': APPROVALS_LABEL,
     'protect_browser_credentials': 'Browser and saved vault protection',
     'browser': 'Browser and saved vault protection',
-    'goals': 'Agent tools and conversation recall', 'scheduling': 'Agent tools and conversation recall',
-    'question_forms': 'Agent tools and conversation recall', 'compaction_recall': 'Agent tools and conversation recall',
+    'goals': PI_FEATURES_LABEL, 'scheduling': PI_FEATURES_LABEL,
+    'question_forms': PI_FEATURES_LABEL, 'compaction_recall': PI_FEATURES_LABEL,
     'knowledge_embedding': 'Document search',
     'knowledge_embedding_url': 'Document search',
     'knowledge_embedding_provider': 'Document search',
@@ -60,7 +60,7 @@ def configuration_changes(original, draft):
     groups = {'Browser' if native and key == 'browser' else title
               for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
     for key, title in {'network': NETWORK_LABEL, 'memory': 'Memory limit',
-                       'subagents': 'Agent tools and conversation recall',
+                       'subagents': PI_FEATURES_LABEL,
                        'local_model_ports': 'Local model access', 'env_file': 'Environment file'}.items():
         if (original.get(key) or None) != (draft.get(key) or None):
             groups.add(title)
@@ -89,7 +89,7 @@ def configuration_notes(original, draft, mode='browser'):
     groups = set(configuration_changes(original, draft))
     migration = editor_migration(original) if mode is not None else []
     notes = [RECREATE, *migration, 'Workspace files and saved chats are kept.', *reconnect(mode)]
-    if groups & {'Skills', 'Agent tools and conversation recall', APPROVALS_LABEL}:
+    if groups & {'Skills', PI_FEATURES_LABEL, APPROVALS_LABEL}:
         notes.append('Earlier chat messages stay unchanged; a new chat gives a clean context.')
     before, after = options(original.get('options')), options(draft.get('options'))
     if ('Browser and saved vault protection' in groups or 'Browser' in groups) and after['browser']:

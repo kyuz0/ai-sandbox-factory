@@ -39,7 +39,7 @@ finds a result but cannot open it, allow that host explicitly or ask Pi to use
 other sources.
 
 For a broad question, Pi can delegate independent parts of the research. Change
-**Enable optional subagents** under **Agent tools** if you want one agent to do
+**Enable optional subagents** under **Pi features** if you want one agent to do
 the work. To use local documents alongside web sources, add a read-only folder
 under **Folders** and name it in your request. Keyword search works immediately.
 Optional `pi-knowledge` adds an index for semantic search. [Local document setup](local-knowledge.md)

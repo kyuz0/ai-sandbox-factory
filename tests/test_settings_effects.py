@@ -24,7 +24,7 @@ class SettingsEffectsTests(unittest.TestCase):
         draft['_search_keys_changed']=True
         groups=settings_effects.configuration_changes(before,draft)
         self.assertIn('Skills',groups);self.assertIn('Browser and saved vault protection',groups)
-        self.assertIn('Agent tools and conversation recall',groups)
+        self.assertIn('Pi features',groups)
         self.assertIn('Search credentials',groups)
         notes=' '.join(settings_effects.configuration_notes(before,draft))
         self.assertNotIn('SECRET_VALUE',notes)

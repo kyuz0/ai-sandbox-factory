@@ -19,7 +19,7 @@ Fixes and unit tests belong in the extension repositories. This repository manag
 
 ## Goals
 
-**Goals** under **Agent tools** loads the same `@ethanthoma/pi-goal` extension in Pi CLI and FrostPi. Use `/goal <objective>` to start work on a goal, `/goal status` to see progress, and `/goal pause` or `/goal resume` to control continuation.
+**Goals** under **Pi features** loads the same `@ethanthoma/pi-goal` extension in Pi CLI and FrostPi. Use `/goal <objective>` to start work on a goal, `/goal status` to see progress, and `/goal pause` or `/goal resume` to control continuation.
 
 Use `/goal revise <new objective>` while paused to edit the objective and keep the goal's accumulated usage.
 
@@ -36,7 +36,7 @@ If Pi can keep working while it waits, it leaves the question pending. Open
 the question in FrostPi or type `/questions` in Pi’s terminal. Pi gets the
 answer in the chat that asked the question.
 
-To disable these forms, open **Settings → Agent tools**,
+To disable these forms, open **Settings → Pi features**,
 clear **Question forms**, then **Apply and recreate**. The agent can still ask
 questions in chat. This setting does not change permission approvals.
 

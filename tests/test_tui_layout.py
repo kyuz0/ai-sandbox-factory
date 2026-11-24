@@ -271,7 +271,7 @@ class TUILayoutTests(unittest.TestCase):
     async def test_create_and_edit_share_category_names_and_order(self):
         from ai_sandbox_factory.settings_catalog import CATEGORIES
         expected_order = ['Model Providers', 'Editor', 'Folders', 'Network and Web Search', 'Approvals & sandbox',
-                          'Agent tools', 'Custom system prompt add-on', 'Advisors (Codex/Claude/Antigravity)', 'Communications',
+                          'Pi features', 'Custom system prompt add-on', 'Advisors (Codex/Claude/Antigravity)', 'Communications',
                           'Skills', 'Connectors', 'Document search', 'Resources & environment']
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -311,7 +311,8 @@ class TUILayoutTests(unittest.TestCase):
                 index = list(CATEGORIES).index(action)
                 self.assertEqual(prompts[index], titles[CATEGORIES[action].section])
             self.assertIn('Model Providers · Local models on · 1 enabled', prompts)
-            self.assertIn('Agent tools · Recall Lite · Browser on · Goals on', prompts)
+            self.assertIn('Pi features · Subagents off · Question forms on · Scheduled prompts on · '
+                          'Recall Lite · Browser on · Goals on', prompts)
             self.assertIn('Skills · 0 saved', prompts)
 
     async def test_settings_menu_reads_updated_saved_options(self):
@@ -319,10 +320,11 @@ class TUILayoutTests(unittest.TestCase):
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
             app.service.records[0]['config'].update(
-                local_model_ports=None, network='unrestricted',
+                local_model_ports=None, network='unrestricted', subagents=True,
                 hosted_connections={'openrouter': {}},
                 extra_skills=[{'name': 'fixture-skill'}],
                 options={'browser': True, 'goals': False, 'compaction_recall': 'full',
+                         'question_forms': False, 'scheduling': False,
                          'approval': 'manual', 'inner_sandbox': False,
                          'web_access': {'enabled': True}, 'communications': {'slack': True}},
             )
@@ -330,12 +332,13 @@ class TUILayoutTests(unittest.TestCase):
             menu = app.screen.query_one('#settings-actions', OptionList)
             prompts = [str(menu.get_option_at_index(i).prompt) for i in range(menu.option_count)]
             self.assertIn('Model Providers · Local models off · 1 enabled', prompts)
-            self.assertIn('Agent tools · Recall Full · Browser on · Goals off', prompts)
+            self.assertIn('Pi features · Subagents on · Question forms off · Scheduled prompts off · '
+                          'Recall Full · Browser on · Goals off', prompts)
             self.assertIn('Approvals & sandbox · Manual approval (ask me) · Inner sandbox off', prompts)
             self.assertIn('Network and Web Search · Unrestricted · Web Search on', prompts)
             self.assertIn('Communications · Slack', prompts)
             self.assertIn('Skills · 1 saved', prompts)
-            self.assertEqual(menu.virtual_size.height, menu.option_count)
+            self.assertLessEqual(menu.virtual_size.height, menu.scrollable_content_region.height)
             self.assertLess(menu.region.bottom, app.screen.query_one('#settings-back').region.y)
             await pilot.press('escape')
             self.assertIs(app.screen, app.screen_stack[0])
@@ -414,7 +417,7 @@ class TUILayoutTests(unittest.TestCase):
                         self.assertEqual(field.region.height, 1)
                     await app.pop_screen()
 
-    async def test_agent_tools_summary_tracks_visible_controls(self):
+    async def test_pi_features_summary_tracks_visible_controls(self):
         app = self.app()
         async with app.run_test(size=(80, 24)) as pilot:
             await self.ready(app, pilot)
@@ -422,7 +425,19 @@ class TUILayoutTests(unittest.TestCase):
             await app.push_screen(form)
             await pilot.pause()
             section = form.query_one('#skills-section', Collapsible)
-            self.assertIn('Agent tools', section.title)
+            self.assertTrue(section.collapsed)
+            self.assertTrue(section.title.startswith('Pi features · '))
+            scheduling = form.query_one('#scheduling', Checkbox)
+            self.assertEqual(str(scheduling.label), 'Scheduled prompts')
+            self.assertEqual(str(scheduling.parent.query_one('.checkbox-help').render()),
+                             'Run scheduled prompts while this chat is open.')
+            for key, label in (('subagents', 'Subagents'), ('question-forms', 'Question forms'),
+                               ('scheduling', 'Scheduled prompts')):
+                control = form.query_one('#' + key, Checkbox)
+                for enabled in (False, True):
+                    control.value = enabled
+                    await pilot.pause()
+                    self.assertIn(label + (' on' if enabled else ' off'), section.title)
             form.query_one('#browser', Checkbox).value = True
             form.query_one('#goals', Checkbox).value = False
             form.query_one('#compaction-recall', Select).value = 'full'

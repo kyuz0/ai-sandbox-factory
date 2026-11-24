@@ -1042,6 +1042,23 @@ async def capture(size):
                     await shot('settings-summary-create-network', section='#network-search-section',
                                focus='#network-search-section > CollapsibleTitle')
                     await app.pop_screen()
+                    for context in ('create', 'defaults', 'existing'):
+                        screen = SettingsForm({**draft, 'subagents': True,
+                                               'options': {**selected, 'question_forms': False, 'scheduling': False}},
+                                              editing=context == 'existing', defaults=context == 'defaults',
+                                              setting='agent-tools' if context == 'existing' else None)
+                        await app.push_screen(screen)
+                        prefix = 'settings-summary-features-' + context
+                        if context != 'existing':
+                            screen.query_one('#hosted-section', Collapsible).collapsed = True
+                            await pilot.pause()
+                            title = screen.query_one('#skills-section > CollapsibleTitle')
+                            title.focus(scroll_visible=False)
+                            title.scroll_visible(top=True, animate=False, immediate=True)
+                            await shot(prefix + '-collapsed')
+                        await shot(prefix + '-expanded', section='#skills-section', focus='#subagents')
+                        await shot(prefix + '-scheduling', focus='#scheduling')
+                        await app.pop_screen()
                     return
 
                 def network_form(text=None, config=None):

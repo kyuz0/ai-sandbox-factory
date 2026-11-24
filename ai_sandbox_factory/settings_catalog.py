@@ -17,6 +17,7 @@ ADVISORS_LABEL = 'Advisors (Codex/Claude/Antigravity)'
 SYSTEM_PROMPT_LABEL = 'Custom system prompt add-on'
 SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompt add-ons'
 NO_SYSTEM_PROMPT_ADD_ON = 'No add-on'
+PI_FEATURES_LABEL = 'Pi features'
 
 
 # In display order. A focus target opens the shared settings form for a saved
@@ -27,7 +28,7 @@ CATEGORIES = {
     'folders': Category('Folders', 'folders-section'),
     'network-settings': Category(f'{NETWORK_LABEL} and {WEB_SEARCH_LABEL}', 'network-search-section', 'network-section'),
     'approval-settings': Category('Approvals & sandbox', 'agent-section', 'inner-sandbox'),
-    'agent-tools': Category('Agent tools', 'skills-section', 'subagents'),
+    'agent-tools': Category(PI_FEATURES_LABEL, 'skills-section', 'subagents'),
     'system-prompt': Category(SYSTEM_PROMPT_LABEL, 'system-prompt-section'),
     'advisors': Category(ADVISORS_LABEL, 'new-advisors-section'),
     'communications': Category('Communications', 'communications-section', 'slack-enabled'),

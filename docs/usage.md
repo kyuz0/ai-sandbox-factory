@@ -180,7 +180,7 @@ and shows both paths so you can resolve the conflict.
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |
-| Approvals & sandbox, Agent tools, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Approvals & sandbox, Pi features, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
 | Codex, Claude Code or Antigravity: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen the selected agent’s CLI or reload the VS Code window. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
@@ -227,11 +227,12 @@ manager's home screen affects future sandboxes, not existing ones.
 See [approval modes and shell behavior](approvals.md#configuration-and-updates).
 The outer container and its network policy still apply when the inner sandbox is off.
 
-## Agent tools and skills
+## Pi features and skills
 
-**Agent tools** groups conversation recall, the agent browser,
-question forms, goals, scheduled prompts and optional subagents. Its collapsed
-heading shows the current recall, browser and goals settings.
+**Pi features** shows the current settings for subagents, question forms,
+scheduled prompts, conversation recall, the agent browser, and goals. Expand the
+section to change them during creation or open **Settings → Pi features** for a
+saved sandbox. Scheduled prompts run while their originating chat is open.
 
 Select **Enable optional subagents** to let Pi delegate work in either the
 terminal or FrostPi. Pi chooses a role for each task. An assistant can use Pi's
@@ -411,7 +412,7 @@ including Bash, Git, SSH, Python and Node.js. Read command manuals offline with
 ## See and interact with the agent’s browser
 
 Betterwright is enabled by default for new Pi, Codex, Claude Code and Antigravity
-sandboxes. To turn it off, clear **Agent browser · Betterwright** under **Agent tools**
+sandboxes. To turn it off, clear **Agent browser · Betterwright** under **Pi features**
 for Pi, or **Enable the browser** under **Browser** for the other agents. Add
 `--no-browser` when creating a sandbox from the CLI. Updates preserve explicit
 saved choices.
@@ -455,8 +456,8 @@ in **Lite** mode. Pi can search conversation history removed by compaction with
 `history_grep` and retrieve a passage with `history_expand`.
 Lite adds no automatic history hints.
 
-Choose **Conversation recall** under **Agent tools** during creation
-or under **Settings → Agent tools** for an existing sandbox. **Full**
+Choose **Conversation recall** under **Pi features** during creation
+or under **Settings → Pi features** for an existing sandbox. **Full**
 adds automatic hints and may reduce prefix-cache reuse. **Off** disables recall.
 The selection applies to both Pi CLI and FrostPi.
 For CLI creation, use `"compaction_recall": "lite"`, `"full"` or `"off"` in the

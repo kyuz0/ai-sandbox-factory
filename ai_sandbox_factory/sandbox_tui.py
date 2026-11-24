@@ -1451,7 +1451,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
                                      network_mode_label(network) if agent != 'pi' else
                                      network_search_summary(network, selected['web_access']['enabled'])),
                 'approval-settings': approval_mode_summary(selected['approval'], selected['inner_sandbox']),
-                'agent-tools': agent_tools_summary(selected['compaction_recall'], selected['browser'], selected['goals']),
+                'agent-tools': pi_features_summary(config.get('subagents', False), selected),
                 'primary-browser': on_off(selected['browser']).capitalize(),
                 'document-search': search_summary(selected, embedding_models.sources(config)),
                 'communications': communications_summary(selected['communications']['slack']),
@@ -1525,8 +1525,13 @@ def approval_mode_summary(mode, inner):
     return f'{APPROVAL_MODES[mode][0]} · Inner sandbox {on_off(inner)}'
 
 
-def agent_tools_summary(recall, browser, goals):
-    return f'Recall {recall.capitalize()} · Browser {on_off(browser)} · Goals {on_off(goals)}'
+def pi_features_summary(subagents, selected):
+    return ' · '.join((f'Subagents {on_off(subagents)}',
+                       f'Question forms {on_off(selected["question_forms"])}',
+                       f'Scheduled prompts {on_off(selected["scheduling"])}',
+                       f'Recall {selected["compaction_recall"].capitalize()}',
+                       f'Browser {on_off(selected["browser"])}',
+                       f'Goals {on_off(selected["goals"])}'))
 
 
 class FoldersScreen(Screen):
@@ -3394,7 +3399,9 @@ class SettingsForm(Screen):
                 yield Checkbox('Goals', value=selected['goals'], id='goals')
                 yield Static('Use /goal to save an objective and keep working toward it across turns.',
                              classes='setting-help checkbox-help')
-            yield Checkbox('Scheduled prompts in the current chat', value=selected['scheduling'], id='scheduling')
+            with Vertical(classes='setting'):
+                yield Checkbox('Scheduled prompts', value=selected['scheduling'], id='scheduling')
+                yield Static('Run scheduled prompts while this chat is open.', classes='setting-help checkbox-help')
 
     def compose_skills(self, category, value, selected):
         skills = SkillSelection(value)
@@ -3535,16 +3542,19 @@ class SettingsForm(Screen):
     def skills_summary(self):
         self.query_one('#skill-library-section', Collapsible).title = CATEGORIES['skills'].label + ' · ' + self.query_one(SkillSelection).summary()
 
+    @on(Checkbox.Changed, '#subagents')
+    @on(Checkbox.Changed, '#question-forms')
+    @on(Checkbox.Changed, '#scheduling')
     @on(Checkbox.Changed, '#browser')
     @on(Checkbox.Changed, '#goals')
     @on(Select.Changed, '#compaction-recall')
     def tools_summary(self):
-        browser = self.query_one('#browser', Checkbox).value
-        goals = self.query_one('#goals', Checkbox).value
-        recall = self.query_one('#compaction-recall', Select).value
+        selected = {key: self.query_one('#' + key.replace('_', '-'), Checkbox).value
+                    for key in ('question_forms', 'scheduling', 'browser', 'goals')}
+        selected['compaction_recall'] = self.query_one('#compaction-recall', Select).value
+        subagents = self.query_one('#subagents', Checkbox).value
         self.query_one('#skills-section', Collapsible).title = (
-            CATEGORIES['agent-tools'].label + ' · ' + agent_tools_summary(
-                recall, browser, goals))
+            CATEGORIES['agent-tools'].label + ' · ' + pi_features_summary(subagents, selected))
 
     @on(Checkbox.Changed, '#browser')
     def browser_changed(self):
@@ -4260,6 +4270,7 @@ class Cockpit(App):
     #local-provider > Contents { padding: 1 3 0 3; }
     #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
     #provider-controls > CollapsibleTitle { padding: 0 1 0 0; }
+    #skills-section > CollapsibleTitle { width: 1fr; text-wrap: wrap; }
     #local-provider.-local-off #local-enable-setting { margin: 0; }
     #network-search-section #network-section,
     #network-search-section #web-section { margin: 0; }
