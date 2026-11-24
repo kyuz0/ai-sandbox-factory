@@ -68,6 +68,18 @@ Choose **Details…** on a profile to read its system prompt addendum.
 
 ## Write a profile
 
+The [profile authoring guide](../ai_sandbox_factory/containers/dev/profile-authoring/README.md)
+includes a complete two-host example, the service fields, Dockerfile requirements,
+SSH, networking, persistent storage and a workflow for editing and versioning a
+profile outside the project repository. Several services can share one Dockerfile
+or use different build folders and images.
+
+The same guide and example are readable inside new sandboxes at
+`/opt/sandbox/base-profile/authoring/README.md`. Factory tells the agent where to
+find them when explaining its applied profile. Applied files are read-only;
+the guide explains how to edit a separate writable copy and register its Git
+revisions from the host.
+
 Copy [examples/profile](../examples/profile) into a new repository. It contains:
 
 | File | Purpose |
@@ -189,7 +201,9 @@ Podman and Restricted networking.
 
 Add optional `services` to `profile.json`. The profile’s top-level Dockerfile
 for the coding-agent container is not listed in `services`. Each service chooses
-an existing image or a build context:
+an existing image or a build context. Add one entry per host; the
+[complete two-host example](../ai_sandbox_factory/containers/dev/profile-authoring/example/profile.json)
+uses separate data and credentials for each:
 
 ```json
 {
@@ -215,7 +229,8 @@ an existing image or a build context:
 
 An image declaration uses `"image": "registry.example.com/team/service:version"`
 in place of `build`. Factory records its resolved image ID for the sandbox.
-Build contexts and Dockerfile paths are relative to the profile. Optional
+Build contexts are relative to the profile. A Dockerfile path is relative to
+its build context. Optional
 `command` overrides the image command with an argument list; the original
 entrypoint remains in use. Like the profile’s top-level Dockerfile, service
 Dockerfiles are trusted build inputs executed by the host container engine.

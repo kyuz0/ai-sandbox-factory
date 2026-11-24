@@ -1665,3 +1665,19 @@ override, its precedence over trusted project settings through the pinned native
 app-server, Unicode and control characters, and actionable diagnostics for the OS
 argument limit. The real profile fixture checks managed instructions inside all
 four coding-agent containers and new database data in Create from existing.
+
+The bundled [profile authoring guide](ai_sandbox_factory/containers/dev/profile-authoring/README.md)
+has a complete two-host example. Check its manifest, independent Git revisions,
+per-service credentials, and read-only documentation delivery to all agents with:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_authoring test_profile_services
+PYTHONPATH=.:tests .venv/bin/python tests/profile_authoring_integration.py
+```
+
+The real Podman fixture installs the example, builds and starts both PostgreSQL
+hosts, runs the exact documented SSH/SQL commands, checks direct peer access and
+isolated data/passwords, and verifies persistent data across Stop/Start. It reads
+the authoring guide through the applied read-only mount and copies the bundled
+example back to a host folder using the documented command. It leaves project
+instructions unchanged and removes its disposable containers, volumes and network.

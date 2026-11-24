@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 PATH = '/opt/sandbox/base-profile'
+AUTHORING = PATH + '/authoring/README.md'
 
 
 def identity(config, image_id):
@@ -33,6 +34,8 @@ def recording(config, state):
         target.mkdir()
         shutil.copytree(config['profile']['path'], target / 'profile')
         common = Path(config['common']['path'])
+        if (common / 'profile-authoring').is_dir():
+            shutil.copytree(common / 'profile-authoring', target / 'authoring')
         agent = primary_workspace.agent(config)
         if agent == 'pi':
             shutil.copytree(common, target / 'base')
@@ -153,10 +156,13 @@ def guidance(state):
         return ''
     extra = ('workspace/ contains the coding-agent container recipe; it is unrelated to /workspace. '
              if value.get('agent', 'pi') != 'pi' else '')
+    authoring = (f' For profile format, additional hosts and versioning, read {AUTHORING}. '
+                 'The applied profile remains read-only; use a separate writable profile copy for edits.'
+                 if value.get('path') and (Path(value['path']) / 'authoring/README.md').is_file() else '')
     return (f'\n## Applied profile\n\nYour coding-agent container was built from profile {value["name"]!r}, '
             f'revision {value["profile_digest"]}. Its read-only build recipes are at {PATH}. '
             "This directory holds this sandbox's own profile, not just the built-in base profile. "
             'profile/ contains the profile files and base/ contains Factory base-image inputs. '
             + extra + 'build.json identifies the image and recipes actually used. '
             'These files describe the image build; packages installed later and current Factory settings may differ. '
-            'They are separate from the project folder and its instructions at /workspace.\n')
+            'They are separate from the project folder and its instructions at /workspace.' + authoring + '\n')

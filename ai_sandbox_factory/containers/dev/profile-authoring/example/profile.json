@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "name": "two-databases",
+  "description": "Developer + two PostgreSQL hosts",
+  "agents": [
+    "pi",
+    "codex",
+    "claude",
+    "agy"
+  ],
+  "services": {
+    "database": {
+      "description": "Primary database for the project",
+      "build": {
+        "context": "services/postgres",
+        "dockerfile": "Dockerfile"
+      },
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_USER": "app",
+        "POSTGRES_PASSWORD": {
+          "generate": "database-password"
+        }
+      },
+      "volumes": {
+        "data": "/var/lib/postgresql/data"
+      },
+      "healthcheck": [
+        "pg_isready",
+        "-U",
+        "app",
+        "-d",
+        "app"
+      ],
+      "connections": {
+        "port": 5432,
+        "database": "app",
+        "user": "app",
+        "password": {
+          "environment": "POSTGRES_PASSWORD"
+        }
+      }
+    },
+    "reporting": {
+      "description": "Independent database for reporting and experiments",
+      "build": {
+        "context": "services/postgres",
+        "dockerfile": "Dockerfile"
+      },
+      "environment": {
+        "POSTGRES_DB": "reports",
+        "POSTGRES_USER": "reporter",
+        "POSTGRES_PASSWORD": {
+          "generate": "database-password"
+        }
+      },
+      "volumes": {
+        "data": "/var/lib/postgresql/data"
+      },
+      "healthcheck": [
+        "pg_isready",
+        "-U",
+        "reporter",
+        "-d",
+        "reports"
+      ],
+      "connections": {
+        "port": 5432,
+        "database": "reports",
+        "user": "reporter",
+        "password": {
+          "environment": "POSTGRES_PASSWORD"
+        }
+      }
+    }
+  }
+}
