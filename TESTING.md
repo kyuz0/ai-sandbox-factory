@@ -721,6 +721,11 @@ existing containers. The fixture removes its own disposable build storage after
 testing; production cancellation preserves build cache. Unit and UI tests also
 cover ownership collisions, cleanup failures, repeated clicks and late cancellation.
 
+The model setup warning tests cover returning to Model Providers, explicitly
+continuing without a model, and creating with a configured model source. Capture
+`no-model-warning` and `no-model-return` with `tests/render_tui.py` to review
+both states at all three terminal sizes.
+
 Run `.venv/bin/python tests/creation_provider.py` to check provider setup through
 the actual creation worker. It checks that stopped containers and leftover volumes
 are reported before saving a new sandbox, that only exact approved resources

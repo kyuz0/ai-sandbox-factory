@@ -35,7 +35,7 @@ continues to forward to the new application. [Migration details](docs/usage.md#u
    - **Pi** — Open **Model Providers**. For a local model, enable **Connect to models on this computer** and enter the server port, usually `8000`. If a model is missing, check that the server is running and refresh the model list. For OpenRouter, Together, Azure/Foundry or Bedrock, choose **Connect hosted provider…**. Hosted credentials stay in a separate container. [Local models](docs/usage.md#local-models) · [Hosted models](docs/hosted-models.md)
    - **Codex, Claude Code or Antigravity** — **Copy sign-in from this computer** is selected by default where supported. Choose **Sign in inside the sandbox** if you want a fresh login. [Agent sign-in](docs/usage.md#choose-a-coding-agent)
 3. Open **Connectors** if your agent needs SSH, Git, AWS or an installed HTTPS service. Choose what this sandbox may use. You can make this choice later in **Settings → Connectors**. [Connector setup](docs/connectors.md)
-4. Choose **Create and start sandbox**. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
+4. Choose **Create and start sandbox**. If you skipped model setup for Pi, choose **Open Model Providers** to configure it, or **Create without a model** to set it up later. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
 
 ![Built-in SSH and Git and AWS connectors in sandbox settings](docs/connectors.png)
 

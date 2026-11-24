@@ -26,7 +26,7 @@ class CreationConflictUI(unittest.IsolatedAsyncioTestCase):
             service.check_creation = Mock(side_effect=[found, found, found, ValueError(diagnostic), found, available])
             app = Cockpit(root / 'state', service)
             draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
-            draft.update(name='codex-test', workspace=str(root), engine='podman')
+            draft.update(name='codex-test', workspace=str(root), engine='podman', primary_agent='codex')
             submitted = []
             with patch('ai_sandbox_factory.updates.available_update', return_value=None):
                 async with app.run_test(size=(80, 24)) as pilot:

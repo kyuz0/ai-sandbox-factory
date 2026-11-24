@@ -75,9 +75,10 @@ async def capture(size):
         research_only = args.only and all(name.startswith('research-') for name in args.only)
         prompts_only = args.only and all(name.startswith('prompt-') for name in args.only)
         aws_only = args.only and all(name.startswith('aws-access-') for name in args.only)
+        no_model_only = args.only and set(args.only) <= {'no-model-warning', 'no-model-return'}
         if aws_only:
             record['workspace'] = '/home/example/projects/demo'
-        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only else {}
+        variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only or no_model_only else {}
         with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
             app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
             async with app.run_test(size=size, notifications=app.startup_notice) as pilot:
@@ -195,6 +196,20 @@ async def capture(size):
                     return
                 if args.only and set(args.only) <= {'home', 'home-renamed'}:
                     await shot('home-renamed' if app.startup_notice else 'home')
+                    return
+                if no_model_only:
+                    draft = preset('base', DEFAULT_SETTINGS)
+                    draft.update(name='demo', workspace=str(workspace), model_providers={}, local_model_ports=None)
+                    form = SettingsForm(draft)
+                    await app.push_screen(form)
+                    await pilot.pause()
+                    form.query_one('#hosted-section', Collapsible).collapsed = True
+                    form.query_one('#apply', Button).press()
+                    await pilot.pause()
+                    await shot('no-model-warning')
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    await shot('no-model-return')
                     return
                 if args.only and set(args.only) <= {'ssh-alias-invalid', 'ssh-alias-settings-invalid'}:
                     draft = preset('base', DEFAULT_SETTINGS)

@@ -1245,6 +1245,20 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(event.button.id == 'yes')
 
 
+class ConfirmWithoutModel(Confirm):
+    def __init__(self):
+        super().__init__(
+            'Pi needs a model connection to reply. You can set one up now or start the sandbox and connect a model later.',
+            'Create without a model', confirm_by_default=False, cancel_label='Open Model Providers',
+            title='No model providers enabled',
+        )
+
+    def action_buttons(self):
+        with Horizontal(classes='buttons dialog-actions'):
+            yield Button(self.cancel_label, id='cancel', variant='primary')
+            yield Button(self.action, id='yes')
+
+
 class ConfirmCreationConflicts(Confirm):
     DEFAULT_CSS = '''
     ConfirmCreationConflicts #confirm-box { width: 88; height: 21; overflow: hidden; }
@@ -3825,7 +3839,7 @@ class SettingsForm(Screen):
             elif action == 'explain-approval':
                 self.app.push_screen(ApprovalHelp(editing=self.editing))
             elif action == 'apply':
-                if event.button.disabled:
+                if event.button.disabled or self.app.screen is not self:
                     return
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
@@ -3905,7 +3919,7 @@ class SettingsForm(Screen):
                     self.app.push_screen(ApplySettingsReview(self.draft, draft, mode),
                         lambda yes: self.submit(draft, key) if yes else None)
                 else:
-                    self.begin_creation_check(draft, key)
+                    self.review_creation(draft, key)
         except (OSError, ValueError) as error:
             if any(message.display for message in self.query('SkillSelection Feedback')):
                 self.query_one('#skill-library-section', Collapsible).collapsed = False
@@ -3931,6 +3945,24 @@ class SettingsForm(Screen):
     def choose_local_keys(self, choices):
         if choices is not None:
             self.local_key_choices = choices
+
+    def review_creation(self, draft, key):
+        if self.native or any(draft.get(field) for field in ('model_providers', '_hosted_changes', 'pi_config')):
+            self.begin_creation_check(draft, key)
+            return
+
+        def confirmed(continue_without_model):
+            if not self.is_attached or self.app.screen is not self:
+                return
+            if continue_without_model:
+                self.begin_creation_check(draft, key)
+                return
+            section = self.query_one('#' + CATEGORIES['models'].section, Collapsible)
+            section.collapsed = False
+            section.query_one('#local-provider > CollapsibleTitle').focus(scroll_visible=False)
+            self.call_after_refresh(section.scroll_visible, top=True, animate=False)
+
+        self.app.push_screen(ConfirmWithoutModel(), confirmed)
 
     def begin_creation_check(self, draft, key, approved=None):
         button = self.query_one('#apply', Button)
@@ -4098,7 +4130,8 @@ class Cockpit(App):
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
     Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
-    Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus {
+    Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus,
+    .settings-review #local-provider > CollapsibleTitle:focus {
         background: #d4e0e7; color: #171a1d; text-style: bold underline;
     }
     Confirm:nocolor #yes.-error, ExternalConnectorDialog:nocolor #connector-confirm.-error { background: #454a51; color: white; }
