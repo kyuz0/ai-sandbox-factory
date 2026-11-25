@@ -24,6 +24,13 @@ mkdir -p "$TMPDIR"
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
+Before long container runs, check free space on the filesystem holding the VM
+disk as well as inside the guest. In WSL2, check the Windows volume containing
+`ext4.vhdx`: Linux reports the virtual disk's maximum capacity even when that
+Windows volume cannot accommodate it. Monitor that volume during image builds
+and remove only disposable test resources when reclaiming space. See
+[Microsoft's WSL disk-space guide](https://learn.microsoft.com/en-us/windows/wsl/disk-space).
+
 Async tests and the TUI screenshot renderer require local socket IPC. In a
 restricted agent shell, blocked socket writes can leave Python waiting in
 `shutdown_default_executor()` after the checks finish. Run this control if a
