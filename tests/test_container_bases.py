@@ -11,6 +11,12 @@ class ContainerBaseTests(unittest.TestCase):
     def test_owned_bases_explicitly_select_debian_13(self):
         count = 0
         for dockerfile in ROOT.rglob('Dockerfile*'):
+            relative = dockerfile.relative_to(ROOT)
+            # Profile authors choose their own Linux images. The bundled profiles
+            # and editable authoring example are not Factory-managed runtimes.
+            if relative.parts[0] == 'profiles' or relative.is_relative_to(
+                    Path('containers/dev/profile-authoring/example')):
+                continue
             stages = set()
             for line in dockerfile.read_text().splitlines():
                 match = re.match(r'FROM\s+(\S+)', line, re.I)
