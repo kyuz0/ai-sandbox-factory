@@ -1,4 +1,4 @@
-"""Replace a workspace while retaining its profile applications and recovery copy."""
+"""Transactional workspace and profile service replacement with recovery."""
 from pathlib import Path
 from contextlib import contextmanager
 import shutil
@@ -136,6 +136,18 @@ def recover_preparation(config, state):
                 if sandbox.inspect(original,previous['Id']):
                     sandbox.run([engine,'rm',previous['Id']],capture=True,stderr=subprocess.PIPE)
             restore('previous stopped container '+name,retire)
+        before, after = profile_services.resources(original), profile_services.resources(updated)
+        for kind in ('volume', 'network'):
+            for name in sorted(before[kind] - after[kind]):
+                def retire_resource(kind=kind, name=name):
+                    found = sandbox.run([engine, kind, 'exists', name], capture=True, check=False, stderr=subprocess.PIPE)
+                    if found.returncode == 1:
+                        return
+                    if found.returncode:
+                        raise ValueError(f'exit {found.returncode}: {(found.stderr or found.stdout).strip()}')
+                    profile_services.check_ownership(original)
+                    sandbox.run([engine, kind, 'rm', name], capture=True, stderr=subprocess.PIPE)
+                restore('unused ' + kind + ' ' + name, retire_resource)
     if failures:
         raise ValueError('Profile recovery needs attention: ' + '; '.join(failures)
                          + '. Saved recovery information and private volumes were retained; retry the profile action after fixing the reported engine error.')
@@ -143,11 +155,42 @@ def recover_preparation(config, state):
 
 
 @contextmanager
-def prepared_services(original, updated, state):
+def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False):
     """Journal allocations before preparation; retain old containers until commit."""
     from . import sandbox
     state = Path(state)
     recover_preparation(original,state)
+    profile_services.check_ownership(original)
+    changes = profile_services.changes(original, updated)
+    affected = changes['replaced_services'] + changes['removed_services']
+    # A replacement gets a copy of its previous data. Its entrypoint or migration
+    # must never write into the recovery container's only data volume.
+    import copy
+    mappings = copy.deepcopy(original.get('profile_service_volumes', {}))
+    retained = set(original.get('profile_service_retained_volumes', []))
+    copies = []
+    for name in affected:
+        previous = profile_services.selected(original)[name]
+        current = profile_services.selected(updated).get(name)
+        mappings.pop(name, None)
+        for volume in previous['volumes']:
+            prior = profile_services.data_volume(original, name, volume)
+            retained.add(prior)
+            if current and volume in current['volumes']:
+                candidate = profile_services.data_volume_base(updated, name, volume) + '-revision-' + uuid4().hex[:12]
+                mappings.setdefault(name, {})[volume] = candidate
+                copies.append((prior, candidate))
+    for name, spec in profile_services.selected(updated).items():
+        for volume in spec['volumes']:
+            if (volume not in mappings.get(name, {})
+                    and profile_services.data_volume(updated, name, volume) in retained):
+                mappings.setdefault(name, {})[volume] = profile_services.data_volume_base(updated, name, volume) + '-revision-' + uuid4().hex[:12]
+    if mappings:
+        updated['profile_service_volumes'] = mappings
+    else:
+        updated.pop('profile_service_volumes', None)
+    if retained:
+        updated['profile_service_retained_volumes'] = sorted(retained)
     before, after = profile_services.resources(original), profile_services.resources(updated)
     added = {kind:sorted(after[kind]-before[kind]) for kind in after}
     for kind,names in added.items():
@@ -157,7 +200,9 @@ def prepared_services(original, updated, state):
                 raise ValueError(f'Cannot add profile services: {kind} {name!r} already exists. Inspect this exact resource before retrying; nothing was replaced or deleted.')
             if found.returncode != 1:
                 raise ValueError(f'Cannot check {kind} {name!r} (exit {found.returncode}): {(found.stderr or found.stdout).strip()}. Check the container engine and retry.')
-    runtime = {name:sandbox.inspect(original,name) for name in runtime_names(original)|runtime_names(updated)}
+    replaced = {profile_services.container(original, name) for name in affected}
+    replaced.update(before['container'] - after['container'])
+    runtime = {name:sandbox.inspect(original,name) for name in runtime_names(original)|runtime_names(updated)|replaced}
     services = {name:sandbox.inspect(original,name) for name in before['container']}
     journal = state/'profile-preparation'
     journal.mkdir(mode=0o700)
@@ -169,10 +214,52 @@ def prepared_services(original, updated, state):
             target=journal/'files'/name
             target.parent.mkdir(parents=True,exist_ok=True)
             shutil.copyfile(source,target)
+    helpers = [profile_services.prefix(updated) + '-copy-' + uuid4().hex for _ in copies]
+    added['container'] += helpers
     saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added}
     sandbox.write_json(journal/'record.json',saved)
+    def prepare():
+        if cancelled and cancelled():
+            from .updating import UpdateCancelled
+            raise UpdateCancelled()
+        for name in sorted(replaced):
+            previous = runtime[name]
+            if not previous:
+                continue
+            if previous['State']['Running']:
+                sandbox.run([original['engine'], 'stop', previous['Id']])
+            sandbox.run([original['engine'], 'rename', previous['Id'], name + '-previous-' + uuid4().hex])
+        for (previous, candidate), helper in zip(copies, helpers):
+            sandbox.run([updated['engine'], 'volume', 'create', *profile_services._labels(updated, 'data'), candidate])
+            found = sandbox.run([original['engine'], 'volume', 'exists', previous], capture=True, check=False, stderr=subprocess.PIPE)
+            if found.returncode == 1:
+                raise ValueError(f'Cannot copy service data volume {previous!r}: the volume is missing. '
+                                 'Restore it from a backup, or remove and re-add the service if you want fresh data. '
+                                 'The previous container and settings will be restored.')
+            if found.returncode:
+                raise ValueError(f'Cannot copy service data volume {previous!r} (exit {found.returncode}): '
+                                 f'{(found.stderr or found.stdout).strip()}')
+            # Check both ends of the tar pipeline. A partial copy is a failure.
+            script = ('import subprocess,sys; '
+                      'source=subprocess.Popen(["tar","-C","/source","-cpf","-","."],stdout=subprocess.PIPE); '
+                      'target=subprocess.run(["tar","-C","/target","-xpf","-"],stdin=source.stdout); '
+                      'source.stdout.close(); result=source.wait(); sys.exit(result or target.returncode)')
+            print(f'Copying service data volume {previous} for replacement; the previous data is kept.', flush=True)
+            try:
+                with sandbox.cancellable_build(cancelled):
+                    sandbox.run([updated['engine'], 'run', '--rm', '--name', helper,
+                                 *profile_services._labels(updated, helper), '--network=none', '--user', '0',
+                                 '--security-opt=label=disable', '-v', previous + ':/source:ro', '-v', candidate + ':/target',
+                                 '--entrypoint', 'python3', sandbox.image_names(updated)[1], '-c', script],
+                                capture=True, stderr=subprocess.PIPE)
+            except subprocess.CalledProcessError as error:
+                detail = (error.stderr or error.stdout or '').strip()
+                raise ValueError(f'Cannot copy service data volume {previous!r} to {candidate!r} '
+                                 f'(exit {error.returncode}): {detail}. Previous data was kept; check storage and retry Apply.') from error
     try:
-        yield
+        if not defer_preparation:
+            prepare()
+        yield prepare
         stop={name for name,info in services.items() if info and not info['State']['Running']}
         workspace=runtime.get(sandbox.names(original)[0])
         if workspace and not workspace['State']['Running']:
@@ -181,7 +268,7 @@ def prepared_services(original, updated, state):
             if sandbox.inspect(updated,name):
                 sandbox.run([updated['engine'],'stop',name])
     except BaseException as error:
-        failure_logs(updated,state,added['container'])
+        failure_logs(updated,state,set(added['container']) | replaced)
         try:
             recover_preparation(original,state)
         except Exception as recovery:
@@ -194,10 +281,10 @@ def prepared_services(original, updated, state):
         recover_preparation(updated,state)
 
 
-def apply(original, updated, state, *, text=None, allow_additions=False, retain_previous=False):
+def apply(original, updated, state, *, text=None, allow_service_changes=False, retain_previous=False):
     from . import activity, sandbox
     state = Path(state)
-    profile_services.validate_update(original, updated, allow_additions=allow_additions)
+    profile_services.validate_update(original, updated, allow_service_changes=allow_service_changes)
     engine = original['engine']
     names = runtime_names(original) | runtime_names(updated)
     workspace = sandbox.names(original)[0]

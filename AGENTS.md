@@ -188,6 +188,9 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   beside the check and test its boundary. Remove unexplained caps on counts,
   lengths and ranges. A convenient round number or a pre-existing assertion
   is insufficient.
+- Reconcile declared profile services through reviewed Apply: additions,
+  replacements and removals are supported changes. Preserve recovery data and
+  test rollback; do not replace missing lifecycle implementation with a blanket refusal.
 - Treat an ordinary sustained editor, agent and browser session as the minimum
   workload. Capacity changes must exercise at least ten times the measured
   baseline in the affected layer, with cancellation, cleanup and fault recovery.

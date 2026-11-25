@@ -35,16 +35,24 @@ def container(config, name):
 
 
 def data_volume(config, name, volume):
+    override = config.get('profile_service_volumes', {}).get(name, {}).get(volume)
+    if override:
+        return override
+    return data_volume_base(config, name, volume)
+
+
+def data_volume_base(config, name, volume):
     key = hashlib.sha256(json.dumps([name, volume]).encode()).hexdigest()[:16]
     return prefix(config) + '-data-' + key
 
 
 def resources(config):
+    retained = set(config.get('profile_service_retained_volumes', []))
     if not selected(config):
-        return {'container': set(), 'volume': set(), 'network': set()}
+        return {'container': set(), 'volume': retained, 'network': set()}
     base = prefix(config)
     containers = {base + '-gateway', base + '-proxy'}
-    volumes = {base + '-socket'}
+    volumes = {base + '-socket'} | retained
     for name, spec in selected(config).items():
         containers.add(container(config, name))
         volumes.update(data_volume(config, name, volume) for volume in spec['volumes'])
@@ -94,12 +102,13 @@ def image(config, name, spec):
     return f'localhost/pi-sandbox-factory-service:{name}-{digest}'
 
 
-def resolved_images(config):
+def resolved_images(config, previous=None):
     from . import sandbox
     result = {}
+    replaced = set(changes(previous, config)['replaced_services']) if previous is not None else set()
     for name, spec in selected(config).items():
         current = sandbox.inspect(config, container(config, name))
-        if current:
+        if current and name not in replaced:
             result[name] = current['Image']
             continue
         found = _run(config, 'image', 'inspect', image(config, name, spec), capture=True)
@@ -107,8 +116,8 @@ def resolved_images(config):
     return result
 
 
-def validate_update(original, updated, *, allow_additions=False):
-    """Profile editing/data migrations are separate from workspace rebuilding."""
+def changes(original, updated):
+    """Compare runtime recipes, including files consumed by service builds."""
     def contract(config):
         from . import sandbox
         result = {}
@@ -119,22 +128,19 @@ def validate_update(original, updated, *, allow_additions=False):
                     Path(config['profile']['path']) / spec['build']['context'])
         return result
     before, after = contract(original), contract(updated)
-    if allow_additions:
-        for name, previous in before.items():
-            if name not in after:
-                raise ValueError(f'Cannot remove existing profile service {name!r} from this sandbox: its container and data must be preserved. '
-                                 'Create a separate sandbox with the edited profile and export/import application data if needed.')
-            fields = sorted(key for key in previous.keys() | after[name].keys() if previous.get(key) != after[name].get(key))
-            if fields:
-                detail = ', '.join('build context files' if field == 'source_digest' else field for field in fields)
-                raise ValueError(f'Cannot replace existing profile service {name!r}: changed {detail}. '
-                                 'Its running container and saved application data are unchanged. '
-                                 'Revert those service changes, or create a separate sandbox with the edited profile and export/import its data.')
+    return {'added_services': sorted(after.keys() - before.keys()),
+            'removed_services': sorted(before.keys() - after.keys()),
+            'replaced_services': sorted(name for name in before.keys() & after.keys() if before[name] != after[name])}
+
+
+def validate_update(original, updated, *, allow_service_changes=False):
+    """Explicit profile Apply reconciles services; ordinary rebuilds keep their layout."""
+    if allow_service_changes:
         return
-    if before != after:
+    if any(changes(original, updated).values()):
         raise ValueError('This profile changes the sandbox’s profile services. '
                          'Nothing was stopped; the existing services and their data are unchanged. '
-                         'Create a separate sandbox with the new profile; export/import application data if needed. '
+                         'Use Edit profile → Review changes → Apply profile changes to install service changes. '
                          'Rebuilds that leave profile services unchanged keep their containers and data.')
 
 
@@ -398,7 +404,7 @@ def down(config, remove=False):
 
 
 def delete(config):
-    if not selected(config):
+    if not selected(config) and not config.get('profile_service_retained_volumes'):
         return
     check_ownership(config)
     down(config, remove=True)

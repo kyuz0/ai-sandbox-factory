@@ -1691,8 +1691,10 @@ its saved path without changing private state, restores the folder and retries.
 
 ## Editable profiles
 
+The fresh-sandbox CI job runs the Pi lifecycle fixture below before release.
+
 ```sh
-PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_updating
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_profile_service_changes test_updating
 PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_integration.py
 PYTHONPATH=.:tests .venv/bin/python tests/render_profile_edit.py /tmp/factory-profile-edit-ui
 ```
@@ -1705,6 +1707,14 @@ readiness failure, build/readiness cancellation, interrupted-worker recovery,
 and a bootstrap failure after cutover. Rebuild after adding a service must use
 the applied snapshot even with invalid unapplied source files. Existing runtime IDs and service data
 are preserved on failure; same-name retry and stopped-state application are exercised. It uses synthetic credentials and removes its private resources.
+Existing-service checks change the image and environment, write into a candidate
+database before failing readiness, cancel preparation, fail workspace bootstrap
+after service readiness, and retry successfully. They verify the exact previous
+container and untouched data after rollback, retained data volumes after removal,
+fresh data when re-adding the same service name, and removal of the final service
+and its network while the sandbox is stopped. Pi also kills a replacement worker
+and recovers through Start. Delete must remove retained data volumes even when
+the applied profile no longer declares services.
 After an interrupted profile worker, ordinary lifecycle actions recover the
 pending transaction before changing the sandbox. The real fixture checks Stop
 and Start after killing the preparation worker; dispatch tests also cover

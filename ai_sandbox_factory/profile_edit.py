@@ -14,7 +14,7 @@ PATH = '/opt/sandbox/profile'
 EDIT = 'editable_profile'
 
 PURPOSE = (
-    'Customize the profile only for needed persistent system software, new services '
+    'Customize the profile only for needed persistent system software, profile services '
     '(such as a database), or user-requested environment maintenance. '
     'Keep ordinary project dependencies in the project. Once the environment works, leave it unchanged: '
     'a new task, session or day needs no profile change. Reuse an editable profile unless the user requests another fork.'
@@ -85,8 +85,9 @@ def guidance(config):
             'Tell the user what changed and direct them to Actions… → Edit profile… → Review changes… → Apply profile changes. '
             'Then reopen the coding agent. '
             'Factory builds before replacement. Replacement stops running agent work and terminals, and keeps project files, '
-            'home, chats, sign-ins and existing services and data. New services are supported. Changing or removing an existing '
-            'service, other than its description or connections, requires a separate sandbox and application-specific data export/import. '
+            'home, chats and sign-ins. Apply can add, replace or remove services. Affected services stop during preparation; '
+            'replacements use copies of their data volumes, and removed services leave their data volumes available for recovery. '
+            'Factory does not perform application-specific data migrations. '
             'Never claim an edit is installed until Apply succeeds.\n\n'
             'If undecided, ask whether to track this folder with Git, whether commits stay local or are pushed, '
             'and whether that is one-time or ongoing. '
@@ -185,13 +186,16 @@ def review(config, state):
     value = freeze(config, state)
     updated = dict(config, profile=value)
     profile_services.validate(updated)
-    profile_services.validate_update(config, updated, allow_additions=True)
+    profile_services.validate_update(config, updated, allow_service_changes=True)
     changes, diff = differences(config['profile']['path'], value['path'])
     revision = hashlib.sha256(json.dumps([config['profile']['digest'], value['digest']]).encode()).hexdigest()[:16]
     result = {'revision': revision, 'base': config['profile']['digest'], 'profile': value,
               'folder': config[EDIT]['path'], 'changes': changes, 'diff': diff,
-              'added_services': sorted(profile_services.selected(updated).keys() - profile_services.selected(config).keys()),
+              **profile_services.changes(config, updated),
               'shared_with': shared_with(config, state)}
+    result['retained_volumes'] = sorted({profile_services.data_volume(config, name, volume)
+        for name in result['replaced_services'] + result['removed_services']
+        for volume in profile_services.selected(config)[name]['volumes']})
     sandbox.write_json(Path(state) / 'profile-reviews' / (revision + '.json'), result)
     return result
 
@@ -300,23 +304,29 @@ def apply(config, state, revision, gate=None):
     if sandbox.tree_digest(Path(updated['profile']['path'])) != profile['digest']:
         raise ValueError(f'Saved profile review {revision} was modified. Choose Review changes again.')
     profile_services.validate(updated)
-    profile_services.validate_update(config, updated, allow_additions=True)
+    profile_services.validate_update(config, updated, allow_service_changes=True)
     if profile['digest'] == config['profile']['digest']:
         print('The edited profile already matches the applied revision; no containers changed.', flush=True)
         return
-    progress = Progress(['Build profile images', 'Prepare new profile services', 'Apply profile changes'])
+    progress = Progress(['Build profile images', 'Prepare profile services', 'Apply profile changes'])
     with sandbox.image_graph(updated):
         with progress.stage('Build profile images'):
             with sandbox.cancellable_build(lambda: _cancelled(gate)):
                 sandbox.build(updated, state)
         if _cancelled(gate):
             raise updating.UpdateCancelled()
-        with profile_replacement.prepared_services(config, updated, state):
-            with progress.stage('Prepare new profile services'):
+        with profile_replacement.prepared_services(config, updated, state, cancelled=lambda: _cancelled(gate),
+                                                   defer_preparation=True) as prepare:
+            with progress.stage('Prepare profile services'):
+                prepare()
+                profile_runtime.select(updated, state)
                 profile_services.up(updated, state)
                 profile_services.ready(updated, state, check_ssh=False, cancelled=lambda: _cancelled(gate))
             if not updating.begin_apply(gate):
                 raise updating.UpdateCancelled()
             with progress.stage('Apply profile changes'):
-                profile_replacement.apply(config, updated, state, allow_additions=True, retain_previous=True)
+                profile_replacement.apply(config, updated, state, allow_service_changes=True, retain_previous=True)
     print('Profile changes applied. Open the coding agent again to use the new image and instructions.', flush=True)
+    retained = set(updated.get('profile_service_retained_volumes', [])) - set(config.get('profile_service_retained_volumes', []))
+    for name in sorted(retained):
+        print(f'Previous service data kept in volume {name}. Export it with: podman volume export {name} --output {name}.tar', flush=True)

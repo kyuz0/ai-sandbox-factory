@@ -304,7 +304,7 @@ class EditTests(unittest.TestCase):
                     context=edit.guidance(config)
                     self.assertIn('Customize the profile only for needed',context)
                     self.assertIn('persistent system software',context)
-                    self.assertIn('new services (such as a database)',context)
+                    self.assertIn('profile services (such as a database)',context)
                     self.assertIn('Once the environment works, leave it unchanged',context)
                     self.assertIn('a new task, session or day needs no profile change',context)
                     self.assertIn('ordinary project dependencies in the project',context)
@@ -333,22 +333,23 @@ class EditTests(unittest.TestCase):
                 self.assertIn('If undecided, ask whether to track this folder with Git',context)
                 self.assertIn('inspect this folder’s Git status, log and remotes',context)
 
-    def test_additions_and_metadata_are_allowed_but_existing_service_runtime_changes_are_refused(self):
+    def test_explicit_apply_allows_service_addition_replacement_and_removal(self):
         original = {**self.config, 'profile':sandbox.load_profile('developer-postgres')}
         updated = copy.deepcopy(original)
         updated['profile']['services']['reporting'] = copy.deepcopy(updated['profile']['services']['database'])
-        profile_services.validate_update(original, updated, allow_additions=True)
+        profile_services.validate_update(original, updated, allow_service_changes=True)
         updated['profile']['services']['database']['description'] = 'New description'
         updated['profile']['services']['database']['connections']['purpose'] = 'project'
-        profile_services.validate_update(original, updated, allow_additions=True)
+        profile_services.validate_update(original, updated, allow_service_changes=True)
         for field, value in [('environment', {}), ('volumes', {}), ('command', ['false']), ('ssh', {})]:
             broken = copy.deepcopy(updated)
             broken['profile']['services']['database'][field] = value
-            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "existing profile service 'database'.*" + field):
-                profile_services.validate_update(original, broken, allow_additions=True)
+            with self.subTest(field=field):
+                profile_services.validate_update(original, broken, allow_service_changes=True)
+                self.assertEqual(profile_services.changes(original, broken)['replaced_services'], ['database'])
         del updated['profile']['services']['database']
-        with self.assertRaisesRegex(ValueError, "remove existing profile service 'database'"):
-            profile_services.validate_update(original, updated, allow_additions=True)
+        profile_services.validate_update(original, updated, allow_service_changes=True)
+        self.assertEqual(profile_services.changes(original, updated)['removed_services'], ['database'])
 
     def test_validation_error_names_file_line_agent_and_service_field(self):
         file = self.source / 'profile.json'

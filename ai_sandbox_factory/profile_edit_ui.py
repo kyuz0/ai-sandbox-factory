@@ -11,14 +11,23 @@ from .file_browser import PathField
 from .tui_widgets import Bullet, Details, Feedback
 
 
-def consequences(record):
+def consequences(record, review=None):
     notes = []
     # The runtime may change while review runs or this screen is open.
     notes.append(f'If {record["name"]} is running, its agent work, terminals and browser processes stop when its coding-agent container is replaced.')
     notes.append(f'If {record["name"]} is stopped, it stays stopped.')
-    notes += ['Project files, private home, saved chats and sign-ins are kept.',
-              'Existing profile services and their application data are kept.',
-              'Packages installed manually in the container must be added to the Dockerfile to survive replacement.']
+    notes.append('Project files, private home, saved chats and sign-ins are kept.')
+    affected = (review or {}).get('replaced_services', []) + (review or {}).get('removed_services', [])
+    if affected:
+        notes.append('These services stop during preparation: ' + ', '.join(affected) + '.')
+        if review.get('replaced_services'):
+            notes.append('Replaced services use copies of their data volumes. Only data stored in declared volumes survives replacement.')
+        if review.get('removed_services'):
+            notes.append('Removed service containers are deleted. Their data volumes are kept until you delete this sandbox.')
+        notes.append('Previous data volumes are kept for recovery; Factory does not perform application-specific data migrations.')
+    else:
+        notes.append('Existing profile services and their application data are kept.')
+    notes.append('Packages installed manually in the container must be added to the Dockerfile to survive replacement.')
     return notes
 
 
@@ -134,10 +143,21 @@ class ReviewProfile(Screen):
                         yield Label('New profile services', classes='section-heading')
                         for name in self.review['added_services']:
                             yield Bullet(name + ' — initializes separate application data')
+                for field, title in (('replaced_services', 'Services to replace'), ('removed_services', 'Services to remove')):
+                    if self.review.get(field):
+                        with Vertical(classes='setting'):
+                            yield Label(title, classes='section-heading')
+                            for name in self.review[field]:
+                                yield Bullet(name)
+                if self.review.get('retained_volumes'):
+                    with Vertical(classes='setting'):
+                        yield Label('Data volumes kept for recovery', classes='section-heading')
+                        for name in self.review['retained_volumes']:
+                            yield Bullet(name)
                 with Vertical(classes='setting'):
                     yield Label('When you apply', classes='section-heading')
-                    yield Bullet('Factory builds images and checks new services before replacing the coding-agent container.')
-                    for note in consequences(self.record):
+                    yield Bullet('Factory builds images first, then prepares services before replacing the coding-agent container.')
+                    for note in consequences(self.record, self.review):
                         yield Bullet(note)
                     yield Bullet('You can cancel preparation. Factory stops the active build or removes newly prepared service resources before reporting cancellation.')
                 with Vertical(classes='setting'):
@@ -166,5 +186,6 @@ class ReviewProfile(Screen):
                     lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
                     cooperative=True, success_message='Profile changes applied. Open the coding agent again to use them.')
         target=name+' only' if self.review.get('shared_with') else name
-        app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds and checks new services before replacing the coding-agent container.',
-                                'Apply profile changes',confirm_by_default=True,notes=consequences(self.record)),confirmed)
+        app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds images first, then prepares services before replacing the coding-agent container.',
+                                'Apply profile changes',confirm_by_default=not bool(self.review.get('removed_services')),
+                                notes=consequences(self.record, self.review)),confirmed)

@@ -313,8 +313,9 @@ applied profile, any added services and the replacement consequences. Choose
 exactly that revision. If files change after
 review, review them again before applying.
 
-Factory builds images and checks new services while the previous coding-agent
-container remains available. Preparation is a job and can be cancelled. Factory
+Factory builds images while the previous containers remain available, then stops
+services that must be replaced or removed. Unchanged services keep running.
+Preparation is a job and can be cancelled. Factory
 stops the active image build or removes newly prepared service resources before
 reporting cancellation. Once replacement starts, cancellation is unavailable so
 Factory can finish or restore the previous
@@ -324,14 +325,26 @@ are removed on failure or cancellation; existing service data is preserved.
 If Factory exits during preparation or replacement, the next lifecycle action
 or client launch recovers the pending change before continuing.
 
-Package changes and **new services** can be applied to this same sandbox. New
-services initialize separate application data. Existing service containers and
-passwords are retained. Changes confined to a service's `description` or
-`connections` update its agent-readable metadata. Changing or removing an existing
-service's image, build context contents, environment, command, volumes, healthcheck
-or SSH settings is refused by name before replacement. Revert that change, or
-create a separate sandbox and use the application's export/import tools to move
-its data. Factory does not infer a database migration from a changed Dockerfile.
+Package changes and service additions, replacements and removals can be applied
+to the same sandbox. New services initialize separate data. A changed image,
+build context, environment, command, volumes, healthcheck or SSH setting replaces
+that service. Factory copies each retained volume key's existing data into a new
+volume before starting the replacement. New volume keys start empty; removed
+keys are no longer mounted. Changes confined to `description` or `connections`
+update agent-readable metadata without replacing the service.
+
+Removing a service removes its container after the replacement sandbox works.
+Previous data volumes from removed or replaced services remain available until
+**Delete sandbox**. The Apply job lists their exact names and export commands:
+
+```sh
+podman volume export VOLUME --output VOLUME.tar
+```
+
+Only declared data volumes survive service replacement. Factory preserves
+generated credentials but does not infer application migrations or reset an
+existing database's accounts when you change an environment variable. Use the
+application's migration or export/import tools when its data format changes.
 
 After success, open the coding agent again to use the new image and instructions.
 Packages installed manually in the old container survive only if the profile's

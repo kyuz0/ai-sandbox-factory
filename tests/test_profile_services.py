@@ -151,12 +151,12 @@ class ProfileServicesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'database.*bad database config'):
                 services.ready(self.config, Path('/unused'))
 
-    def test_rebuild_preserves_service_contract_and_rejects_destructive_change(self):
+    def test_rebuild_preserves_service_contract_and_directs_changes_to_reviewed_apply(self):
         original = copy.deepcopy(self.config)
         services.validate_update(original, self.config)
         updated = dict(self.config, profile=sandbox.load_profile('base'))
         with patch.object(sandbox, 'inspect', return_value={'Id': 'running-db'}):
-            with self.assertRaisesRegex(ValueError, 'profile services.*unchanged'):
+            with self.assertRaisesRegex(ValueError, 'Apply profile changes'):
                 services.validate_update(original, updated)
 
     def test_bad_profile_modes_do_not_affect_ordinary_profiles(self):

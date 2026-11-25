@@ -1,4 +1,4 @@
-"""Disposable real creation, profile edits, service additions and rollback."""
+"""Disposable real creation, profile edits, service reconciliation and rollback."""
 import argparse
 import copy
 import json
@@ -285,13 +285,135 @@ def exercise(agent, root):
         finally:
             (destination/'profile.json').write_text(valid_manifest)
         log('PASS '+agent+': Rebuild keeps the applied customized profile, added service IDs and credentials despite invalid unapplied source')
-        applied_manifest=(destination/'profile.json').read_text()
-        edit("m=json.loads((p/'profile.json').read_text()); m['services']["+repr(host)+"]['volumes']['data']='/different-data'; (p/'profile.json').write_text(json.dumps(m))")
-        try:service.review_profile(name)
-        except ValueError as error:
-            assert host in str(error) and 'volumes' in str(error)
-        else:raise AssertionError('Existing service storage was silently changed')
-        (destination/'profile.json').write_text(applied_manifest)
+        # Replacing an existing host must preserve its data through a private
+        # volume copy, including when a failed candidate writes to that copy.
+        applied_manifest = (destination/'profile.json').read_text()
+        def host_sql(statement):
+            return inside('ssh','-F','/run/profile-services/config',host+'.profile.internal',
+                          f'psql -U {user} -d {database} -Atc "{statement}"').stdout.strip()
+        host_sql("CREATE TABLE service_change_marker (value text); INSERT INTO service_change_marker VALUES ('original')")
+        before_change = config()
+        previous_ids = ids()
+        old_volume = profile_services.data_volume(before_change, host, 'data')
+        old_password = settings[host]['password']
+        manifest = json.loads(applied_manifest)
+        spec = manifest['services'][host]
+        spec['environment']['PROFILE_SERVICE_VERSION'] = 'updated'
+        spec['healthcheck'] = ['sh','-c',
+            f"until pg_isready -U {user} -d {database}; do sleep 0.1; done; "
+            f"psql -U {user} -d {database} -c \"UPDATE service_change_marker SET value='candidate'\" || exit 127; "
+            'echo CHANGED_SERVICE_DATA_WRITTEN >&2; '
+            'echo CHANGED_SERVICE_FAILED >&2; exit 127']
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        broken_change = service.review_profile(name)
+        assert broken_change['replaced_services'] == [host]
+        assert old_volume in broken_change['retained_volumes']
+        try: apply(broken_change)
+        except ValueError:
+            assert 'CHANGED_SERVICE_FAILED' in '\n'.join(output)
+            assert 'CHANGED_SERVICE_DATA_WRITTEN' in '\n'.join(output)
+        else: raise AssertionError('A changed service with a failing healthcheck was applied')
+        assert ids() == previous_ids
+        assert host_sql('SELECT value FROM service_change_marker') == 'original'
+        assert not (state/'profile-preparation').exists()
+        # Cancelling a replacement must return the original container and data.
+        spec['healthcheck'] = ['sh','-c','echo CHANGED_SERVICE_WAITING; exit 1']
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        waiting_change = service.review_profile(name)
+        ready = threading.Event()
+        control = updating.Update(cooperative=True)
+        def changed_log(line):
+            log(line)
+            if 'CHANGED_SERVICE_WAITING' in line and not line.startswith('STEP '): ready.set()
+        with ThreadPoolExecutor() as pool:
+            future = pool.submit(service.run_update,['profile-apply',name,'--revision',waiting_change['revision']],changed_log,control)
+            try:
+                assert ready.wait(600), 'Changed service did not reach readiness: '+'\n'.join(output[-20:])
+                assert control.cancel()
+            finally:
+                if not ready.is_set(): control.cancel()
+            try: future.result(timeout=180)
+            except updating.UpdateCancelled: pass
+            else: raise AssertionError('Changed-service cancellation was not reported')
+        assert ids() == previous_ids
+        assert host_sql('SELECT value FROM service_change_marker') == 'original'
+        # Force the same ordering with an abruptly killed worker; Start must recover.
+        if agent == 'pi':
+            ready = threading.Event()
+            process = subprocess.Popen(service.command('profile-apply',name,'--revision',waiting_change['revision']),
+                                       stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+            def changed_reader():
+                for line in process.stdout: changed_log(line.rstrip())
+            thread = threading.Thread(target=changed_reader,daemon=True); thread.start()
+            try:
+                assert ready.wait(600), 'Changed-service interruption did not reach readiness'
+                process.kill(); process.wait(); thread.join(timeout=30)
+            finally:
+                if process.poll() is None: process.kill(); process.wait()
+            service.run(['up',name],log)
+            assert ids() == previous_ids
+            assert host_sql('SELECT value FROM service_change_marker') == 'original'
+        # The service can be ready while the replacement workspace fails at cutover.
+        spec['healthcheck'] = ['pg_isready','-U',user,'-d',database]
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        (destination/'Dockerfile').write_text(valid_dockerfile + "\nUSER root\nRUN printf 'raise SystemExit(\"CHANGED_SERVICE_BOOT_FAILURE\")\\n' > " + bootstrap + "\nUSER node\n")
+        try: apply(service.review_profile(name))
+        except ValueError:
+            assert 'CHANGED_SERVICE_BOOT_FAILURE' in '\n'.join(output)
+        else: raise AssertionError('Service replacement with failed workspace bootstrap was applied')
+        assert ids() == previous_ids
+        assert host_sql('SELECT value FROM service_change_marker') == 'original'
+        (destination/'Dockerfile').write_text(valid_dockerfile)
+        # Successful replacement installs changed environment and build contents.
+        service_recipe = destination / spec['build']['context'] / spec['build']['dockerfile']
+        with service_recipe.open('a') as stream: stream.write('\nRUN printf updated > /profile-service-version\n')
+        if agent == 'codex':
+            service.run(['down',name],log)
+        apply(service.review_profile(name))
+        if agent == 'codex':
+            assert all(not sandbox.inspect(config(),resource)['State']['Running'] for resource in ids())
+            service.run(['up',name],log)
+        changed = config()
+        new_volume = profile_services.data_volume(changed,host,'data')
+        assert new_volume != old_volume and old_volume in changed['profile_service_retained_volumes']
+        assert ids()[profile_services.container(changed,host)] != previous_ids[profile_services.container(before_change,host)]
+        assert host_sql('SELECT value FROM service_change_marker') == 'original'
+        assert json.loads(inside('cat','/run/profile-services/connections.json').stdout)[host]['password'] == old_password
+        result = sandbox.run(['podman','exec',profile_services.container(changed,host),'sh','-c',
+                              'test "$PROFILE_SERVICE_VERSION" = updated && test "$(cat /profile-service-version)" = updated'],capture=True)
+        assert result.returncode == 0
+        print('PASS '+agent+': changed service environment/image, copied data, failure/cancel/cutover rollback and retry with original data/password',flush=True)
+        # Removal retires the container, not its saved data. Re-adding the same
+        # service name must allocate fresh storage, never attach the archived volume.
+        del manifest['services'][host]
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        removed_review = service.review_profile(name)
+        assert removed_review['removed_services'] == [host]
+        if agent == 'pi':
+            # Removing the last service also retires the profile gateway. A
+            # cutover failure must restore both that network and its exact hosts.
+            before_removal = ids()
+            (destination/'Dockerfile').write_text(valid_dockerfile + "\nUSER root\nRUN printf 'raise SystemExit(\"REMOVED_SERVICE_BOOT_FAILURE\")\\n' > " + bootstrap + "\nUSER node\n")
+            try: apply(service.review_profile(name))
+            except ValueError:
+                assert 'REMOVED_SERVICE_BOOT_FAILURE' in '\n'.join(output)
+            else: raise AssertionError('Failed last-service removal was applied')
+            assert ids() == before_removal
+            assert host_sql('SELECT value FROM service_change_marker') == 'original'
+            (destination/'Dockerfile').write_text(valid_dockerfile)
+            removed_review = service.review_profile(name)
+        apply(removed_review)
+        removed = config()
+        assert sandbox.inspect(removed,profile_services.container(removed,host)) is None
+        assert new_volume in removed['profile_service_retained_volumes']
+        assert sandbox.run(['podman','volume','exists',new_volume],capture=True,check=False).returncode == 0
+        assert host not in json.loads((state/'profile-services/client/connections.json').read_text()) or not profile_services.selected(removed)
+        manifest['services'][host] = spec
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        apply(service.review_profile(name))
+        assert profile_services.data_volume(config(),host,'data') not in (old_volume,new_volume)
+        assert host_sql("SELECT count(*) FROM information_schema.tables WHERE table_name='service_change_marker'") == '0'
+        print('PASS '+agent+': removal deletes service container, retains exact data volumes, and re-adding starts with separate data',flush=True)
         assert config()['profile']['digest'] == profile_runtime.applied(state)['profile_digest']
         maintenance='Maintain this profile at its approved origin; preserve user edits.'
         with (destination/'profile.md').open('a') as stream: stream.write('\n'+maintenance+'\n')
@@ -317,6 +439,22 @@ def exercise(agent, root):
         assert 'forked from '+repr(original['profile']['name']) in context
         assert maintenance in context
         print('PASS '+agent+': profile Git history/origin, uncommitted edits and original/applied/editable context survive Apply and restart',flush=True)
+        manifest['services'] = {}
+        (destination/'profile.json').write_text(json.dumps(manifest))
+        service.run(['down',name],log)
+        old_resources = profile_services.resources(config())
+        apply(service.review_profile(name))
+        assert not profile_services.selected(config())
+        assert not sandbox.inspect(config(),sandbox.names(config())[0])['State']['Running']
+        for resource in old_resources['container']:
+            assert sandbox.inspect(config(),resource) is None, resource
+        for network in old_resources['network']:
+            assert sandbox.run(['podman','network','exists',network],capture=True,check=False).returncode == 1
+        for volume in config()['profile_service_retained_volumes']:
+            assert sandbox.run(['podman','volume','exists',volume],capture=True,check=False).returncode == 0
+        service.run(['up',name],log)
+        assert inside('cat','/home/node/profile-edit-marker').stdout == 'KEEP_PRIVATE_HOME'
+        print('PASS '+agent+': remove all services while stopped, retire profile network, retain data volumes, and restart workspace',flush=True)
         print('PASS '+agent+': new host, diagnostic readiness failure, cooperative cancel, exact rollback/retry and stopped-state apply',flush=True)
     finally:
         if (state/'config.json').exists():
@@ -326,6 +464,10 @@ def exercise(agent, root):
             for kind, names in wanted.items():
                 for resource in names:
                     assert sandbox.run(['podman',kind,'exists',resource],capture=True,check=False).returncode == 1, resource
+            for command in (['ps','-aq'], ['volume','ls','-q'], ['network','ls','-q']):
+                remaining = sandbox.run(['podman',*command,'--filter',f'label={sandbox.LABEL}={name}'],capture=True)
+                assert not remaining.stdout.strip(), ('Leaked profile resources',command,remaining.stdout)
+            print('PASS '+agent+': no remaining labeled containers, volumes or networks after deletion',flush=True)
         assert (workspace/'AGENTS.md').read_text() == 'PROJECT_INSTRUCTIONS_UNCHANGED\n'
 
 

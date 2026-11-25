@@ -66,8 +66,8 @@ class ReplacementTests(unittest.TestCase):
         if running:
             self.assertFalse(any(argv[1] == 'stop' and argv[2] in (db, original[db]['Id']) for argv in calls))
 
-    def test_first_service_transition_requires_a_separate_sandbox(self):
+    def test_ordinary_rebuild_directs_service_changes_to_reviewed_apply(self):
         original={'profile':sandbox.load_profile('base')}
         updated={'profile':sandbox.load_profile('developer-postgres')}
-        with self.assertRaisesRegex(ValueError,'Create a separate sandbox'):
+        with self.assertRaisesRegex(ValueError,'Apply profile changes'):
             profile_services.validate_update(original,updated)

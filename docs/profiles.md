@@ -284,14 +284,19 @@ for environment routing and credential handling.
 Stopping and starting a sandbox keeps its profile containers, application data,
 generated passwords and SSH keys. A rebuild keeps running profile services running and leaves a stopped sandbox
 stopped when it finishes. If a rebuild fails, Factory restores the previous coding-agent container,
-Factory helper containers and settings. **Edit profile… → Review changes… → Apply profile changes** can add new services
-while keeping existing services and their data. A normal rebuild uses the saved
-service layout. Replacing or removing an existing service, or changing its
-image, build context files, environment, command, volumes, healthcheck or SSH
-settings, requires a separate sandbox and application-specific export/import.
-Factory identifies the affected service and refuses the replacement before
-stopping anything. Description and connection metadata can be updated without
-replacing the service.
+Factory helper containers and settings. **Edit profile… → Review changes… → Apply profile changes**
+can add, replace or remove services. Review lists affected services and the data
+volumes that will be kept. Factory builds images before stopping affected
+services. Replacements use copies of their declared data volumes; a failed
+preparation or startup restores the previous containers and settings.
+
+Removing a service removes its container. Its data volumes remain available for
+recovery until **Delete sandbox**. Previous volumes from replaced services are
+also kept; the job output lists their names and export commands. Data outside
+declared volumes does not survive service replacement. Factory does not perform
+application-specific data migrations, such as a database major-version upgrade.
+Description and connection metadata can be updated without replacing the service.
+A normal rebuild uses the saved applied service layout.
 
 **Create from existing…** reuses the source sandbox's settings and saved profile
 when that profile supports the selected coding agent. It creates new application

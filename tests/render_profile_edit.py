@@ -10,6 +10,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Checkbox, Input, Select
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
+from ai_sandbox_factory.chat_history_ui import DeleteSandbox
 from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, CreateFromSandbox, MoreActions, SettingsForm, copy_draft
 from test_profile_edit_ui import record, review
 from test_tui import FakeService
@@ -26,6 +27,7 @@ async def capture(output,size):
             await app.workers.wait_for_complete()
             async def shot(name):
                 await pilot.pause()
+                await pilot.wait_for_scheduled_animations()
                 check_input_layout(app.screen)
                 check_checkbox_alignment(app.screen)
                 check_dropdown_layout(app.screen)
@@ -85,6 +87,21 @@ async def capture(output,size):
                     await pilot.press('escape')
                 await app.pop_screen()
             information=record(True)
+            changed = {**review(), 'added_services':['analytics'], 'replaced_services':['database'], 'removed_services':['reporting'],
+                       'changes':['Changed: profile.json','Changed: services/database/Dockerfile','Removed: services/reporting/Dockerfile'],
+                       'retained_volumes':['pi-sandbox-factory-example-profile-data-0123456789abcdef',
+                                           'pi-sandbox-factory-example-profile-data-fedcba9876543210']}
+            await app.push_screen(ReviewProfile(record(True),changed))
+            await shot('profile-services-change-review')
+            app.screen.query_one('#profile-edit-diff').scroll_visible(top=True,animate=False)
+            await shot('profile-services-change-diff')
+            app.screen.query_one('#profile-review-apply',Button).press()
+            await shot('profile-services-change-confirm')
+            await pilot.press('escape')
+            await app.pop_screen()
+            await app.push_screen(DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=['previous-data']))
+            await shot('profile-services-retained-delete')
+            await pilot.press('escape')
             information['config']['profile']=sandbox.load_profile('developer-postgres')
             with patch('ai_sandbox_factory.profile_runtime.applied',return_value={'path':'/synthetic/applied'}), \
                     patch('ai_sandbox_factory.profile_services.status',return_value=[{'name':'database','running':True}]):
@@ -126,6 +143,10 @@ async def capture(output,size):
             chooser.query_one('#copy-keys',Checkbox).focus()
             chooser.query_one('#copy-keys',Checkbox).scroll_visible(top=True,animate=False)
             chooser.fit_dialog()
+            # This synthetic state bypasses the worker's final layout callback.
+            # Finish the focus scroll before revealing its manually inserted error.
+            await pilot.wait_for_scheduled_animations()
+            chooser.reveal_copy_feedback()
             await shot('profile-sharing-copy-error')
             chooser.query_one('#copy-error').update('Cannot copy Web Search API keys from example: fixture diagnostic.\n'+'\n'.join('Diagnostic line '+str(i) for i in range(60)))
             chooser.query_one('#copy-error').scroll_visible(top=True,animate=False)

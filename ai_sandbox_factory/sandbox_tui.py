@@ -1284,13 +1284,17 @@ class Confirm(ModalScreen[bool]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            if self.title_text:
-                yield Label(self.title_text, markup=False, classes='title')
-            yield Static(self.message, markup=False)
             if self.notes:
                 with VerticalScroll(classes='confirm-notes'):
+                    if self.title_text:
+                        yield Label(self.title_text, markup=False, classes='title')
+                    yield Static(self.message, markup=False, classes='confirm-message')
                     for note in self.notes:
                         yield Bullet(note)
+            else:
+                if self.title_text:
+                    yield Label(self.title_text, markup=False, classes='title')
+                yield Static(self.message, markup=False)
             yield from self.action_buttons()
 
     def action_buttons(self):
@@ -4465,6 +4469,7 @@ class Cockpit(App):
     Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
     Confirm.with-notes .confirm-notes { height: auto; max-height: 55vh; margin: 1 0 0 0; }
+    Confirm.with-notes .confirm-message { margin: 0 0 1 0; }
     Confirm.with-notes Button:focus, Confirm.with-notes #cancel:focus { text-style: bold; background: #d4e0e7; color: #171a1d; }
     Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus,
     .settings-review CollapsibleTitle:focus {
@@ -5692,7 +5697,8 @@ class Cockpit(App):
             self.push_screen(ContinueChat(name))
         elif action == 'delete':
             self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config),
-                                           services=list(profile_services.selected(config))),
+                                           services=list(profile_services.selected(config)),
+                                           retained_volumes=config.get('profile_service_retained_volumes', [])),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
         elif action == 'pi':
             self.launch_client(name, 'pi')

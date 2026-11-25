@@ -94,7 +94,9 @@ def recording(config, state):
             'base_recipe': 'base/Dockerfile' if agent == 'pi' else 'workspace/Dockerfile',
         }
         from . import profile_services
-        metadata['services'] = profile_services.resolved_images(config)
+        saved = state / 'config.json'
+        previous = json.loads(saved.read_text()) if saved.exists() else None
+        metadata['services'] = profile_services.resolved_images(config, previous)
         if agent != 'pi':
             metadata['workspace_recipe'] = 'workspace/Dockerfile'
         (target / 'build.json').write_text(json.dumps(metadata, indent=2) + '\n')

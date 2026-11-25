@@ -10,6 +10,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Input, Static
 from ai_sandbox_factory import profile_edit, sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile, consequences
+from ai_sandbox_factory.chat_history_ui import DeleteSandbox
 from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions, NewSandbox, copy_draft
 from test_tui import FakeService
 from tui_geometry import check_input_layout
@@ -33,6 +34,49 @@ def review(changed=True):
 
 
 class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
+    async def test_changed_and_removed_services_have_visible_review_and_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
+            for size in ((80,24),(120,40),(220,50)):
+                with self.subTest(size=size):
+                    app = Cockpit(Path(tmp), FakeService([]))
+                    async with app.run_test(size=size) as pilot:
+                        await app.workers.wait_for_complete()
+                        change = {**review(), 'replaced_services':['database'], 'removed_services':['reporting'],
+                                  'retained_volumes':['example-database-data','example-reporting-data']}
+                        screen = ReviewProfile(record(True), change)
+                        await app.push_screen(screen)
+                        await pilot.pause()
+                        text = ' '.join(str(item.render()) for item in screen.query(Static))
+                        for expected in ('Services to replace','Services to remove','database','reporting',
+                                         'Data volumes kept for recovery','example-reporting-data'):
+                            self.assertIn(expected,text)
+                        with patch.object(app,'start_settings_job') as start:
+                            await pilot.press('enter')
+                            await pilot.pause()
+                            notes = ' '.join(app.screen.notes)
+                            self.assertIn('database, reporting', notes)
+                            self.assertIn('Removed service containers are deleted',notes)
+                            self.assertIn('copies of their data volumes',notes)
+                            self.assertEqual(app.focused.id,'cancel')
+                            for button in app.screen.query(Button):
+                                self.assertEqual(button.region.height,1)
+                                self.assertTrue(app.screen.query_one('#confirm-box').content_region.contains_region(button.region))
+                            await pilot.press('escape')
+                            start.assert_not_called()
+                            self.assertIs(app.screen, screen)
+                        await pilot.press('escape')
+                        deletion = DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=['previous-data'])
+                        await app.push_screen(deletion)
+                        await pilot.pause()
+                        text = ' '.join(str(item.render()) for item in deletion.query(Static))
+                        self.assertIn('Data volumes kept from previous profile services',text)
+                        self.assertIn('permanently deleted',text)
+                        self.assertEqual(app.focused.id,'cancel')
+                        for button in deletion.query(Button):
+                            self.assertEqual(button.region.height,1)
+                            self.assertLess(button.region.bottom,size[1])
+                        await pilot.press('escape')
+
     async def test_folder_focus_blank_error_confirmation_and_cooperative_job(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
             app=Cockpit(Path(tmp),FakeService([]))
