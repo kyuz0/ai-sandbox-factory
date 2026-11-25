@@ -470,6 +470,15 @@ Screenshots and the editor log remain in the output directory. Add
 `--startup-only automatic` to test first launch without a configured model. The
 same check accepts `assisted`, `manual`, and `off`.
 
+Use `--file-references` with the same image and code-server arguments to check
+real editor selection/file context menus and `@CurrentFile` completion. The
+synthetic model verifies the exact reference marker and line range, and rejects
+file contents in the request. Sent messages must display the complete marker as
+one tag, while Copy preserves its original text. The browser checks tag editing,
+removal, keyboard Backspace/Delete, undo, clipboard copy/paste and narrow layouts. Mentioning a file
+must leave that file unchanged. The same check selects a chat answer with a mouse
+drag and verifies the browser clipboard after native-menu Copy and Ctrl+C.
+
 Repeat the browser command with `--chat-workflows` and a separate output
 directory to test steering, switching between branches in one session, and
 forking into a separate session. The check continues the original after the fork

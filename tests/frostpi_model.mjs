@@ -171,6 +171,23 @@ http.createServer((request, response) => {
         return;
       }
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (userText.startsWith('Factory file reference fixture ')) {
+      const path = 'reference docs/Quarterly Observatory Instrument Calibration Notes.tex';
+      const kind = userText.slice('Factory file reference fixture '.length).split(' ')[0];
+      const expected = 'Factory file reference fixture ' + kind + ' ref:`' + path + (kind === 'selection' ? ':2-3' : '') + '`';
+      if (!['selection', 'file', 'completion'].includes(kind) || userText !== expected || context.includes('REFERENCE_BODY_MUST_NOT_BE_SENT_624')) {
+        const reason = context.includes('REFERENCE_BODY_MUST_NOT_BE_SENT_624')
+          ? 'Referenced file body was included in the prompt'
+          : 'Unexpected file reference marker or line range for ' + kind;
+        response.writeHead(400, {'content-type':'application/json'});
+        response.end(JSON.stringify({error:{message:reason}}));
+        return;
+      }
+      const fs = await import('node:fs');
+      const receipt = '/tmp/factory-reference-receipts.json';
+      const previous = fs.existsSync(receipt) ? JSON.parse(fs.readFileSync(receipt, 'utf8')) : [];
+      fs.writeFileSync(receipt, JSON.stringify([...previous, kind]));
+      delta = { content: 'FACTORY FILE REFERENCE ' + kind + ' VERIFIED' };
     } else if (context.includes('Factory profile editing fixture')) {
       if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
         delta = {content: JSON.stringify({outcome:'allow',risk_level:'low',user_authorization:'high',rationale:'Disposable profile file-edit regression.'})};

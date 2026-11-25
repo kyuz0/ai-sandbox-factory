@@ -437,7 +437,7 @@ def interrupt_frostpi(page, frame, send, workspace, inside, output):
         frame.locator('button.session-heading .session-title').filter(has_text=re.compile(r'^New session$')).wait_for()
     send('/goal Factory parent worker goal')
     wait_for_markers(workspace, ('HOLD_PARENT.ready', 'HOLD_WORKER.ready'))
-    frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).click()
+    frame.get_by_role('button', name='Stop response', exact=True).click()
     worker = frame.get_by_role('button', name='View transcript for Birch')
     worker.get_by_text(re.compile(r'^Running')).wait_for()
     page.screenshot(path=str(output / 'frostpi-interrupted-worker-running.png'))
@@ -623,7 +623,7 @@ def stop_frostpi(page, frame, send, workspace, inside, output):
     send('Factory subagents stop-all')
     wait_for_markers(workspace, STOP_READY)
     with foreground_reader(workspace):
-        frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).click()
+        frame.get_by_role('button', name='Stop response', exact=True).click()
     frame.get_by_text('Turn stopped', exact=True).wait_for(timeout=15000)
     ids = active_pair(inside, before)
     for accept in (False, True):

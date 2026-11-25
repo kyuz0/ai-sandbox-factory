@@ -185,7 +185,7 @@ def check_chat_workflows(page, frame, composer, send, inside, output):
     page.screenshot(path=str(output / 'fork.png'))
 
     send('Factory chat steering initial')
-    frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).wait_for()
+    frame.get_by_role('button', name='Stop response', exact=True).wait_for()
     composer.fill('Factory chat steer')
     frame.get_by_role('button', name='Choose streaming delivery').click()
     frame.get_by_role('option', name=re.compile('Steer')).click()
@@ -293,7 +293,7 @@ def check_tool_images(page, frame, send, inside, output):
     assert thumbnails.count() == len(expected)
 
     frame.get_by_role('button', name='Session actions', exact=True).click()
-    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
+    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart Pi process\s*$')).click()
     frame.get_by_text('FACTORY TOOL IMAGE REACHED MODEL', exact=True).nth(1).wait_for(timeout=30000)
     for index, digest in enumerate(expected):
         thumbnail = thumbnails.nth(index)
@@ -382,7 +382,7 @@ assert.equal(new ProjectTrustStore('/home/node/.pi/agent').get('/workspace/app')
 
 def check_streaming_metrics(frame, send, output):
     metrics = frame.locator('.response-metrics')
-    active = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
+    active = frame.get_by_role('button', name='Stop response', exact=True)
     answer = frame.get_by_text(re.compile(r'^FACTORY STREAMING ANSWER\.')).first
     live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s avg')
 
@@ -656,7 +656,7 @@ def check_scheduled_tasks(page, frame, send, inside, output):
         previous = pi_processes()
         assert previous, 'The current Pi RPC process was not found'
         frame.get_by_role('button', name='Session actions').click()
-        frame.locator('.session-menu button').filter(has_text='Restart session').click(timeout=8000)
+        frame.locator('.session-menu button').filter(has_text='Restart Pi process').click(timeout=8000)
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
             current = pi_processes()
@@ -849,7 +849,7 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
           reviewed_file_access=None, provider_connection_check=None, full_width=False, profile_services_check=False,
-          profile_edit_check=False):
+          profile_edit_check=False, file_references_check=False):
     if profile_edit_check:
         profile_services_check = True
     output.mkdir(parents=True, exist_ok=True)
@@ -1188,6 +1188,20 @@ p.write_text(json.dumps(v))
                 assert not frame.get_by_text(re.compile(r'project is not trusted|Grant project trust')).count(), 'A fresh workspace was not trusted'
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if file_references_check:
+                    from frostpi_references import check as check_file_references
+                    try:
+                        check_file_references(page, frame, inside, output, cwd)
+                    except Exception:
+                        try:
+                            page.screenshot(path=str(output / 'file-references-failure.png'))
+                            (output / 'file-references-failure.txt').write_text(page.locator('body').aria_snapshot())
+                        except PlaywrightError as diagnostic_error:
+                            print('Could not capture reference failure UI: ' + str(diagnostic_error), flush=True)
+                        raise
+                    assert not errors, errors
+                    browser.close()
+                    return
                 if profile_edit_check:
                     send('Factory profile editing fixture')
                     result = frame.get_by_text('FACTORY PROFILE EDITING VERIFIED', exact=True)
@@ -1308,7 +1322,7 @@ p.write_text(json.dumps(v))
                     question.get_by_text('Answer when ready.', exact=True).wait_for()
                     continued = frame.get_by_text('FACTORY WORK CONTINUED', exact=True)
                     continued.first.wait_for()
-                    stop_turn = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
+                    stop_turn = frame.get_by_role('button', name='Stop response', exact=True)
                     assert stop_turn.is_visible()
                     assert question.get_by_text('Recommended', exact=True).is_visible()
                     question.screenshot(path=str(output / 'nonblocking-question.png'))
@@ -1324,8 +1338,8 @@ p.write_text(json.dumps(v))
                     assert question.is_visible(), 'Stopping the turn discarded the pending question'
                     request_label = question.get_attribute('aria-labelledby')
                     frame.get_by_role('button', name='Session actions', exact=True).click()
-                    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
-                    page.get_by_role('button', name='Restart session', exact=True).click()
+                    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart Pi process\s*$')).click()
+                    page.get_by_role('button', name='Restart Pi process', exact=True).click()
                     expect(question).not_to_have_attribute('aria-labelledby', request_label, timeout=15000)
                     question.get_by_role('button', name='Pear', exact=True).wait_for()
                     assert question.count() == 1
@@ -1467,6 +1481,7 @@ if __name__ == '__main__':
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--profile-services', action='store_true', help='Check profile recipes and direct SSH through the shipped FrostPi webview.')
+    scope.add_argument('--file-references', action='store_true', help='Check real editor context menus, reference chips, keyboard editing and exact Pi prompt text.')
     scope.add_argument('--profile-edit', action='store_true', help='Check actual Pi/FrostPi profile read/write tools and validation.')
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
@@ -1507,4 +1522,4 @@ if __name__ == '__main__':
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
           provider_connection_check=args.provider_connection_check, profile_services_check=args.profile_services,
-          profile_edit_check=args.profile_edit)
+          profile_edit_check=args.profile_edit, file_references_check=args.file_references)
