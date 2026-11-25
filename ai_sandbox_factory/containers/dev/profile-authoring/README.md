@@ -104,6 +104,9 @@ ssh -F /run/profile-services/config database.profile.internal
 ssh -F /run/profile-services/config reporting.profile.internal
 ```
 
+The supplied SSH config already enables batch mode and pins each host's key.
+Use it without identity or host-key overrides; no manual fingerprint setup is needed.
+
 Each hostname is `<service-key>.profile.internal`; the short service key also
 resolves on the private network. The same hosts are reachable directly on their application ports, for example
 `database.profile.internal:5432`. Service names are stable; use them instead of

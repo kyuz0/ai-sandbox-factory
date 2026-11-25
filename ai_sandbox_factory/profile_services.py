@@ -450,6 +450,8 @@ def guidance(config):
     for name, spec in selected(config).items():
         lines.append(f'- {name}: {spec["description"]}. SSH: ssh -F {CLIENT}/config {hostname(name)} '
                      f'(user {spec["ssh"]["user"]}, port {spec["ssh"]["port"]}).')
+    lines.append('The supplied SSH config already enables batch mode and pins each service’s host key. '
+                 'Use it without identity or host-key overrides. If SSH fails, report its actual error instead of disabling host-key checks.')
     from . import primary_workspace
     from .sandbox_options import options
     current = options(config.get('options'))

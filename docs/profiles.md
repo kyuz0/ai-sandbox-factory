@@ -200,6 +200,9 @@ The coding-agent container has administrative SSH access to the actual database 
 ssh -F /run/profile-services/config database.profile.internal
 ```
 
+Factory supplies the identity, batch mode and trusted host key in this config.
+No extra SSH options or manual fingerprint setup are needed.
+
 Pi uses its existing `bash_escalate` tool for this direct connection when the
 inner sandbox is enabled. The configured approval mode still applies. With
 approvals off, use a sandbox terminal or enable approvals. Codex, Claude Code,

@@ -79,6 +79,15 @@ class ProfileServicesTests(unittest.TestCase):
             for value in ('BatchMode yes', 'StrictHostKeyChecking yes', 'IdentityAgent none', 'ProxyCommand none'):
                 self.assertIn(value, config)
             self.assertNotIn('ProxyJump', config)
+            host_key=(directory/'servers/database/host-key.pub').read_text().strip()
+            self.assertIn(services.hostname('database')+' '+host_key,
+                          (directory/'client/known_hosts').read_text().splitlines())
+            effective=subprocess.run(['ssh','-G','-F',str(directory/'client/config'),services.hostname('database')],
+                                     capture_output=True,text=True,check=True)
+            settings=dict(line.split(' ',1) for line in effective.stdout.splitlines())
+            self.assertIn(settings['batchmode'],('yes','true'))
+            self.assertIn(settings['stricthostkeychecking'],('yes','true'))
+            self.assertEqual(settings['userknownhostsfile'],services.CLIENT+'/known_hosts')
             connection = json.loads((directory / 'client/connections.json').read_text())['database']
             self.assertEqual(connection['password'], json.loads((directory / 'values.json').read_text())['database:database-password'])
             self.assertIn('AuthorizedKeysFile /etc/profile-service-authorized-keys',
@@ -141,6 +150,16 @@ class ProfileServicesTests(unittest.TestCase):
             self.assertIn('Connect directly to the profile host', text)
             self.assertIn('Follow any shell approval request', text)
             self.assertNotIn('bash_escalate', text)
+
+    def test_ssh_guidance_explains_preconfigured_authentication_for_every_agent(self):
+        for agent in ('pi','codex','claude','agy'):
+            with self.subTest(agent=agent):
+                text=services.guidance(dict(self.config,primary_agent=agent))
+                self.assertIn('ssh -F /run/profile-services/config database.profile.internal',text)
+                self.assertIn('already enables batch mode and pins each service’s host key',text)
+                self.assertIn('without identity or host-key overrides',text)
+                self.assertIn('report its actual error',text)
+                self.assertNotIn('StrictHostKeyChecking=no',text)
 
     def test_service_health_waits_for_initialization(self):
         info = {'State': {'Running': True}}
