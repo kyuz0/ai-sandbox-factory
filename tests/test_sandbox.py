@@ -563,7 +563,7 @@ with operation_locks.sandbox(state.name, 'create'):
                 sandbox.list_sandboxes(root, structured=True)
             demo, empty, offline = json.loads(output.getvalue())
             self.assertEqual([row['role'] for row in demo['containers']],
-                             ['Development', 'Network gateway', 'Model connections',
+                         ['Main agent sandbox', 'Network gateway', 'Model connections',
                               'Advisors', 'Advisor network gateway', 'Additional container'])
             self.assertEqual(demo['containers'][3]['status'], 'exited')
             self.assertTrue(all(row['purpose'] for row in demo['containers']))
