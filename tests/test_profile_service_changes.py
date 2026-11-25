@@ -35,7 +35,7 @@ class ServiceChanges(unittest.TestCase):
                              {'database':'new-image','reporting':'previous-image'})
 
     def exercise(self, *, remove=False, fail=False, copy_failure=False, copy_cancel=False, stopped=False,
-                 previously_replaced=False, missing_volume=False):
+                 previously_replaced=False, missing_volume=False, commit_failure=False):
         original = {'name': 'fixture', 'engine': 'podman', 'primary_agent': 'pi',
                     'profile': sandbox.load_profile('developer-postgres')}
         if previously_replaced:
@@ -103,8 +103,14 @@ class ServiceChanges(unittest.TestCase):
             directory = state / 'profile-services'
             directory.mkdir()
             (directory / 'values.json').write_text('{"database:password":"synthetic-value"}')
+            write_json = sandbox.write_json
+            def publish(path, value):
+                if commit_failure and Path(path).name == 'record.json' and value.get('committed'):
+                    raise OSError('No space left while committing profile settings')
+                return write_json(path, value)
             with patch.object(sandbox, 'inspect', side_effect=inspect), patch.object(sandbox, 'run', side_effect=run), \
-                    patch.object(sandbox, 'image_names', return_value=('workspace-image', 'copy-image')):
+                    patch.object(sandbox, 'image_names', return_value=('workspace-image', 'copy-image')), \
+                    patch.object(sandbox, 'write_json', side_effect=publish):
                 def transaction():
                     with profile_replacement.prepared_services(original, updated, state):
                         self.assertFalse(inspect(original, 'previous-database')['State']['Running'])
@@ -121,8 +127,8 @@ class ServiceChanges(unittest.TestCase):
                         (directory / 'values.json').write_text('{"wrong":"candidate"}')
                         if fail:
                             raise ValueError('candidate failed after changing its data')
-                if fail or copy_failure or copy_cancel or missing_volume:
-                    with self.assertRaises((ValueError, subprocess.CalledProcessError, updating.UpdateCancelled)) as failure:
+                if fail or copy_failure or copy_cancel or missing_volume or commit_failure:
+                    with self.assertRaises((OSError, ValueError, subprocess.CalledProcessError, updating.UpdateCancelled)) as failure:
                         transaction()
                     if copy_failure:
                         self.assertIn(old_volume, str(failure.exception))
@@ -168,6 +174,9 @@ class ServiceChanges(unittest.TestCase):
 
     def test_missing_previous_data_is_reported_instead_of_silently_starting_empty(self):
         self.exercise(missing_volume=True)
+
+    def test_failed_commit_restores_previous_runtime_immediately(self):
+        self.exercise(commit_failure=True)
 
     def test_removal_keeps_data_even_without_remaining_services(self):
         self.exercise(remove=True)

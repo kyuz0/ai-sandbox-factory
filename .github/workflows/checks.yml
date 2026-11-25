@@ -109,6 +109,9 @@ jobs:
       - name: Require profile service replacement, removal and recovery
         shell: bash
         run: python tests/profile_edit_integration.py --agent pi 2>&1 | tee /tmp/factory-fresh-sandbox/profile-edit.log
+      - name: Require immediate recovery from a failed profile commit
+        shell: bash
+        run: python tests/profile_commit_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/profile-commit.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

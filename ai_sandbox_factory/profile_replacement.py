@@ -275,9 +275,18 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
             raise ValueError(f'Profile change failed: {error}. {recovery}') from error
         raise
     else:
-        # From this point recovery keeps the new runtime and only retires backups.
+        # Publish the decision before retiring any previous containers.
         saved['committed']=True
-        sandbox.write_json(journal/'record.json',saved)
+        try:
+            sandbox.write_json(journal/'record.json',saved)
+        except BaseException as error:
+            # Until the commit marker is published, the saved journal still
+            # owns rollback. Do not leave a failed Apply running its candidate.
+            try:
+                recover_preparation(original,state)
+            except Exception as recovery:
+                raise ValueError(f'Could not commit profile changes: {error}. {recovery}') from error
+            raise
         recover_preparation(updated,state)
 
 
