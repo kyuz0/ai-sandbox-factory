@@ -1681,3 +1681,58 @@ isolated data/passwords, and verifies persistent data across Stop/Start. It read
 the authoring guide through the applied read-only mount and copies the bundled
 example back to a host folder using the documented command. It leaves project
 instructions unchanged and removes its disposable containers, volumes and network.
+
+## Editable profiles
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_updating
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_edit.py /tmp/factory-profile-edit-ui
+```
+
+The real fixture creates disposable Pi, Codex, Claude Code and Antigravity
+sandboxes. Pi uses the real creation worker with a provider selected. It checks
+the editable mount and managed instructions, invalid JSON, static validation,
+changes made after review, real build failure, package application, new hosts,
+readiness failure, build/readiness cancellation, interrupted-worker recovery,
+and a bootstrap failure after cutover. Existing runtime IDs and service data
+are preserved on failure; same-name retry and stopped-state application are exercised. It uses synthetic credentials and removes its private resources.
+The standalone validator runs without installing Factory inside the sandbox.
+
+Render the editing folder, empty/error and attached states, the full change
+review and its diff, replacement confirmation and no-change review at all three
+terminal sizes. Verify Enter, Escape, visible one-row actions and late review
+completion after leaving Job details. Inspect the actual screenshots before
+committing UI changes.
+
+Run the actual Pi RPC and shipped FrostPi webview profile tools with the fixture's
+cached Pi image and a matching code-server binary:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/frostpi_editor.py --image "$PI_IMAGE" --code-server "$CODE_SERVER" --output /tmp/factory-profile-client-check --profile-edit
+```
+
+The synthetic model drives real read, write and Bash tools to change a package
+and add a service. Both clients run the documented validator and attempt a write
+to the read-only applied record, which must remain unchanged.
+
+For an explicitly authorized live authoring check with the host's Claude sign-in:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_opus.py --live --output /tmp/factory-profile-live-check
+```
+
+The live agent reads the bundled guide, repairs invalid JSON, edits package and
+service recipes, validates, and explains the user's review/apply steps. The fixture
+applies those edits and checks the package and SQL service. Keep its model output
+outside the checkout. This opt-in check uses the account's model quota.
+
+Check an editable folder on a Windows-backed WSL2 filesystem with cached images:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_mounts.py --image "$PI_IMAGE" --proxy-image "$PROXY_IMAGE" --profile-root /mnt/c/Users/Public
+```
+
+This checks host/agent writes, standalone validation, managed instructions,
+read-only applied files and retained profile files after sandbox deletion. It
+uses cached images and does not establish an image-build result.

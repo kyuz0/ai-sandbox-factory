@@ -56,7 +56,8 @@ class ProfileAuthoringTests(unittest.TestCase):
                     self.assertEqual(set(copied['services']), {'database', 'reporting'})
                     self.assertIn(profile_runtime.AUTHORING, profile_runtime.guidance(state))
                     self.assertIn(profile_runtime.AUTHORING, primary_agents.guidance(config, state))
-                    self.assertIn('separate writable profile copy', profile_runtime.guidance(state))
+                    self.assertIn('Actions… → Edit profile…', profile_runtime.guidance(state, config))
+                    self.assertEqual((applied / 'authoring/validate.py').read_bytes(), Path(profile_spec.__file__).read_bytes())
                     self.assertNotIn('Author a profile with multiple hosts', primary_agents.guidance(config, state))
 
     def test_old_record_does_not_advertise_a_guide_it_does_not_mount(self):

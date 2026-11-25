@@ -107,18 +107,31 @@ def resolved_images(config):
     return result
 
 
-def validate_update(original, updated):
+def validate_update(original, updated, *, allow_additions=False):
     """Profile editing/data migrations are separate from workspace rebuilding."""
     def contract(config):
         from . import sandbox
         result = {}
         for name, spec in selected(config).items():
-            result[name] = dict(spec)
+            result[name] = {key: value for key, value in spec.items() if key not in ('description', 'connections')}
             if 'build' in spec:
                 result[name]['source_digest'] = sandbox.tree_digest(
                     Path(config['profile']['path']) / spec['build']['context'])
         return result
-    if contract(original) != contract(updated):
+    before, after = contract(original), contract(updated)
+    if allow_additions:
+        for name, previous in before.items():
+            if name not in after:
+                raise ValueError(f'Cannot remove existing profile service {name!r} from this sandbox: its container and data must be preserved. '
+                                 'Create a separate sandbox with the edited profile and export/import application data if needed.')
+            fields = sorted(key for key in previous.keys() | after[name].keys() if previous.get(key) != after[name].get(key))
+            if fields:
+                detail = ', '.join('build context files' if field == 'source_digest' else field for field in fields)
+                raise ValueError(f'Cannot replace existing profile service {name!r}: changed {detail}. '
+                                 'Its running container and saved application data are unchanged. '
+                                 'Revert those service changes, or create a separate sandbox with the edited profile and export/import its data.')
+        return
+    if before != after:
         raise ValueError('This profile changes the sandbox’s profile services. '
                          'Nothing was stopped; the existing services and their data are unchanged. '
                          'Create a separate sandbox with the new profile; export/import application data if needed. '
@@ -325,8 +338,8 @@ def update_policy(config, state, text, groups):
         sandbox.restart_existing(config, gateway)
 
 
-def ready(config, state):
-    """Wait for initialization while the service runs; cancellation kills this job."""
+def ready(config, state, *, check_ssh=True, cancelled=None):
+    """Wait for initialization, allowing profile preparation to cancel and clean up."""
     if not selected(config):
         return
     from . import sandbox
@@ -341,6 +354,9 @@ def ready(config, state):
         command = spec.get('healthcheck', ['true'])
         announced = False
         while True:
+            if cancelled and cancelled():
+                from .updating import UpdateCancelled
+                raise UpdateCancelled()
             info = sandbox.inspect(config, container(config, name))
             if not info or not info.get('State', {}).get('Running'):
                 logs = _run(config, 'logs', container(config, name), capture=True,
@@ -359,6 +375,8 @@ def ready(config, state):
                 print(f'Waiting for profile service {name}: {diagnostic((result.stderr or result.stdout).strip())}', flush=True)
                 announced = True
             time.sleep(0.5)
+        if not check_ssh:
+            continue
         check = _run(config, 'exec', dev, 'ssh', '-F', CLIENT + '/config', '-T', hostname(name), 'true',
                      capture=True, check=False, stderr=subprocess.PIPE)
         if check.returncode:

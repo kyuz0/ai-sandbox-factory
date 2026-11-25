@@ -13,7 +13,11 @@ AUTHORING = PATH + '/authoring/README.md'
 
 def identity(config, image_id):
     return hashlib.sha256(json.dumps([image_id, config['profile']['digest'],
-        config['common']['digest'], config.get('primary_agent', 'pi')]).encode()).hexdigest()
+        config['common']['digest'], config.get('primary_agent', 'pi'), validator_digest()]).encode()).hexdigest()
+
+
+def validator_digest():
+    return hashlib.sha256(Path(__file__).with_name('profile_spec.py').read_bytes()).hexdigest()
 
 
 @contextmanager
@@ -34,8 +38,11 @@ def recording(config, state):
         target.mkdir()
         shutil.copytree(config['profile']['path'], target / 'profile')
         common = Path(config['common']['path'])
+        validation_source = Path(__file__).with_name('profile_spec.py').read_bytes()
         if (common / 'profile-authoring').is_dir():
             shutil.copytree(common / 'profile-authoring', target / 'authoring')
+            (target / 'authoring/validate.py').write_bytes(validation_source)
+        validation_revision = hashlib.sha256(validation_source).hexdigest()
         agent = primary_workspace.agent(config)
         if agent == 'pi':
             shutil.copytree(common, target / 'base')
@@ -61,6 +68,8 @@ def recording(config, state):
         for part in ('profile', 'common'):
             if sandbox.tree_digest(Path(config[part]['path'])) != config[part]['digest']:
                 raise ValueError(f'The {part} sources changed while building. Retry the build with unchanged sources.')
+        if validator_digest() != validation_revision:
+            raise ValueError('The profile validator changed while building. Retry with unchanged Factory sources.')
         if agent != 'pi':
             if (sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker') != native_recipe_digest
                     or any(file.read_bytes() != (sandbox.ROOT / 'containers/primary' / file.name).read_bytes()
@@ -81,6 +90,7 @@ def recording(config, state):
                                    else native_recipe_digest),
             'agent': agent, 'image': image, 'image_id': image_id,
             'profile_layer_applied': True,
+            'profile_validator_digest': validation_revision,
             'base_recipe': 'base/Dockerfile' if agent == 'pi' else 'workspace/Dockerfile',
         }
         from . import profile_services
@@ -150,14 +160,14 @@ def mounts(state):
     return ['-v', f'{value["path"]}:{PATH}:{host_platform.bind_mode()}']
 
 
-def guidance(state):
+def guidance(state, config=None):
+    from . import profile_edit
     value = applied(state)
     if not value:
         return ''
     extra = ('workspace/ contains the coding-agent container recipe; it is unrelated to /workspace. '
              if value.get('agent', 'pi') != 'pi' else '')
     authoring = (f' For profile format, additional hosts and versioning, read {AUTHORING}. '
-                 'The applied profile remains read-only; use a separate writable profile copy for edits.'
                  if value.get('path') and (Path(value['path']) / 'authoring/README.md').is_file() else '')
     return (f'\n## Applied profile\n\nYour coding-agent container was built from profile {value["name"]!r}, '
             f'revision {value["profile_digest"]}. Its read-only build recipes are at {PATH}. '
@@ -165,4 +175,5 @@ def guidance(state):
             'profile/ contains the profile files and base/ contains Factory base-image inputs. '
             + extra + 'build.json identifies the image and recipes actually used. '
             'These files describe the image build; packages installed later and current Factory settings may differ. '
-            'They are separate from the project folder and its instructions at /workspace.' + authoring + '\n')
+            'They are separate from the project folder and its instructions at /workspace.' + authoring + '\n'
+            + (profile_edit.guidance(config) if config is not None else ''))

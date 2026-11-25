@@ -67,6 +67,8 @@ def comparison_path(path):
 def needs_mount_check(config):
     paths = [config['workspace'], config.get('pi_config'),
              *(row['source'] for row in config.get('extra_folders', []))]
+    if config.get('editable_profile'):
+        paths.append(config['editable_profile']['path'])
     return is_mac() or (is_wsl() and any(windows_drive(p) for p in paths if p))
 
 
@@ -268,6 +270,8 @@ def check_mounts(config, state, image):
     paths = [(Path(config['workspace']), False),
              *[(Path(row['source']), row['read_only']) for row in config.get('extra_folders', [])],
              (Path(state) / 'runtime-config', True)]
+    if config.get('editable_profile'):
+        paths.append((Path(config['editable_profile']['path']), False))
     if config.get('pi_config'):
         paths.append((Path(config['pi_config']), True))
     command = ['podman', 'run', '--rm', '--network=none', '--cap-drop=ALL',

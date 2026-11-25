@@ -9,7 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services
+from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextvars import ContextVar
 import time
 from urllib.parse import urlsplit
 from types import SimpleNamespace
@@ -78,8 +79,11 @@ def load_profile(value):
                 or source.startswith('-') or any(c.isspace() for c in source)):
             raise ValueError('git_source must be a Git repository URL without whitespace')
         if (path / 'source').exists():
-            raise ValueError('git_source profiles must reserve source/ for fetched files')
-        profile['git_source'] = source
+            if not registry.bundled_source(path):
+                raise ValueError('This profile declares git_source but source/ has no saved source-revisions.json. '
+                                 'Remove git_source and git_ref to use these bundled files, or remove source/ to fetch the repository.')
+        else:
+            profile['git_source'] = source
     return profile
 
 
@@ -141,7 +145,43 @@ def common_profile():
                 **json.loads((path / 'package-source.json').read_text()))
 
 
+_build_cancelled = ContextVar('profile_build_cancelled', default=None)
+
+
+@contextmanager
+def cancellable_build(cancelled):
+    token = _build_cancelled.set(cancelled)
+    try:
+        yield
+    finally:
+        _build_cancelled.reset(token)
+
+
 def run(argv, capture=False, check=True, **kwargs):
+    cancelled = _build_cancelled.get()
+    if cancelled is not None:
+        if cancelled():
+            raise updating.UpdateCancelled()
+        command = [str(x) for x in argv]
+        process = subprocess.Popen(command, text=True, start_new_session=True,
+                                   stdout=subprocess.PIPE if capture else None, **kwargs)
+        try:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancelled():
+                        raise updating.UpdateCancelled()
+        except BaseException as error:
+            if process.poll() is None:
+                if not host_platform.stop_process_group(process):
+                    raise updating.StopFailed(f'Cannot stop profile build process {process.pid}. Its sandbox has not been replaced; inspect the process before retrying.') from error
+                process.communicate()
+            raise
+        if check and process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     return subprocess.run([str(x) for x in argv], check=check, text=True,
                           stdout=subprocess.PIPE if capture else None, **kwargs)
 
@@ -685,6 +725,8 @@ def _up(config, state, *, prepare_sign_in=True):
     from . import primary_agents
 
     folders.validate_config(config, state.parent, saved=True)
+    if config.get(profile_edit.EDIT):
+        profile_edit._folder(config[profile_edit.EDIT]['path'], config, state)
     engine = config['engine']
     dev, proxy, socket_volume, home_volume = names(config)
     restricted = network_mode(config) == 'allowlist'
@@ -782,6 +824,7 @@ def _up(config, state, *, prepare_sign_in=True):
                     '-v', f'{home_volume}:/home/node']
             args += folders.mounts(config)
             args += profile_runtime.mounts(state)
+            args += profile_edit.mounts(config)
             args += profile_services.mounts(config, state)
             args += sandbox_ssh.mounts(config, state)
             if native:
@@ -1193,7 +1236,7 @@ def prepare_options(config, state):
     target = state / 'runtime-config'
     target.mkdir(exist_ok=True, mode=0o700)
     profile = selected_profile(config)
-    write_json(target / 'profile-context.json', {'text': profile_runtime.guidance(state) + profile_services.guidance(config)})
+    write_json(target / 'profile-context.json', {'text': profile_runtime.guidance(state, config) + profile_services.guidance(config)})
     write_json(target / 'profile-system-prompt.json', {
         'text': registry.profile_system_prompt(profile['path'], profile['name']),
     })
@@ -1652,7 +1695,10 @@ def package_command(args):
             print(f'{name}: {description}')
         return
     name = args.package_name
-    if action == 'show':
+    if action == 'validate':
+        profile_spec.validate(registry.resolve('profile', name), args.agent)
+        print('Static checks passed: profile.json, required files, paths, agents and services. Dockerfiles and service startup are checked when you apply.')
+    elif action == 'show':
         path = registry.resolve(kind, name)
         print(json.dumps(registry.installed(kind).get(name) or registry.manifest(kind, path), indent=2))
     elif action == 'add':
@@ -1686,6 +1732,10 @@ def main(*, startup_notice=''):
         add.add_argument('--subdir', default='.', help='Plugin folder inside the source repository')
         for operation in ('update','remove','show'):
             item=operations.add_parser(operation);item.add_argument('package_name')
+        if kind == 'profile':
+            item = operations.add_parser('validate', help='Check a profile folder or installed profile without building')
+            item.add_argument('package_name')
+            item.add_argument('--agent', choices=profile_spec.AGENTS)
     listing = sub.add_parser('list', help='List saved sandboxes, container states, and workspace paths')
     listing.add_argument('--json', action='store_true', help='Structured saved inventory')
     new = sub.add_parser('create', help='Validate and save a new sandbox configuration')
@@ -1751,11 +1801,17 @@ def main(*, startup_notice=''):
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
-        if command in ('update', 'recreate', 'install-system-packages'):
+        if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
+        if command == 'profile-fork':
+            cmd.add_argument('--directory', required=True, help='New or empty host folder outside the project')
+        if command == 'profile-review':
+            cmd.add_argument('--output', type=Path, help='Write the structured review to this JSON file')
+        if command == 'profile-apply':
+            cmd.add_argument('--revision', required=True, help='Frozen revision returned by profile-review')
         if command == 'install-system-packages':
             cmd.add_argument('packages', nargs='+', help='Debian package names')
         if command == 'browser-editor':
@@ -1835,10 +1891,15 @@ def main(*, startup_notice=''):
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
-    if args.command in ('create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
+    if args.command in ('profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                         'configure', 'primary-login', 'primary-import'):
-        with operation_locks.sandbox(args.name, args.command):
-            sandbox_command(args, state, parser)
+        try:
+            with operation_locks.sandbox(args.name, args.command):
+                sandbox_command(args, state, parser)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            if not args.command.startswith('profile-'):
+                raise
+            parser.exit(1, f'Error: {error}\n')
         if args.command == 'create' and args.open:
             open_selected(json.loads((state / 'config.json').read_text()), state)
         return
@@ -1870,6 +1931,25 @@ def sandbox_command(args, state, parser):
             delete_incomplete(state)
             return
     config = json.loads((state / 'config.json').read_text())
+    if args.command in ('profile-fork', 'profile-review', 'profile-apply'):
+        from . import profile_replacement
+        profile_replacement.recover_preparation(config, state)
+        config = json.loads((state / 'config.json').read_text())
+    if args.command == 'profile-fork':
+        return profile_edit.fork(config, state, args.directory, args.apply_gate)
+    if args.command == 'profile-review':
+        reviewed = profile_edit.review(config, state)
+        if args.output:
+            write_json(args.output, reviewed)
+        else:
+            print(json.dumps(reviewed, indent=2))
+        return
+    if args.command == 'profile-apply':
+        try:
+            return profile_edit.apply(config, state, args.revision, args.apply_gate)
+        except updating.UpdateCancelled:
+            print('Profile preparation cancelled. The previous sandbox is unchanged.', flush=True)
+            return
     native = primary_workspace.agent(config) != 'pi'
     if native and args.command in ('configure', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
         raise ValueError('This command applies to Pi sandboxes. Use open to launch the selected coding agent.')
@@ -1928,7 +2008,7 @@ def sandbox_command(args, state, parser):
         original = json.loads(json.dumps(config))
         if native and args.subagents is not None:
             raise ValueError('Pi subagent settings apply to Pi sandboxes.')
-        building = native or args.profile or args.subagents is not None or args.browser is not None
+        building = native or bool(config.get(profile_edit.EDIT)) or args.profile or args.subagents is not None or args.browser is not None
         replacing_profile_workspace = bool(profile_services.selected(config))
         labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + (
             ['Replace coding-agent container'] if replacing_profile_workspace else

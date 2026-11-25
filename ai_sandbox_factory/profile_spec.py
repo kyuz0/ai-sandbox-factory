@@ -1,5 +1,6 @@
 """Optional profile application services; older profile layouts stay unchanged."""
 from pathlib import Path
+import json
 import re
 
 AGENTS = ('pi', 'codex', 'claude', 'agy')
@@ -110,7 +111,7 @@ def services(metadata, root):
         value['connections'] = {}
         for key, content in connections.items():
             if isinstance(content, dict) and set(content) == {'environment'}:
-                if content['environment'] not in environment:
+                if not isinstance(content['environment'], str) or content['environment'] not in environment:
                     raise ValueError(f'{prefix} connection {key}: environment variable {content["environment"]!r} is not declared.')
             elif not isinstance(content, (str, int)) or isinstance(content, bool):
                 raise ValueError(f'{prefix} connection {key}: use text, a number or an environment reference.')
@@ -124,3 +125,79 @@ def compatible(metadata, agent):
     if not isinstance(declared, list) or not declared or any(a not in AGENTS for a in declared):
         raise ValueError('Profile agents must be a nonempty list of pi, codex, claude or agy.')
     return agent in declared
+
+
+def validate(root, agent=None):
+    """Static profile checks shared by Factory and the in-sandbox authoring tool."""
+    root = Path(root)
+    # Build snapshots use regular files; never follow a link to copy host files.
+    for path in root.rglob('*'):
+        if any(part in ('.git', '__pycache__') for part in path.relative_to(root).parts):
+            continue
+        if path.is_symlink() or not (path.is_dir() or path.is_file()):
+            raise ValueError(f'Profile build snapshots require regular files: {path}. Copy the required file into the profile instead of linking it.')
+    file = root / 'profile.json'
+    try:
+        metadata = json.loads(file.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as error:
+        raise ValueError(f'{file}: line {error.lineno}, column {error.colno}: {error.msg}. Fix the JSON and validate again.') from error
+    except (OSError, UnicodeError) as error:
+        raise ValueError(f'Cannot read {file}: {error}. Restore this profile file and validate again.') from error
+    if not isinstance(metadata, dict):
+        raise ValueError(f'{file}: the profile must be a JSON object, not {type(metadata).__name__}.')
+    name = metadata.get('name')
+    if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,254}', name):
+        raise ValueError(f'{file}: name {name!r} must start with a lowercase letter and contain up to 255 lowercase letters, digits or hyphens.')
+    if type(metadata.get('version', 1)) is not int or metadata.get('version', 1) != 1:
+        raise ValueError(f'{file}: version {metadata.get("version")!r} must be the supported manifest format 1. Use Git revisions to version a profile.')
+    if not isinstance(metadata.get('description', ''), str):
+        raise ValueError(f'{file}: description must be text, not {type(metadata["description"]).__name__}.')
+    for name in ('Dockerfile', 'profile.md'):
+        path = root / name
+        try:
+            path.read_text(encoding='utf-8')
+        except UnicodeError as error:
+            raise ValueError(f'{path} must be valid UTF-8 text: {error}. Fix the file and validate again.') from error
+        except OSError as error:
+            raise ValueError(f'Cannot read required profile file {path}: {error}. Restore it and validate again.') from error
+    for name in ('system-prompt.md', 'start-here.md'):
+        path = root / name
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding='utf-8')
+        except UnicodeError as error:
+            raise ValueError(f'{path} must be valid UTF-8 text: {error}. Fix the file and validate again.') from error
+        except OSError as error:
+            raise ValueError(f'Cannot read profile guide {path}: {error}. Fix the file and validate again.') from error
+        if name == 'system-prompt.md' and any(marker in text for marker in ('<!-- sandbox-profile -->', '<!-- /sandbox-profile -->')):
+            raise ValueError(f'{path} uses a reserved Factory marker. Remove the marker; Factory supplies it when installing the instructions.')
+    compatible(metadata, agent or 'pi')
+    if agent and not compatible(metadata, agent):
+        raise ValueError(f'{file}: agents {metadata.get("agents", ["pi"])!r} do not include this sandbox’s coding agent {agent!r}. Keep that agent enabled or create a separate sandbox with another agent.')
+    services(metadata, root)
+    defaults = metadata.get('defaults', {})
+    if (not isinstance(defaults, dict) or defaults.keys() - {'web_search', 'subagents'}
+            or any(type(value) is not bool for value in defaults.values())):
+        raise ValueError(f'{file}: defaults accept only boolean web_search and subagents settings.')
+    summary = metadata.get('summary', '')
+    if not isinstance(summary, str) or '\n' in summary or '\r' in summary:
+        raise ValueError(f'{file}: summary must be single-line text.')
+    return metadata
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='Check profile files without building or changing the sandbox.')
+    parser.add_argument('path', type=Path)
+    parser.add_argument('--agent', choices=AGENTS)
+    args = parser.parse_args()
+    try:
+        validate(args.path, args.agent)
+    except (ValueError, OSError) as error:
+        parser.exit(1, f'Error: {error}\n')
+    print('Static checks passed: profile.json, required files, paths, agents and services. Dockerfiles and service startup are checked when you apply.')
+
+
+if __name__ == '__main__':
+    main()

@@ -211,81 +211,128 @@ Run the SSH and direct TCP SQL checks in `start-here.md`, then verify:
 Use a disposable sandbox for these checks. **Delete sandbox** deletes its profile
 service data as well as its other private data; it keeps host project files.
 
-## Edit and version a profile
+## Edit the profile of an existing sandbox
 
-The applied files at `/opt/sandbox/base-profile` are read-only. They describe the
-running image; editing an installed Library package does not change an existing
-sandbox. Edit a separate writable copy. If you are an agent
-working inside a sandbox, read this guide, propose the required profile changes,
-and ask the user for a separate writable profile folder. The user can share it
-through **Settings → Folders** as a writable additional folder, for example
-`/mnt/profile`. Applying a new folder mount recreates the coding-agent container
-and interrupts its running processes; Factory asks for confirmation first.
-Edit that copy, not the project's `/workspace` or Factory's
-read-only build records. Host installation
-and application of that profile remain actions for the user or Factory.
+Choose **Actions… → Edit profile…**. Select a new or empty host folder outside
+the project and choose **Create editable copy…**. Review the replacement notice
+and confirm. Factory copies the sandbox's saved profile, including its saved
+source files; it does not fetch a newer upstream revision or modify the Library.
+A profile originally installed from a repository subfolder becomes a standalone
+folder. The host folder is yours to keep and version, independently of the project.
 
-To start from the current profile, copy only
-`/opt/sandbox/base-profile/profile/` to the writable profile folder. Do not use
-`base/`, `workspace/` or `build.json` as the editable profile: those describe
-Factory's own build inputs. The authoring example is another complete starting
-point. The writable copy may be its own Git repository even if its original
-profile came from a subfolder of a larger repository. For an existing writable
-`/mnt/profile` folder, copy its contents without nesting another directory:
+Attaching this folder replaces the coding-agent container so it can acquire the
+new mount. Running agent work and terminals stop. Project files, private home,
+chats, sign-ins, existing services and their data are kept. A stopped sandbox
+stays stopped. If attachment fails, Factory restores the previous runtime and
+keeps the editable copy so the same action can be retried.
+
+Inside the sandbox:
+
+- `/opt/sandbox/profile` is the editable source folder.
+- `/opt/sandbox/base-profile` remains the read-only record of the applied build.
+- `/workspace` remains the user's project; the profile is not added to it.
+
+Open the coding agent again after attachment. Factory's managed instructions tell
+it where to edit, where to read this guide, how to validate and what the user must
+choose to apply the changes. Editing a file does not change the running image.
+The agent should agree permanent changes with the user and explain the proposed
+replacement before asking the user to apply them.
+
+To add packages, edit the top-level Dockerfile. To add another host:
+
+1. Add its Dockerfile and build files, or reuse a service build context.
+2. Add a new entry in `profile.json` under `services`, including its application
+   settings, persistent paths, readiness check and connection details.
+3. Explain the host's role and commands in `profile.md` and `start-here.md`.
+4. Validate, then ask the user to review and apply the changes.
+
+Keep service build contexts separate from the top-level profile files, as in the
+example. Changing a file inside an existing service's build context counts as a
+change to that service's image, even if its Dockerfile did not change.
+
+### Validate and apply
+
+The agent can run the shared static validator inside the sandbox. Substitute its
+coding agent for `pi` (`codex`, `claude` or `agy`):
 
 ```sh
-cp -R /opt/sandbox/base-profile/profile/. /mnt/profile/
+python3 -I - /opt/sandbox/profile --agent pi < /opt/sandbox/base-profile/authoring/validate.py
 ```
 
-Set a new manifest `name` and an explicit `agents` list in the copy, including
-when starting from Factory's `base` profile. The host folder mounted at
-`/mnt/profile` is the folder to commit and register with `profile add`. The full
-authoring example is also available at
-`/opt/sandbox/base-profile/authoring/example/`.
-
-When adding a host:
-
-1. Add a Dockerfile and its build files, or reuse an existing build context.
-2. Add the host under a new `services` key, with its application settings,
-   persistent paths, readiness check and agent-readable connection details.
-3. Update `profile.md`, `start-here.md` and the profile's `description`
-   so they describe the new host and its purpose.
-4. Commit and install the revised profile, create a disposable sandbox and run
-   the checks above before using it for project data.
-
-The separate profile repository starts without the original repository's remote.
-Add your own Git remote if you want to share it; this does not change the
-repository the original profile came from.
-
-After editing, commit the new files. A new Git tag and registration can retain
-both versions:
+The same checks are available on the host:
 
 ```sh
+ai-sandbox-factory profile validate "$HOME/sandbox-profiles/team-dev" --agent pi
+```
+
+Checks cover JSON syntax, required files, supported agents, service fields and
+referenced build paths. Errors identify the file, JSON location or rejected
+service field. These are static checks: Dockerfile commands and application
+startup are tested when applying, not by the validator.
+
+Choose **Actions… → Edit profile… → Review changes…**. Factory freezes the
+working-tree files, including uncommitted edits, and shows their diff against the
+applied profile, any added services and the replacement consequences. Choose
+**Apply profile changes** to use exactly that revision. If files change after
+review, review them again before applying.
+
+Factory builds images and checks new services while the previous coding-agent
+container remains available. Preparation is a job and can be cancelled. Factory
+stops the active image build or removes newly prepared service resources before
+reporting cancellation. Once replacement starts, cancellation is unavailable so
+Factory can finish or restore the previous
+runtime. Build or preparation failures keep the previous runtime. Startup failure
+restores the previous containers and settings. Newly created service resources
+are removed on failure or cancellation; existing service data is preserved.
+
+Package changes and **new services** can be applied to this same sandbox. New
+services initialize separate application data. Existing service containers and
+passwords are retained. Changes confined to a service's `description` or
+`connections` update its agent-readable metadata. Changing or removing an existing
+service's image, build context contents, environment, command, volumes, healthcheck
+or SSH settings is refused by name before replacement. Revert that change, or
+create a separate sandbox and use the application's export/import tools to move
+its data. Factory does not infer a database migration from a changed Dockerfile.
+
+After success, open the coding agent again to use the new image and instructions.
+Packages installed manually in the old container survive only if the profile's
+Dockerfile installs them. A normal **Rebuild sandbox…** for an editable profile
+uses the saved applied revision; it does not apply unreviewed edits.
+
+The equivalent host commands are:
+
+```sh
+ai-sandbox-factory profile-fork my-sandbox --directory "$HOME/sandbox-profiles/team-dev"
+ai-sandbox-factory profile-review my-sandbox
+ai-sandbox-factory profile-apply my-sandbox --revision REVISION_FROM_REVIEW
+```
+
+### Version and share your profile
+
+Factory does not initialize Git or publish the editable folder. The user can
+commit it and set a remote when ready. Keep manifest `version: 1`; use Git tags or
+commits to identify profile revisions. For example, after editing:
+
+```sh
+git -C "$HOME/sandbox-profiles/team-dev" init
 git -C "$HOME/sandbox-profiles/team-dev" add .
 git -C "$HOME/sandbox-profiles/team-dev" commit -m "Add an application service"
 git -C "$HOME/sandbox-profiles/team-dev" tag v2
 ai-sandbox-factory profile add team-dev-v2 "$HOME/sandbox-profiles/team-dev" --ref v2
 ```
 
-For a registration added without `--ref`, `ai-sandbox-factory profile update team-dev` imports
-its latest committed revision. Updating a registration pinned to a tag or commit
-keeps that revision. An ordinary non-Git folder uses its current files instead.
-Existing sandboxes keep their own saved profiles in all cases.
+A copied profile with fetched source includes its saved `source/` files and
+`source-revisions.json`. Registering that copy reuses those files without fetching
+the original source again.
 
-In this version, any change to a service declaration requires choosing
-**New sandbox** with the updated profile registration. This includes its image,
-build settings or any file in its build context, environment, command, volumes,
-healthcheck, connections, SSH settings and description, as well as adding or
-removing hosts. Factory detects these changes and refuses them before stopping
-anything. **Create from existing** reuses the saved profile; it does not adopt an
-updated registration. Changing a PostgreSQL initialization environment variable
-such as `POSTGRES_PASSWORD` does not change a password in an initialized database.
-The new sandbox initializes new application data; it does not copy the original
-sandbox's databases. Export/import any data you need to move, and keep the old
-sandbox until you have verified the replacement.
+Registering the folder makes that version available for new sandboxes. It does
+not change any running sandbox; use Review changes and Apply for the sandbox
+attached to this editable folder. For a registration added without `--ref`,
+`profile update NAME` imports its latest committed revision. A pinned registration
+keeps its tag or commit. An ordinary non-Git folder uses its current files.
 
-For Pi, changes confined to the coding-agent container can be applied from an
-updated installed profile with **Update sources and recreate…**, provided the
-profile services stay unchanged. For Codex, Claude Code and Antigravity,
-**Rebuild sandbox…** refreshes Factory software using the saved profile. To use
-an edited profile with one of those agents, create a new sandbox with that profile.
+**Create from existing** uses the source sandbox's saved applied profile, not its
+unreviewed edits. The copy gets fresh private state and application data and does
+not share the source's editable folder. Create a separate editable copy there if
+needed. Deleting a sandbox keeps the host profile folder, just as it keeps the
+host project folder.

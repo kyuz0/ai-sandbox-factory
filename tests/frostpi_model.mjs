@@ -171,6 +171,40 @@ http.createServer((request, response) => {
         return;
       }
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (context.includes('Factory profile editing fixture')) {
+      if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+        delta = {content: JSON.stringify({outcome:'allow',risk_level:'low',user_authorization:'high',rationale:'Disposable profile file-edit regression.'})};
+      } else {
+        const results = messages.filter(message => message.role === 'tool' && message.tool_call_id?.startsWith('factory-profile-edit-'));
+        const system = JSON.stringify(messages.filter(message => message.role === 'system' || message.role === 'developer'));
+        const root = '/opt/sandbox/profile';
+        const base = '/opt/sandbox/base-profile';
+        const metadata = JSON.parse(readFileSync(base + '/profile/profile.json', 'utf8'));
+        const reporting = JSON.parse(readFileSync(base + '/authoring/example/profile.json', 'utf8')).services.reporting;
+        reporting.build.context = 'services/reporting';
+        metadata.services = {...metadata.services, reporting};
+        const steps = [
+          ['read', {path:base + '/authoring/README.md'}],
+          ['write', {path:root + '/Dockerfile',content:readFileSync(base + '/profile/Dockerfile','utf8') + '\nUSER root\nRUN apt-get update && apt-get install -y figlet\nUSER node\n'}],
+          ['write', {path:root + '/services/reporting/Dockerfile',content:readFileSync(base + '/authoring/example/services/postgres/Dockerfile','utf8')}],
+          ['write', {path:root + '/profile.json',content:JSON.stringify(metadata,null,2) + '\n'}],
+          ['bash', {command:'python3 -I - ' + root + ' --agent pi < ' + base + '/authoring/validate.py'}],
+          ['bash', {command:'printf UNALLOWED_PROFILE_WRITE >> ' + base + '/profile/profile.md'}],
+        ];
+        if (!system.includes(root) || !system.includes('Review changes')) {
+          delta = {content:'FACTORY PROFILE EDITING FAILED managed instructions missing'};
+        } else if (results.length < steps.length) {
+          const [tool,args] = steps[results.length];
+          delta = choice(tool,args);
+          delta.tool_calls[0].id = 'factory-profile-edit-' + results.length;
+        } else {
+          const valid = String(results[0].content).includes('Author a profile with multiple hosts') &&
+            String(results[4].content).includes('Static checks passed') &&
+            !readFileSync(base + '/profile/profile.md','utf8').includes('UNALLOWED_PROFILE_WRITE') &&
+            JSON.parse(readFileSync(root + '/profile.json','utf8')).services.reporting;
+          delta = {content: valid ? 'FACTORY PROFILE EDITING VERIFIED' : 'FACTORY PROFILE EDITING FAILED ' + JSON.stringify(results)};
+        }
+      }
     } else if (context.includes('Factory profile service fixture')) {
       if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
         delta = {content: JSON.stringify({outcome:'allow',risk_level:'medium',user_authorization:'high',rationale:'Disposable profile regression.'})};

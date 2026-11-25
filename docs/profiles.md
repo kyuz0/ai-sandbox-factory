@@ -76,9 +76,11 @@ or use different build folders and images.
 
 The same guide and example are readable inside new sandboxes at
 `/opt/sandbox/base-profile/authoring/README.md`. Factory tells the agent where to
-find them when explaining its applied profile. Applied files are read-only;
-the guide explains how to edit a separate writable copy and register its Git
-revisions from the host.
+find them when explaining its applied profile. Applied files are read-only.
+**Actions… → Edit profile…** creates a separate writable copy outside the project,
+available to the agent at `/opt/sandbox/profile`.
+Review its diff and choose **Apply profile changes** to install an edited image
+or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
 Copy [examples/profile](../examples/profile) into a new repository. It contains:
 
@@ -255,10 +257,14 @@ chooses the engine names, mounts, private network and proxy settings.
 Stopping and starting a sandbox keeps its profile containers, application data,
 generated passwords and SSH keys. A rebuild keeps running profile services running and leaves a stopped sandbox
 stopped when it finishes. If a rebuild fails, Factory restores the previous coding-agent container,
-Factory helper containers and settings. A rebuild cannot add or remove a profile
-service or change its image, build recipe or volumes. Create a new sandbox with
-the updated profile and export/import application data. Factory refuses such a
-rebuild before stopping anything.
+Factory helper containers and settings. **Edit profile… → Review changes… → Apply profile changes** can add new services
+while keeping existing services and their data. A normal rebuild uses the saved
+service layout. Replacing or removing an existing service, or changing its
+image, build context files, environment, command, volumes, healthcheck or SSH
+settings, requires a separate sandbox and application-specific export/import.
+Factory identifies the affected service and refuses the replacement before
+stopping anything. Description and connection metadata can be updated without
+replacing the service.
 
 **Create from existing…** reuses the source sandbox's settings and saved profile
 when that profile supports the selected coding agent. It creates new application

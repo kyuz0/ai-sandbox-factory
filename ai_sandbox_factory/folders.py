@@ -104,7 +104,9 @@ def mounts(config):
 
 
 def roots(config):
-    return [('/workspace', False)] + [('/mnt/' + r['name'], r['read_only']) for r in config.get('extra_folders', [])]
+    from . import profile_edit
+    return ([('/workspace', False)] + [('/mnt/' + r['name'], r['read_only']) for r in config.get('extra_folders', [])]
+            + profile_edit.roots(config))
 
 
 def scratch_roots():

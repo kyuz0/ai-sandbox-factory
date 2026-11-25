@@ -71,7 +71,7 @@ root = Path(sys.argv[1])
 cancel = sys.argv[2] == 'True'
 sys.argv = sys.argv[2:]
 
-def build(config):
+def build(config, state=None):
     if cancel:
         subprocess.run([sys.executable, '-c',
                         "import time; print('Ready', flush=True); time.sleep(60)"], check=True)

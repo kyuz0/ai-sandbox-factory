@@ -151,7 +151,7 @@ def guidance(config, state):
         lines += ['', 'Installed skills. Read the relevant instructions and references in the workspace before using a skill.',
                   *skill_catalog]
     from . import profile_runtime, profile_services
-    profile_context = profile_runtime.guidance(state) + profile_services.guidance(config)
+    profile_context = profile_runtime.guidance(state, config) + profile_services.guidance(config)
     if profile_context:
         lines.append(profile_context)
     profile = config.get('profile') or {}

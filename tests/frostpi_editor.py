@@ -4,6 +4,7 @@ import base64
 from contextlib import ExitStack
 import hashlib
 import json
+import shutil
 import os
 from pathlib import Path
 import re
@@ -847,7 +848,10 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
-          reviewed_file_access=None, provider_connection_check=None, full_width=False, profile_services_check=False):
+          reviewed_file_access=None, provider_connection_check=None, full_width=False, profile_services_check=False,
+          profile_edit_check=False):
+    if profile_edit_check:
+        profile_services_check = True
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
     if profile_services_check:
@@ -984,6 +988,11 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             config.update(name=name.removeprefix('pi-sandbox-factory-'), uid=1000, gid=1000,
                           network='allowlist', profile=sandbox.load_profile('developer-postgres'),
                           common=sandbox.common_profile())
+            if profile_edit_check:
+                from ai_sandbox_factory import profile_edit
+                editable = root / 'editable-profile'
+                shutil.copytree(config['profile']['path'], editable)
+                config[profile_edit.EDIT] = {'path':str(editable)}
             profile_services.build(config)
             with patch.object(sandbox, 'image_names', return_value=(image, 'localhost/pi-sandbox-factory-proxy:1')):
                 with profile_runtime.recording(config, root):
@@ -1025,6 +1034,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             index = args.index('--network')
             args[index:index + 2] = profile_services.network_args(config)
             args += profile_runtime.mounts(root) + profile_services.mounts(config, root)
+            if profile_edit_check:
+                args += profile_edit.mounts(config)
         if subagents or deep_research:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
@@ -1111,6 +1122,14 @@ p.write_text(json.dumps(v))
                                  '--approve', '--provider', 'fixture', '--model', 'fixture',
                                  'Factory profile prompt fixture')
                     assert 'FACTORY PROFILE PROMPT VERIFIED' in cli, cli
+                if profile_edit_check:
+                    script = Path(__file__).with_name('profile_edit_pi.py').read_text()
+                    cli = podman('exec', '-i', '--workdir', cwd, name, 'python3', '-c', script, stdin=subprocess.DEVNULL)
+                    assert 'FACTORY PROFILE EDITING VERIFIED' in cli, cli
+                    print('PASS Pi CLI: actual read/write/Bash tools edit package/service files, validate, and preserve the read-only applied profile.',flush=True)
+                    for item in editable.iterdir():
+                        shutil.rmtree(item) if item.is_dir() else item.unlink()
+                    shutil.copytree(config['profile']['path'], editable, dirs_exist_ok=True)
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 address = f'127.0.0.1:{port.getsockname()[1]}'
@@ -1168,6 +1187,15 @@ p.write_text(json.dumps(v))
                 assert not frame.get_by_text(re.compile(r'project is not trusted|Grant project trust')).count(), 'A fresh workspace was not trusted'
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if profile_edit_check:
+                    send('Factory profile editing fixture')
+                    result = frame.get_by_text('FACTORY PROFILE EDITING VERIFIED', exact=True)
+                    result.wait_for(timeout=120000)
+                    page.screenshot(path=str(output / 'profile-editing.png'))
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS shipped FrostPi webview: actual profile read/write/Bash validation and read-only applied-record protection.',flush=True)
+                    return
                 if profile_services_check:
                     send('Factory profile service fixture')
                     result = frame.get_by_text('FACTORY PROFILE SERVICES VERIFIED', exact=True)
@@ -1438,6 +1466,7 @@ if __name__ == '__main__':
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument('--profile-services', action='store_true', help='Check profile recipes and direct SSH through the shipped FrostPi webview.')
+    scope.add_argument('--profile-edit', action='store_true', help='Check actual Pi/FrostPi profile read/write tools and validation.')
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
@@ -1476,4 +1505,5 @@ if __name__ == '__main__':
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
-          provider_connection_check=args.provider_connection_check, profile_services_check=args.profile_services)
+          provider_connection_check=args.provider_connection_check, profile_services_check=args.profile_services,
+          profile_edit_check=args.profile_edit)

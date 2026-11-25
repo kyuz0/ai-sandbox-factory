@@ -18,7 +18,8 @@ from rich.text import Text
 from typing import NamedTuple, Optional
 from inspect import isawaitable
 
-from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages, profile_spec, profile_services, profile_runtime
+from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages, profile_spec, profile_services, profile_runtime, profile_edit
+from .profile_edit_ui import EditProfile
 from . import chat_history
 from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
@@ -292,6 +293,19 @@ class Service:
 
     def config(self, name):
         return json.loads((self.state / name / 'config.json').read_text())
+
+    def review_profile(self, name):
+        with tempfile.TemporaryDirectory(prefix='factory-profile-review-') as temporary:
+            path = Path(temporary) / 'review.json'
+            result = self.capture('profile-review', name, '--output', str(path))
+            if result.returncode:
+                raise ValueError(f'Cannot review the profile for {name} (exit {result.returncode}): '
+                                 + (result.stderr.strip() or result.stdout.strip() or 'The review worker returned no diagnostic output.'))
+            try:
+                return json.loads(path.read_text())
+            except (OSError, ValueError) as error:
+                raise ValueError(f'Cannot read the profile review for {name}: {error}. '
+                                 f'Worker output: {result.stdout}. Retry Review changes.') from error
 
     def export_chats(self, name, path):
         return chat_history.export_chats(self.chat_config(name), self.state / name, path)
@@ -1237,12 +1251,14 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action, *, confirm_by_default, cancel_label='Cancel', title=None):
+    def __init__(self, message, action, *, confirm_by_default, cancel_label='Cancel', title=None, notes=()):
         super().__init__(classes='titled-confirm' if title else None)
         self.message, self.action = message, action
         self.cancel_label = cancel_label
         self.title_text = title
         self.confirm_by_default = confirm_by_default
+        self.notes = notes
+        self.set_class(bool(notes), 'with-notes')
         self.AUTO_FOCUS = '#yes' if confirm_by_default else '#cancel'
 
     def compose(self):
@@ -1250,6 +1266,10 @@ class Confirm(ModalScreen[bool]):
             if self.title_text:
                 yield Label(self.title_text, markup=False)
             yield Static(self.message, markup=False)
+            if self.notes:
+                with VerticalScroll(classes='confirm-notes'):
+                    for note in self.notes:
+                        yield Bullet(note)
             yield from self.action_buttons()
 
     def action_buttons(self):
@@ -1471,9 +1491,10 @@ class MoreActions(ModalScreen[Optional[str]]):
             self.page = None
             return
         native = coding_agent(record.get('config', {})) != 'pi'
+        saved_profile_only = native or bool(record.get('config', {}).get(profile_edit.EDIT))
         opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
-                     ('Rebuild sandbox…' if native else 'Update sources and recreate…', 'rebuild')]
+                     ('Rebuild sandbox…' if saved_profile_only else 'Update sources and recreate…', 'rebuild')]
         if record.get('config', {}).get('engine'):
             lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
@@ -1482,6 +1503,7 @@ class MoreActions(ModalScreen[Optional[str]]):
         saved_profile = record.get('config', {}).get('profile')
         if isinstance(saved_profile, dict) and all(key in saved_profile for key in ('name', 'digest', 'path')):
             related.insert(0, ('Profile and services…', 'profile-information'))
+            related.insert(1, ('Edit profile…', 'edit-profile'))
         diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
         if not native:
             diagnostics.append(('Test MCP connections', 'connections'))
@@ -1601,6 +1623,7 @@ class AppliedProfile(Screen):
 
     def __init__(self, record, state):
         super().__init__()
+        self.add_class('profile-edit-flow')
         self.record, self.state = record, state
 
     def compose(self):
@@ -1629,6 +1652,7 @@ class AppliedProfile(Screen):
                 yield Static(profile_services.data_guidance(), classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-information-back')
+            yield Button('Edit profile…', id='profile-information-edit', variant='primary')
         yield Footer()
 
     def on_mount(self):
@@ -1660,6 +1684,10 @@ class AppliedProfile(Screen):
     def back_pressed(self, event):
         event.stop()
         self.action_back()
+
+    @on(Button.Pressed, '#profile-information-edit')
+    def edit_profile(self):
+        self.app.push_screen(EditProfile(self.record))
 
     def action_back(self):
         self.app.pop_screen()
@@ -4269,6 +4297,8 @@ class Cockpit(App):
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
     Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
+    Confirm.with-notes .confirm-notes { height: auto; max-height: 55vh; margin: 1 0 0 0; }
+    Confirm.with-notes Button:focus, Confirm.with-notes #cancel:focus { text-style: bold; background: #d4e0e7; color: #171a1d; }
     Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus,
     .settings-review CollapsibleTitle:focus {
         background: #d4e0e7; color: #171a1d; text-style: bold underline;
@@ -4300,6 +4330,7 @@ class Cockpit(App):
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
     .setting, .default-profile-setting { height: auto; }
     .setting { margin-bottom: 1; }
+    .bounded-form > .form, .bounded-form > .wizard-actions,
     .native-primary-form > .form, .native-primary-form > .wizard-actions,
     .settings-review > .form, .settings-review > .wizard-actions { max-width: 100; }
     .native-primary-form EditorFields > .setting { margin: 0 0 1 0; }
@@ -4358,6 +4389,7 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
+    .profile-edit-flow Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold; }
     #hosted-section Button:focus, ModelsScreen Button:focus,
     .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
@@ -5125,11 +5157,13 @@ class Cockpit(App):
     def start_rebuild(self, name, args):
         return self.start_job(RebuildJob(name), lambda log, update: self.service.run_update(args, log, update))
 
-    def start_settings_job(self, name, title, task, *, success_message=''):
+    def start_settings_job(self, name, title, task, *, success_message='', cooperative=False):
         def completed(job):
             if job.result == 'Complete':
                 job.notice = success_message
-        return self.start_job(RebuildJob(name, title), task, completed)
+        job = RebuildJob(name, title)
+        job.update.cooperative = cooperative
+        return self.start_job(job, task, completed)
 
     def start_creation(self, request):
         draft = request.draft
@@ -5510,13 +5544,16 @@ class Cockpit(App):
                         ['install-system-packages', name, *packages], log, update))
 
             self.push_screen(InstallSystemPackages(name), install_packages)
+        elif action == 'edit-profile':
+            self.push_screen(EditProfile(record))
         elif action == 'rebuild':
             profile = config.get('profile', {})
             source = profile.get('registry_name', profile.get('name', 'base'))
             args = ['recreate', name]
             migration = [] if native else settings_effects.editor_migration(config)
-            action_label = 'Rebuild sandbox' if native else 'Update sources and recreate'
-            if native:
+            saved_profile_only = native or bool(config.get(profile_edit.EDIT))
+            action_label = 'Rebuild sandbox' if saved_profile_only else 'Update sources and recreate'
+            if saved_profile_only:
                 question = f'Rebuild {name} using its saved profile and current Factory software?'
             else:
                 args += ['--profile', source if source in profile_titles() else profile['path']]
