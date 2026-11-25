@@ -34,6 +34,32 @@ def review(changed=True):
 
 
 class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
+    async def test_replace_only_and_package_only_confirmations_show_only_relevant_effects(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+            for size in ((80,24),(120,40),(220,50)):
+                app = Cockpit(Path(tmp),FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await app.workers.wait_for_complete()
+                    for replace in (False,True):
+                        changed = {**review(),'added_services':[], 'removed_services':[],
+                                   'replaced_services':['database'] if replace else []}
+                        screen = ReviewProfile(record(True),changed)
+                        await app.push_screen(screen)
+                        await pilot.pause()
+                        with patch.object(app,'start_settings_job') as start:
+                            await pilot.press('enter')
+                            await pilot.pause()
+                            notes = ' '.join(app.screen.notes)
+                            self.assertEqual(app.focused.id,'yes')
+                            self.assertEqual(app.screen.query_one('#yes',Button).variant,'primary')
+                            self.assertEqual('These services stop' in notes,replace)
+                            self.assertEqual('Existing profile services and their application data are kept.' in notes,not replace)
+                            self.assertNotIn('Removed service containers',notes)
+                            self.assertNotIn(';',notes)
+                            await pilot.press('escape')
+                            start.assert_not_called()
+                        await pilot.press('escape')
+
     async def test_changed_and_removed_services_have_visible_review_and_confirmation(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             for size in ((80,24),(120,40),(220,50)):
@@ -65,12 +91,18 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                             start.assert_not_called()
                             self.assertIs(app.screen, screen)
                         await pilot.press('escape')
-                        deletion = DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=['previous-data'])
+                        volume = 'pi-sandbox-factory-example-profile-data-0123456789abcdef'
+                        deletion = DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=[volume])
                         await app.push_screen(deletion)
                         await pilot.pause()
                         text = ' '.join(str(item.render()) for item in deletion.query(Static))
-                        self.assertIn('Data volumes kept from previous profile services',text)
+                        self.assertIn('When you applied profile changes, Factory kept the old data from services you replaced or removed.',text)
+                        self.assertIn('It is stored in Podman volumes on this computer.',text)
+                        self.assertIn('Deleting this sandbox permanently deletes that data.',text)
+                        self.assertNotIn('kept from previous profile',text)
                         self.assertIn('permanently deleted',text)
+                        self.assertIn(f'podman volume export {volume} --output {volume}.tar',text)
+                        self.assertNotIn('will also be permanently deleted',text)
                         self.assertEqual(app.focused.id,'cancel')
                         for button in deletion.query(Button):
                             self.assertEqual(button.region.height,1)

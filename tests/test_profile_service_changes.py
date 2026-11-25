@@ -1,5 +1,6 @@
 """Service reconciliation retains recoverable data and restores interrupted changes."""
 import copy
+import errno
 import json
 from pathlib import Path
 import subprocess
@@ -106,7 +107,7 @@ class ServiceChanges(unittest.TestCase):
             write_json = sandbox.write_json
             def publish(path, value):
                 if commit_failure and Path(path).name == 'record.json' and value.get('committed'):
-                    raise OSError('No space left while committing profile settings')
+                    raise OSError(errno.ENOSPC,'No space left while committing profile settings')
                 return write_json(path, value)
             with patch.object(sandbox, 'inspect', side_effect=inspect), patch.object(sandbox, 'run', side_effect=run), \
                     patch.object(sandbox, 'image_names', return_value=('workspace-image', 'copy-image')), \
@@ -137,6 +138,12 @@ class ServiceChanges(unittest.TestCase):
                     if missing_volume:
                         self.assertIn(old_volume, str(failure.exception))
                         self.assertIn('volume is missing', str(failure.exception))
+                    if commit_failure:
+                        message = str(failure.exception)
+                        for value in ('commit profile changes', 'fixture', 'record.json', 'No space left', 'were restored',
+                                      'Free storage space', 'retry the same profile review'):
+                            self.assertIn(value, message)
+                        self.assertIsInstance(failure.exception.__cause__, OSError)
                     self.assertEqual(containers, before)
                     self.assertEqual(volumes, {} if missing_volume else {old_volume: b'original database'})
                     self.assertEqual(json.loads((directory / 'values.json').read_text()), {'database:password': 'synthetic-value'})

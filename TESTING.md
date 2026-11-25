@@ -1721,6 +1721,8 @@ The commit fixture injects a disk-full error while publishing the transaction's
 commit marker. It verifies immediate restoration of actual container IDs,
 running state, settings, database contents and credentials, then retries the same
 review successfully and checks exact resource cleanup.
+It also checks internal HTTP access with an unchanged service's proxy settings
+and exports a retained volume using the command shown in the Delete dialog.
 After an interrupted profile worker, ordinary lifecycle actions recover the
 pending transaction before changing the sandbox. The real fixture checks Stop
 and Start after killing the preparation worker; dispatch tests also cover

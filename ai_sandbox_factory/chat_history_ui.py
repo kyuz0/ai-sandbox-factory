@@ -8,9 +8,9 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import chat_history, primary_workspace
+from . import chat_history, primary_workspace, profile_services
 from .file_browser import PathField
-from .tui_widgets import Feedback
+from .tui_widgets import Command, Feedback
 
 
 EXPORT = 'Export chat history'
@@ -268,9 +268,13 @@ class DeleteSandbox(ModalScreen[bool]):
                     yield Static('Application data for these profile services will be permanently deleted: ' + ', '.join(self.services)
                                  + '. Cancel and ask your coding agent to export any needed application data before deleting.', classes='chat-note', markup=False)
                 if self.retained_volumes:
-                    yield Static('Data volumes kept from previous profile services will also be permanently deleted. '
-                                 'Cancel to export them with podman volume export.',
+                    yield Static('When you applied profile changes, Factory kept the old data from services '
+                                 'you replaced or removed. It is stored in Podman volumes on this computer. '
+                                 'Deleting this sandbox permanently deletes that data. '
+                                 'To save a copy, cancel and run the export commands below on this computer:',
                                  classes='chat-note', markup=False)
+                    for volume in self.retained_volumes:
+                        yield Command(profile_services.export_command(volume),classes='chat-note')
                 if self.services or self.retained_volumes:
                     yield Static('Chat history export does not include application data.', classes='chat-note', markup=False)
                 yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)

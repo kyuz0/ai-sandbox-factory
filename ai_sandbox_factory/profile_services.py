@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
+import shlex
 import subprocess
 import time
 
@@ -44,6 +45,10 @@ def data_volume(config, name, volume):
 def data_volume_base(config, name, volume):
     key = hashlib.sha256(json.dumps([name, volume]).encode()).hexdigest()[:16]
     return prefix(config) + '-data-' + key
+
+
+def export_command(volume):
+    return shlex.join(['podman', 'volume', 'export', volume, '--output', volume + '.tar'])
 
 
 def resources(config):
@@ -234,7 +239,7 @@ def network_args(config):
 
 
 def no_proxy(config):
-    return ','.join(['localhost', '127.0.0.1', '::1', 'workspace', hostname('workspace'),
+    return ','.join(['localhost', '127.0.0.1', '::1', 'workspace', hostname('workspace'), '.' + DOMAIN,
                      *(value for name in selected(config) for value in (name, hostname(name)))])
 
 

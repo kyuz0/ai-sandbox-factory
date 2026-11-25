@@ -108,7 +108,10 @@ Each hostname is `<service-key>.profile.internal`; the short service key also
 resolves on the private network. The same hosts are reachable directly on their application ports, for example
 `database.profile.internal:5432`. Service names are stable; use them instead of
 container IP addresses. Hosts can reach each other directly on this private
-network. Factory's SSH client configuration is supplied to the coding-agent
+network. Use full hostnames in HTTP URLs, such as
+`http://reporting.profile.internal:8080`, so requests bypass the outbound proxy
+even from a container started before that service was added.
+Factory's SSH client configuration is supplied to the coding-agent
 container; configure application-owned credentials if another service needs its
 own authenticated connections to a peer.
 

@@ -286,6 +286,14 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
                 recover_preparation(original,state)
             except Exception as recovery:
                 raise ValueError(f'Could not commit profile changes: {error}. {recovery}') from error
+            if isinstance(error, Exception):
+                import errno
+                advice = ('Free storage space' if getattr(error, 'errno', None) == errno.ENOSPC
+                          else f'Check the reported error and permissions on {journal}')
+                raise ValueError(f'Could not commit profile changes for sandbox {original["name"]!r} '
+                                 f'to {journal / "record.json"}: {error}. '
+                                 f'The previous runtime and application data were restored. {advice}, '
+                                 'then retry the same profile review.') from error
             raise
         recover_preparation(updated,state)
 

@@ -329,4 +329,4 @@ def apply(config, state, revision, gate=None):
     print('Profile changes applied. Open the coding agent again to use the new image and instructions.', flush=True)
     retained = set(updated.get('profile_service_retained_volumes', [])) - set(config.get('profile_service_retained_volumes', []))
     for name in sorted(retained):
-        print(f'Previous service data kept in volume {name}. Export it with: podman volume export {name} --output {name}.tar', flush=True)
+        print(f'Previous service data kept in volume {name}. Export it with: {profile_services.export_command(name)}', flush=True)

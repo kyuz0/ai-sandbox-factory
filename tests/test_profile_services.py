@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from urllib.request import proxy_bypass_environment
 from unittest.mock import patch
 
 from ai_sandbox_factory import profile_runtime, profile_services as services, profile_spec, sandbox
@@ -92,6 +93,12 @@ class ProfileServicesTests(unittest.TestCase):
         self.assertIn('CONTAINER_HOST=ssh://not-the-host-engine', argv)
         self.assertIn('MULTILINE=line1\nline2', argv)
         self.assertNotIn('env', run.call_args.kwargs)
+
+    def test_internal_http_bypass_keeps_working_when_another_service_is_added(self):
+        # Unchanged services keep their existing environment after Apply.
+        retained = {'no': services.no_proxy(self.config)}
+        self.assertTrue(proxy_bypass_environment('new-service.profile.internal:8080', retained))
+        self.assertFalse(proxy_bypass_environment('example.net:443', retained))
 
     def test_application_passwords_are_service_scoped_and_not_in_agent_instructions(self):
         spec = copy.deepcopy(self.config['profile']['services']['database'])

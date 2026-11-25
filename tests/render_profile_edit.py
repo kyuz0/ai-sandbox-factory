@@ -99,8 +99,23 @@ async def capture(output,size):
             await shot('profile-services-change-confirm')
             await pilot.press('escape')
             await app.pop_screen()
-            await app.push_screen(DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=['previous-data']))
+            for replace in (False,True):
+                variant = 'replace-only' if replace else 'package-only'
+                separate = {**review(), 'added_services':[], 'removed_services':[],
+                            'replaced_services':['database'] if replace else [],
+                            'retained_volumes':['pi-sandbox-factory-example-profile-data-0123456789abcdef'] if replace else []}
+                await app.push_screen(ReviewProfile(record(True),separate))
+                await shot('profile-services-'+variant+'-review')
+                app.screen.query_one('#profile-review-apply',Button).press()
+                await shot('profile-services-'+variant+'-confirm')
+                await pilot.press('escape')
+                await app.pop_screen()
+            volume = 'pi-sandbox-factory-example-profile-data-0123456789abcdef'
+            await app.push_screen(DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=[volume]))
             await shot('profile-services-retained-delete')
+            await pilot.press('escape')
+            await app.push_screen(DeleteSandbox('example',has_config=True,retained_volumes=[volume]))
+            await shot('profile-services-retained-only-delete')
             await pilot.press('escape')
             information['config']['profile']=sandbox.load_profile('developer-postgres')
             with patch('ai_sandbox_factory.profile_runtime.applied',return_value={'path':'/synthetic/applied'}), \

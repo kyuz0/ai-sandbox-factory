@@ -24,7 +24,7 @@ def consequences(record, review=None):
             notes.append('Replaced services use copies of their data volumes. Only data stored in declared volumes survives replacement.')
         if review.get('removed_services'):
             notes.append('Removed service containers are deleted. Their data volumes are kept until you delete this sandbox.')
-        notes.append('Previous data volumes are kept for recovery; Factory does not perform application-specific data migrations.')
+        notes.append('Factory does not perform application-specific data migrations.')
     else:
         notes.append('Existing profile services and their application data are kept.')
     notes.append('Packages installed manually in the container must be added to the Dockerfile to survive replacement.')
