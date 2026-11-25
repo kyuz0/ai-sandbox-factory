@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from uuid import uuid4
 
-from . import profile_services
+from . import profile_services, runtime_context
 
 
 def runtime_names(config):
@@ -179,6 +179,8 @@ def recover_preparation(config, state):
         raise ValueError(heading + '; '.join(failures)
                          + f'. Saved recovery information and private volumes were retained; retry {action} after fixing the reported engine error.')
     shutil.rmtree(journal)
+    if saved.get('committed'):
+        runtime_context.publish_saved(state)
 
 
 @contextmanager
@@ -352,6 +354,7 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
         recover_preparation(updated,state)
 
 
+@runtime_context.publish_after
 def apply(original, updated, state, *, text=None, allow_service_changes=False, retain_previous=False):
     import json
     from . import activity, browser_editor, sandbox

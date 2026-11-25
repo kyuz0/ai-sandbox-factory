@@ -29,7 +29,7 @@ APPROVAL_LABELS = {
 }
 sys.path.insert(0, str(REPO))
 from knowledge_documents import write_documents
-from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
+from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, runtime_context, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -596,7 +596,7 @@ def check_deep_research(page, frame, send, inside, workspace, output):
     print('PASS Deep Web Research loads its skill, delegates web search, reads a mounted source and writes a cited report in both clients.')
 
 
-def check_system_prompt(page, frame, send, inside, state, output, container):
+def check_system_prompt(page, frame, send, inside, state, config, output, container):
     from frostpi_subagents import fixture_rpc, rpc_result
 
     earlier_history = None
@@ -608,16 +608,26 @@ assert len(matches) == 1, matches
 print(matches[0].read_text(), end='')
 '''
     with fixture_rpc(container, output, 'system-prompt-cli', session='/tmp/system-prompt-cli.jsonl') as (send_cli, until):
-        for label in ('DEFAULT', 'CONNECTOR_ONLY', 'FIRST', 'SECOND', 'NONE'):
-            custom = label in ('FIRST', 'SECOND')
-            value = {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + label} if custom else None
-            config = {}
-            if label in ('CONNECTOR_ONLY', 'FIRST', 'SECOND'):
-                alias = 'fixture-connector-' + ('second' if label == 'SECOND' else 'first')
-                config['ssh'] = {'hosts': [{'alias': alias, 'hostname': 'build.example.test', 'user': 'builder',
-                                            'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}
-            connector_settings.refresh_agent_context(config, state)
-            prompt_library.assign(state, value)
+        cases = [
+            ('DEFAULT', 'allowlist', None, None),
+            ('CONNECTOR_ONLY', 'allowlist', 'first', None),
+            ('FIRST', 'allowlist', 'first', 'FIRST'),
+            ('UNRESTRICTED', 'unrestricted', 'first', 'FIRST'),
+            ('RESTRICTED_AGAIN', 'allowlist', 'first', 'FIRST'),
+            ('SECOND', 'allowlist', 'second', 'SECOND'),
+            ('NONE', 'allowlist', None, None),
+        ]
+        for label, network, alias, custom in cases:
+            value = {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + custom} if custom else None
+            saved = {**config, 'network': network}
+            if alias:
+                saved['ssh'] = {'hosts': [{'alias': 'fixture-connector-' + alias, 'hostname': 'build.example.test',
+                                           'user': 'builder', 'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}
+            with runtime_context.applied(state):
+                sandbox.write_json(state / 'config.json', saved)
+                sandbox.prepare_options(saved, state)
+                connector_settings.refresh_agent_context(saved, state)
+                prompt_library.assign(state, value)
             assert prompt_library.selection(state) == value
             prompt = 'Factory sandbox system prompt fixture ' + label
             reply = 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
@@ -635,7 +645,7 @@ print(matches[0].read_text(), end='')
             until(lambda event: event.get('type') == 'agent_settled')
             print(f'PASS {label}: same Pi CLI and FrostPi conversations', flush=True)
     page.screenshot(path=str(output / 'system-prompt.png'))
-    print('PASS Pi and the same FrostPi chat read the assigned, replaced and removed prompt. Earlier chat entries are unchanged.')
+    print('PASS Both open chats received current network settings and project instructions on every turn. Earlier FrostPi entries are unchanged.')
 
 
 def check_scheduled_tasks(page, frame, send, inside, output):
@@ -954,6 +964,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 'providers': {'searxng': {'endpoint': 'http://localhost:19382'}},
             })
         cwd = '/workspace'
+        if system_prompt:
+            (root / 'workspace/AGENTS.md').write_text('FACTORY PROJECT CONTEXT MARKER\n')
+            (root / 'allowlist.txt').write_text('downloads.example.test:443\n')
         if profile_prompt:
             config['profile'] = sandbox.load_profile(str(profile_prompt.resolve()))
             project_config = root / 'workspace/.pi'
@@ -1002,6 +1015,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
             profile_services.up(config, root)
             resources.callback(profile_services.delete, config)
         sandbox.prepare_options(config, root)
+        sandbox.write_json(root / 'config.json', config)
+        runtime_context.publish_saved(root)
         if system_prompt or worker_prompt:
             os.environ['SANDBOX_REGISTRY_DIR'] = str(root / 'library')
         if worker_prompt:
@@ -1281,7 +1296,7 @@ p.write_text(json.dumps(v))
                     browser.close()
                     return
                 if system_prompt:
-                    check_system_prompt(page, frame, send, inside, root, output, name)
+                    check_system_prompt(page, frame, send, inside, root, config, output, name)
                     assert not errors, errors
                     browser.close()
                     return
@@ -1457,7 +1472,7 @@ p.write_text(json.dumps(v))
                 (output / 'fixture.log').write_text(log.stdout + log.stderr)
             raise
         finally:
-            if subagents:
+            if subagents or system_prompt:
                 log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'],
                                      text=True, capture_output=True)
                 (output / 'fixture.log').write_text(log.stdout + log.stderr)

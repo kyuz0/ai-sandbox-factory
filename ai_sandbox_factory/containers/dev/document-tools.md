@@ -21,4 +21,5 @@ soffice -env:UserInstallation=file:///tmp/unique-office-profile --headless
 --convert-to pdf --outdir /tmp/output input.docx
 Use temporary files for conversion and retain the original. OCR handles scanned
 pages; PDF text extractors alone cannot recover text from image-only scans.
-Package downloads happen at image build time; runtime network allowlists still apply.
+The image build downloads these packages. With Restricted networking selected,
+runtime downloads must use an allowed destination.

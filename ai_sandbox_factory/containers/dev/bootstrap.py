@@ -266,17 +266,12 @@ if profile_text or profile_prompt or profile_context:
     guidance = '\n\n'.join(text for text in (
         profile_prompt, profile_context, profile_text,
     ) if text)
-    for common in ('document-tools.md', 'security.md'):
-        extra = (Path('/opt/pi-security/config/security.md') if selection and common == 'security.md'
-                 else Path('/opt/sandbox') / common)
+    # Pi caches AGENTS.md for the session. The per-turn extension supplies the
+    # applied security guidance for configured sandboxes.
+    for common in (('document-tools.md',) if selection else ('document-tools.md', 'security.md')):
+        extra = Path('/opt/sandbox') / common
         if extra.exists():
             guidance += '\n\n' + extra.read_text().rstrip()
-    if selection:
-        guidance += ('\n\nSaved agent settings: approval=' + approval
-                     + ', inner sandbox=' + str(inner_sandbox)
-                     + ', goals=' + str(goals_enabled) + ', scheduling=' + str(scheduling_enabled)
-                     + '. These saved settings override generic feature descriptions above. '
-                     + 'Only use tools and skills actually present in this session.')
     if browser_enabled:
         guidance += '\n\n' + Path('/opt/betterwright/browser.md').read_text().rstrip()
     ssh_targets = Path('/etc/sandbox-ssh/targets.json')

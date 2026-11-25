@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from ai_sandbox_factory import browser_editor, profile_replacement as replacement, profile_services, sandbox
+from ai_sandbox_factory import browser_editor, profile_replacement as replacement, profile_services, runtime_context, sandbox
 
 
 class ReplacementTests(unittest.TestCase):
@@ -38,6 +38,7 @@ class ReplacementTests(unittest.TestCase):
         resumed=[]
         def resume(config,state,snapshot):
             self.assertEqual(snapshot,connection)
+            self.assertEqual(snapshot_file.read_bytes(), previous_context)
             resumed.append(containers[workspace]['Id'])
             if resumed[-1].startswith('new-'):
                 self.assertTrue(any(value['Id']==original[workspace]['Id'] for value in containers.values()))
@@ -58,6 +59,8 @@ class ReplacementTests(unittest.TestCase):
         def up(candidate,*args,**kwargs):
             nonlocal starts
             starts+=1
+            runtime_context.publish_saved(state)
+            self.assertEqual(snapshot_file.read_bytes(), previous_context)
             if starts==1:
                 for name in (workspace,helper): containers[name]={'Id':'new-' + name,'State':{'Running':True}}
                 containers[db]['State']['Running']=True
@@ -68,21 +71,27 @@ class ReplacementTests(unittest.TestCase):
             state=Path(tmp)
             (state/'allowlist.txt').write_text('')
             (state/'squid.conf').write_text('old policy')
+            sandbox.activity.save_config(state, config)
+            runtime_context.publish_saved(state)
+            snapshot_file = state / 'primary-runtime/sandbox-state.json'
+            previous_context = snapshot_file.read_bytes()
+            updated = {**config, 'memory': '2g'}
             with patch.object(sandbox,'inspect',side_effect=lambda c,n: copy.deepcopy(containers.get(n))), \
                  patch.object(sandbox,'run',side_effect=run), patch.object(sandbox,'up',side_effect=up), \
                  patch.object(sandbox,'network_policy',return_value='new policy'), \
                  patch.object(profile_services,'update_policy'), \
                  patch.object(browser_editor,'replacement_connection',return_value=connection), \
                  patch.object(browser_editor,'stop') as stop_editor, \
-                 patch.object(browser_editor,'resume_connection',side_effect=resume) as resume_editor, \
-                 patch('ai_sandbox_factory.activity.save_config'):
+                 patch.object(browser_editor,'resume_connection',side_effect=resume) as resume_editor:
                 if failure or reconnect_failure:
                     with self.assertRaisesRegex(ValueError,'address already in use' if reconnect_failure else 'startup failed with diagnostic'):
-                        replacement.apply(config,copy.deepcopy(config),state)
+                        replacement.apply(config,updated,state)
                     self.assertEqual(containers,original)
                     self.assertEqual((state/'squid.conf').read_text(),'old policy')
+                    self.assertEqual(snapshot_file.read_bytes(), previous_context)
                 else:
-                    replacement.apply(config,copy.deepcopy(config),state)
+                    replacement.apply(config,updated,state)
+                    self.assertEqual(json.loads(snapshot_file.read_text())['values']['Memory limit'], '2g')
                     self.assertEqual(containers[db],original[db])
                     self.assertTrue(all(info['State']['Running'] == running for info in containers.values()))
                 if browser:

@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "exec /usr/bin/python3 -I /opt/sandbox/sandbox-update.py codex before"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "exec /usr/bin/python3 -I /opt/sandbox/sandbox-update.py codex after"}]}]
+  }
+}

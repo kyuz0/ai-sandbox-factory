@@ -193,8 +193,9 @@ def main():
                         result = sandbox.run(['podman', 'exec', container, 'cat',
                                               '/home/node/.pi/agent/fixture-provider-ready'], capture=True)
                         assert result.stdout == model, result.stdout
-                        instructions = sandbox.run(['podman', 'exec', container, 'cat',
-                                                    '/home/node/.pi/agent/AGENTS.md'], capture=True).stdout
+                        snapshot = sandbox.run(['podman', 'exec', container, 'cat',
+                                                '/opt/pi-security/config/sandbox-state.json'], capture=True).stdout
+                        instructions = json.loads(snapshot)['securityGuidance']
                         assert 'AI Sandbox Factory workspace' in instructions
                         assert 'Network is Restricted' in instructions
                         assert 'wait for confirmation' in instructions

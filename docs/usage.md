@@ -243,7 +243,7 @@ and shows both paths so you can resolve the conflict.
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
 | Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
 | Connectors → AWS | Connecting AWS for the first time can require replacing the main agent sandbox. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
-| Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
+| Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. The agent receives the current grants on its next turn. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Choose **Open** to reopen with the saved settings. |
 | Model Providers: hosted connection or endpoint | Saved without recreating the main agent sandbox; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
@@ -262,7 +262,16 @@ Factory gives Pi, Codex, Claude Code and Antigravity instructions about the
 sandbox’s network, mounted folders and enabled features. If a task needs access
 that is off, the agent can ask you to change the relevant setting and explain
 why. Pi can use **Question forms** when enabled. The other agents can ask in chat.
-Reopen the client when a setting requires it so the agent picks up the change.
+When you continue a conversation, Factory supplies the current settings at the
+next turn, including changes to the network, folders, profile and connector grants.
+These replace older Factory instructions in that conversation. A setting that
+requires restarting the sandbox or reopening the client still needs that step
+before its tools or runtime change.
+
+With **Unrestricted** selected, project commands use ordinary network connections.
+Native clients keep their separate managed sign-in transport. Restricted sandboxes
+use the configured gateway; removing proxy variables does not grant direct external
+access. Profile services can communicate on their sandbox's private network.
 
 Reloading tools and instructions does not rewrite earlier chat messages. Engine,
 profile, workspace and seed-home choices are fixed for an existing sandbox; create

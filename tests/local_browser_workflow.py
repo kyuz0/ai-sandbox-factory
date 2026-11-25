@@ -7,7 +7,7 @@ import sys
 import tempfile
 import uuid
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from ai_sandbox_factory import sandbox
+from ai_sandbox_factory import runtime_context, sandbox
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--image',required=True)
 p.add_argument('--packages',type=Path,help='Optional dependency checkout to test before pinning')
@@ -20,6 +20,8 @@ with tempfile.TemporaryDirectory(prefix='factory-local-browser-') as directory:
  (state/'allowlist.txt').write_text('fixture.test:80\n')
  config={'common':{'path':str(root/'ai_sandbox_factory/containers/dev')},'options':{'browser':True,'goals':a.goals,'scheduling':a.editor_env,'compaction_recall':'off'}}
  sandbox.prepare_options(config,state)
+ sandbox.write_json(state/'config.json',config)
+ runtime_context.publish_saved(state)
  # Mounts are read-only; UID mapping preserves the current user's private fixtures.
  for client in ('pi',):
   name='factory-local-check-'+uuid.uuid4().hex[:10]

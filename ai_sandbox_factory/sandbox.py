@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create and manage coding agent sandboxes with Podman or Docker."""
 import argparse
-from . import activity
+from . import activity, runtime_context
 from .cli import COMMAND
 from . import sandbox_skills
 from . import sandbox_extensions
@@ -38,10 +38,11 @@ PI_VERSION = '1.4.0'
 LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                       'configure', 'primary-login', 'primary-import')
+LOOPBACK_ENV = {'NO_PROXY': 'localhost,127.0.0.1,::1', 'no_proxy': 'localhost,127.0.0.1,::1'}
 RUNTIME_ENV = {
     'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
     'http_proxy': 'http://127.0.0.1:3128', 'https_proxy': 'http://127.0.0.1:3128',
-    'NO_PROXY': 'localhost,127.0.0.1,::1', 'no_proxy': 'localhost,127.0.0.1,::1',
+    **LOOPBACK_ENV,
     'NODE_USE_ENV_PROXY': '1',
 }
 
@@ -731,6 +732,7 @@ def native_chat_lock(state):
         yield
 
 
+@runtime_context.publish_after
 def up(config, state, *, prepare_sign_in=True):
     with native_chat_lock(state):
         return _up(config, state, prepare_sign_in=prepare_sign_in)
@@ -866,11 +868,12 @@ def _up(config, state, *, prepare_sign_in=True):
             if config.get('pi_config'):
                 args += ['-v', f'{config["pi_config"]}:/pi-config:ro']
             if engine == 'podman':
-                args += ['--userns=keep-id:uid=1000,gid=1000']
+                # Podman otherwise imports the workstation's proxy variables into the workspace.
+                args += ['--http-proxy=false', '--userns=keep-id:uid=1000,gid=1000']
             if config.get('env_file'):
                 validate_env(config['env_file'])
                 args += ['--env-file', config['env_file']]
-            runtime_env = RUNTIME_ENV if restricted else {'NODE_USE_ENV_PROXY': '1'}
+            runtime_env = RUNTIME_ENV if restricted else {**LOOPBACK_ENV, 'NODE_USE_ENV_PROXY': '1'}
             if config.get('local_model_gateway'):
                 args += ['--env', 'LOCAL_MODEL_PORTS=' + config['local_model_ports']]
             args += ['--env', 'SANDBOX_NETWORK_MODE=' + network_mode(config)]
@@ -1052,6 +1055,7 @@ def configure_local_gateway(config, value, rules):
             raise ValueError(f'Add local-model.internal:{port} to the allowlist')
 
 
+@runtime_context.publish_after
 def create(args, state):
     source = getattr(args, 'reuse_from', None)
     if source:
@@ -1332,8 +1336,7 @@ def prepare_options(config, state):
             filesystem['protectCommonCredentialFiles'] = selected['protect_credentials']
         write_json(target / path.name, value)
     guide = target / 'security.md'
-    guide.write_text(guidance(selected, config.get('subagents', False), network=network_mode(config))
-                     + folders.guidance(config))
+    guide.write_text(runtime_context.pi_security(config, selected, network_mode(config)))
     guide.chmod(0o600)
 
 
@@ -1483,6 +1486,7 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
     print('AWS permissions updated.' if value else 'AWS disconnected.')
 
 
+@runtime_context.publish_after_save
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
@@ -1645,6 +1649,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     up(updated, state)
 
 
+@runtime_context.publish_after
 def update_network(config, state, text, groups=None, *, download_curlie=True, curlie_revision=None):
     if network_mode(config) != 'allowlist':
         raise ValueError('Use Settings to switch to restricted networking first.')
@@ -1973,6 +1978,9 @@ def main(*, startup_notice=''):
         if args.command == 'create' and args.open:
             open_selected(json.loads((state / 'config.json').read_text()), state)
         return
+    if args.command == 'web-key' and not (args.status or args.export_keys):
+        with operation_locks.sandbox(args.name, 'update web search'), runtime_context.applied(state):
+            return sandbox_command(args, state, parser)
     return sandbox_command(args, state, parser)
 
 

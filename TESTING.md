@@ -12,7 +12,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 npm ci --prefix ai_sandbox_factory/containers/inference --ignore-scripts
-node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
+node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs tests/test_sandbox_context.mjs
 ```
 
 These suites use fixtures without account credentials. For macOS, put fixtures
@@ -198,6 +198,40 @@ not grant external ICMP or DNS access.
 
 ## Native agent regression checks
 
+### Current settings in saved conversations
+
+Run `test_runtime_context`, `test_sandbox_update_hooks` and
+`test_workspace_network_environment` with the Python suite. They cover successful
+publication, rollback, independent conversations, cancellation, overlapping turns,
+receipt recovery and project proxy selection without changing native sign-in
+transport. `tests/test_sandbox_context.mjs`, when run with Node, exercises Pi's
+per-turn context loading.
+
+Use cached, pinned workspace images for the native client checks:
+
+```sh
+python tests/native_sandbox_updates.py --agent codex --image CODEX_WORKSPACE_IMAGE
+python tests/native_sandbox_updates.py --agent claude --image CLAUDE_WORKSPACE_IMAGE
+```
+
+These run without external networking or account credentials. Each check opens
+a conversation, resumes it after Restricted → Unrestricted → Restricted changes,
+and checks both the actual model requests and completion acknowledgments. Hook
+tests must also cover the pinned Antigravity CLI and the shipped FrostPi webview;
+configuration-file assertions alone do not establish delivery to those clients.
+
+Check the actual workspace network and live policy updates with a cached Pi image:
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/workspace_network_runtime.py --image PI_WORKSPACE_IMAGE
+PYTHONPATH=. .venv/bin/python tests/workspace_network_runtime.py --image PI_WORKSPACE_IMAGE --providers-only
+```
+
+The first command covers direct IPv4/IPv6 denial, allowed and denied gateway
+requests, revocation, Unrestricted access, inherited host proxies and workspace
+loopback. The second checks the three native provider gateways without signing
+in: provider routes remain available and an unselected hostname is denied.
+
 Cross-agent copies use the pinned `session-migrate` helper in
 `containers/session-transfer/`. The unit suite checks confirmation, changed
 destinations and the narrow TUI. The integration fixture exercises all six
@@ -272,10 +306,15 @@ Additional offline native checks run in the indicated image:
 | --- | --- | --- |
 | Claude credential image, `/opt/claude-proxy/bin/python` | `tests/native_claude_login.py --binary /usr/local/bin/factory-agent` | Official authorization-code login against local fake services; only placeholders reach native files; Auto/Manual/Plan defaults; native rejection of disabled WebSearch |
 | Antigravity credential image, `/opt/agy-proxy/bin/python` | `tests/agy_native_auth.py`, then `tests/agy_native_auth.py --fresh` | Official refresh and fresh OAuth exchange against fake services; masked Secret Service storage; HTTP 418 and its diagnostic remain visible |
+| Antigravity credential image, `/opt/agy-proxy/bin/python` | `tests/agy_sandbox_updates.py` | The pinned CLI sends network changes on the model request, suppresses unchanged updates, and refreshes a resumed chat after a rejected invocation |
 | Codex workspace image, `python3` | `tests/codex_client_tests.py` | Native configuration using the workspace's installed `tomlkit` |
 | Codex credential image, `/opt/codex-proxy/bin/python` | `tests/codex_network_tests.py` and `tests/codex_auth_transport.py` | Gateway catalogue, inherited editor environment, TLS/HTTP2, WebSockets and CONNECT transport |
 
 Use the same read-only checkout mount and `/source` working directory as above.
+For `agy_sandbox_updates.py`, also pass
+`--tmpfs /run/primary-runtime:rw,mode=1777` and
+`-v "$PWD/ai_sandbox_factory/containers/primary-worker/sandbox-update.py:/opt/sandbox/sandbox-update.py:ro"`.
+Its local service advertises native customization hooks and records the model requests.
 The OAuth fixtures issue synthetic credentials; they do not complete a real
 provider consent screen. Set `FACTORY_CODEX_HISTORY_BINARY` or
 `FACTORY_CLAUDE_HISTORY_BINARY` to the pinned executable when running its history
@@ -528,10 +567,11 @@ With the Deep Web Research image and the Web Search layer, use `--deep-research`
 to verify that Pi and FrostPi load the skill, delegate a search through a
 loopback provider, read a mounted reference and save a cited report and source log.
 
-Use `--system-prompt` with the current Factory image to check that a saved add-on
-can be assigned, replaced and removed in existing Pi CLI and FrostPi conversations.
-The fixture inspects the system prompt sent to the model and checks that earlier
-FrostPi transcript entries stay intact.
+Use `--system-prompt` with the current Factory image to check existing Pi CLI
+and FrostPi conversations. The fixture publishes Restricted, Unrestricted and
+Restricted settings in sequence and checks the guidance sent to the model on
+each turn. It also assigns, replaces and removes a saved add-on, verifies that
+project instructions remain present and compares earlier FrostPi transcript entries.
 
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.

@@ -13,12 +13,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True, help='Cached workspace image with Python, curl and SSH client')
     parser.add_argument('--proxy-image', default='localhost/pi-sandbox-factory-proxy:1')
+    parser.add_argument('--database-image', help='Use a cached developer-postgres service image')
     args = parser.parse_args()
     from unittest.mock import patch
     with tempfile.TemporaryDirectory(prefix='factory-profile-runtime-') as tmp:
         state = Path(tmp)
         config = {'name':'profile-runtime-' + uuid4().hex[:8], 'engine':'podman', 'network':'allowlist',
                   'profile':sandbox.load_profile('developer-postgres')}
+        if args.database_image:
+            service = config['profile']['services']['database']
+            service.pop('build')
+            service['image'] = args.database_image
         (state / 'allowlist.txt').write_text('example.com:443\n')
         workspace = sandbox.names(config)[0]
         def run(*cmd, check=True):

@@ -486,10 +486,12 @@ class Service:
         return hosted_models.request(config, action, **values)
 
     def hosted_save(self, name, value):
-        return hosted_models.save(self.config(name), self.state / name, value)
+        with operation_locks.sandbox(name, 'save the model connection for'):
+            return hosted_models.save(self.config(name), self.state / name, value)
 
     def hosted_remove(self, name, provider):
-        return hosted_models.remove(self.config(name), self.state / name, provider)
+        with operation_locks.sandbox(name, 'remove the model connection for'):
+            return hosted_models.remove(self.config(name), self.state / name, provider)
 
     def hosted_select(self, name, provider, model, **values):
         result = hosted_models.select(self.config(name), provider, model, **values)

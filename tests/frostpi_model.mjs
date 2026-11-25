@@ -23,6 +23,47 @@ function sendReply(response, delta) {
   response.end('data: [DONE]\n\n');
 }
 
+function checkSandboxPrompt(messages, label) {
+  const steps = ['DEFAULT', 'CONNECTOR_ONLY', 'FIRST', 'UNRESTRICTED', 'RESTRICTED_AGAIN', 'SECOND', 'NONE'];
+  const systems = messages.filter(message => message.role === 'system');
+  const system = systems.map(message => typeof message.content === 'string' ? message.content :
+    message.content.map(part => part.text).join('\n')).join('\n');
+  const history = JSON.stringify(messages.filter(message => message.role !== 'system'));
+  const sections = system.split('Current Factory sandbox settings.');
+  const current = sections[1] || '';
+  const unrestricted = label === 'UNRESTRICTED';
+  const expectedAddon = ['FIRST', 'UNRESTRICTED', 'RESTRICTED_AGAIN'].includes(label) ? 'FIRST' :
+    label === 'SECOND' ? 'SECOND' : '';
+  const expectedAlias = ['DEFAULT', 'NONE'].includes(label) ? '' : label === 'SECOND' ? 'second' : 'first';
+  const matches = (text, regex) => [...text.matchAll(regex)].map(match => match[1]).join(',');
+  const checks = {
+    project: system.split('FACTORY PROJECT CONTEXT MARKER').length === 2,
+    base: system.includes('You are'),
+    currentSettings: sections.length === 2 && current.includes('replace older Factory settings'),
+    network: matches(current, /^Network: (Restricted|Unrestricted)$/gm) === (unrestricted ? 'Unrestricted' : 'Restricted'),
+    securityGuidance: matches(system, /^Network is (Restricted|Unrestricted)\b/gm) === (unrestricted ? 'Unrestricted' : 'Restricted'),
+    guidance: unrestricted
+      ? current.includes('Use ordinary network connections') && !system.includes('The outer network allowlist still applies')
+      : current.includes('allow the specific hostname and port') && !system.includes('Network is Unrestricted at the container boundary'),
+    destinations: current.includes('Additional allowed destinations: downloads.example.test:443') === !unrestricted,
+    addon: matches(system, /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g) === expectedAddon,
+    connectorInstructions: matches(sections[0], /fixture-connector-(first|second)/g) === expectedAlias,
+    sshSettings: matches(current, /fixture-connector-(first|second)/g) === expectedAlias,
+    privateValues: !system.includes('FIXTURE_PRIVATE_MARKER'),
+    oldReplies: steps.slice(0, steps.indexOf(label)).every(step =>
+      history.includes('FACTORY SANDBOX SYSTEM PROMPT ' + step + ' VERIFIED')),
+    cleanHistory: !/FACTORY_SANDBOX_PROMPT_|Current Factory sandbox settings\./.test(history),
+  };
+  const failed = Object.keys(checks).filter(key => !checks[key]);
+  console.log('Sandbox prompt', label, JSON.stringify({
+    applied: current.split('\n').find(line => line.startsWith('Network: ')),
+    securityGuidance: system.split('\n').filter(line => /^Network is (Restricted|Unrestricted)/.test(line)),
+    failed,
+  }));
+  return {content: failed.length ? 'FACTORY SANDBOX PROMPT FAILED ' + label + ' ' + failed.join(', ') :
+    'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'};
+}
+
 async function streamReasoningAndAnswer(response) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   writeChunk(response, { role: 'assistant' });
@@ -261,17 +302,7 @@ http.createServer((request, response) => {
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
     } else if (userText.startsWith('Factory sandbox system prompt fixture ')) {
-      const label = userText.split(' ').at(-1);
-      const system = messages[0].role === 'system' ? JSON.stringify(messages[0].content) : '';
-      const markers = [...system.matchAll(/FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g)].map(match => match[1]);
-      const inHistory = /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/.test(JSON.stringify(messages.slice(1)));
-      const expected = ['FIRST', 'SECOND'].includes(label) ? label : '';
-      const expectedAlias = {CONNECTOR_ONLY: 'first', FIRST: 'first', SECOND: 'second'}[label] || '';
-      const aliases = [...system.matchAll(/fixture-connector-(first|second)/g)].map(match => match[1]);
-      const connectorMatches = aliases.join() === expectedAlias && !system.includes('FIXTURE_PRIVATE_MARKER');
-      delta = { content: !inHistory && connectorMatches && markers.join() === expected && system.includes('You are')
-        ? 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
-        : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') + ' aliases ' + aliases.join(',') };
+      delta = checkSandboxPrompt(messages, userText.split(' ').at(-1));
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
       delta = tools.includes('web_search')
         ? choice('web_search', { query: 'Factory research source', numResults: 1 })

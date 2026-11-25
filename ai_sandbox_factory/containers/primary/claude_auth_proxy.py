@@ -17,10 +17,9 @@ PUBLIC_HOST = 'factory-claude.internal'
 RESOURCE_HOSTS = frozenset(('api.anthropic.com', 'claude.ai'))
 OAUTH_ENDPOINTS = frozenset((('platform.claude.com', '/v1/oauth/token'),
                             ('console.anthropic.com', '/v1/oauth/token')))
-NATIVE_HOSTS = RESOURCE_HOSTS | {host for host, _ in OAUTH_ENDPOINTS} | {
-    'claude.com', 'code.claude.com', 'downloads.claude.ai', 'storage.googleapis.com',
-    'statsig.anthropic.com', 'sentry.io',
-}
+# These are exactly the provider routes allowed by the sign-in gateway.
+# Documentation, downloads and unrelated services follow the workspace policy.
+NATIVE_HOSTS = RESOURCE_HOSTS | {host for host, _ in OAUTH_ENDPOINTS}
 
 
 class SubscriptionProxy:

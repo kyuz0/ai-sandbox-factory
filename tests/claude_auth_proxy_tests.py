@@ -41,6 +41,20 @@ class ClaudeProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(flow.request.content, body)
         self.assertEqual(flow.request.path, '/v1/messages?beta=true')
 
+    async def test_project_destinations_follow_workspace_mode_not_the_sign_in_gateway(self):
+        for restricted in (True, False):
+            proxy = SubscriptionProxy(self.store, restricted)
+            for host in ('api.anthropic.com', 'claude.ai', 'platform.claude.com', 'console.anthropic.com'):
+                flow = self.flow('https://' + host + '/')
+                proxy.route(flow)
+                self.assertEqual(flow.server_conn.via, ('http', ('127.0.0.1', 3128)))
+            for host in ('storage.googleapis.com', 'code.claude.com', 'claude.com',
+                         'api.anthropic.com.example.test', 'localhost'):
+                flow = self.flow('https://' + host + '/')
+                proxy.route(flow)
+                self.assertEqual(flow.server_conn.via,
+                                 ('http', ('127.0.0.1', 3129)) if restricted else None)
+
     async def test_untrusted_origins_and_ports_never_receive_credentials(self):
         mask = self.public['accessToken']
         for url in ('https://attacker.invalid/', 'http://api.anthropic.com/',

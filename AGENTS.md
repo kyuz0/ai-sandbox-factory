@@ -125,6 +125,14 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ## Async work and test isolation
 
+- Publish model-visible settings only after the owning change succeeds. Test
+  resumed conversations with the pinned clients' actual model requests, not
+  just generated hook files. Cached instructions must not contradict current
+  settings. Verify the payloads emitted by the installed hook implementation.
+- A delivery receipt records what the completed turn saw, not what the host
+  currently wants. Test A → B → A changes during completion and cancellation,
+  overlapping callbacks, failure/retry and unchanged-turn suppression.
+
 - Give every queued UI event, timer and worker result an owner. Resolve widgets
   on the UI thread and check that the owner is still attached before rendering.
   Check request identity on success and failure so an older result cannot

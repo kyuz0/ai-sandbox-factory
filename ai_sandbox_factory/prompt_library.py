@@ -99,10 +99,34 @@ def refresh_connectors(state):
 
 
 def assign(state, value):
+    from . import primary_agents, runtime_context
+    from .connectors.context import write_text
     state = Path(state)
     value = prompt(value)
     with registry.locked():
-        if selection(state) != value:
-            write_json(state / SANDBOX_FILE, _with_connectors(state, value))
-            return True
-    return False
+        previous = _stored(state)
+        if _custom(previous) == value:
+            return False
+        prompt_file = state / SANDBOX_FILE
+        existed = prompt_file.exists()
+        # Existing native chats read this reference when their next turn receives an update.
+        references = {}
+        if (state / 'primary-runtime/context.md').is_file():
+            for directory in ('primary-agent', 'primary-runtime'):
+                path = state / directory / 'context.md'
+                references[path] = path.read_text() if path.is_file() else ''
+        try:
+            write_json(prompt_file, _with_connectors(state, value))
+            if references:
+                config = json.loads((state / 'config.json').read_text())
+                primary_agents.write_context(config, state)
+            runtime_context.publish_saved(state)
+        except Exception:
+            if existed:
+                write_json(prompt_file, previous)
+            else:
+                prompt_file.unlink(missing_ok=True)
+            for path, text in references.items():
+                write_text(path, text)
+            raise
+    return True

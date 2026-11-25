@@ -1,5 +1,5 @@
 """Configure native Pi models through the isolated inference companion."""
-from . import activity
+from . import activity, runtime_context
 import copy
 import json
 from pathlib import Path
@@ -93,6 +93,7 @@ def request(config, action, **values):
     return reply
 
 
+@runtime_context.publish_after_save
 def save(config, state, value):
     from . import inference, provider_credentials, sandbox
     value = validate(value)
@@ -142,6 +143,7 @@ def save(config, state, value):
     return {**reply, **saved, 'assignment': assignment}
 
 
+@runtime_context.publish_after_save
 def remove(config, state, provider):
     from . import inference, sandbox
     from .sandbox_options import check_reviewer_provider

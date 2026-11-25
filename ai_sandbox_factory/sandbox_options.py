@@ -213,7 +213,8 @@ def access_guidance(network):
         lines.append('Network is Restricted. Workspace requests use the inherited proxy and configured allowlist. '
                      f'If access is denied, ask the user to allow the specific hostname and port under {NETWORK_PATH}.')
     else:
-        lines.append('Network is Unrestricted at the container boundary.')
+        lines.append('Network is Unrestricted at the container boundary. Use ordinary network connections; '
+                     'do not configure the Restricted gateway. Keep the native client’s managed sign-in transport unchanged.')
     lines.append('If the task needs a capability that is off or unavailable, explain why, ask the user for the smallest '
                  'change that would unblock the task, and wait for confirmation before using it. '
                  'Check the tools available in the current session after a change.')
@@ -307,6 +308,6 @@ def guidance(selected, subagents=False, *, network='allowlist'):
     else:
         lines.append(f'Scheduled prompts are off in Settings → {features}.')
     lines.append(f'Conversation recall is set to {selected["compaction_recall"].capitalize()} under Settings → {features}.')
-    lines.append(web_access.guidance(selected['web_access']) or
+    lines.append(web_access.guidance(selected['web_access'], network == 'allowlist') or
                  f'Web Search is off. Ask the user to configure it under Settings → {search_settings} if a search is needed.')
     return '\n\n'.join(x for x in lines if x) + '\n'
