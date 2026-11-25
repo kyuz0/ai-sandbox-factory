@@ -318,6 +318,9 @@ applied profile, any added services and the replacement consequences. Choose
 exactly that revision. If files change after
 review, review them again before applying.
 
+In **File changes**, green `+` lines are additions and red `-` lines are removals.
+The `@@` markers give the changed line ranges. Long lines wrap within the review.
+
 Factory builds images while the previous containers remain available, then stops
 services that must be replaced or removed. Unchanged services keep running.
 Preparation is a job and can be cancelled. Factory

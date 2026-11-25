@@ -1,6 +1,9 @@
 """Create an editable profile and review the exact files Factory will apply."""
 from pathlib import Path
 
+from pygments.token import Generic
+from rich.style import Style
+from rich.syntax import ANSISyntaxTheme, Syntax
 from textual import on
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
@@ -166,7 +169,11 @@ class ReviewProfile(Screen):
                     yield Bullet('You can cancel preparation. Factory stops the active build or removes newly prepared service resources before reporting cancellation.')
                 with Vertical(classes='setting'):
                     yield Label('File changes', classes='section-heading')
-                    yield Static(self.review['diff'], markup=False, id='profile-edit-diff')
+                    # Keep normal text contrast when Textual converts colours to greyscale.
+                    theme = 'ansi_dark'
+                    if self.app.no_color:
+                        theme = ANSISyntaxTheme({Generic.Heading:Style(bold=True), Generic.Subheading:Style(bold=True)})
+                    yield Static(Syntax(self.review['diff'], 'diff', theme=theme, word_wrap=True), id='profile-edit-diff')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-review-back')
             yield Button('Apply profile changes', id='profile-review-apply', variant='primary', disabled=not self.review['changes'])

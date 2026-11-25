@@ -1,6 +1,7 @@
 """Profile editing labels, exact review actions, asynchronous ownership and layout."""
 import asyncio
 import copy
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -33,7 +34,72 @@ def review(changed=True):
             'diff':'--- applied/Dockerfile\n+++ edited/Dockerfile\n@@ -1 +1 @@\n-RUN true\n+RUN apt-get install -y figlet\n'}
 
 
+def diff_review():
+    """Exercise the real patch generator with added, removed and changed files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        before, after = Path(tmp)/'before', Path(tmp)/'after'
+        before.mkdir(); after.mkdir()
+        (before/'Dockerfile').write_text('FROM debian:13\nRUN echo old-package\n')
+        (after/'Dockerfile').write_text('FROM debian:13\nRUN apt-get update && apt-get install -y figlet\n')
+        (before/'notes.md').write_text('# Old service\nRemove this unused service.\n')
+        (after/'profile.json').write_text('{\n  "description": "Database for café development",\n  "literal": "[bold]not terminal markup[/bold]",\n  "command": "' + 'very-long-argument '*12 + 'END-OF-LONG-LINE"\n}\n')
+        (after/'asset.bin').write_bytes(b'\xff\x00')
+        changes, diff = profile_edit.differences(before, after)
+    return {**review(), 'changes':changes, 'diff':diff}
+
+
 class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
+    async def test_diff_highlights_changes_and_keeps_literal_long_lines_scrollable(self):
+        for mono in (False,True):
+            for size in ((80,24),(120,40),(220,50)):
+                with self.subTest(mono=mono,size=size), tempfile.TemporaryDirectory() as tmp, \
+                        patch.dict(os.environ,TEXTUAL_COLOR_SYSTEM='truecolor'), \
+                        patch('ai_sandbox_factory.updates.available_update',return_value=None):
+                    if mono: os.environ['NO_COLOR']='1'
+                    else: os.environ.pop('NO_COLOR',None)
+                    app=Cockpit(Path(tmp),FakeService([]))
+                    value=diff_review()
+                    original=copy.deepcopy(value)
+                    async with app.run_test(size=size) as pilot:
+                        await app.workers.wait_for_complete()
+                        page=ReviewProfile(record(True),value)
+                        await app.push_screen(page)
+                        await pilot.pause()
+                        diff=page.query_one('#profile-edit-diff')
+                        diff.scroll_visible(top=True,animate=False)
+                        await pilot.pause()
+                        lines=[diff.render_line(y) for y in range(diff.region.height)]
+                        text='\n'.join(line.text for line in lines)
+                        for expected in ('--- applied/Dockerfile','+++ edited/Dockerfile','@@ -1,2 +1,2 @@',
+                                         '-RUN echo old-package','+RUN apt-get update','--- applied/notes.md',
+                                         '+++ edited/profile.json','END-OF-LONG-LINE','café',
+                                         '[bold]not terminal markup[/bold]','Added binary file: asset.bin'):
+                            self.assertIn(expected,text)
+                        self.assertEqual(value,original)
+                        self.assertLessEqual(max(line.cell_length for line in lines),diff.region.width)
+                        styles={prefix:next(segment.style for line in lines if line.text.startswith(prefix)
+                                            for segment in line if segment.text.startswith(prefix))
+                                for prefix in ('-RUN','+RUN','@@')}
+                        self.assertTrue(styles['@@'].bold)
+                        if not mono:
+                            self.assertNotEqual(styles['-RUN'].color,styles['+RUN'].color)
+                            self.assertNotEqual(styles['@@'].color,styles['+RUN'].color)
+                        else:
+                            self.assertEqual(styles['-RUN'].color,styles['+RUN'].color)
+                            self.assertEqual(styles['@@'].color,styles['+RUN'].color)
+                        body=page.query_one('.form')
+                        self.assertGreater(body.scroll_y,0)
+                        body.scroll_end(animate=False)
+                        await pilot.pause()
+                        self.assertTrue(body.content_region.contains(diff.region.x,diff.region.bottom-1))
+                        self.assertLessEqual(body.max_scroll_x,0)
+                        for key in ('profile-review-back','profile-review-apply'):
+                            button=page.query_one('#'+key,Button)
+                            self.assertEqual(button.region.height,1)
+                            self.assertLess(button.region.bottom,size[1])
+                        await pilot.press('escape')
+                        self.assertIsNot(app.screen,page)
+
     async def test_copy_review_points_only_independent_copies_to_make_editable(self):
         for size in ((80,24),(120,40),(220,50)):
             with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp, \

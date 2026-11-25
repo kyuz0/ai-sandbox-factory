@@ -12,7 +12,7 @@ from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
 from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopySandboxHelp, CopyWebAccess, CreateFromSandbox, MoreActions, SettingsForm, copy_draft
-from test_profile_edit_ui import record, review
+from test_profile_edit_ui import diff_review, record, review
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
 
@@ -93,6 +93,16 @@ async def capture(output,size,only=None):
                     await shot('profile-edit-apply-confirm')
                     await pilot.press('escape')
                 await app.pop_screen()
+            await app.push_screen(ReviewProfile(record(True),diff_review()))
+            await shot('profile-diff-review')
+            app.screen.query_one('#profile-edit-diff').scroll_visible(top=True,animate=False)
+            await shot('profile-diff-start')
+            app.screen.query_one('.form').scroll_end(animate=False)
+            await shot('profile-diff-end')
+            app.screen.query_one('#profile-review-apply',Button).press()
+            await shot('profile-diff-confirm')
+            await pilot.press('escape')
+            await app.pop_screen()
             information=record(True)
             changed = {**review(), 'added_services':['analytics'], 'replaced_services':['database'], 'removed_services':['reporting'],
                        'changes':['Changed: profile.json','Changed: services/database/Dockerfile','Removed: services/reporting/Dockerfile'],

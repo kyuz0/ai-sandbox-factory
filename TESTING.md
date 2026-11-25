@@ -1715,6 +1715,11 @@ successes and failures must not overwrite a refreshed profile page. The action
 label and page title must match the saved editable state after returning from
 creation, including failure and retry. Agent guidance and recovery errors use
 the same available action.
+Diff checks use Factory-generated patches with changed, added and removed files,
+long lines, Unicode, literal markup and binary-file notices. Added and removed
+lines have distinct colours, hunk markers are emphasized, and the original
+markers remain readable in monochrome. Wrapped lines must remain complete while
+the review scrolls and Back and Apply stay visible.
 `render_service_data.py` also captures the full menu with an open
 browser editor, a profile guide and alerts.
 
