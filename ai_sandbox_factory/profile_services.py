@@ -262,19 +262,18 @@ def _start(config, name, args, environment=None):
                 if value:
                     detail = detail.replace(value, '[redacted]')
             raise ValueError(f'Could not start profile container {name!r} (exit {result.returncode}): '
-                             f'{detail}. Inspect its image and profile settings, then retry Start.')
+                             f'{detail}. Inspect its image and profile settings before retrying.')
 
 
 def up(config, state):
     if not selected(config):
         return
-    from . import sandbox, profile_runtime
+    from . import sandbox
     validate(config)
     check_ownership(config)
     state = Path(state)
     prepare(config, state)
     base = prefix(config)
-    frozen = (profile_runtime.applied(state) or {}).get('services', {})
     directory = state / 'profile-services'
     known = _run(config, 'network', 'exists', base, check=False, capture=True)
     if known.returncode:
@@ -299,36 +298,52 @@ def up(config, state):
         '-v', f'{socket}:/run/egress:ro,z',
         '-v', f'{directory / "relay.py"}:/opt/profile-relay.py:{host_platform.bind_mode()}',
         '--entrypoint', 'python3', sandbox.image_names(config)[1], '/opt/profile-relay.py'])
-    for name, spec in selected(config).items():
-        args = ['--network', base, '--network-alias', name, '--network-alias', hostname(name),
-                '--sysctl', 'net.ipv4.ping_group_range=0 0', '--security-opt=label=disable',
-                '-v', f'{directory / "servers" / name}:/run/profile-service:{host_platform.bind_mode()}',
-                '-v', f'{directory / "servers" / name / "authorized_keys"}:/etc/profile-service-authorized-keys:{host_platform.bind_mode()}',
-                '-e', f'HTTP_PROXY=http://{hostname("proxy")}:3128',
-                '-e', f'HTTPS_PROXY=http://{hostname("proxy")}:3128',
-                '-e', f'http_proxy=http://{hostname("proxy")}:3128',
-                '-e', f'https_proxy=http://{hostname("proxy")}:3128', '-e', 'NO_PROXY=' + no_proxy(config)]
-        environment = json.loads((directory / 'servers' / name / 'environment.json').read_text())
-        for volume, target in spec['volumes'].items():
-            volume_name = data_volume(config, name, volume)
-            if _run(config, 'volume', 'exists', volume_name, capture=True, check=False).returncode:
-                _run(config, 'volume', 'create', *_labels(config, 'data'), volume_name)
-            args += ['-v', volume_name + ':' + target]
-        _start(config, container(config, name), [*args, frozen.get(name) or image(config, name, spec), *spec.get('command', [])], environment)
-        # The application's original entrypoint remains PID 1; sshd runs inside the same container.
-        check = _run(config, 'exec', '--user', '0', container(config, name), 'sh', '-c',
-                     'test -d /run/sshd || mkdir -p /run/sshd; '
-                     'pid=$(cat /run/profile-service-sshd.pid 2>/dev/null); '
-                     'test -n "$pid" && test "$(cat /proc/$pid/comm 2>/dev/null)" = sshd',
-                     capture=True, check=False)
-        if check.returncode:
-            started = _run(config, 'exec', '--user', '0', container(config, name),
-                           spec['ssh']['server'], '-f', '/run/profile-service/sshd_config',
-                           capture=True, check=False, stderr=subprocess.PIPE)
-            if started.returncode:
-                raise ValueError(f'Could not start administrative SSH in profile service {name!r} '
-                                 f'(exit {started.returncode}): {(started.stderr or started.stdout).strip()}. '
-                                 'Its image must provide a shell and SSH server. Check the service Dockerfile.')
+    for name in selected(config):
+        start_service(config, state, name)
+
+
+def start_service(config, state, name):
+    """Start one application container using its already prepared private settings."""
+    from . import profile_runtime
+    base = prefix(config)
+    state = Path(state)
+    spec = selected(config)[name]
+    frozen = (profile_runtime.applied(state) or {}).get('services', {})
+    directory = state / 'profile-services'
+    args = ['--network', base, '--network-alias', name, '--network-alias', hostname(name),
+            '--sysctl', 'net.ipv4.ping_group_range=0 0', '--security-opt=label=disable',
+            '-v', f'{directory / "servers" / name}:/run/profile-service:{host_platform.bind_mode()}',
+            '-v', f'{directory / "servers" / name / "authorized_keys"}:/etc/profile-service-authorized-keys:{host_platform.bind_mode()}',
+            '-e', f'HTTP_PROXY=http://{hostname("proxy")}:3128',
+            '-e', f'HTTPS_PROXY=http://{hostname("proxy")}:3128',
+            '-e', f'http_proxy=http://{hostname("proxy")}:3128',
+            '-e', f'https_proxy=http://{hostname("proxy")}:3128', '-e', 'NO_PROXY=' + no_proxy(config)]
+    environment = json.loads((directory / 'servers' / name / 'environment.json').read_text())
+    for volume, target in spec['volumes'].items():
+        volume_name = data_volume(config, name, volume)
+        if _run(config, 'volume', 'exists', volume_name, capture=True, check=False).returncode:
+            _run(config, 'volume', 'create', *_labels(config, 'data'), volume_name)
+        args += ['-v', volume_name + ':' + target]
+    _start(config, container(config, name), [*args, frozen.get(name) or image(config, name, spec), *spec.get('command', [])], environment)
+    ensure_ssh(config, name, container(config, name))
+
+
+def ensure_ssh(config, name, identifier):
+    """Start the separate administrative SSH daemon in the specified running container."""
+    spec = selected(config)[name]
+    check = _run(config, 'exec', '--user', '0', identifier, 'sh', '-c',
+                 'test -d /run/sshd || mkdir -p /run/sshd; '
+                 'pid=$(cat /run/profile-service-sshd.pid 2>/dev/null); '
+                 'test -n "$pid" && test "$(cat /proc/$pid/comm 2>/dev/null)" = sshd',
+                 capture=True, check=False)
+    if check.returncode:
+        started = _run(config, 'exec', '--user', '0', identifier,
+                       spec['ssh']['server'], '-f', '/run/profile-service/sshd_config',
+                       capture=True, check=False, stderr=subprocess.PIPE)
+        if started.returncode:
+            raise ValueError(f'Could not start administrative SSH in profile service {name!r} '
+                             f'(exit {started.returncode}): {(started.stderr or started.stdout).strip()}. '
+                             'Its image must provide a shell and SSH server. Check the service Dockerfile.')
 
 
 def update_policy(config, state, text, groups):
@@ -349,7 +364,7 @@ def update_policy(config, state, text, groups):
         sandbox.restart_existing(config, gateway)
 
 
-def ready(config, state, *, check_ssh=True, cancelled=None):
+def ready(config, state, *, check_ssh=True, cancelled=None, service=None):
     """Wait for initialization, allowing profile preparation to cancel and clean up."""
     if not selected(config):
         return
@@ -361,7 +376,8 @@ def ready(config, state, *, check_ssh=True, cancelled=None):
             text = text.replace(value, '[redacted]')
         return text
     dev = sandbox.names(config)[0]
-    for name, spec in selected(config).items():
+    for name in ([service] if service else selected(config)):
+        spec = selected(config)[name]
         command = spec.get('healthcheck', ['true'])
         announced = False
         while True:
@@ -373,7 +389,7 @@ def ready(config, state, *, check_ssh=True, cancelled=None):
                 logs = _run(config, 'logs', container(config, name), capture=True,
                             check=False, stderr=subprocess.PIPE)
                 raise ValueError(f'Profile service {name!r} stopped during initialization: '
-                                 f'{diagnostic(logs.stdout + (logs.stderr or ""))}. Inspect its Dockerfile and retry Start.')
+                                 f'{diagnostic(logs.stdout + (logs.stderr or ""))}. Inspect the service logs and image before retrying.')
             result = _run(config, 'exec', container(config, name), *command,
                           capture=True, check=False, stderr=subprocess.PIPE)
             if result.returncode == 0:

@@ -9,7 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit
+from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit, service_data
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -35,7 +35,7 @@ from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 PI_VERSION = '1.4.0'
-LIFECYCLE_COMMANDS = ('profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
+LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                       'configure', 'primary-login', 'primary-import')
 RUNTIME_ENV = {
@@ -1866,11 +1866,18 @@ def main(*, startup_notice=''):
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('service-data-list', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
-        if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply'):
+        if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
+        if command in ('service-data-export', 'service-data-restore'):
+            cmd.add_argument('--saved', required=True, help='Saved service data ID from service-data-list')
+        if command == 'service-data-export':
+            cmd.add_argument('--volume', required=True, help='Declared data volume key')
+            cmd.add_argument('--output', required=True, type=Path, help='New archive file on this computer')
+        if command == 'service-data-restore':
+            cmd.add_argument('--service', required=True, help='Service whose data will be replaced')
         if command == 'profile-fork':
             cmd.add_argument('--directory', required=True, help='New or empty host folder outside the project')
         if command == 'profile-review':
@@ -1961,7 +1968,7 @@ def main(*, startup_notice=''):
             with operation_locks.sandbox(args.name, args.command):
                 sandbox_command(args, state, parser)
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
-            if not args.command.startswith('profile-'):
+            if not args.command.startswith(('profile-', 'service-data-')):
                 raise
             parser.exit(1, f'Error: {error}\n')
         if args.command == 'create' and args.open:
@@ -1997,6 +2004,21 @@ def sandbox_command(args, state, parser):
     config = json.loads((state / 'config.json').read_text())
     if args.command in LIFECYCLE_COMMANDS:
         config = recover_profile(config, state)
+    if args.command == 'service-data-list':
+        print(json.dumps(service_data.entries(config), indent=2))
+        return
+    if args.command in ('service-data-export', 'service-data-restore'):
+        try:
+            if args.command == 'service-data-export':
+                path = service_data.export(config, state, args.saved, args.volume, args.output, gate=args.apply_gate)
+                print(f'Service data exported to {path}. Saved volumes and running services were unchanged.', flush=True)
+                return
+            service_data.restore(config, state, args.saved, args.service, gate=args.apply_gate)
+            print(f'Service data restored to {args.service}. Find its previous data in Actions… → Saved service data….', flush=True)
+            return
+        except updating.UpdateCancelled:
+            print('Service data operation cancelled. Existing service data was kept.', flush=True)
+            return
     if args.command == 'profile-fork':
         return profile_edit.fork(config, state, args.directory, args.apply_gate)
     if args.command == 'profile-review':

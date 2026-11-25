@@ -86,7 +86,8 @@ def guidance(config):
             'Then reopen the coding agent. '
             'Factory builds before replacement. Replacement stops running agent work and terminals, and keeps project files, '
             'home, chats and sign-ins. Apply can add, replace or remove services. Affected services stop during preparation; '
-            'replacements use copies of their data volumes, and removed services leave their data volumes available for recovery. '
+            'replacements use copies of their data volumes. Factory keeps the previous data from replaced or removed services '
+            'under Actions… → Saved service data… for export or restore. '
             'Factory does not perform application-specific data migrations. '
             'Never claim an edit is installed until Apply succeeds.\n\n'
             'If undecided, ask whether to track this folder with Git, whether commits stay local or are pushed, '
@@ -328,5 +329,10 @@ def apply(config, state, revision, gate=None):
                 profile_replacement.apply(config, updated, state, allow_service_changes=True, retain_previous=True)
     print('Profile changes applied. Open the coding agent again to use the new image and instructions.', flush=True)
     retained = set(updated.get('profile_service_retained_volumes', [])) - set(config.get('profile_service_retained_volumes', []))
-    for name in sorted(retained):
-        print(f'Previous service data kept in volume {name}. Export it with: {profile_services.export_command(name)}', flush=True)
+    if retained:
+        from . import service_data
+        previous_ids = {row['id'] for row in service_data.entries(config)}
+        for row in service_data.entries(updated):
+            if row['id'] not in previous_ids:
+                print(f'Saved service data: {row["service"]} · {row["time"]} · {row["reason"]}', flush=True)
+        print('Find the service, date and profile version in Actions… → Saved service data…. You can export or restore the saved data there.', flush=True)

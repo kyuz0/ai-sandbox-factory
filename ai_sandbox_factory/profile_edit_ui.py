@@ -24,6 +24,8 @@ def consequences(record, review=None):
             notes.append('Replaced services use copies of their data volumes. Only data stored in declared volumes survives replacement.')
         if review.get('removed_services'):
             notes.append('Removed service containers are deleted. Their data volumes are kept until you delete this sandbox.')
+        if (review or {}).get('retained_volumes'):
+            notes.append('Factory keeps the previous service data in Actions… → Saved service data…, where you can export or restore it.')
         notes.append('Factory does not perform application-specific data migrations.')
     else:
         notes.append('Existing profile services and their application data are kept.')

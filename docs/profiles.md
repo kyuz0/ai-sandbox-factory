@@ -291,12 +291,52 @@ services. Replacements use copies of their declared data volumes; a failed
 preparation or startup restores the previous containers and settings.
 
 Removing a service removes its container. Its data volumes remain available for
-recovery until **Delete sandbox**. Previous volumes from replaced services are
-also kept; the job output lists their names and export commands. Data outside
+recovery until **Delete sandbox**. Factory also keeps the previous volumes when
+replacing a service. Data outside
 declared volumes does not survive service replacement. Factory does not perform
 application-specific data migrations, such as a database major-version upgrade.
 Description and connection metadata can be updated without replacing the service.
 A normal rebuild uses the saved applied service layout.
+
+### Find, export or restore previous service data
+
+Open **Actions… → Saved service data…**. Factory lists each service's saved data
+with its date, source image, profile version and data volumes. The same page is
+available from **Profile and services…**, including after removing all services.
+These are Podman volumes on your computer, separate from your project files.
+Factory keeps them when you apply changes that replace or remove a service,
+and before restoring saved data. This is not a scheduled backup of running services.
+
+- **Export data…** saves a selected volume to a new `.tar` file on your computer.
+  It leaves the saved volume and running services unchanged. Export each volume
+  when the saved service has several.
+- **Restore data…** copies the saved volumes into a selected service. Review the
+  source image, current image and data paths before confirming. Only that service
+  stops during restore; its current data is kept as another entry in **Saved service data**.
+  Other services and coding-agent sessions keep running.
+- If the service was removed, add it back through **Edit profile… → Review changes…
+  → Apply profile changes**, then restore its saved data. You can export its data
+  without adding it back.
+
+Restore changes application data, not the service's current image, profile or
+connection settings. The target service's current image must read the saved data
+format. If necessary, change its image through **Edit profile… → Review changes…
+→ Apply profile changes** before restoring. Factory
+does not convert database versions or passwords stored inside application files.
+If restore fails, Factory restores the previous container, SSH access and data.
+After an interrupted worker, the next Start or Open completes recovery before
+using the sandbox. Factory briefly starts even a stopped service to check the
+restored copy, then stops it again. Saved source
+volumes remain unchanged. **Delete sandbox** removes both current and saved service
+data; exported archives outside Factory's state folder remain on your computer.
+
+For the CLI, `ai-sandbox-factory service-data-list NAME` prints the saved IDs and
+volume keys. For example:
+
+```sh
+ai-sandbox-factory service-data-export NAME --saved ID --volume data --output database.tar
+ai-sandbox-factory service-data-restore NAME --saved ID --service database
+```
 
 **Create from existing…** reuses the source sandbox's settings and saved profile
 when that profile supports the selected coding agent. It creates new application

@@ -10,7 +10,7 @@ from textual.widgets import Button, Input, Label, Static
 
 from . import chat_history, primary_workspace, profile_services
 from .file_browser import PathField
-from .tui_widgets import Command, Feedback
+from .tui_widgets import Command, Feedback, WrappingCollapsible
 
 
 EXPORT = 'Export chat history'
@@ -268,13 +268,16 @@ class DeleteSandbox(ModalScreen[bool]):
                     yield Static('Application data for these profile services will be permanently deleted: ' + ', '.join(self.services)
                                  + '. Cancel and ask your coding agent to export any needed application data before deleting.', classes='chat-note', markup=False)
                 if self.retained_volumes:
-                    yield Static('When you applied profile changes, Factory kept the old data from services '
-                                 'you replaced or removed. It is stored in Podman volumes on this computer. '
+                    yield Static('Factory kept old service data when you applied profile changes or restored saved data. '
+                                 'It is stored in Podman volumes on this computer. '
                                  'Deleting this sandbox permanently deletes that data. '
-                                 'To save a copy, cancel and run the export commands below on this computer:',
+                                 'Cancel and open Actions… → Saved service data… to see each service and date, '
+                                 'and export anything you want to keep.',
                                  classes='chat-note', markup=False)
-                    for volume in self.retained_volumes:
-                        yield Command(profile_services.export_command(volume),classes='chat-note')
+                    with WrappingCollapsible(title='Command-line export', collapsed=True):
+                        yield Static('Alternatively, cancel and run these commands on this computer:', markup=False)
+                        for volume in self.retained_volumes:
+                            yield Command(profile_services.export_command(volume),classes='chat-note')
                 if self.services or self.retained_volumes:
                     yield Static('Chat history export does not include application data.', classes='chat-note', markup=False)
                 yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)

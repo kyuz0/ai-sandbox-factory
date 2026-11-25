@@ -175,6 +175,12 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   validate the replacement before interrupting work. When replacing a running
   sandbox, keep the previous runtime available until the new one works. Test
   what happens when it fails. Preserve whether the sandbox was running or stopped.
+- When keeping data for recovery, provide a named UI entry with its source and
+  date, and tested export and restore actions. Job output alone is not a usable
+  recovery workflow. State who keeps the data, when and where it is stored, and
+  what deletes it.
+- Check conditional actions inside their parent's visible area. A button with
+  the right height can still be hidden by a zero-width or clipped container.
 - Before applying an unavoidable restart or loss, name the sandbox, the work
   that will stop, the data that will be removed, and the data that will survive.
   Put those consequences and a clearly named action together. Offer a backup or

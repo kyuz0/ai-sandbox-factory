@@ -20,6 +20,7 @@ from inspect import isawaitable
 
 from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages, profile_spec, profile_services, profile_runtime, profile_edit
 from .profile_edit_ui import EditProfile
+from .service_data_ui import SavedServiceData
 from . import chat_history
 from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
@@ -1534,6 +1535,8 @@ class MoreActions(ModalScreen[Optional[str]]):
         if isinstance(saved_profile, dict) and all(key in saved_profile for key in ('name', 'digest', 'path')):
             related.insert(0, ('Profile and services…', 'profile-information'))
             related.insert(1, ('Edit profile…', 'edit-profile'))
+        if record.get('config', {}).get('profile_service_recovery'):
+            related.insert(2, ('Saved service data…', 'saved-service-data'))
         diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
         if not native:
             diagnostics.append(('Test MCP connections', 'connections'))
@@ -1692,6 +1695,11 @@ class AppliedProfile(Screen):
                 yield Details([('Connection settings and application credentials', profile_services.CLIENT + '/connections.json')])
                 yield Label('Application data', classes='group-title')
                 yield Static(profile_services.data_guidance(), classes='setting-help')
+            if self.record['config'].get('profile_service_recovery'):
+                with Vertical(classes='setting'):
+                    yield Label('Saved service data', classes='group-title')
+                    yield Static('Factory kept previous service data. Export or restore it here.', classes='setting-help')
+                    yield Button('Saved service data…', id='profile-information-data')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-information-back')
             yield Button('Edit profile…', id='profile-information-edit', variant='primary')
@@ -1730,6 +1738,10 @@ class AppliedProfile(Screen):
     @on(Button.Pressed, '#profile-information-edit')
     def edit_profile(self):
         self.app.push_screen(EditProfile(self.record))
+
+    @on(Button.Pressed, '#profile-information-data')
+    def saved_service_data(self):
+        self.app.perform('saved-service-data', record=self.record)
 
     def action_back(self):
         self.app.pop_screen()
@@ -4589,6 +4601,8 @@ class Cockpit(App):
     .action-buttons { height: 1; }
     .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }
+    .wizard-actions .data-actions { dock: right; width: auto; height: 1; }
+    .wizard-actions .data-actions Button { dock: none; margin: 0 0 0 1; }
     .job-actions #job-cancel { dock: right; margin-right: 0; }
     .dialog-actions { align-horizontal: right; height: 1; min-height: 1; margin: 1 0 0 0; }
     .dialog-actions Button { min-width: 12; padding: 0 2; }
@@ -5621,6 +5635,13 @@ class Cockpit(App):
             self.push_screen(ContainersScreen(record))
         elif action == 'profile-information':
             self.push_screen(AppliedProfile(record, self.state_root / name))
+        elif action == 'saved-service-data':
+            try:
+                saved = self.service.config(name)
+            except (OSError, ValueError) as error:
+                self.notify(f'Cannot read saved service data for {name}: {error}. Check the sandbox settings and retry.', severity='error')
+            else:
+                self.push_screen(SavedServiceData({**record, 'config': saved}))
         elif action == 'profile-guide':
             profile = sandbox.selected_profile(config)
             self.push_screen(ProfileGuide(profile.get('description') or profile['name'], registry.profile_guide(profile['path'])))

@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from textual.widgets import Button, Checkbox, Input, Select
+from textual.widgets import Button, Checkbox, Collapsible, Input, Select
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
@@ -113,6 +113,8 @@ async def capture(output,size):
             volume = 'pi-sandbox-factory-example-profile-data-0123456789abcdef'
             await app.push_screen(DeleteSandbox('example',has_config=True,services=['database'],retained_volumes=[volume]))
             await shot('profile-services-retained-delete')
+            app.screen.query_one(Collapsible).collapsed = False
+            await shot('profile-services-retained-delete-commands')
             await pilot.press('escape')
             await app.push_screen(DeleteSandbox('example',has_config=True,retained_volumes=[volume]))
             await shot('profile-services-retained-only-delete')

@@ -1698,6 +1698,7 @@ below before release.
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_profile_service_changes test_updating
 PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_integration.py
 PYTHONPATH=.:tests .venv/bin/python tests/profile_commit_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/service_data_integration.py
 PYTHONPATH=.:tests .venv/bin/python tests/render_profile_edit.py /tmp/factory-profile-edit-ui
 ```
 
@@ -1723,6 +1724,9 @@ running state, settings, database contents and credentials, then retries the sam
 review successfully and checks exact resource cleanup.
 It also checks internal HTTP access with an unchanged service's proxy settings
 and exports a retained volume using the command shown in the Delete dialog.
+The saved-service-data fixture exercises the CLI inventory, export and restore
+against actual service volumes. It checks multi-volume data, retained source and
+target data, stopped services, unrelated running containers, rollback and cleanup.
 After an interrupted profile worker, ordinary lifecycle actions recover the
 pending transaction before changing the sandbox. The real fixture checks Stop
 and Start after killing the preparation worker; dispatch tests also cover

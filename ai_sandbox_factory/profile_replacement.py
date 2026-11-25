@@ -1,4 +1,5 @@
 """Transactional workspace and profile service replacement with recovery."""
+import copy
 from pathlib import Path
 from contextlib import contextmanager
 import shutil
@@ -67,6 +68,7 @@ def recover_preparation(config, state):
         except Exception as error:
             failures.append(f'{label}: {error}')
     engine = original['engine']
+    restore_target = saved.get('restore_target')
     if not saved.get('committed'):
         for name, previous in saved['runtime'].items():
             def container_back(name=name, previous=previous):
@@ -95,6 +97,9 @@ def recover_preparation(config, state):
                 restore(kind + ' ' + name, remove)
         directory, backup = state / 'profile-services', journal / 'services'
         def restore_files():
+            if saved.get('restore_target'):
+                activity.save_config(state, original)
+                return
             if backup.exists():
                 if directory.exists():
                     for path in directory.rglob('*'):
@@ -119,12 +124,19 @@ def recover_preparation(config, state):
         else:
             for name, previous in saved['runtime'].items():
                 if previous and previous['State']['Running']:
-                    restore('running state '+name,lambda previous=previous:sandbox.run([engine,'start',previous['Id']]))
+                    def resume(previous=previous):
+                        sandbox.run([engine, 'start', previous['Id']])
+                        if restore_target:
+                            profile_services.ensure_ssh(original, restore_target, previous['Id'])
+                    restore('running state ' + name, resume)
         for name, previous in {**saved['runtime'], **saved['services']}.items():
             if previous and not previous['State']['Running']:
                 restore('stopped state '+name,lambda previous=previous:sandbox.run([engine,'stop',previous['Id']]))
         if not failures:
-            print('Profile preparation was rolled back; new service resources were removed and the previous runtime and settings were restored.',flush=True)
+            if restore_target:
+                print(f'Restored the previous container, data and running state of service {restore_target!r}.', flush=True)
+            else:
+                print('Profile preparation was rolled back; new service resources were removed and the previous runtime and settings were restored.', flush=True)
     else:
         for name, previous in saved['runtime'].items():
             if not previous:
@@ -149,37 +161,56 @@ def recover_preparation(config, state):
                     sandbox.run([engine, kind, 'rm', name], capture=True, stderr=subprocess.PIPE)
                 restore('unused ' + kind + ' ' + name, retire_resource)
     if failures:
-        raise ValueError('Profile recovery needs attention: ' + '; '.join(failures)
-                         + '. Saved recovery information and private volumes were retained; retry the profile action after fixing the reported engine error.')
+        action = f'Restore data for {restore_target!r}' if restore_target else 'the profile action'
+        heading = f'Service data restore for {restore_target!r} needs attention: ' if restore_target else 'Profile recovery needs attention: '
+        raise ValueError(heading + '; '.join(failures)
+                         + f'. Saved recovery information and private volumes were retained; retry {action} after fixing the reported engine error.')
     shutil.rmtree(journal)
 
 
 @contextmanager
-def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False):
+def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False, restore_target=None, restore_sources=None):
     """Journal allocations before preparation; retain old containers until commit."""
-    from . import sandbox
+    from . import sandbox, service_data
     state = Path(state)
     recover_preparation(original,state)
     profile_services.check_ownership(original)
-    changes = profile_services.changes(original, updated)
-    affected = changes['replaced_services'] + changes['removed_services']
+    if restore_target is None:
+        changes = profile_services.changes(original, updated)
+        affected = changes['replaced_services'] + changes['removed_services']
+    else:
+        affected = [restore_target]
+    action = 'Restore data' if restore_target else 'Apply'
     # A replacement gets a copy of its previous data. Its entrypoint or migration
     # must never write into the recovery container's only data volume.
-    import copy
     mappings = copy.deepcopy(original.get('profile_service_volumes', {}))
     retained = set(original.get('profile_service_retained_volumes', []))
     copies = []
     for name in affected:
         previous = profile_services.selected(original)[name]
         current = profile_services.selected(updated).get(name)
+        saved_volumes = {}
         mappings.pop(name, None)
         for volume in previous['volumes']:
             prior = profile_services.data_volume(original, name, volume)
+            if not current or volume not in current['volumes']:
+                found = sandbox.run([original['engine'], 'volume', 'exists', prior], capture=True,
+                                    check=False, stderr=subprocess.PIPE)
+                if found.returncode == 1:
+                    print(f'Service volume {prior!r} does not exist. No data was saved for {name}/{volume}.', flush=True)
+                    continue
+                if found.returncode:
+                    raise ValueError(f'Cannot check service volume {prior!r} (exit {found.returncode}): '
+                                     f'{(found.stderr or found.stdout).strip()}. Check Podman before retrying Apply.')
+            saved_volumes[volume] = {'volume': prior, 'target': previous['volumes'][volume]}
             retained.add(prior)
             if current and volume in current['volumes']:
                 candidate = profile_services.data_volume_base(updated, name, volume) + '-revision-' + uuid4().hex[:12]
                 mappings.setdefault(name, {})[volume] = candidate
-                copies.append((prior, candidate))
+                copies.append(((restore_sources or {}).get(volume, prior), candidate))
+        if saved_volumes:
+            reason = 'restored' if restore_target else ('replaced' if current else 'removed')
+            service_data.record(updated, original, name, reason, saved_volumes)
     for name, spec in profile_services.selected(updated).items():
         for volume in spec['volumes']:
             if (volume not in mappings.get(name, {})
@@ -197,26 +228,30 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
         for name in names:
             found = sandbox.run([updated['engine'],kind,'exists',name],capture=True,check=False,stderr=subprocess.PIPE)
             if found.returncode == 0:
-                raise ValueError(f'Cannot add profile services: {kind} {name!r} already exists. Inspect this exact resource before retrying; nothing was replaced or deleted.')
+                operation = f'restore data for {restore_target!r}' if restore_target else 'add profile services'
+                raise ValueError(f'Cannot {operation}: {kind} {name!r} already exists. Inspect this exact resource before retrying; nothing was replaced or deleted.')
             if found.returncode != 1:
                 raise ValueError(f'Cannot check {kind} {name!r} (exit {found.returncode}): {(found.stderr or found.stdout).strip()}. Check the container engine and retry.')
     replaced = {profile_services.container(original, name) for name in affected}
     replaced.update(before['container'] - after['container'])
-    runtime = {name:sandbox.inspect(original,name) for name in runtime_names(original)|runtime_names(updated)|replaced}
-    services = {name:sandbox.inspect(original,name) for name in before['container']}
+    runtime_scope = replaced if restore_target else runtime_names(original) | runtime_names(updated) | replaced
+    service_scope = replaced if restore_target else before['container']
+    runtime = {name:sandbox.inspect(original,name) for name in runtime_scope}
+    services = {name:sandbox.inspect(original,name) for name in service_scope}
     journal = state/'profile-preparation'
     journal.mkdir(mode=0o700)
-    if (state/'profile-services').exists():
-        shutil.copytree(state/'profile-services',journal/'services')
-    for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json'):
-        source = state/name
-        if source.exists():
-            target=journal/'files'/name
-            target.parent.mkdir(parents=True,exist_ok=True)
-            shutil.copyfile(source,target)
+    if not restore_target:
+        if (state/'profile-services').exists():
+            shutil.copytree(state/'profile-services',journal/'services')
+        for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json'):
+            source = state/name
+            if source.exists():
+                target=journal/'files'/name
+                target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(source,target)
     helpers = [profile_services.prefix(updated) + '-copy-' + uuid4().hex for _ in copies]
     added['container'] += helpers
-    saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added}
+    saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added,'restore_target':restore_target}
     sandbox.write_json(journal/'record.json',saved)
     def prepare():
         if cancelled and cancelled():
@@ -233,9 +268,9 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
             sandbox.run([updated['engine'], 'volume', 'create', *profile_services._labels(updated, 'data'), candidate])
             found = sandbox.run([original['engine'], 'volume', 'exists', previous], capture=True, check=False, stderr=subprocess.PIPE)
             if found.returncode == 1:
-                raise ValueError(f'Cannot copy service data volume {previous!r}: the volume is missing. '
-                                 'Restore it from a backup, or remove and re-add the service if you want fresh data. '
-                                 'The previous container and settings will be restored.')
+                advice = ('Choose another saved copy with the required data.' if restore_target else
+                          'Restore it from a backup, or remove and re-add the service if you want fresh data.')
+                raise ValueError(f'Cannot copy service data volume {previous!r}: the volume is missing. {advice}')
             if found.returncode:
                 raise ValueError(f'Cannot copy service data volume {previous!r} (exit {found.returncode}): '
                                  f'{(found.stderr or found.stdout).strip()}')
@@ -244,7 +279,7 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
                       'source=subprocess.Popen(["tar","-C","/source","-cpf","-","."],stdout=subprocess.PIPE); '
                       'target=subprocess.run(["tar","-C","/target","-xpf","-"],stdin=source.stdout); '
                       'source.stdout.close(); result=source.wait(); sys.exit(result or target.returncode)')
-            print(f'Copying service data volume {previous} for replacement; the previous data is kept.', flush=True)
+            print(f'Copying service data volume {previous} to {candidate}.', flush=True)
             try:
                 with sandbox.cancellable_build(cancelled):
                     sandbox.run([updated['engine'], 'run', '--rm', '--name', helper,
@@ -255,7 +290,7 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
             except subprocess.CalledProcessError as error:
                 detail = (error.stderr or error.stdout or '').strip()
                 raise ValueError(f'Cannot copy service data volume {previous!r} to {candidate!r} '
-                                 f'(exit {error.returncode}): {detail}. Previous data was kept; check storage and retry Apply.') from error
+                                 f'(exit {error.returncode}): {detail}. Previous data was kept; check storage and retry {action}.') from error
     try:
         if not defer_preparation:
             prepare()
@@ -272,11 +307,15 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
         try:
             recover_preparation(original,state)
         except Exception as recovery:
-            raise ValueError(f'Profile change failed: {error}. {recovery}') from error
+            raise ValueError(f'{action} failed: {error}. {recovery}') from error
+        if restore_target and isinstance(error, (ValueError, OSError, subprocess.CalledProcessError)):
+            raise ValueError(f'{error} The previous container and data for {restore_target!r} were restored.') from error
         raise
     else:
         # Publish the decision before retiring any previous containers.
         saved['committed']=True
+        operation = f'service data restore for {restore_target!r}' if restore_target else 'profile changes'
+        retry = 'retry Restore data' if restore_target else 'retry the same profile review'
         try:
             sandbox.write_json(journal/'record.json',saved)
         except BaseException as error:
@@ -285,15 +324,15 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
             try:
                 recover_preparation(original,state)
             except Exception as recovery:
-                raise ValueError(f'Could not commit profile changes: {error}. {recovery}') from error
+                raise ValueError(f'Could not commit {operation}: {error}. {recovery}') from error
             if isinstance(error, Exception):
                 import errno
                 advice = ('Free storage space' if getattr(error, 'errno', None) == errno.ENOSPC
                           else f'Check the reported error and permissions on {journal}')
-                raise ValueError(f'Could not commit profile changes for sandbox {original["name"]!r} '
+                raise ValueError(f'Could not commit {operation} for sandbox {original["name"]!r} '
                                  f'to {journal / "record.json"}: {error}. '
                                  f'The previous runtime and application data were restored. {advice}, '
-                                 'then retry the same profile review.') from error
+                                 f'then {retry}.') from error
             raise
         recover_preparation(updated,state)
 

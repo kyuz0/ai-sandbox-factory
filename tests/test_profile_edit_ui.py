@@ -96,7 +96,7 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                         await app.push_screen(deletion)
                         await pilot.pause()
                         text = ' '.join(str(item.render()) for item in deletion.query(Static))
-                        self.assertIn('When you applied profile changes, Factory kept the old data from services you replaced or removed.',text)
+                        self.assertIn('Factory kept old service data when you applied profile changes or restored saved data.',text)
                         self.assertIn('It is stored in Podman volumes on this computer.',text)
                         self.assertIn('Deleting this sandbox permanently deletes that data.',text)
                         self.assertNotIn('kept from previous profile',text)

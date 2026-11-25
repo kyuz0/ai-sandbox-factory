@@ -256,6 +256,7 @@ with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.ar
     def test_draft_excludes_private_paths_and_is_independent(self):
         self.config['profile_service_volumes'] = {'database': {'data': 'source-private-database'}}
         self.config['profile_service_retained_volumes'] = ['source-previous-database']
+        self.config['profile_service_recovery'] = [{'id':'source-only','service':'database'}]
         original = copy.deepcopy(self.config)
         draft = copy_draft({'name': 'source', 'config': self.config}, self.root)
         for field in ('name', 'env_file', 'pi_config'):
@@ -265,9 +266,11 @@ with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.ar
         self.assertNotIn('ssh', draft)
         self.assertNotIn('profile_service_volumes', draft)
         self.assertNotIn('profile_service_retained_volumes', draft)
+        self.assertNotIn('profile_service_recovery', draft)
         state, config = self.create()
         self.assertNotIn('profile_service_volumes', config)
         self.assertNotIn('profile_service_retained_volumes', config)
+        self.assertNotIn('profile_service_recovery', config)
         self.assertFalse(draft['options']['web_access']['providers']['exa']['has_key'])
         draft['advisors']['providers'].clear()
         self.assertEqual(self.config, original)
