@@ -71,7 +71,9 @@ class CopyHelpUI(unittest.IsolatedAsyncioTestCase):
                         details=' '.join(str(widget.render()) for widget in app.screen.query(Static))
                         for expected in ('network rules','profile version installed in the source sandbox, example','Profile folder',
                                          'Leave it unchecked','Editing files does not update either sandbox',
-                                         'Apply profile changes','Project files are not copied','Application data',
+                                         'Editable profile… → Review changes… → Apply profile changes',
+                                         'To edit a separate copy later, choose Actions… → Profile and services… → Make profile editable…',
+                                         'Project files are not copied','Application data',
                                          'Model and advisor credentials, including sign-ins, are not copied','SSH keys, browser sessions and saved chats'):
                             self.assertIn(expected,details)
                         body=app.screen.query_one('#copy-help-body')

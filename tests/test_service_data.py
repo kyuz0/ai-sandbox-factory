@@ -104,6 +104,21 @@ class ServiceDataTests(unittest.TestCase):
     def restore(self):
         return service_data.restore(self.config, self.state, self.entry['id'], 'target')
 
+    def test_missing_service_points_to_the_available_profile_action(self):
+        for attached in (False,True):
+            config = copy.deepcopy(self.config)
+            config['profile']['services'].pop('target')
+            if attached:
+                config['editable_profile'] = {'path':'/synthetic/profile'}
+            before = copy.deepcopy(config)
+            calls = list(self.calls)
+            with self.assertRaises(ValueError) as caught:
+                service_data.restore(config, self.state, self.entry['id'], 'target')
+            self.assertIn('Editable profile…' if attached else 'Make profile editable…', str(caught.exception))
+            self.assertIn('editable copy', str(caught.exception))
+            self.assertEqual(config, before)
+            self.assertEqual(self.calls, calls)
+
     def test_restore_set_on_stopped_service_retains_current_and_source(self):
         self.containers[profile_services.container(self.config, 'target')]['State']['Running'] = False
         before = copy.deepcopy(self.volumes)

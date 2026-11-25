@@ -183,8 +183,14 @@ class ProfileServicesTests(unittest.TestCase):
         services.validate_update(original, self.config)
         updated = dict(self.config, profile=sandbox.load_profile('base'))
         with patch.object(sandbox, 'inspect', return_value={'Id': 'running-db'}):
-            with self.assertRaisesRegex(ValueError, 'Apply profile changes'):
-                services.validate_update(original, updated)
+            for attached in (False, True):
+                config = dict(original)
+                if attached:
+                    config['editable_profile'] = {'path':'/synthetic/profile'}
+                with self.assertRaises(ValueError) as caught:
+                    services.validate_update(config, updated)
+                self.assertIn('Editable profile…' if attached else 'Make profile editable…', str(caught.exception))
+                self.assertIn('Apply profile changes', str(caught.exception))
 
     def test_bad_profile_modes_do_not_affect_ordinary_profiles(self):
         services.validate(dict(self.config, profile=sandbox.load_profile('base'), engine='docker', network='unrestricted'))

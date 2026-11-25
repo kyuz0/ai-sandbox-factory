@@ -16,7 +16,7 @@ from test_tui import FakeService
 from tui_geometry import check_dropdown_layout, check_input_layout
 
 
-async def capture(output, size):
+async def capture(output, size, only=None):
     row,saved = recovery_record()
     saved['volumes']['logs'] = {'target':'/var/log/application', 'volume':'pi-sandbox-factory-example-profile-data-fedcba9876543210'}
     row['config']['profile']['services']['database']['volumes']['logs'] = '/var/log/application'
@@ -33,6 +33,8 @@ async def capture(output, size):
             async def shot(name):
                 await pilot.pause()
                 await pilot.wait_for_scheduled_animations()
+                if only and name not in only:
+                    return
                 check_dropdown_layout(app.screen)
                 check_input_layout(app.screen)
                 for button in app.screen.query(Button):
@@ -123,6 +125,13 @@ async def capture(output, size):
             await app.push_screen(RestoreServiceData(removed,saved))
             await shot('removed-service')
             await app.pop_screen()
+            removed['config'].pop('editable_profile')
+            await app.push_screen(SavedServiceData(removed))
+            await shot('removed-inventory-initial')
+            await app.pop_screen()
+            await app.push_screen(RestoreServiceData(removed,saved))
+            await shot('removed-service-initial')
+            await app.pop_screen()
             row['config'].pop('profile_service_recovery')
             await app.push_screen(SavedServiceData(row))
             await shot('empty')
@@ -132,13 +141,14 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
     parser.add_argument('--mono',action='store_true')
+    parser.add_argument('--only',nargs='+',help='Capture only these named states')
     args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=True)
     if args.mono: os.environ['NO_COLOR']='1'
     else: os.environ.pop('NO_COLOR',None)
     os.environ['TEXTUAL_COLOR_SYSTEM']='truecolor'
     for size in ((80,24),(120,40),(220,50)):
-        asyncio.run(capture(args.output,size))
+        asyncio.run(capture(args.output,size,args.only))
 
 
 if __name__=='__main__': main()

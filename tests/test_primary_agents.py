@@ -61,7 +61,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
         for path in documents:
             with self.subTest(path=str(path.relative_to(root))):
                 text = ' '.join(path.read_text().lower().split())
-                for old in ('coding-agent container', 'development container', 'workspace container', 'devcontainer'):
+                for old in ('coding-agent container', 'development container', 'workspace container', 'devcontainer', 'edit profile…'):
                     self.assertFalse(old in text, f'{path.relative_to(root)} still uses {old!r}')
         self.assertIn('main agent sandbox', (root / 'docs/usage.md').read_text().lower())
         guide = (sandbox.ROOT / 'containers/dev/profile-authoring/README.md').read_text()

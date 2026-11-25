@@ -249,7 +249,7 @@ a new task, session or day does not require a fork, rebuild or profile edit.
 Manage ordinary project dependencies in the project. Reuse an attached editable
 profile for later necessary changes unless a separate fork is wanted.
 
-Choose **Actions… → Profile and services… → Edit profile…**. Select a new or empty host folder outside
+Choose **Actions… → Profile and services… → Make profile editable…**. Select a new or empty host folder outside
 the project and choose **Create editable copy…**. Review the replacement notice
 and confirm. Factory copies the sandbox's saved profile, including its saved
 source files; it does not fetch a newer upstream revision or modify the Library.
@@ -311,7 +311,7 @@ referenced build paths. Errors identify the file, JSON location or rejected
 service field. These are static checks: Dockerfile commands and application
 startup are tested when applying, not by the validator.
 
-Choose **Actions… → Profile and services… → Edit profile… → Review changes…**. Factory freezes the
+Choose **Actions… → Profile and services… → Editable profile… → Review changes…**. Factory freezes the
 working-tree files, including uncommitted edits, and shows their diff against the
 applied profile, any added services and the replacement consequences. Choose
 **Apply profile changes**, review the replacement notice and confirm to use
@@ -422,12 +422,12 @@ in the selected sandbox. Edits in the folder are not installed automatically.
 The new sandbox gets fresh private state and application data.
 When the source has an editable profile, choose **Share the profile folder**:
 
-- Leave it off for a separate copy of the installed profile. To edit it later, choose **Actions… → Profile and services… → Edit profile…** in the new sandbox.
+- Leave it off for a separate copy of the installed profile. To edit it later, choose **Actions… → Profile and services… → Make profile editable…** in the new sandbox.
 - Turn it on so both sandboxes use the same profile files and Git repository. Editing files does not update either sandbox automatically.
 
-**Edit profile…** and **Review changes…** show which sandboxes share the folder.
+**Editable profile…** and **Review changes…** show which sandboxes share the folder.
 Each review compares the files with the profile version installed in that sandbox.
-To install the edits, choose **Actions… → Profile and services… → Edit profile… → Review changes… → Apply
+To install the edits, choose **Actions… → Profile and services… → Editable profile… → Review changes… → Apply
 profile changes** in each sandbox you want to update. Sharing does not share databases,
 private homes, chats or Factory-managed credentials.
 

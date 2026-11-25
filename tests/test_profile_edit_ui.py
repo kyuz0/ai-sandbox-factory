@@ -11,7 +11,7 @@ from textual.widgets import Button, Input, OptionList, Static
 from ai_sandbox_factory import profile_edit, sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile, consequences
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
-from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions, NewSandbox, copy_draft
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions, NewSandbox, SettingsForm, copy_draft
 from test_tui import FakeService
 from tui_geometry import check_input_layout
 
@@ -34,6 +34,27 @@ def review(changed=True):
 
 
 class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
+    async def test_copy_review_points_only_independent_copies_to_make_editable(self):
+        for size in ((80,24),(120,40),(220,50)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp, \
+                    patch('ai_sandbox_factory.updates.available_update',return_value=None):
+                (Path(tmp)/'example').mkdir()
+                (Path(tmp)/'example/allowlist.txt').write_text('')
+                app=Cockpit(Path(tmp),FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await app.workers.wait_for_complete()
+                    for shared in (False,True):
+                        draft=copy_draft(record(True),Path(tmp))
+                        draft.update(name='new-project',share_editable_profile=shared)
+                        page=SettingsForm(draft)
+                        await app.push_screen(page)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        text=str(page.query_one('#review-profile-copy',Static).render())
+                        self.assertEqual('Make profile editable…' in text,not shared)
+                        self.assertNotIn('→ Edit profile…',text)
+                        await pilot.press('escape')
+
     def test_actions_group_profile_details_and_guide_without_duplicate_controls(self):
         row=record()
         with tempfile.TemporaryDirectory() as temp:
@@ -63,10 +84,14 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause()
                     self.assertIsInstance(app.screen,AppliedProfile)
                     page=app.screen
+                    control = page.query_one('#profile-information-edit', Button)
+                    self.assertEqual(str(control.label), 'Make profile editable…')
+                    self.assertIn('Make profile editable…', control.render_line(0).text)
                     self.assertEqual(app.focused.id,'profile-information-back')
                     await pilot.press('tab','enter')
                     await pilot.pause()
                     self.assertIsInstance(app.screen,EditProfile)
+                    self.assertEqual(str(app.screen.query_one('.focused-settings-title').render()), 'Make profile editable · example')
                     await pilot.press('escape')
                     await app.workers.wait_for_complete()
                     self.assertIs(app.screen,page)
@@ -89,12 +114,14 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                 await app.workers.wait_for_complete()
                 page=AppliedProfile(record(),Path(temp))
                 await app.push_screen(page)
+                self.assertEqual(str(page.query_one('#profile-information-edit', Button).label), 'Make profile editable…')
                 page.query_one('#profile-information-edit',Button).press()
                 await pilot.pause()
                 await pilot.press('escape')
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertEqual(page.record['config'],updated['config'])
+                self.assertEqual(str(page.query_one('#profile-information-edit', Button).label), 'Editable profile…')
                 self.assertEqual(app.focused.id,'profile-information-edit')
                 self.assertIn(updated['config'][profile_edit.EDIT]['path'],
                               ' '.join(str(widget.render()) for widget in page.query(Static)))
@@ -292,12 +319,21 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                     app=Cockpit(Path(tmp),FakeService([]))
                     async with app.run_test(size=size) as pilot:
                         await app.workers.wait_for_complete()
-                        for screen in (EditProfile(record()),EditProfile(record(True)),
+                        for screen in (AppliedProfile(record(),Path(tmp)),AppliedProfile(record(True),Path(tmp)),
+                                       EditProfile(record()),EditProfile(record(True)),
                                        EditProfile(record(True),error='profile.json: line 4, column 8: expected a comma. Fix the JSON and validate again.'),
                                        ReviewProfile(record(True),review())):
                             await app.push_screen(screen)
                             await pilot.pause()
                             check_input_layout(screen)
+                            if isinstance(screen,AppliedProfile):
+                                expected = 'Editable profile…' if screen.record['config'].get(profile_edit.EDIT) else 'Make profile editable…'
+                                control = screen.query_one('#profile-information-edit', Button)
+                                self.assertEqual(str(control.label), expected)
+                                self.assertIn(expected, control.render_line(0).text)
+                            elif isinstance(screen,EditProfile):
+                                expected = 'Editable profile' if screen.record['config'].get(profile_edit.EDIT) else 'Make profile editable'
+                                self.assertEqual(str(screen.query_one('.focused-settings-title').render()), expected + ' · example')
                             if isinstance(screen,(EditProfile,ReviewProfile)):
                                 self.assertLessEqual(screen.query_one('.form').region.width,100)
                                 self.assertEqual(screen.query_one('.form').region.width,screen.query_one('.wizard-actions').region.width)

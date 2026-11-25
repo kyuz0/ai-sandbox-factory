@@ -279,6 +279,8 @@ class EditTests(unittest.TestCase):
                 self.assertIn('--agent ' + agent, context)
                 self.assertIn('Editing the source does not change the running sandbox', context)
                 self.assertIn('Review changes', context)
+                self.assertIn('Actions… → Profile and services… → Editable profile… → Review changes…', context)
+                self.assertNotIn('Make profile editable…', context)
                 self.assertIn('Dockerfile', context)
                 self.assertIn('services entry in profile.json', context)
                 self.assertIn('forked from '+repr(self.saved['name']),context)
@@ -293,6 +295,18 @@ class EditTests(unittest.TestCase):
                 self.assertNotIn(str(self.destination), context)
         self.assertNotIn((edit.PATH, False), folders.roots({}))
         self.assertIn('create an editable copy', edit.guidance({}))
+
+    def test_agent_instructions_and_missing_copy_error_name_the_initial_action(self):
+        for agent in profile_spec.AGENTS:
+            with self.subTest(agent=agent):
+                config = {**self.config, 'primary_agent':agent}
+                self.assertEqual(edit.action_label(config), 'Make profile editable…')
+                context = edit.guidance(config)
+                self.assertIn('Actions… → Profile and services… → Make profile editable…', context)
+                self.assertIn('create an editable copy outside the project', context)
+                self.assertNotIn('→ Editable profile…', context)
+                with self.assertRaisesRegex(ValueError, 'Make profile editable… to create a copy first'):
+                    edit.review(config, self.state)
 
     def test_profile_customization_is_need_based_in_every_agent_context(self):
         self.attach()

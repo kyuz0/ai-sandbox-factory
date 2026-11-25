@@ -7,7 +7,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
 
-from . import profile_runtime, profile_services, service_data
+from . import profile_edit, profile_runtime, profile_services, service_data
 from .file_browser import PathField
 from .tui_widgets import Bullet, Details, Feedback
 
@@ -96,7 +96,9 @@ class SavedServiceData(Screen):
         self.query_one('#saved-data-export',Button).variant = 'default' if can_restore else 'primary'
         self.query_one('#saved-data-help',Static).update(
             'Export saves a volume as a .tar file. Restore replaces a selected service’s data with a copy of these volumes.' if can_restore else
-            'Export saves this data without adding the service back. To restore it, add the service through Edit profile… → Review changes… → Apply profile changes, then return here.')
+            'Export saves this data without adding the service back. To restore it, open '
+            + profile_edit.action_path(self.record['config'])
+            + ', add the service to the editable copy, review and apply the changes, then return here.')
 
     @on(Button.Pressed, '#saved-data-export')
     def export_data(self):
@@ -212,7 +214,8 @@ class RestoreServiceData(Screen):
                 yield Bullet('',id='service-restore-credentials')
             else:
                 yield Static('There is no service with matching data storage: ' + ', '.join(self.saved['volumes']) + '. '
-                             'Add the service back through Edit profile… → Review changes… → Apply profile changes, '
+                             'Open ' + profile_edit.action_path(self.record['config'])
+                             + ', add the service to the editable copy, review and apply the changes, '
                              'then return here to restore its data. Choose Back, then Export data… to save an archive now.', classes='section-intro')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='service-restore-back')

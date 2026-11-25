@@ -126,13 +126,15 @@ async def capture(output,size,only=None):
             await app.push_screen(DeleteSandbox('example',has_config=True,retained_volumes=[volume]))
             await shot('profile-services-retained-only-delete')
             await pilot.press('escape')
-            information['config']['profile']=sandbox.load_profile('developer-postgres')
             with patch('ai_sandbox_factory.profile_runtime.applied',return_value={'path':'/synthetic/applied'}), \
                     patch('ai_sandbox_factory.profile_services.status',return_value=[{'name':'database','running':True}]):
-                await app.push_screen(AppliedProfile(information,Path(tmp)))
-                await app.workers.wait_for_complete()
-                await shot('profile-edit-information')
-                await app.pop_screen()
+                for attached in (False,True):
+                    information=record(attached)
+                    information['config']['profile']=sandbox.load_profile('developer-postgres')
+                    await app.push_screen(AppliedProfile(information,Path(tmp)))
+                    await app.workers.wait_for_complete()
+                    await shot('profile-edit-information' if attached else 'profile-edit-information-initial')
+                    await app.pop_screen()
             shared=record(True)
             shared['config']['options']={'web_access':{'providers':{'exa':{'has_key':True}}}}
             shared['shared_profiles']=['source','another-sandbox']

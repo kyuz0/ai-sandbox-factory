@@ -12,6 +12,8 @@ from . import profile_runtime, profile_services, profile_spec
 
 PATH = '/opt/sandbox/profile'
 EDIT = 'editable_profile'
+MAKE_EDITABLE = 'Make profile editable…'
+EDITABLE_PROFILE = 'Editable profile…'
 
 PURPOSE = (
     'Customize the profile only for needed persistent system software, profile services '
@@ -19,6 +21,14 @@ PURPOSE = (
     'Keep ordinary project dependencies in the project. Once the environment works, leave it unchanged: '
     'a new task, session or day needs no profile change. Reuse an editable profile unless the user requests another fork.'
 )
+
+
+def action_label(config):
+    return EDITABLE_PROFILE if config.get(EDIT) else MAKE_EDITABLE
+
+
+def action_path(config):
+    return 'Actions… → Profile and services… → ' + action_label(config)
 
 
 def roots(config):
@@ -67,7 +77,7 @@ def guidance(config):
         copied = ('This sandbox has an independent applied profile copy; no editable folder is attached. '
                   if config.get('profile', {}).get('customized_from') else '')
         return ('\n' + PURPOSE + '\n\n' + copied + f'The applied profile at {profile_runtime.PATH} is read-only. For a needed change, ask the user to choose '
-                'Actions… → Profile and services… → Edit profile… and create an editable copy outside the project. '
+                f'{action_path(config)} and create an editable copy outside the project. '
                 'Attaching it replaces this container and stops this session; continue in a new one.\n')
     editable = config[EDIT]
     origin = (f'This editable profile was forked from {editable["origin_name"]!r}, '
@@ -82,7 +92,7 @@ def guidance(config):
             f'Read {profile_runtime.AUTHORING} for the format and examples. '
             f'Validate with `python3 -I - {PATH} --agent {agent} < {profile_runtime.PATH}/authoring/validate.py`. '
             'Fix reported files or fields and validate again. Static checks do not build images or test startup.\n\n'
-            'Tell the user what changed and direct them to Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes. '
+            f'Tell the user what changed and direct them to {action_path(config)} → Review changes… → Apply profile changes. '
             'Then resume your saved conversation. '
             'Factory builds before replacement. Replacement stops running agent work and terminals, and keeps project files, '
             'home, chats and sign-ins. Apply can add, replace or remove services. Affected services stop during preparation; '
@@ -183,7 +193,7 @@ def differences(before, after):
 def review(config, state):
     from . import sandbox
     if not config.get(EDIT):
-        raise ValueError('This sandbox has no editable profile. Choose Actions… → Profile and services… → Edit profile… to create a copy first.')
+        raise ValueError(f'This sandbox has no editable profile. Choose {action_path(config)} to create a copy first.')
     value = freeze(config, state)
     updated = dict(config, profile=value)
     profile_services.validate(updated)

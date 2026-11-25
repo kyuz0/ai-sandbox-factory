@@ -44,7 +44,8 @@ class EditProfile(Screen):
 
     def compose(self):
         yield Header()
-        yield Label('Edit profile · ' + self.record['name'], classes='title focused-settings-title')
+        yield Label(profile_edit.action_label(self.record['config']).removesuffix('…') + ' · ' + self.record['name'],
+                    classes='title focused-settings-title')
         with VerticalScroll(classes='form spaced-form-fields'):
             editable = self.record['config'].get(profile_edit.EDIT)
             if editable:
@@ -91,7 +92,8 @@ class EditProfile(Screen):
             app.start_task(name, 'Review profile changes · ' + name,
                            lambda log: app.service.review_profile(name), working='Validating profile files',
                            on_success=resume, followup_label='Review changes',
-                           on_failure=lambda error: app.push_screen(EditProfile(record, error=error)), failure_label='Edit profile')
+                           on_failure=lambda error: app.push_screen(EditProfile(record, error=error)),
+                           failure_label=profile_edit.EDITABLE_PROFILE.removesuffix('…'))
             return
         destination = self.query_one('#profile-edit-folder', Input).value.strip()
         if not destination:

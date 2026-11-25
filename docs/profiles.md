@@ -77,9 +77,10 @@ or use different build folders and images.
 The same guide and example are readable inside new sandboxes at
 `/opt/sandbox/base-profile/authoring/README.md`. Factory tells the agent where to
 find them when explaining its applied profile. Applied files are read-only.
-**Actions… → Profile and services… → Edit profile…** creates a separate writable
+**Actions… → Profile and services… → Make profile editable…** creates a separate writable
 copy outside the project, available to the agent at `/opt/sandbox/profile`.
-Review its diff and choose **Apply profile changes** to install an edited image
+After editing the copy, choose **Editable profile… → Review changes… →
+Apply profile changes** to install an edited image
 or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
 Attaching or applying an editable profile replaces the main agent sandbox.
@@ -93,7 +94,7 @@ separate private state and application data. Its **Rebuild sandbox…** action
 keeps that saved profile; it does not fetch the original Library profile.
 If the source has an editable profile, **Share the profile folder** shares its
 folder. Both sandboxes see the same files, but editing them does not update either
-sandbox automatically. To install edits, choose **Actions… → Profile and services… → Edit profile… → Review changes… →
+sandbox automatically. To install edits, choose **Actions… → Profile and services… → Editable profile… → Review changes… →
 Apply profile changes** in each sandbox you want to update. Databases and private state remain separate.
 
 Copy [examples/profile](../examples/profile) into a new repository. It contains:
@@ -297,7 +298,7 @@ for environment routing and credential handling.
 Stopping and starting a sandbox keeps its profile containers, application data,
 generated passwords and SSH keys. A rebuild keeps running profile services running and leaves a stopped sandbox
 stopped when it finishes. If a rebuild fails, Factory restores the previous main agent sandbox,
-Factory helper containers and settings. **Edit profile… → Review changes… → Apply profile changes**
+Factory helper containers and settings. **Editable profile… → Review changes… → Apply profile changes**
 can add, replace or remove services. Review lists affected services and the data
 volumes that will be kept. Factory builds images before stopping affected
 services. Replacements use copies of their declared data volumes; a failed
@@ -327,13 +328,13 @@ and before restoring saved data. This is not a scheduled backup of running servi
   source image, current image and data paths before confirming. Only that service
   stops during restore; its current data is kept as another entry in **Saved service data**.
   Other services and coding-agent sessions keep running.
-- If the service was removed, add it back through **Edit profile… → Review changes…
+- If the service was removed, add it back through **Editable profile… → Review changes…
   → Apply profile changes**, then restore its saved data. You can export its data
   without adding it back.
 
 Restore changes application data, not the service's current image, profile or
 connection settings. The target service's current image must read the saved data
-format. If necessary, change its image through **Edit profile… → Review changes…
+format. If necessary, change its image through **Editable profile… → Review changes…
 → Apply profile changes** before restoring. Factory
 does not convert database versions or passwords stored inside application files.
 If restore fails, Factory restores the previous container, SSH access and data.

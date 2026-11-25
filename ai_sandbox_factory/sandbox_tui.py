@@ -1730,7 +1730,7 @@ class AppliedProfile(Screen):
                     yield Static('Export or restore service data kept by Factory.', classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-information-back')
-            yield Button('Edit profile…', id='profile-information-edit', variant='primary')
+            yield Button(profile_edit.action_label(self.record['config']), id='profile-information-edit', variant='primary')
         yield Footer()
 
     def on_mount(self):
@@ -2872,8 +2872,8 @@ class CopySandboxHelp(ModalScreen[None]):
                     with Vertical(classes='setting'):
                         yield Label('Installing later profile edits', classes='section-heading')
                         yield Static('Editing files does not update either sandbox. In each sandbox you want to update, choose '
-                                     'Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes.', markup=False)
-                        yield Static('To edit a separate copy later, choose Actions… → Profile and services… → Edit profile…', markup=False)
+                                     'Actions… → Profile and services… → Editable profile… → Review changes… → Apply profile changes.', markup=False)
+                        yield Static('To edit a separate copy later, choose Actions… → Profile and services… → Make profile editable…', markup=False)
                 with Vertical(classes='setting'):
                     yield Label('Project files', classes='section-heading')
                     yield Static('Project files are not copied. Choosing the same workspace shares its files.', markup=False)
@@ -3422,7 +3422,7 @@ class SettingsForm(Screen):
                             yield Details([('Profile folder', 'shared with ' + value['reuse_from'] + '. Editing files does not update either sandbox automatically.')],
                                           id='review-profile-copy')
                         else:
-                            yield Details([('Profile folder', 'not shared. To edit the new sandbox’s profile later, choose Actions… → Profile and services… → Edit profile…')],
+                            yield Details([('Profile folder', 'not shared. To edit the new sandbox’s profile later, choose Actions… → Profile and services… → Make profile editable…')],
                                           id='review-profile-copy')
             if review and self.profile.get('services'):
                 with Vertical(classes='setting', id='review-profile-services'):
