@@ -207,6 +207,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   Use backpressure for transient pressure rather than rejecting valid work.
 - A transient relay failure must not stop active editor or agent processes.
   Retrying must preserve the same destination and configured network rules.
+- Container replacement checks must begin with the actual browser editor open.
+  Preserve its address and connection settings on success and rollback; verify
+  an authenticated request at the original address. Also cover no open editor,
+  a stopped sandbox and service-only operations that leave the workspace alone.
 - Exercise the shipped clients with the editor's inherited environment, including
   Node preload settings. Mocked tool calls alone do not establish usability.
 

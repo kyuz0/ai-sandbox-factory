@@ -106,7 +106,7 @@ class EditProfile(Screen):
                 app.pop_screen()
                 app.start_settings_job(name, 'Create editable profile · ' + name,
                     lambda log, update: app.service.run_update(['profile-fork', name, '--directory', destination], log, update),
-                    cooperative=True, success_message='Editable profile ready. Open the coding agent again to edit it.')
+                    cooperative=True, success_message='Editable profile ready.')
         app.push_screen(Confirm(message, 'Create editable copy', confirm_by_default=True, notes=consequences(record)), confirmed)
 
 
@@ -186,7 +186,7 @@ class ReviewProfile(Screen):
                 app.pop_screen()
                 app.start_settings_job(name, 'Apply profile changes · ' + name,
                     lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
-                    cooperative=True, success_message='Profile changes applied. Open the coding agent again to use them.')
+                    cooperative=True, success_message='Profile changes applied.')
         target=name+' only' if self.review.get('shared_with') else name
         app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds images first, then prepares services before replacing the coding-agent container.',
                                 'Apply profile changes',confirm_by_default=not bool(self.review.get('removed_services')),

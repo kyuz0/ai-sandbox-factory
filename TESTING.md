@@ -1710,6 +1710,7 @@ below before release.
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_profile_service_changes test_updating
 PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_integration.py
 PYTHONPATH=.:tests .venv/bin/python tests/profile_commit_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/profile_commit_integration.py --browser-editor /path/to/pinned-code-server.tar.gz
 PYTHONPATH=.:tests .venv/bin/python tests/service_data_integration.py
 PYTHONPATH=.:tests .venv/bin/python tests/render_profile_edit.py /tmp/factory-profile-edit-ui
 ```
@@ -1734,6 +1735,12 @@ The commit fixture injects a disk-full error while publishing the transaction's
 commit marker. It verifies immediate restoration of actual container IDs,
 running state, settings, database contents and credentials, then retries the same
 review successfully and checks exact resource cleanup.
+With `--browser-editor`, it opens the actual password-protected editor before
+attaching an editable profile. Attachment, Apply and commit-failure rollback
+must restore the same URL, password settings and authenticated browser cookie.
+Relay regressions reject a conflicting original port without choosing another
+address; service-data restore must leave the workspace editor alone. Cancellation
+during service preparation must preserve an editor that has not been replaced.
 It also checks internal HTTP access with an unchanged service's proxy settings
 and exports a retained volume using the command shown in the Delete dialog.
 The saved-service-data fixture exercises the CLI inventory, export and restore

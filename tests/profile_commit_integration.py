@@ -1,17 +1,20 @@
 """A failed transaction commit restores actual containers and application data."""
 import copy
+import argparse
 import errno
 import json
 import shlex
+import shutil
 import subprocess
 import tarfile
 import threading
+from urllib.parse import urlencode
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
 from uuid import uuid4
 
-from ai_sandbox_factory import operation_locks, profile_edit, profile_replacement, profile_services, sandbox
+from ai_sandbox_factory import browser_editor, editor_settings, operation_locks, profile_edit, profile_replacement, profile_services, sandbox
 from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
 
 
@@ -64,6 +67,9 @@ def check_internal_http(config):
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--browser-editor',type=Path,help='Pinned code-server archive for active-editor replacement checks')
+    args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='factory-profile-commit-') as temporary:
         root = Path(temporary)
         workspace = root / 'project'
@@ -88,10 +94,38 @@ def main():
         def sql(statement):
             return sandbox.run(['podman','exec',profile_services.container(config(),'database'),
                                 'psql','-U','app','-d','app','-Atc',statement],capture=True).stdout.strip()
+        connection=None
+        cookie=None
+        def check_editor(stage):
+            if not connection:
+                return
+            from browser_editor_lifecycle import request
+            current=browser_editor.runtime(state)
+            assert current and current['url']==connection['url'], (stage,current,connection)
+            assert current['container']==sandbox.inspect(config(),sandbox.names(config())[0])['Id'],stage
+            assert request(connection['url'],headers={'Cookie':cookie})[0]==200,stage
+            assert request(connection['url'])[0]==302,stage
+            assert current['preferences']==connection['preferences'],stage
+            print('PASS active browser editor: same address, password and authenticated cookie after '+stage,flush=True)
         try:
             service.create(draft, None, log)
+            if args.browser_editor:
+                from browser_editor_lifecycle import request
+                cache=state.parent/'.browser-editor-downloads'
+                cache.mkdir(exist_ok=True)
+                shutil.copyfile(args.browser_editor,cache/args.browser_editor.name)
+                password='disposable-editor-fixture'
+                editor_settings.save(state,{'password_hash':editor_settings.password_hash(password)})
+                browser_editor.open_browser_editor(config(),state,archive=str(args.browser_editor),background=True,open_tab=False)
+                connection=browser_editor.runtime(state)
+                status,headers,_=request(connection['url'],'/login',method='POST',body=urlencode({'password':password}),
+                                         headers={'Content-Type':'application/x-www-form-urlencoded'})
+                assert status==302, (status,headers)
+                cookie=headers['Set-Cookie'].split(';')[0]
+                check_editor('initial launch')
             folder = root / 'editable-profile'
             service.run(['profile-fork',name,'--directory',str(folder)],log)
+            check_editor('attaching an editable profile')
             check_internal_http(config())
             sql("CREATE TABLE commit_marker (value text); INSERT INTO commit_marker VALUES ('preserved')")
             before = runtime()
@@ -120,6 +154,7 @@ def main():
             assert len(failures) == 1
             assert not (state/'profile-preparation').exists()
             assert config() == original
+            check_editor('failed commit and rollback')
             after = runtime()
             assert after.keys() == before.keys()
             for key, previous in before.items():
@@ -129,6 +164,7 @@ def main():
             assert json.loads((state/'profile-services/client/connections.json').read_text())['database']['password'] == password
             print('PASS commit failure: previous container IDs, running state, settings, database and password restored before returning the error',flush=True)
             service.run(['profile-apply',name,'--revision',review['revision']],log)
+            check_editor('applying a profile')
             assert sql('SELECT value FROM commit_marker') == 'preserved'
             result = sandbox.run(['podman','exec',profile_services.container(config(),'database'),
                                   'printenv','EXAMPLE_VERSION'],capture=True)
@@ -141,6 +177,8 @@ def main():
             print('PASS saved-data export: the displayed command exports the exact retained PostgreSQL volume to a readable archive',flush=True)
             print('PASS retry: the same reviewed service replacement succeeds and preserves database data',flush=True)
         finally:
+            if args.browser_editor:
+                browser_editor.stop(state)
             if (state/'config.json').exists():
                 service.run(['delete',name],log)
                 for command in (['ps','-aq'],['volume','ls','-q'],['network','ls','-q']):

@@ -49,7 +49,7 @@ def failure_logs(config, state, names):
 def recover_preparation(config, state):
     """Finish an interrupted profile transaction under the sandbox lifecycle lock."""
     import json
-    from . import activity, sandbox
+    from . import activity, browser_editor, sandbox
     state = Path(state)
     journal = state / 'profile-preparation'
     record = journal / 'record.json'
@@ -69,7 +69,13 @@ def recover_preparation(config, state):
             failures.append(f'{label}: {error}')
     engine = original['engine']
     restore_target = saved.get('restore_target')
+    browser = saved.get('browser_editor')
     if not saved.get('committed'):
+        previous_workspace = saved['runtime'].get(sandbox.names(original)[0])
+        if browser:
+            editor = browser_editor.runtime(state)
+            if editor and editor['container'] != (previous_workspace or {}).get('Id'):
+                restore('replacement browser editor shutdown',lambda: browser_editor.stop(state))
         for name, previous in saved['runtime'].items():
             def container_back(name=name, previous=previous):
                 current = sandbox.inspect(updated, name)
@@ -132,12 +138,19 @@ def recover_preparation(config, state):
         for name, previous in {**saved['runtime'], **saved['services']}.items():
             if previous and not previous['State']['Running']:
                 restore('stopped state '+name,lambda previous=previous:sandbox.run([engine,'stop',previous['Id']]))
+        if browser:
+            restore('previous browser editor',lambda: browser_editor.resume_connection(original,state,browser))
         if not failures:
             if restore_target:
                 print(f'Restored the previous container, data and running state of service {restore_target!r}.', flush=True)
             else:
                 print('Profile preparation was rolled back; new service resources were removed and the previous runtime and settings were restored.', flush=True)
     else:
+        if browser:
+            restore('browser editor connection',lambda: browser_editor.resume_connection(updated,state,browser))
+            if failures:
+                raise ValueError('Could not reconnect the browser editor: ' + '; '.join(failures)
+                                 + '. The committed sandbox and recovery information were kept; retry Start.')
         for name, previous in saved['runtime'].items():
             if not previous:
                 continue
@@ -171,7 +184,7 @@ def recover_preparation(config, state):
 @contextmanager
 def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False, restore_target=None, restore_sources=None):
     """Journal allocations before preparation; retain old containers until commit."""
-    from . import sandbox, service_data
+    from . import browser_editor, sandbox, service_data
     state = Path(state)
     recover_preparation(original,state)
     profile_services.check_ownership(original)
@@ -238,6 +251,7 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
     service_scope = replaced if restore_target else before['container']
     runtime = {name:sandbox.inspect(original,name) for name in runtime_scope}
     services = {name:sandbox.inspect(original,name) for name in service_scope}
+    browser = None if restore_target else browser_editor.replacement_connection(original,state)
     journal = state/'profile-preparation'
     journal.mkdir(mode=0o700)
     if not restore_target:
@@ -251,7 +265,8 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
                 shutil.copyfile(source,target)
     helpers = [profile_services.prefix(updated) + '-copy-' + uuid4().hex for _ in copies]
     added['container'] += helpers
-    saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added,'restore_target':restore_target}
+    saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added,
+           'restore_target':restore_target,'browser_editor':browser}
     sandbox.write_json(journal/'record.json',saved)
     def prepare():
         if cancelled and cancelled():
@@ -338,7 +353,8 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
 
 
 def apply(original, updated, state, *, text=None, allow_service_changes=False, retain_previous=False):
-    from . import activity, sandbox
+    import json
+    from . import activity, browser_editor, sandbox
     state = Path(state)
     profile_services.validate_update(original, updated, allow_service_changes=allow_service_changes)
     engine = original['engine']
@@ -351,8 +367,13 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
     old_policy = (state / 'squid.conf').read_text()
     pointer = state / 'profile-runtime/applied.json'
     old_pointer = pointer.read_bytes() if pointer.exists() else None
+    journal = state/'profile-preparation/record.json'
+    browser = (json.loads(journal.read_text()).get('browser_editor') if retain_previous and journal.is_file()
+               else browser_editor.replacement_connection(original,state))
     moved = {}
     try:
+        if browser:
+            browser_editor.stop(state)
         for name, info in prior.items():
             if not info:
                 continue
@@ -375,6 +396,8 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         for name, info in services.items():
             if info and not info['State']['Running']:
                 sandbox.run([engine, 'stop', name])
+        if browser:
+            browser_editor.resume_connection(updated,state,browser)
     except BaseException as error:
         failure_logs(updated,state,{name for name in names if name in moved})
         if retain_previous:
@@ -386,6 +409,10 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
                 action()
             except Exception as failure:
                 failures.append(f'{label}: {failure}')
+        if browser:
+            editor = browser_editor.runtime(state)
+            if editor and editor['container'] != (prior[workspace] or {}).get('Id'):
+                restore('replacement browser editor shutdown', lambda: browser_editor.stop(state))
         for name in names:
             def container_back(name=name):
                 current = sandbox.inspect(updated, name)
@@ -410,6 +437,8 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         for name, info in {**prior, **services}.items():
             if info and not info['State']['Running']:
                 restore(f'stopped state {name}', lambda info=info: sandbox.run([engine, 'stop', info['Id']]))
+        if browser:
+            restore('previous browser editor',lambda: browser_editor.resume_connection(original,state,browser))
         if failures:
             raise ValueError(f'Profile replacement failed: {error}. Some recovery steps need attention: '
                              + '; '.join(failures) + '. Project files and private volumes were not deleted.') from error

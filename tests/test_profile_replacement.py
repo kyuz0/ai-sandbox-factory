@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from ai_sandbox_factory import profile_replacement as replacement, profile_services, sandbox
+from ai_sandbox_factory import browser_editor, profile_replacement as replacement, profile_services, sandbox
 
 
 class ReplacementTests(unittest.TestCase):
@@ -15,7 +15,16 @@ class ReplacementTests(unittest.TestCase):
     def test_startup_failure_restores_exact_workspace_and_helper_ids(self):
         self.exercise(True, True)
 
-    def exercise(self, running, failure):
+    def test_open_editor_resumes_on_replacement_before_old_containers_are_removed(self):
+        self.exercise(True, False, browser=True)
+
+    def test_failed_editor_reconnection_restores_previous_runtime_and_editor(self):
+        self.exercise(True, False, browser=True, reconnect_failure=True)
+
+    def test_startup_failure_restores_open_editor_at_previous_address(self):
+        self.exercise(True, True, browser=True)
+
+    def exercise(self, running, failure, browser=False, reconnect_failure=False):
         config = {'name':'fixture','engine':'podman','primary_agent':'codex',
                   'profile':sandbox.load_profile('developer-postgres')}
         workspace = sandbox.names(config)[0]
@@ -25,6 +34,17 @@ class ReplacementTests(unittest.TestCase):
                       for index,name in enumerate((workspace,helper,db))}
         original = copy.deepcopy(containers)
         calls=[]
+        connection={'url':'http://127.0.0.1:12345','preferences':{'mode':'browser'}} if browser else None
+        resumed=[]
+        def resume(config,state,snapshot):
+            self.assertEqual(snapshot,connection)
+            resumed.append(containers[workspace]['Id'])
+            if resumed[-1].startswith('new-'):
+                self.assertTrue(any(value['Id']==original[workspace]['Id'] for value in containers.values()))
+                if reconnect_failure:
+                    raise ValueError('Cannot reconnect editor: address already in use')
+            else:
+                self.assertEqual(resumed[-1],original[workspace]['Id'])
         def run(argv, **kwargs):
             calls.append(argv)
             operation, value = argv[1:3]
@@ -52,16 +72,25 @@ class ReplacementTests(unittest.TestCase):
                  patch.object(sandbox,'run',side_effect=run), patch.object(sandbox,'up',side_effect=up), \
                  patch.object(sandbox,'network_policy',return_value='new policy'), \
                  patch.object(profile_services,'update_policy'), \
+                 patch.object(browser_editor,'replacement_connection',return_value=connection), \
+                 patch.object(browser_editor,'stop') as stop_editor, \
+                 patch.object(browser_editor,'resume_connection',side_effect=resume) as resume_editor, \
                  patch('ai_sandbox_factory.activity.save_config'):
-                if failure:
-                    with self.assertRaisesRegex(ValueError,'startup failed with diagnostic'):
+                if failure or reconnect_failure:
+                    with self.assertRaisesRegex(ValueError,'address already in use' if reconnect_failure else 'startup failed with diagnostic'):
                         replacement.apply(config,copy.deepcopy(config),state)
                     self.assertEqual(containers,original)
                     self.assertEqual((state/'squid.conf').read_text(),'old policy')
                 else:
                     replacement.apply(config,copy.deepcopy(config),state)
                     self.assertEqual(containers[db],original[db])
-                    self.assertFalse(any(info['State']['Running'] for info in containers.values()))
+                    self.assertTrue(all(info['State']['Running'] == running for info in containers.values()))
+                if browser:
+                    stop_editor.assert_called_once_with(state)
+                    self.assertEqual(resumed[-1],original[workspace]['Id'] if failure or reconnect_failure else 'new-'+workspace)
+                else:
+                    stop_editor.assert_not_called()
+                    resume_editor.assert_not_called()
         self.assertFalse(any(argv[1] == 'rm' and any(value in (db, original[db]['Id']) for value in argv[2:]) for argv in calls))
         if running:
             self.assertFalse(any(argv[1] == 'stop' and argv[2] in (db, original[db]['Id']) for argv in calls))

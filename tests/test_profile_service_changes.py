@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from ai_sandbox_factory import profile_replacement, profile_services, sandbox, updating
+from ai_sandbox_factory import browser_editor, profile_replacement, profile_services, sandbox, updating
 
 
 class ServiceChanges(unittest.TestCase):
@@ -111,6 +111,10 @@ class ServiceChanges(unittest.TestCase):
                 return write_json(path, value)
             with patch.object(sandbox, 'inspect', side_effect=inspect), patch.object(sandbox, 'run', side_effect=run), \
                     patch.object(sandbox, 'image_names', return_value=('workspace-image', 'copy-image')), \
+                    patch.object(browser_editor,'replacement_connection',return_value={'url':'http://127.0.0.1:12345','preferences':{}}), \
+                    patch.object(browser_editor,'runtime',return_value=None), \
+                    patch.object(browser_editor,'stop') as stop_editor, \
+                    patch.object(browser_editor,'resume_connection') as resume_editor, \
                     patch.object(sandbox, 'write_json', side_effect=publish):
                 def transaction():
                     with profile_replacement.prepared_services(original, updated, state):
@@ -158,6 +162,8 @@ class ServiceChanges(unittest.TestCase):
                     else:
                         self.assertEqual(containers[name]['State']['Running'], not stopped)
                         self.assertEqual(volumes[profile_services.data_volume(updated, 'database', 'data')], b'candidate migration')
+                stop_editor.assert_not_called()
+                resume_editor.assert_called_once()
                 self.assertFalse((state / 'profile-preparation').exists())
         self.assertFalse(any(argv[1:3] == ['volume', 'rm'] and argv[3] == old_volume for argv in calls))
 

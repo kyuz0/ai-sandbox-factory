@@ -82,6 +82,12 @@ available to the agent at `/opt/sandbox/profile`.
 Review its diff and choose **Apply profile changes** to install an edited image
 or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
+Attaching or applying an editable profile replaces the coding-agent container.
+An open browser editor restarts at the same address with its existing password
+and connection settings. Reload that tab if it has not reconnected. Terminal
+clients must be reopened. If replacement fails, Factory restores the previous
+container and its browser editor before returning the error.
+
 **Create from existing** copies the installed profile, including customizations, and starts with
 separate private state and application data. Its **Rebuild sandbox…** action
 keeps that saved profile; it does not fetch the original Library profile.

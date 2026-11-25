@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from ai_sandbox_factory import job_progress, profile_replacement, profile_services, sandbox, service_data, updating
+from ai_sandbox_factory import browser_editor, job_progress, profile_replacement, profile_services, sandbox, service_data, updating
 
 
 class ServiceDataTests(unittest.TestCase):
@@ -124,6 +124,14 @@ class ServiceDataTests(unittest.TestCase):
             self.assertEqual(self.volumes[name], value)
         self.ready.assert_called_once()
         self.assertEqual(self.ready.call_args.kwargs['service'], 'target')
+
+    def test_service_only_restore_does_not_stop_or_reopen_workspace_editor(self):
+        with patch.object(browser_editor,'replacement_connection') as capture, \
+                patch.object(browser_editor,'stop') as stop, patch.object(browser_editor,'resume_connection') as resume:
+            self.restore()
+            capture.assert_not_called()
+            stop.assert_not_called()
+            resume.assert_not_called()
 
     def test_failed_restore_rolls_back_running_target_data_and_catalog(self):
         self.ready.side_effect = ValueError('healthcheck could not run')

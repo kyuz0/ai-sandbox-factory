@@ -47,6 +47,48 @@ def head(target='/', headers='', host=HOST):
 
 
 class Requests(unittest.TestCase):
+    def test_replacement_does_not_open_an_editor_for_a_terminal_only_sandbox(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(editor,'runtime') as runtime:
+            self.assertIsNone(editor.replacement_connection({'engine':'podman'},Path(folder)))
+            runtime.assert_not_called()
+
+    def test_replacement_captures_only_active_connection_for_the_current_container(self):
+        from ai_sandbox_factory import sandbox
+        info={'container':'current','url':'http://127.0.0.1:12345','preferences':{},
+              'hub_url':None,'token':'private-control-token','pid':123}
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(editor,'runtime',return_value=info), \
+                patch.object(sandbox,'names',return_value=('workspace',)), \
+                patch.object(sandbox,'inspect',return_value={'Id':'current','State':{'Running':True}}) as inspect:
+            state=Path(folder)
+            (state/'browser-editor-runtime.json').write_text('{}')
+            snapshot=editor.replacement_connection({'engine':'podman','name':'fixture'},state)
+            self.assertEqual(set(snapshot),{'url','preferences','hub_url'})
+            inspect.return_value={'Id':'other','State':{'Running':True}}
+            with self.assertRaisesRegex(ValueError,'another container'):
+                editor.replacement_connection({'engine':'podman','name':'fixture'},state)
+
+    def test_resume_reuses_healthy_connection_and_restarts_only_a_different_runtime(self):
+        from ai_sandbox_factory import sandbox
+        connection={'url':'https://127.0.0.1:12345','hub_url':'https://127.0.0.1:12346',
+                    'preferences':{'password_hash':'synthetic','mode':'browser'}}
+        info={'container':'new-container',**connection}
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(sandbox,'inspect',return_value={'Id':'new-container'}), \
+                patch.object(sandbox,'names',return_value=('workspace',)), \
+                patch.object(editor,'runtime',return_value=info) as runtime, \
+                patch.object(editor,'active',return_value=True), \
+                patch.object(editor,'stop') as stop, patch.object(editor,'open_browser_editor') as launch:
+            state=Path(folder)
+            editor.resume_connection({},state,connection)
+            stop.assert_not_called()
+            launch.assert_not_called()
+            runtime.side_effect=[{**info,'container':'old-container'},info]
+            editor.resume_connection({},state,connection)
+            stop.assert_called_once_with(state)
+            launch.assert_called_once_with({},state,background=True,open_tab=False,
+                                           connection=connection,recover=False,preferences=connection['preferences'])
+
     def test_browser_and_websocket_headers(self):
         editor.validate_head(head(), HOST)
         editor.validate_head(head('/?folder=/workspace', f'Origin: http://{HOST}\r\nUpgrade: websocket\r\n'), HOST)
@@ -114,6 +156,22 @@ class Requests(unittest.TestCase):
 
 
 class RelayChecks(unittest.IsolatedAsyncioTestCase):
+    async def test_replacement_rejects_occupied_original_address_without_port_fallback(self):
+        server=await asyncio.start_server(lambda r,w:w.close(),'127.0.0.1',0)
+        port=server.sockets[0].getsockname()[1]
+        try:
+            with tempfile.TemporaryDirectory() as folder, \
+                    patch.object(asyncio.get_running_loop(),'add_signal_handler'), \
+                    patch.object(editor.editor_settings,'connection',return_value=('127.0.0.1',0)):
+                url=f'http://127.0.0.1:{port}'
+                with self.assertRaisesRegex(ValueError,f'Cannot reconnect.*{port}.*available'):
+                    await editor.serve('a'*64,'/workspace',editor.editor_settings.validate(),Path(folder),
+                                       connection={'url':url})
+                self.assertFalse((Path(folder)/'browser-editor-runtime.json').exists())
+        finally:
+            server.close()
+            await server.wait_closed()
+
     async def test_eighty_concurrent_editor_connections_are_not_dropped(self):
         relay = editor.Relay('a' * 64)
         children = []

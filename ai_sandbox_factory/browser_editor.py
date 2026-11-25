@@ -15,6 +15,7 @@ import secrets
 import signal
 import subprocess
 import urllib.request
+from urllib.parse import urlsplit
 
 from . import editor_settings, host_platform, operation_locks
 from .sandbox_options import write_json
@@ -302,17 +303,23 @@ class Relay:
         await asyncio.gather(*list(self.tasks), return_exceptions=True)
 
 
-async def serve(container, cwd, preferences, state, ready=None):
+async def serve(container, cwd, preferences, state, ready=None, connection=None):
     task = asyncio.current_task()
     for signum in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(signum, task.cancel)
     relay = Relay(container)
     address, port = editor_settings.connection(state, preferences)
+    if connection:
+        prior = urlsplit(connection['url'])
+        address, port = prior.hostname, prior.port
     context = editor_settings.tls_context(preferences)
     relay.scheme = 'https' if context else 'http'
     try:
         server = await asyncio.start_server(relay.handle, host_platform.listen_address(address), port, ssl=context, limit=16384)
-    except OSError:
+    except OSError as error:
+        if connection:
+            raise ValueError(f'Cannot reconnect the browser editor at {connection["url"]}: {error}. '
+                             'Check that this address and port are available, then retry the profile action.') from error
         if preferences['port'] or not port:
             raise
         server = await asyncio.start_server(relay.handle, host_platform.listen_address(address), 0, ssl=context, limit=16384)
@@ -323,6 +330,7 @@ async def serve(container, cwd, preferences, state, ready=None):
     agent_server = None
     control = None
     heartbeat = None
+    hub_url = None
     control_path = host_platform.control_path(state)
     token = secrets.token_hex(32)
 
@@ -370,9 +378,11 @@ async def serve(container, cwd, preferences, state, ready=None):
             from .native_browser_hub import AntigravityRelay
             agent_hub = AntigravityRelay(container, preferences['password_hash'], relay.scheme + '://' + relay.host)
             agent_hub.scheme = relay.scheme
+            hub_port = urlsplit((connection or {}).get('hub_url') or '').port or 0
             agent_server = await asyncio.start_server(agent_hub.handle, host_platform.listen_address(address),
-                                                     0, ssl=context, limit=16384)
+                                                     hub_port, ssl=context, limit=16384)
             agent_hub.host = editor_settings.authority(address, agent_server.sockets[0].getsockname()[1])
+            hub_url = relay.scheme + '://' + agent_hub.host
             relay.redirector = agent_hub.redirect
         editor = await asyncio.create_subprocess_exec('podman', 'exec', '-i', '--user', 'node',
             container, *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, start_new_session=True)
@@ -386,6 +396,7 @@ async def serve(container, cwd, preferences, state, ready=None):
         write_json(state / 'browser-editor-runtime.json', {
             'pid': os.getpid(), 'token': token, 'url': url,
             'container': container, 'preferences': preferences,
+            'hub_url': hub_url,
         })
         if ready:
             ready(url)
@@ -420,20 +431,61 @@ async def serve(container, cwd, preferences, state, ready=None):
                 await editor.wait()
 
 
-def open_browser_editor(config, state, archive=None, background=False, open_tab=True):
+def replacement_connection(config, state):
+    """Remember an open editor, without opening one for a terminal-only sandbox."""
+    from . import sandbox
+    if config.get('engine') != 'podman' or not (Path(state)/'browser-editor-runtime.json').is_file():
+        return None
+    info = runtime(state)
+    if not info:
+        return None
+    current = sandbox.inspect(config, sandbox.names(config)[0])
+    if not current or not current['State']['Running'] or info['container'] != current['Id']:
+        raise ValueError(f'Cannot replace {config["name"]!r}: its browser editor is attached to another container. '
+                         'Stop the browser editor from Actions, then retry.')
+    return {key: info[key] for key in ('url', 'preferences', 'hub_url') if key in info}
+
+
+def resume_connection(config, state, connection):
+    """Restore the existing browser origin after a cutover or rollback."""
+    if not connection:
+        return
+    from . import sandbox
+    current = sandbox.inspect(config, sandbox.names(config)[0])
+    info = runtime(state)
+    if (info and current and info['container'] == current['Id'] and info['url'] == connection['url']
+            and info.get('hub_url') == connection.get('hub_url')
+            and info['preferences'] == connection['preferences']):
+        return
+    if active(state):
+        stop(state)
+    try:
+        open_browser_editor(config, state, background=True, open_tab=False,
+                            connection=connection, recover=False, preferences=connection['preferences'])
+    except Exception as error:
+        raise ValueError(f'Cannot reconnect the browser editor for {config["name"]!r} at {connection["url"]}: {error}') from error
+    info = runtime(state)
+    if (not info or info['url'] != connection['url']
+            or info.get('hub_url') != connection.get('hub_url')):
+        raise ValueError(f'Browser editor did not reconnect at {connection["url"]}. '
+                         f'See {Path(state)/"browser-editor.log"}, then retry the profile action.')
+
+
+def open_browser_editor(config, state, archive=None, background=False, open_tab=True, *, connection=None, recover=True, preferences=None):
     from . import sandbox, folders
     if config['engine'] != 'podman':
         raise ValueError('The browser editor requires rootless Podman')
     with ExitStack() as startup, ExitStack() as editor:
         if not background:
             startup.enter_context(operation_locks.sandbox(state.name, 'open the browser editor for'))
-        config = sandbox.recover_profile(config, state)
+        if recover:
+            config = sandbox.recover_profile(config, state)
         host_platform.check_engine(config['engine'], config.get('podman_connection'))
         current = sandbox.inspect(config, sandbox.names(config)[0])
         if not current or not current['State']['Running']:
             raise ValueError('Start the sandbox before opening its browser editor')
         container = current['Id']
-        preferences = editor_settings.validate({**editor_settings.load(state), 'mode': 'browser'})
+        preferences = editor_settings.validate({**(preferences or editor_settings.load(state)), 'mode': 'browser'})
         lock = editor.enter_context((state / 'browser-editor.lock').open('a+'))
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -474,11 +526,12 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
         if config.get('local_model_ports') or config.get('model_providers'):
             sandbox.initialize_models(config, state)
         if background:
-            start_background(container, folders.container_cwd(config), preferences, state, open_tab, lock.fileno())
+            extra = {'connection': connection} if connection else {}
+            start_background(container, folders.container_cwd(config), preferences, state, open_tab, lock.fileno(), **extra)
         else:
             startup.close()
             try:
-                asyncio.run(serve(container, folders.container_cwd(config), preferences, state))
+                asyncio.run(serve(container, folders.container_cwd(config), preferences, state, connection=connection))
             except (KeyboardInterrupt, asyncio.CancelledError):
                 print('\nBrowser editor stopped.')
 
@@ -522,13 +575,14 @@ def show_url(url, open_tab=True):
         host_platform.open_url(url)
 
 
-def start_background(container, cwd, preferences, state, open_tab, lock_fd):
+def start_background(container, cwd, preferences, state, open_tab, lock_fd, *, connection=None):
     """Exec a supervisor with the existing lock; never fork a threaded TUI."""
     read_fd, write_fd = os.pipe()
     try:
         with (state / 'browser-editor.log').open('w') as log:
+            extra = [json.dumps({key: connection[key] for key in ('url','hub_url') if connection.get(key)})] if connection else []
             process = subprocess.Popen(host_platform.python_command('ai_sandbox_factory.browser_editor',
-                container, cwd, str(state), str(write_fd), str(lock_fd)),
+                container, cwd, str(state), str(write_fd), str(lock_fd), *extra),
                 stdin=subprocess.PIPE, stdout=log, stderr=log, start_new_session=True,
                 pass_fds=(write_fd, lock_fd))
         os.close(write_fd)
@@ -551,7 +605,7 @@ def start_background(container, cwd, preferences, state, open_tab, lock_fd):
 
 
 def main():
-    container, cwd, state, ready_fd, lock_fd = sys.argv[1:]
+    container, cwd, state, ready_fd, lock_fd, *connection = sys.argv[1:]
     # Keep the inherited descriptor alive for the entire supervisor lifetime.
     with os.fdopen(int(lock_fd), 'a+'):
         preferences = editor_settings.validate(json.load(sys.stdin))
@@ -559,7 +613,8 @@ def main():
             os.write(int(ready_fd), (url + '\n').encode())
             os.close(int(ready_fd))
         try:
-            asyncio.run(serve(container, cwd, preferences, Path(state), ready))
+            asyncio.run(serve(container, cwd, preferences, Path(state), ready,
+                              json.loads(connection[0]) if connection else None))
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
 
