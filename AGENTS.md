@@ -212,6 +212,12 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 - HARD GATE — clear, consistent labels: use plain, direct names for controls. The same concept must have the same label across screens and engines. Never expose an internal implementation term where an ordinary user-facing name exists. Keep a shared name for each repeated concept and regression-test rendered labels and errors. Review visible copy before release; inconsistent or opaque labels block release.
 
+- Give text a visible hierarchy throughout the TUI. Use section headings, bold
+  field labels, plain values, secondary help and distinct command blocks. Use
+  the shared `Details` and `Command` widgets for read-only facts and commands;
+  never guess a text role from punctuation or style untrusted values as markup.
+  Check that the roles remain distinguishable in monochrome.
+
 - HARD GATE — plain, complete instructions: give the reader enough context to
   know what the action affects. Reserve short verb phrases for controls and
   headings. Never write “Create and start downloads about 180 MB.” It omits
@@ -243,6 +249,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   next required action. Derive change notices from the actual diff and selected
   client. Never show unrelated feature exceptions, credentials guidance or advice
   for clients the user is not using.
+  Hide an optional copy choice when the source has nothing to copy. Show a
+  disabled choice only when a concrete action can make it available.
 - HARD GATE — coherent treatment across the UI. Use the same labels, grouping,
   defaults, initial keyboard focus, shortcut hints and feedback for equivalent
   choices. Compare shared settings across coding agents and keep their labels
@@ -285,6 +293,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 - QA must test both presence and absence of conditional notices, inspect narrow
   screens for readable bullets and visible actions, and remove irrelevant or
   repeated text before release.
+  After focus and layout settle, check that validation errors are actually visible,
+  including short errors in scrolling forms and monochrome terminals.
 
 - Group each label, control and explanation in one `.setting`. Put the help
   below its control and leave one blank row between groups. In compact forms,
@@ -357,6 +367,9 @@ the same responsive height as page actions. Indentation must express a parent/ch
 relationship, never compensate for unrelated alignment errors. In Textual CSS, use
 complete margin values when overriding one side; a more specific side override can
 clear the other margins. Verify the rendered gap, not just the stylesheet.
+Application CSS can override a screen's `DEFAULT_CSS` regardless of selector
+specificity. Put overrides at the appropriate stylesheet precedence and check
+rendered control text as well as widget bounds after a label changes.
 
 ## Changes and docs
 

@@ -38,6 +38,33 @@ class Feedback(Static):
         self.display = bool(content)
 
 
+class Details(Static):
+    """Read-only facts with distinct labels and literal, unstyled values."""
+
+    def __init__(self, rows, **kwargs):
+        kwargs['markup'] = False
+        super().__init__('', **kwargs)
+        self.set_rows(rows)
+
+    def set_rows(self, rows):
+        content = Text()
+        for label, value in rows:
+            if content:
+                content.append('\n')
+            content.append(str(label) + ': ', style='bold')
+            content.append(str(value))
+        self.update(content)
+
+
+class Command(Static):
+    """A literal command, visually separate from explanatory prose."""
+
+    def __init__(self, command, **kwargs):
+        kwargs['markup'] = False
+        super().__init__(command, **kwargs)
+        self.add_class('command-text')
+
+
 class Bullet(Horizontal):
     """Keep wrapped list text aligned after its marker."""
     DEFAULT_CSS = """

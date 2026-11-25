@@ -9,7 +9,7 @@ from textual.widgets import Button, Collapsible, Label, Static
 
 from . import connectors
 from .connector_fields import ConnectorFields
-from .tui_widgets import Checkbox, Feedback
+from .tui_widgets import Checkbox, Command, Details, Feedback
 
 DISCONNECT_EFFECT = 'Disconnecting removes access for this sandbox. Your saved token stays on this computer.'
 
@@ -30,12 +30,12 @@ class ConnectorSetup(ModalScreen):
     def compose(self):
         installed = next((item for item in connectors.catalog() if item.id == self.connector.id), None)
         with Vertical(id='confirm-box'):
-            yield Label('Set up ' + self.connector.title, markup=False)
+            yield Label('Set up ' + self.connector.title, markup=False, classes='title')
             with VerticalScroll(classes='connector-setup-body'):
                 if installed and installed.account == self.connector.account:
                     yield Static('Run this command on your computer to save your service token.')
-                    yield Static('ai-sandbox-factory connector-login ' + self.connector.id,
-                                 classes='connector-command', markup=False)
+                    yield Command('ai-sandbox-factory connector-login ' + self.connector.id,
+                                  classes='connector-command')
                 else:
                     yield Static('This sandbox uses a saved copy of the connector. To change its token, '
                                  'reinstall the connector version this sandbox uses.',
@@ -85,7 +85,7 @@ class ExternalConnectorDialog(ModalScreen):
     def compose(self):
         connector = self.connector
         with Vertical(id='confirm-box'):
-            yield Label(connector.title, markup=False)
+            yield Label(connector.title, markup=False, classes='title')
             with VerticalScroll(classes='connector-details'):
                 yield Static(connector.description, classes='section-intro', markup=False)
                 if self.multiple:
@@ -95,7 +95,7 @@ class ExternalConnectorDialog(ModalScreen):
                         if self.multiple:
                             yield Checkbox(operation, name=operation, value=operation in self.original)
                         else:
-                            yield Static('Request · ' + operation, markup=False)
+                            yield Details([('Request', operation)])
                         yield Static('GET ' + url, classes='checkbox-help', markup=False)
                 if connector.agent_instructions or connector.operation_instructions:
                     with Collapsible(title='Instructions for the coding agent', id='connector-agent-guide'):
@@ -210,7 +210,7 @@ class ConnectorSettings(ModalScreen):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Connectors · ' + self.sandbox_name, markup=False)
+            yield Label('Connectors · ' + self.sandbox_name, markup=False, classes='title')
             with VerticalScroll(classes='connector-settings-body'):
                 yield ConnectorFields(self.config, state=self.app.state_root / self.sandbox_name)
                 yield Feedback('', id='connector-settings-error', markup=False)

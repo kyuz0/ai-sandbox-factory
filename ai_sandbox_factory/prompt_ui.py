@@ -21,7 +21,7 @@ class EditPrompt(ModalScreen[bool]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.title_text)
+            yield Label(self.title_text, classes='title')
             with VerticalScroll(id='prompt-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Name')

@@ -377,8 +377,28 @@ attached to this editable folder. For a registration added without `--ref`,
 `profile update NAME` imports its latest committed revision. A pinned registration
 keeps its tag or commit. An ordinary non-Git folder uses its current files.
 
-**Create from existing** uses the source sandbox's saved applied profile, not its
-unreviewed edits. The copy gets fresh private state and application data and does
-not share the source's editable folder. Create a separate editable copy there if
-needed. Deleting a sandbox keeps the host profile folder, just as it keeps the
-host project folder.
+**Create from existing** starts the new sandbox with the profile version installed
+in the selected sandbox. Edits in the folder are not installed automatically.
+The new sandbox gets fresh private state and application data.
+When the source has an editable profile, choose **Share the profile folder**:
+
+- Leave it off for a separate copy of the installed profile. To edit it later, choose **Actions… → Edit profile…** in the new sandbox.
+- Turn it on so both sandboxes use the same profile files and Git repository. Editing files does not update either sandbox automatically.
+
+**Edit profile…** and **Review changes…** show which sandboxes share the folder.
+Each review compares the files with the profile version installed in that sandbox.
+To install the edits, choose **Actions… → Edit profile… → Review changes… → Apply
+profile changes** in each sandbox you want to update. Sharing does not share databases,
+private homes, chats or Factory-managed credentials.
+
+To share the profile folder from `first` with another Pi sandbox on Podman:
+
+```sh
+mkdir -p "$HOME/projects/second"
+ai-sandbox-factory create second --reuse-from first --reuse-editable-profile \
+  --primary-agent pi --workspace "$HOME/projects/second" --engine podman --start
+```
+
+Configure the new sandbox's model access or sign-in as usual. The selected agent
+must be supported by the installed profile. Deleting any sandbox keeps the host
+profile folder and its Git history; other sandboxes using it continue to work.

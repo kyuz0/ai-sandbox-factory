@@ -1079,6 +1079,8 @@ class TUITests(unittest.TestCase):
                 self.assertFalse(app.screen.query_one('#copy-keys',Checkbox).value)
                 self.assertTrue(await pilot.click('#copy-continue'))
                 await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
                 self.assertIsInstance(app.screen,NewSandbox)
                 self.assertFalse(app.screen.query_one('#profile-summary', Static).display)
                 self.assertEqual(app.screen.query_one('#workspace',Input).value, record['config']['workspace'])
@@ -1109,9 +1111,11 @@ class TUITests(unittest.TestCase):
         from textual.widgets import Select
         self.records[0]['config']['options']={'web_access':{'enabled':True,'providers':{'exa':{'has_key':True}}}}
         self.records[1]['dev']='exited'
+        self.records[1]['config']['options']=copy.deepcopy(self.records[0]['config']['options'])
         service=FakeService(self.records)
         from unittest.mock import Mock
-        service.search_keys=Mock(return_value={'exa':{'endpoint':'','key':'synthetic'}})
+        service.search_keys=Mock(return_value={'exa':{'endpoint':'','key':'synthetic'},
+            'model-provider':{'key':'NOT_A_SEARCH_KEY'},'advisor':{'key':'NOT_AN_ADVISOR_EXPORT'}})
         app=Cockpit(self.root,service)
         async with app.run_test(size=(100,36)) as pilot:
             await self.ready(app,pilot)
@@ -1120,11 +1124,12 @@ class TUITests(unittest.TestCase):
             self.assertTrue(app.screen.query_one('#copy-keys',Checkbox).disabled)
             help_text = app.screen.query_one('#copy-keys-help', Static)
             self.assertTrue(help_text.display)
-            self.assertIn('You can continue without search API keys.', str(help_text.render()))
+            self.assertIn('Start the source sandbox to copy its Web Search API keys, or continue without them.', str(help_text.render()))
             app.screen.query_one('#copy-source',Select).value='alpha';await pilot.pause()
             self.assertFalse(help_text.display)
             app.screen.query_one('#copy-keys',Checkbox).value=True
             await pilot.click('#copy-continue');await pilot.pause()
+            await app.workers.wait_for_complete();await pilot.pause()
             service.search_keys.assert_called_once_with('alpha')
             self.assertEqual(app.screen.search_keys,{'exa':'synthetic'})
             await pilot.press('escape');await pilot.pause()

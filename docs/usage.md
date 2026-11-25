@@ -69,9 +69,11 @@ are carried over, along with Git identity, browser and editor choices, and a cus
 system prompt. Agent-specific settings use the selected agent’s defaults.
 The approval choice also carries over between Codex, Claude Code and Antigravity.
 
-Select **Include search API keys** if you want to copy those keys from a running
-source. The new sandbox has its own package copies. It starts with fresh chats,
-browser sessions, model and advisor logins, and SSH credentials. Select any
+Under **Credentials and sign-ins**, select **Include Web Search API keys** to copy
+those keys from a running source. This option appears only when the source has
+saved Web Search keys. Model and advisor credentials are not copied;
+configure them on **Review sandbox**. The new sandbox has its own package copies. It starts with fresh chats,
+browser sessions and SSH credentials. Select any
 environment file or Pi configuration folder you want to use again.
 
 Application data, such as databases, is not copied. Each profile service

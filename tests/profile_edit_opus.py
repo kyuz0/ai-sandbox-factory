@@ -111,12 +111,31 @@ def main():
             restarted,answer=ask_opus('This is a new session after the profile was applied and the sandbox restarted. '
                 'Read your Factory profile context and inspect the editable profile Git status and origin. '
                 'Explain the original fork, applied record, editable source, existing maintenance instruction and '
-                'the exact UI steps for any future changes to be applied. Do not change files or push.',
+                'the exact UI steps for future changes. Also consult the authoring guide and explain Create from existing '
+                'with Share the profile folder checked and unchecked. Do not change files or push. '
+                'Return only one JSON object with original_fork, applied_record, editable_source, maintenance, apply_steps, '
+                'copy_when_off and copy_when_on. For each copy case give editable_folder_shared (boolean), '
+                'editable_folder_attached (boolean), initial_profile (applied or working tree), '
+                'unapplied_edits_installed (boolean), application_data_shared (boolean), '
+                'and apply_updates_other_sandboxes (boolean).',
                 'opus-profile-restart')
             assert profile_edit.PATH in answer and profile_runtime.PATH in answer,answer
             assert 'Review changes' in answer and 'Apply profile changes' in answer,answer
+            # A Markdown fence doesn't change the model's structured answer.
+            payload=answer.strip()
+            if payload.startswith('```json\n') and payload.endswith('```'):
+                payload=payload[len('```json\n'):-3].strip()
+            explained=json.loads(payload)
+            for key,shared in (('copy_when_off',False),('copy_when_on',True)):
+                case=explained[key]
+                assert case['editable_folder_shared'] is shared,case
+                assert case['editable_folder_attached'] is shared,case
+                assert case['initial_profile']=='applied',case
+                assert case['unapplied_edits_installed'] is False,case
+                assert case['application_data_shared'] is False,case
+                assert case['apply_updates_other_sandboxes'] is False,case
             assert git('rev-parse','HEAD')==commit
-            print('PASS live native Opus: repaired invalid JSON, edited package/service recipes, validated, committed/pushed to the authorized local origin, explained Apply, and understood original/applied/editable profile maintenance in a fresh session after restart; package and SQL checks passed',flush=True)
+            print('PASS live native Opus: repaired invalid JSON, edited package/service recipes, validated, committed/pushed to the authorized local origin, explained Apply, and understood original/applied/editable profile maintenance and both copy/sharing choices in a fresh session after restart; package and SQL checks passed',flush=True)
 
         finally:
             if (state/'config.json').exists():

@@ -35,7 +35,7 @@ class DocumentSearchHelp(ModalScreen):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('How to search documents')
+            yield Label('How to search documents', classes='title')
             with VerticalScroll(id='document-search-help-fields'):
                 for title, text in (
                     ('1. Add your documents', 'Open Folders and add the document folder. Leave Read-only checked to protect the originals. For example, a folder named reference appears at /mnt/reference.'),
@@ -46,7 +46,7 @@ class DocumentSearchHelp(ModalScreen):
                     ('Which providers receive document content?', 'Your chosen embedding provider receives passages during indexing and queries during search. Your chat model receives your conversation and the document content Pi uses to answer.'),
                 ):
                     with Vertical(classes='setting'):
-                        yield Label(title)
+                        yield Label(title, classes='section-heading')
                         yield Static(text, markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='close-document-search-help', variant='primary')
@@ -111,7 +111,7 @@ class DocumentSearchDialog(ModalScreen[Optional[dict]]):
             providers.append((f'{self.initial_provider} (not configured)', self.initial_provider))
         providers.append(('Custom server', CUSTOM))
         with Vertical(id='confirm-box'):
-            yield Label(CATEGORIES['document-search'].label)
+            yield Label(CATEGORIES['document-search'].label, classes='title')
             with VerticalScroll(id='document-search-fields', classes='spaced-form-fields'):
                 with Vertical(classes='setting', id='embedding-mode-setting'):
                     yield Label('Search mode')

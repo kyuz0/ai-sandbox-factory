@@ -14,13 +14,10 @@ PATH = '/opt/sandbox/profile'
 EDIT = 'editable_profile'
 
 PURPOSE = (
-    'Profile customization is occasional environment setup and maintenance. '
-    'Propose it when a task needs persistent system software in the coding-agent container, '
-    'a service such as a database, a change to those environment requirements, or user-requested environment maintenance. '
-    'Once the installed software and services meet the task’s needs, use the existing environment '
-    'and leave the profile unchanged. A new task, session or day alone is not a reason to fork, '
-    'rebuild or modify the profile. Manage ordinary project dependencies in the project as usual. '
-    'For later necessary changes, reuse an existing editable profile unless the user wants a separate fork.'
+    'Customize the profile only for needed persistent system software, new services '
+    '(such as a database), or user-requested environment maintenance. '
+    'Keep ordinary project dependencies in the project. Once the environment works, leave it unchanged: '
+    'a new task, session or day needs no profile change. Reuse an editable profile unless the user requests another fork.'
 )
 
 
@@ -35,42 +32,72 @@ def mounts(config):
     return ['--mount', f'type=bind,src={config[EDIT]["path"]},dst={PATH},{recursion},rw']
 
 
+def shared_source(original, config, state):
+    """Attach the source folder only after an explicit copy choice."""
+    if not original.get(EDIT):
+        raise ValueError('The source sandbox has no editable profile folder to share. Choose another source or copy without sharing its profile folder.')
+    value = copy.deepcopy(original[EDIT])
+    value['path'] = str(_folder(value['path'], config, state))
+    return value
+
+
+def shared_with(config, state):
+    from . import host_platform
+    if not config.get(EDIT):
+        return []
+    folder = host_platform.comparison_path(config[EDIT]['path'])
+    peers = []
+    for file in Path(state).parent.glob('*/config.json'):
+        if file.parent == Path(state):
+            continue
+        try:
+            other = json.loads(file.read_text())
+            source = other.get(EDIT, {}).get('path')
+            if (other.get('name') == file.parent.name and source
+                    and host_platform.comparison_path(source) == folder):
+                peers.append(other['name'])
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue  # An unrelated broken configuration must not block this review.
+    return sorted(peers)
+
+
 def guidance(config):
     agent = config.get('primary_agent', 'pi')
     if not config.get(EDIT):
-        return ('\n' + PURPOSE + '\n\nTo make permanent changes to this profile, ask the user to choose '
-                'Actions… → Edit profile… and create an editable copy. This is separate from the project. '
-                'You can propose this fork when permanent package or service changes are useful. '
-                'After the copy is attached, ask whether the user wants it tracked in Git. '
-                'Do not edit the read-only applied recipes.\n')
+        copied = ('This sandbox has an independent applied profile copy; no editable folder is attached. '
+                  if config.get('profile', {}).get('customized_from') else '')
+        return ('\n' + PURPOSE + '\n\n' + copied + f'The applied profile at {profile_runtime.PATH} is read-only. For a needed change, ask the user to choose '
+                'Actions… → Edit profile… and create an editable copy outside the project. '
+                'Attaching it replaces this container and stops this session; continue in a new one.\n')
     editable = config[EDIT]
     origin = (f'This editable profile was forked from {editable["origin_name"]!r}, '
               f'revision {editable["origin_digest"]}. ')
     return (f'\n## Edit this sandbox’s profile\n\n{PURPOSE}\n\nThe writable profile source is {PATH}, separate from /workspace. '
-            + origin + f'The applied build record at {profile_runtime.PATH} is read-only and describes the current image. '
-            'The editable folder survives restarts and image replacements and may contain changes not yet applied. '
+            + origin + f'The read-only build record at {profile_runtime.PATH} describes the current image. '
+            'Source files survive restarts and image replacements. '
             'Editing the source does not change the running sandbox. Use the user’s existing authorization for profile maintenance; ask before expanding it. '
-            'For packages, edit the top-level Dockerfile; for an additional host, add its Dockerfile and a '
-            'services entry in profile.json. Update profile.md to explain the host and its connections. '
-            f'Read {profile_runtime.AUTHORING} for the format and complete examples. '
+            'Other sandboxes can share this editable folder. Apply updates only this sandbox; Factory’s review lists peers.\n\n'
+            'For packages, edit the top-level Dockerfile. For a new host, add its Dockerfile and a '
+            'services entry in profile.json; describe its connections in profile.md. '
+            f'Read {profile_runtime.AUTHORING} for the format and examples. '
             f'Validate with `python3 -I - {PATH} --agent {agent} < {profile_runtime.PATH}/authoring/validate.py`. '
-            'Static checks do not build images or test startup. Fix any reported file or field and validate again. '
-            'Then tell the user what changed and ask them to choose Actions… → Edit profile… → Review changes… '
-            'and Apply profile changes. Factory builds before replacing the coding-agent container; running '
-            'agent work and terminals stop at replacement, while project files, home, chats, sign-ins and existing '
-            'services and data are kept. New services can be added. Replacing or removing an existing service '
-            'requires a separate sandbox and application-specific data export/import. '
-            'Do not claim an edit is installed until the user has applied it successfully. '
-            'Ask whether the user wants this profile tracked in Git when planning a necessary profile change, if that choice has not been made. '
-            'If authorized, initialize a separate repository here, commit the approved profile changes, and '
-            'use the supplied origin for authorized pushes. If not already specified, agree whether commits stay local or are pushed; '
-            'honor an existing ongoing maintenance instruction without asking again. '
-            'Use the configured SSH & Git connector for SSH-origin authentication; never copy its private keys into the profile. '
-            'If access is missing, ask the user to configure Settings → Connectors → SSH & Git and any required Network destinations. '
-            'When resuming profile maintenance, inspect this folder’s Git status, log and remotes before continuing; preserve uncommitted edits. '
-            'Record the user’s Git tracking choice and approved ongoing maintenance instructions in profile.md so future sessions receive them after Apply. '
-            'When resuming profile maintenance, read the editable profile.md for choices saved since the last Apply; its unapplied package and service changes are still only proposals. '
-            'Keep the profile repository separate from the project repository and never initialize Git or publish without authorization.\n')
+            'Fix reported files or fields and validate again. Static checks do not build images or test startup.\n\n'
+            'Tell the user what changed and direct them to Actions… → Edit profile… → Review changes… → Apply profile changes. '
+            'Then reopen the coding agent. '
+            'Factory builds before replacement. Replacement stops running agent work and terminals, and keeps project files, '
+            'home, chats, sign-ins and existing services and data. New services are supported. Changing or removing an existing '
+            'service, other than its description or connections, requires a separate sandbox and application-specific data export/import. '
+            'Never claim an edit is installed until Apply succeeds.\n\n'
+            'If undecided, ask whether to track this folder with Git, whether commits stay local or are pushed, '
+            'and whether that is one-time or ongoing. '
+            'With authorization, initialize a separate repository here, commit approved changes and push to the supplied origin. '
+            'Follow standing maintenance instructions without asking again. '
+            'For SSH origins, use the SSH & Git connector; never copy its private keys. If access is missing, ask for '
+            'Settings → Connectors → SSH & Git and required Network destinations. '
+            'Record tracking and ongoing maintenance instructions in profile.md so future sessions receive them after Apply. '
+            'When resuming profile maintenance, inspect this folder’s Git status, log and remotes, preserve uncommitted edits, '
+            'and read editable profile.md for choices saved since the last Apply. Unapplied software and service changes remain proposals. '
+            'Do not revert another agent’s edits.\n')
 
 
 def source(config, state):
@@ -163,7 +190,8 @@ def review(config, state):
     revision = hashlib.sha256(json.dumps([config['profile']['digest'], value['digest']]).encode()).hexdigest()[:16]
     result = {'revision': revision, 'base': config['profile']['digest'], 'profile': value,
               'folder': config[EDIT]['path'], 'changes': changes, 'diff': diff,
-              'added_services': sorted(profile_services.selected(updated).keys() - profile_services.selected(config).keys())}
+              'added_services': sorted(profile_services.selected(updated).keys() - profile_services.selected(config).keys()),
+              'shared_with': shared_with(config, state)}
     sandbox.write_json(Path(state) / 'profile-reviews' / (revision + '.json'), result)
     return result
 

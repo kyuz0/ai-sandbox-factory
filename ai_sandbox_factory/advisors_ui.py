@@ -5,7 +5,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 from .advisor_credentials import LABELS
-from .tui_widgets import Checkbox
+from .tui_widgets import Checkbox, Command
 
 
 class AdvisorModelHelp(ModalScreen):
@@ -18,20 +18,19 @@ class AdvisorModelHelp(ModalScreen):
     .compact-terminal AdvisorModelHelp VerticalScroll { height: auto; max-height: 58vh; }
     AdvisorModelHelp .setting:last-child { margin-bottom: 0; }
     AdvisorModelHelp .setting > Label { text-style: bold; }
-    AdvisorModelHelp .command { color: $accent; height: auto; }
     AdvisorModelHelp .setting { height: auto; margin: 0 0 1 0; }
     """
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('How Pi chooses an advisor model')
+            yield Label('How Pi chooses an advisor model', classes='title')
             with VerticalScroll():
                 with Vertical(classes='setting'):
                     yield Static('Pi follows your chat preference first, then the model set in advisor settings. For Codex and Claude, '
                                  'Pi compares model descriptions and prefers newer versions when equally suitable. '
                                  'Without a clear match, or for Antigravity, Pi uses the provider’s default.')
                 with Vertical(classes='setting'):
-                    yield Label('In a Pi chat')
+                    yield Label('In a Pi chat', classes='section-heading')
                     for command, meaning in (
                         ('/advisor status', 'See models and quota'),
                         ('/advisor preference', 'See this chat’s preference'),
@@ -39,8 +38,8 @@ class AdvisorModelHelp(ModalScreen):
                     ):
                         yield Static(Text.assemble((command.ljust(28), 'bold'), meaning))
                 with Vertical(classes='setting'):
-                    yield Label('Save a preference for this chat')
-                    yield Static('/advisor preference Use Claude Haiku for quick questions', classes='command')
+                    yield Label('Save a preference for this chat', classes='section-heading')
+                    yield Command('/advisor preference Use Claude Haiku for quick questions')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Close', variant='primary', id='advisor-help-close')
 

@@ -95,6 +95,35 @@ class EditTests(unittest.TestCase):
                 self.assertEqual(reviewed['profile']['name'],'team-developer')
                 self.assertTrue(profile_spec.compatible(reviewed['profile'],agent))
 
+    def test_review_identifies_current_shared_folder_users_without_linking_their_state(self):
+        self.attach()
+        for name,path in (('peer',self.destination),('unrelated',self.root/'other-profile')):
+            state=self.state.parent/name
+            state.mkdir()
+            sandbox.write_json(state/'config.json',{'name':name,edit.EDIT:{'path':str(path)}})
+        broken=self.state.parent/'broken'
+        broken.mkdir()
+        (broken/'config.json').write_text('{invalid')
+        reviewed=self.review()
+        self.assertEqual(reviewed['shared_with'],['peer'])
+        shutil.rmtree(self.state.parent/'peer')
+        self.assertEqual(edit.shared_with(self.config,self.state),[])
+
+    def test_inventory_reports_shared_users_without_failing_on_an_invalid_peer_path(self):
+        self.attach()
+        for name,path in (('example',self.destination),('peer',self.destination),('broken','invalid\0path')):
+            state=self.state.parent/name
+            state.mkdir(exist_ok=True)
+            config={**self.config,'name':name,edit.EDIT:{**self.config[edit.EDIT],'path':str(path)}}
+            sandbox.write_json(state/'config.json',config)
+        output=io.StringIO()
+        with patch.object(sandbox,'run',return_value=subprocess.CompletedProcess([],0,'','')),redirect_stdout(output):
+            sandbox.list_sandboxes(self.state.parent,structured=True)
+        records={row['name']:row for row in json.loads(output.getvalue())}
+        self.assertEqual(records['example']['shared_profiles'],['peer'])
+        self.assertEqual(records['peer']['shared_profiles'],['example'])
+        self.assertNotIn('shared_profiles',records['broken'])
+
     def test_missing_editable_folder_reports_saved_path_without_mutating_state(self):
         self.attach()
         renamed = self.destination.with_name('moved-profile')
@@ -254,9 +283,11 @@ class EditTests(unittest.TestCase):
                 self.assertIn('services entry in profile.json', context)
                 self.assertIn('forked from '+repr(self.saved['name']),context)
                 self.assertIn(self.saved['digest'],context)
-                self.assertIn('Ask whether the user wants this profile tracked in Git',context)
-                self.assertIn('supplied origin for authorized pushes',context)
-                self.assertIn('honor an existing ongoing maintenance instruction without asking again',context)
+                self.assertIn('If undecided, ask whether to track this folder with Git',context)
+                self.assertIn('push to the supplied origin',context)
+                self.assertIn('Follow standing maintenance instructions without asking again',context)
+                self.assertIn('Apply updates only this sandbox',context)
+                self.assertIn('Other sandboxes can share this editable folder',context)
                 self.assertIn('preserve uncommitted edits',context)
                 self.assertIn('future sessions receive them after Apply',context)
                 self.assertNotIn(str(self.destination), context)
@@ -271,17 +302,17 @@ class EditTests(unittest.TestCase):
                     config={**self.config,'primary_agent':agent}
                     if not attached:config.pop(edit.EDIT)
                     context=edit.guidance(config)
-                    self.assertIn('occasional environment setup and maintenance',context)
+                    self.assertIn('Customize the profile only for needed',context)
                     self.assertIn('persistent system software',context)
-                    self.assertIn('a service such as a database',context)
-                    self.assertIn('use the existing environment and leave the profile unchanged',context)
-                    self.assertIn('A new task, session or day alone is not a reason',context)
+                    self.assertIn('new services (such as a database)',context)
+                    self.assertIn('Once the environment works, leave it unchanged',context)
+                    self.assertIn('a new task, session or day needs no profile change',context)
                     self.assertIn('ordinary project dependencies in the project',context)
-                    self.assertIn('reuse an existing editable profile unless the user wants a separate fork',context)
+                    self.assertIn('Reuse an editable profile unless the user requests another fork',context)
                     if attached:
                         self.assertIn('When resuming profile maintenance, inspect',context)
-                        self.assertIn('When resuming profile maintenance, read',context)
-                        self.assertIn('when planning a necessary profile change',context)
+                        self.assertIn('read editable profile.md for choices saved since the last Apply',context)
+                        self.assertIn('whether that is one-time or ongoing',context)
                         self.assertNotIn('After a restart, inspect',context)
 
     def test_applied_edits_keep_the_original_fork_identity_in_future_agent_context(self):
@@ -297,9 +328,9 @@ class EditTests(unittest.TestCase):
                 self.assertIn(changed['profile']['digest'],context)
                 self.assertIn(self.saved['digest'],context)
                 self.assertIn('forked from '+repr(self.saved['name']),context)
-                self.assertIn('occasional environment setup and maintenance',context)
+                self.assertIn('Customize the profile only for needed',context)
                 self.assertIn(edit.PATH,context)
-                self.assertIn('Ask whether the user wants this profile tracked in Git',context)
+                self.assertIn('If undecided, ask whether to track this folder with Git',context)
                 self.assertIn('inspect this folder’s Git status, log and remotes',context)
 
     def test_additions_and_metadata_are_allowed_but_existing_service_runtime_changes_are_refused(self):

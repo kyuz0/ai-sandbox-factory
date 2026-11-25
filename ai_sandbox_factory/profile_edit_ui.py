@@ -8,7 +8,7 @@ from textual.widgets import Button, Footer, Header, Input, Label, Static
 
 from . import profile_edit
 from .file_browser import PathField
-from .tui_widgets import Bullet, Feedback
+from .tui_widgets import Bullet, Details, Feedback
 
 
 def consequences(record):
@@ -38,11 +38,14 @@ class EditProfile(Screen):
             editable = self.record['config'].get(profile_edit.EDIT)
             if editable:
                 with Vertical(classes='setting'):
-                    yield Label('Editable profile folder')
+                    yield Label('Profile folder')
                     yield Static(editable['path'], markup=False)
-                    yield Static('Inside the sandbox: ' + profile_edit.PATH, classes='setting-help', markup=False)
-                yield Static('Ask your coding agent to edit the profile. Editing files does not change the running sandbox.', classes='section-intro')
-                yield Static('Review changes to validate the files and see exactly what will be applied.', classes='section-intro')
+                    yield Details([('Inside the sandbox', profile_edit.PATH)], classes='setting-help')
+                    if self.record.get('shared_profiles'):
+                        yield Details([('Shared with', ', '.join(self.record['shared_profiles']))])
+                        yield Static('Installing edits here updates only this sandbox.', classes='setting-help', markup=False)
+                yield Static('Ask your coding agent to edit the profile files. Editing files does not update the sandbox.', classes='section-intro')
+                yield Static('Choose Review changes… to check the files and see what will be installed.', classes='section-intro')
             else:
                 yield Static('Create a separate, editable copy of this sandbox’s saved profile. The original profile and project files stay separate.', classes='section-intro')
                 with Vertical(classes='setting'):
@@ -112,28 +115,33 @@ class ReviewProfile(Screen):
                 yield Label('Review ID')
                 yield Static(self.review['revision'], markup=False)
             with Vertical(classes='setting'):
-                yield Label('Editable profile folder')
+                yield Label('Profile folder')
                 yield Static(self.review['folder'], markup=False)
+                if self.review.get('shared_with'):
+                    yield Details([('Shared with', ', '.join(self.review['shared_with']))])
+                    yield Static('Installing these edits updates only this sandbox. Other sandboxes keep their installed versions until you install the edits there too.',
+                                 classes='setting-help', markup=False)
             if not self.review['changes']:
-                yield Static('The edited profile matches the applied revision. There is nothing to apply.')
+                yield Static('These files match the profile version installed in this sandbox. There is nothing to install.')
             else:
                 with Vertical(classes='setting'):
-                    yield Label('Changed files')
+                    yield Label('Changed files', classes='section-heading')
+                    yield Static('Compared with the profile version installed in this sandbox.', classes='setting-help')
                     for item in self.review['changes']:
                         yield Bullet(item)
                 if self.review['added_services']:
                     with Vertical(classes='setting'):
-                        yield Label('New profile services')
+                        yield Label('New profile services', classes='section-heading')
                         for name in self.review['added_services']:
                             yield Bullet(name + ' — initializes separate application data')
                 with Vertical(classes='setting'):
-                    yield Label('When you apply')
+                    yield Label('When you apply', classes='section-heading')
                     yield Bullet('Factory builds images and checks new services before replacing the coding-agent container.')
                     for note in consequences(self.record):
                         yield Bullet(note)
                     yield Bullet('You can cancel preparation. Factory stops the active build or removes newly prepared service resources before reporting cancellation.')
                 with Vertical(classes='setting'):
-                    yield Label('File changes')
+                    yield Label('File changes', classes='section-heading')
                     yield Static(self.review['diff'], markup=False, id='profile-edit-diff')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-review-back')
@@ -157,5 +165,6 @@ class ReviewProfile(Screen):
                 app.start_settings_job(name, 'Apply profile changes · ' + name,
                     lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
                     cooperative=True, success_message='Profile changes applied. Open the coding agent again to use them.')
-        app.push_screen(Confirm(f'Apply the reviewed profile changes to {name}? Factory builds and checks new services before replacing the coding-agent container.',
+        target=name+' only' if self.review.get('shared_with') else name
+        app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds and checks new services before replacing the coding-agent container.',
                                 'Apply profile changes',confirm_by_default=True,notes=consequences(self.record)),confirmed)

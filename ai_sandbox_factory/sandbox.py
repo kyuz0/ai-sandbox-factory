@@ -644,6 +644,19 @@ def list_sandboxes(state_root, structured=False):
         inventory.append(entry)
         rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-')))
     if structured:
+        groups = {}
+        for entry in inventory:
+            editable = entry['config'].get(profile_edit.EDIT)
+            folder = editable.get('path') if isinstance(editable, dict) else None
+            if isinstance(folder, str) and folder:
+                try:
+                    key = str(host_platform.comparison_path(folder))
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                groups.setdefault(key, []).append(entry)
+        for entries in groups.values():
+            for entry in entries:
+                entry['shared_profiles'] = sorted(other['name'] for other in entries if other is not entry)
         print(json.dumps(inventory))
         return
     # Keep paths and other saved values from introducing terminal control codes.
@@ -1041,21 +1054,55 @@ def configure_local_gateway(config, value, rules):
 
 
 def create(args, state):
+    source = getattr(args, 'reuse_from', None)
+    if source:
+        if not SANDBOX_NAME.fullmatch(source):
+            raise ValueError(f'Invalid source sandbox name {source!r}. {SANDBOX_NAME_ERROR}')
+        # Keep config and saved packages consistent while copying. Image builds
+        # run after this command returns and do not retain the source lock.
+        with operation_locks.sandbox(source, 'copy settings from'):
+            return _create(args, state)
+    return _create(args, state)
+
+
+def _create(args, state):
     selected = primary_workspace.agent({'primary_agent': getattr(args, 'primary_agent', 'pi') or 'pi'})
     auth_method = primary_workspace.auth({'primary_auth': getattr(args, 'primary_auth', None) or primary_workspace.DEFAULT_AUTH})
     native = selected != 'pi'
     reuse = {}
     if getattr(args, 'reuse_from', None):
-        if not SANDBOX_NAME.fullmatch(args.reuse_from):
-            raise ValueError('Invalid source sandbox name')
-        reuse = json.loads((state.parent / args.reuse_from / 'config.json').read_text())
+        source = state.parent / args.reuse_from
+        try:
+            reuse = json.loads((source / 'config.json').read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError(f'Cannot copy settings from {args.reuse_from}: cannot read {source / "config.json"}: {error}. '
+                             'Check its saved configuration or choose another completed sandbox.') from error
+        before_recovery = reuse.get('profile', {}).get('path')
+        reuse = recover_profile(reuse, source)
+        if (getattr(args, 'profile', None) == before_recovery
+                and reuse.get('profile', {}).get('path') != before_recovery):
+            raise ValueError(f'The applied profile for {args.reuse_from} changed during recovery. '
+                             'Start Create from existing again to review its recovered profile before copying.')
+    sharing = bool(getattr(args, 'reuse_editable_profile', False))
+    if sharing and not reuse:
+        raise ValueError('--reuse-editable-profile requires --reuse-from NAME. Select a source sandbox with an editable profile.')
+    if not getattr(args, 'profile', None):
+        args.profile = reuse['profile']['path'] if sharing else 'base'
+    if sharing and args.profile != reuse['profile']['path']:
+        raise ValueError(f'Sharing requires the source sandbox’s applied profile {reuse["profile"]["path"]!r}; '
+                         f'the selected profile is {args.profile!r}. '
+                         'Start Create from existing again to use its current profile, or copy without sharing.')
+    if sharing and not reuse.get(profile_edit.EDIT):
+        raise ValueError('The source sandbox has no editable profile folder to share. Choose another source or copy without sharing its profile folder.')
     prompt_file = getattr(args, 'system_prompt_file', None)
     saved_prompt = (prompt_library.prompt(json.loads(Path(prompt_file).read_text(encoding='utf-8'))) if prompt_file else
                     (prompt_library.selection(state.parent / args.reuse_from) if reuse else None))
     if reuse and args.profile == reuse['profile']['path']:
         profile = reuse['profile']
         if tree_digest(Path(profile['path'])) != profile['digest']:
-            raise ValueError('Source profile snapshot was modified')
+            raise ValueError(f'Cannot copy settings from {args.reuse_from}: its saved profile snapshot at '
+                             f'{profile["path"]} was modified and no longer matches revision {profile["digest"]}. '
+                             'Restore the saved snapshot or choose another source sandbox.')
     else:
         profile = load_profile(args.profile)
     if not profile_spec.compatible(profile, selected):
@@ -1120,6 +1167,8 @@ def create(args, state):
     config['extra_folders'] = folders.validate(
         json.loads(Path(args.folders_file).read_text()) if getattr(args, 'folders_file', None) else [],
         workspace, state.parent, private_paths=[shared])
+    if sharing:
+        config[profile_edit.EDIT] = profile_edit.shared_source(reuse, config, state)
     if native:
         if shared or getattr(args, 'local_model_ports', None) or getattr(args, 'model_provider', None) or getattr(args, 'advisor', []):
             raise ValueError('Pi configuration, model providers, local models and advisors apply to Pi sandboxes.')
@@ -1178,7 +1227,9 @@ def create(args, state):
                 continue
             source = Path(skill['path'])
             if tree_digest(source) != skill['digest']:
-                raise ValueError('Source skill snapshot was modified: ' + skill['name'])
+                raise ValueError(f'Cannot copy settings from {args.reuse_from}: its saved skill {skill["name"]!r} '
+                                 f'at {skill["path"]} was modified and no longer matches revision {skill["digest"]}. '
+                                 'Restore the saved skill snapshot, omit that skill, or choose another source sandbox.')
             target = state / 'skills' / skill['digest']
             if not target.exists():
                 shutil.copytree(source, target)
@@ -1757,12 +1808,13 @@ def main(*, startup_notice=''):
                      help='Coding agent to open (default: Pi)')
     new.add_argument('--primary-auth', choices=['copy', 'login'], default=primary_workspace.DEFAULT_AUTH,
                      help='Copy the host sign-in (default), or sign in inside the sandbox')
-    new.add_argument('--profile', default='base', help='Installed profile name or custom profile directory (default: base)')
+    new.add_argument('--profile', help='Installed profile name or custom folder. Defaults to base, or the source’s applied profile with --reuse-editable-profile.')
     new.add_argument('--workspace', required=True)
     new.add_argument('--creation-token', help=argparse.SUPPRESS)
     new.add_argument('--working-directory', default='.', help='Starting folder relative to the workspace')
     new.add_argument('--folders-file', help='JSON list of additional host folders: source, name, read_only')
     new.add_argument('--reuse-from', help='Reuse saved provider and skill packages and advisor settings from NAME; other settings use the supplied flags')
+    new.add_argument('--reuse-editable-profile', action='store_true', help='With --reuse-from, share its editable profile folder. Starts with its applied profile; Apply updates each sandbox separately.')
     new.add_argument('--omit-skill', action='append', default=[], help='Omit an added skill when using --reuse-from')
     new.add_argument('--model-provider', action='append', help='Installed provider name; repeat for multiple sources (default: local)')
     new.add_argument('--providers-file', help='JSON object mapping provider names to non-secret settings')

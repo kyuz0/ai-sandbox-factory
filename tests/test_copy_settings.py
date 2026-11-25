@@ -1,16 +1,19 @@
 """Creation reuses immutable packages without sharing private state."""
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from ai_sandbox_factory import sandbox, model_providers
-from ai_sandbox_factory.sandbox_tui import copy_draft, copy_for_agent, Service, options
+from ai_sandbox_factory import folders, operation_locks, profile_edit, sandbox, model_providers
+from ai_sandbox_factory.sandbox_tui import copy_draft, copy_for_agent, Service, options, shares_editable_profile
 
 
 class CopySettingsTests(unittest.TestCase):
@@ -18,6 +21,8 @@ class CopySettingsTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        (self.root/'locks').mkdir()
+        self.enterContext(patch.object(operation_locks,'private_runtime_dir',return_value=self.root/'locks'))
         self.source = self.root / 'source'
         self.source.mkdir()
         self.workspace = self.root / 'project'
@@ -38,12 +43,14 @@ class CopySettingsTests(unittest.TestCase):
         (self.source / 'allowlist.txt').write_text('example.com:443\n')
         (self.source / 'private-auth.json').write_text('PRIVATE_TEST_SENTINEL')
 
-    def create(self, omit=(), skills=(), agent='pi'):
+    def create(self, omit=(), skills=(), agent='pi', share=False, **overrides):
         args = SimpleNamespace(name='target', profile=self.config['profile']['path'], reuse_from='source',
             workspace=str(self.workspace), pi_config=None, env_file=None, memory='12g',
             engine='docker', allowlist=None, allow_domain=['example.com:443'],
             primary_agent=agent, advisor=['claude'] if agent == 'pi' else [],
-            omit_skill=list(omit), skill=list(skills))
+            omit_skill=list(omit), skill=list(skills),reuse_editable_profile=share)
+        for key,value in overrides.items():
+            setattr(args,key,value)
         state = self.root / 'target'
         resolve = model_providers.registry.resolve
         def saved_package(kind, name):
@@ -57,6 +64,162 @@ class CopySettingsTests(unittest.TestCase):
              patch.object(model_providers.registry, 'resolve', side_effect=saved_package):
             sandbox.create(args, state)
         return state, json.loads((state / 'config.json').read_text())
+
+    def editable(self):
+        path=Path(self.enterContext(tempfile.TemporaryDirectory()))/'editable-profile'
+        shutil.copytree(self.config['profile']['path'],path)
+        self.config[profile_edit.EDIT]={'path':str(path),'origin_name':'base','origin_digest':self.config['profile']['digest']}
+        (self.source/'config.json').write_text(json.dumps(self.config))
+        return path
+
+    def test_explicit_shared_profile_keeps_one_source_and_independent_snapshots_for_all_agents(self):
+        self.workspace=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path=self.editable()
+        (path/'profile.json').write_text('{invalid pending edit\n')
+        for agent in ('pi','codex','claude','agy'):
+            with self.subTest(agent=agent):
+                state,config=self.create(agent=agent,share=True)
+                self.assertEqual(config[profile_edit.EDIT],self.config[profile_edit.EDIT])
+                self.assertEqual(folders.roots(config).count((profile_edit.PATH,False)),1)
+                self.assertTrue(Path(config['profile']['path']).is_relative_to(state))
+                self.assertEqual(config['profile']['digest'],self.config['profile']['digest'])
+                self.assertNotEqual(config['profile']['path'],self.config['profile']['path'])
+                self.assertIsNone(config['env_file'])
+                self.assertFalse((state/'private-auth.json').exists())
+                self.assertFalse(operation_locks.in_use('source'))
+                shutil.rmtree(state)
+        self.assertEqual((path/'profile.json').read_text(),'{invalid pending edit\n')
+
+    def test_sharing_requires_an_editable_source_and_its_applied_profile(self):
+        for overrides,reason in (({'reuse_from':None},'requires --reuse-from'),({},'no editable profile')):
+            with self.subTest(overrides=overrides),self.assertRaisesRegex(ValueError,reason):
+                self.create(share=True,**overrides)
+            self.assertFalse((self.root/'target').exists())
+        self.editable()
+        with self.assertRaisesRegex(ValueError,'source sandbox’s applied profile'):
+            self.create(share=True,profile='base')
+        self.assertFalse((self.root/'target').exists())
+
+    def test_shared_folder_overlap_fails_before_target_state_is_created(self):
+        path=self.editable()
+        self.workspace=path
+        with self.assertRaisesRegex(ValueError,'workspace'):
+            self.create(share=True)
+        self.assertFalse((self.root/'target').exists())
+
+    def test_shared_creation_can_select_its_source_profile_without_a_private_snapshot_path(self):
+        self.workspace=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.editable()
+        state,config=self.create(share=True,profile=None)
+        self.assertEqual(config['profile']['digest'],self.config['profile']['digest'])
+        self.assertEqual(config[profile_edit.EDIT],self.config[profile_edit.EDIT])
+
+    def test_copy_refuses_a_source_lifecycle_operation_before_allocating_target_state(self):
+        self.editable()
+        with operation_locks.sandbox('source','change profile'),ThreadPoolExecutor() as pool:
+            future=pool.submit(self.create,share=True)
+            with self.assertRaisesRegex(ValueError,'Cannot copy settings from source.*another Factory operation'):
+                future.result(10)
+        self.assertFalse((self.root/'target').exists())
+
+    def test_factory_child_can_reuse_its_handed_off_source_lock(self):
+        code='''
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+from ai_sandbox_factory import operation_locks, sandbox
+with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.argv[1])), patch.object(sandbox,'_create') as copied:
+    sandbox.create(SimpleNamespace(reuse_from='source'),Path(sys.argv[2]))
+    copied.assert_called_once()
+'''
+        with operation_locks.sandbox('source','copy settings from'):
+            result=subprocess.run([sys.executable,'-c',code,str(self.root/'locks'),str(self.root/'target')],
+                text=True,capture_output=True,**operation_locks.factory_child('source'))
+            independent=subprocess.run([sys.executable,'-c',code,str(self.root/'locks'),str(self.root/'target')],
+                text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertNotEqual(independent.returncode,0)
+        self.assertIn('another Factory operation',independent.stdout+independent.stderr)
+        self.assertFalse((self.root/'target').exists())
+
+    def test_independent_copy_of_editable_source_has_its_own_snapshot_and_no_editable_attachment(self):
+        self.editable()
+        state,config=self.create(share=False)
+        self.assertNotIn(profile_edit.EDIT,config)
+        self.assertTrue(Path(config['profile']['path']).is_relative_to(state))
+        self.assertNotEqual(config['profile']['path'],self.config['profile']['path'])
+
+    def test_copy_recovers_a_pending_source_before_selecting_its_applied_snapshot(self):
+        self.workspace=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.editable()
+        (self.source/'profile-preparation').mkdir()
+        previous=copy.deepcopy(self.config)
+        stale=copy.deepcopy(previous)
+        stale['profile']['path']='/uncommitted/profile'
+        (self.source/'config.json').write_text(json.dumps(stale))
+        def recover(config,state):
+            (state/'config.json').write_text(json.dumps(previous))
+        with patch('ai_sandbox_factory.profile_replacement.recover_preparation',side_effect=recover) as recovery:
+            state,config=self.create(share=True)
+        recovery.assert_called_once()
+        self.assertEqual(config['profile']['digest'],previous['profile']['digest'])
+
+    def test_copy_rejects_a_stale_ui_profile_after_source_recovery_for_both_copy_choices(self):
+        self.editable()
+        previous=copy.deepcopy(self.config)
+        stale=copy.deepcopy(previous)
+        stale['profile']['path']='/uncommitted/profile'
+        for shared in (False,True):
+            with self.subTest(shared=shared):
+                (self.source/'profile-preparation').mkdir(exist_ok=True)
+                (self.source/'config.json').write_text(json.dumps(stale))
+                def recover(config,state):sandbox.write_json(state/'config.json',previous)
+                with patch('ai_sandbox_factory.profile_replacement.recover_preparation',side_effect=recover):
+                    with self.assertRaisesRegex(ValueError,'source.*changed during recovery.*Start Create from existing again'):
+                        self.create(share=shared,profile=stale['profile']['path'])
+                self.assertFalse((self.root/'target').exists())
+
+    def test_invalid_source_name_reports_the_value_and_allowed_format(self):
+        with self.assertRaises(ValueError) as raised:
+            self.create(reuse_from='bad source')
+        self.assertIn(repr('bad source'),str(raised.exception))
+        self.assertIn(sandbox.SANDBOX_NAME_ERROR,str(raised.exception))
+
+    def test_sharing_choice_only_applies_to_the_selected_saved_profile(self):
+        self.editable()
+        draft=copy_draft({'name':'source','config':self.config},self.root)
+        self.assertFalse(shares_editable_profile(draft))
+        draft['share_editable_profile']=True
+        self.assertTrue(shares_editable_profile(draft))
+        for agent in ('pi','codex','claude','agy'):
+            self.assertTrue(shares_editable_profile(copy_for_agent(draft,agent)))
+        draft['profile']='base'
+        self.assertFalse(shares_editable_profile(draft))
+
+    def test_service_emits_sharing_flag_only_for_the_selected_source_profile(self):
+        self.editable()
+        draft=copy_draft({'name':'source','config':self.config},self.root)
+        draft.update(name='target',workspace=str(self.workspace),open_editor=False)
+        service=Service(self.root)
+        for index,(shared,profile,expected) in enumerate(((False,draft['profile'],False),(True,draft['profile'],True),(True,'base',False))):
+            selected={**draft,'name':'target-'+str(index),'profile':profile,'share_editable_profile':shared}
+            commands=[]
+            with patch.object(service,'run',side_effect=lambda args,log:commands.append(args)),patch.object(service,'setup'):
+                service.create(selected,None,lambda _:None)
+            self.assertEqual('--reuse-editable-profile' in commands[0],expected)
+            self.assertIn('--reuse-from',commands[0])
+
+    def test_key_copy_failure_keeps_operation_exit_code_and_cause_without_exported_keys(self):
+        service=Service(self.root)
+        failure=subprocess.CompletedProcess([],23,'SYNTHETIC_EXPORTED_KEY','Cannot read key store: permission denied')
+        with patch('ai_sandbox_factory.sandbox_tui.subprocess.run',return_value=failure):
+            with self.assertRaises(ValueError) as raised:
+                service.search_keys('source')
+        message=str(raised.exception)
+        for text in ('source','exit 23','permission denied','Include Web Search API keys unchecked'):
+            self.assertIn(text,message)
+        self.assertNotIn('SYNTHETIC_EXPORTED_KEY',message)
 
     def test_independent_profile_provider_and_skill_survive_source_deletion(self):
         state, config = self.create()
@@ -75,10 +238,20 @@ class CopySettingsTests(unittest.TestCase):
         self.assertEqual(config['extra_skills'], [])
         shutil.rmtree(state)
         Path(self.config['extra_skills'][0]['path'], 'SKILL.md').write_text('changed')
-        with self.assertRaisesRegex(ValueError, 'Source skill snapshot was modified'):
+        with self.assertRaises(ValueError) as raised:
             self.create()
+        for value in ('source','example',self.config['extra_skills'][0]['path'],'omit that skill'):
+            self.assertIn(value,str(raised.exception))
         self.assertFalse(state.exists())
         self.assertTrue(self.source.exists())
+
+    def test_modified_profile_copy_names_the_source_path_revision_and_recovery(self):
+        Path(self.config['profile']['path'],'profile.md').write_text('unexpected edit')
+        with self.assertRaises(ValueError) as raised:
+            self.create()
+        for value in ('source',self.config['profile']['path'],self.config['profile']['digest'],'Restore the saved snapshot'):
+            self.assertIn(value,str(raised.exception))
+        self.assertFalse((self.root/'target').exists())
 
     def test_draft_excludes_private_paths_and_is_independent(self):
         original = copy.deepcopy(self.config)

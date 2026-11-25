@@ -1,22 +1,24 @@
 """Render synthetic profile editing, validation and reviewed application states."""
 import argparse
 import asyncio
+import copy
 import os
 from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from textual.widgets import Button, Input
+from textual.widgets import Button, Checkbox, Input, Select
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
-from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, CreateFromSandbox, MoreActions, SettingsForm, copy_draft
 from test_profile_edit_ui import record, review
 from test_tui import FakeService
-from tui_geometry import check_input_layout
+from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
 
 
 async def capture(output,size):
-    with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+    with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+            patch.dict(os.environ,SANDBOX_REGISTRY_DIR=str(Path(tmp)/'library')):
         dashboard=record()
         dashboard.update(profile='Default Developer Sandbox',workspace='/home/example/project',engine='podman',proxy='running')
         app=Cockpit(Path(tmp),FakeService([dashboard]))
@@ -25,9 +27,26 @@ async def capture(output,size):
             async def shot(name):
                 await pilot.pause()
                 check_input_layout(app.screen)
+                check_checkbox_alignment(app.screen)
+                check_dropdown_layout(app.screen)
                 for button in app.screen.query(Button):
                     if button.display and button.region.height:
                         assert button.region.height == 1,(name,button.id,button.region)
+                        if button.id in ('copy-cancel','copy-continue','copy-web-cancel','copy-web-apply'):
+                            assert 0 <= button.region.y < button.region.bottom <= size[1],(name,button.id,button.region)
+                if name in ('profile-sharing-copy-independent','profile-sharing-copy-shared'):
+                    fields=app.screen.query_one('#copy-sandbox-fields')
+                    last=app.screen.query_one('#copy-credentials')
+                    assert fields.content_region.bottom-last.region.bottom <= 1,(name,fields.content_region,last.region)
+                if name=='profile-sharing-copy-preparing':
+                    button=app.screen.query_one('#copy-continue',Button)
+                    assert 'Preparing…' in button.render_line(0).text,(button.region,button.render_line(0).text)
+                if name=='profile-sharing-copy-error':
+                    fields=app.screen.query_one('#copy-sandbox-fields')
+                    error=app.screen.query_one('#copy-error')
+                    assert fields.content_region.contains_region(error.region),(name,fields.content_region,error.region)
+                if name=='profile-web-copy-keys':
+                    assert not app.screen.query_one('#copy-web-keys',Checkbox).disabled
                 (output/f'{name}-{size[0]}x{size[1]}.svg').write_text(app.export_screenshot())
             for editable in (False,True):
                 row=record(editable)
@@ -72,14 +91,107 @@ async def capture(output,size):
                 await app.push_screen(AppliedProfile(information,Path(tmp)))
                 await app.workers.wait_for_complete()
                 await shot('profile-edit-information')
+                await app.pop_screen()
+            shared=record(True)
+            shared['config']['options']={'web_access':{'providers':{'exa':{'has_key':True}}}}
+            shared['shared_profiles']=['source','another-sandbox']
+            plain=copy.deepcopy(shared)
+            plain['name']='plain'
+            plain['config'].pop('editable_profile')
+            no_keys=copy.deepcopy(shared)
+            no_keys['name']='without-keys'
+            no_keys['config']['options']={}
+            source=Path(tmp)/shared['name']
+            source.mkdir()
+            (source/'allowlist.txt').write_text('')
+            chooser=CreateFromSandbox([shared,plain,no_keys])
+            await app.push_screen(chooser)
+            await shot('profile-sharing-copy-independent')
+            chooser.query_one('#copy-source',Select).expanded=True
+            await shot('profile-sharing-copy-sources')
+            chooser.query_one('#copy-source',Select).expanded=False
+            chooser.query_one('#copy-source',Select).focus()
+            chooser.query_one('#copy-share-profile',Checkbox).value=True
+            chooser.query_one('#copy-share-profile',Checkbox).focus()
+            await shot('profile-sharing-copy-shared')
+            chooser.query_one('#copy-keys',Checkbox).value=True
+            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-continue'):
+                chooser.query_one(selector).disabled=True
+            chooser.query_one('#copy-continue',Button).label='Preparing…'
+            await shot('profile-sharing-copy-preparing')
+            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-continue'):
+                chooser.query_one(selector).disabled=False
+            chooser.query_one('#copy-continue',Button).label='Continue'
+            chooser.query_one('#copy-error').update('Cannot copy Web Search API keys from example (exit 1): fixture I/O failure. Try copying again, or leave Include Web Search API keys unchecked.')
+            chooser.query_one('#copy-keys',Checkbox).focus()
+            chooser.query_one('#copy-keys',Checkbox).scroll_visible(top=True,animate=False)
+            chooser.fit_dialog()
+            await shot('profile-sharing-copy-error')
+            chooser.query_one('#copy-error').update('Cannot copy Web Search API keys from example: fixture diagnostic.\n'+'\n'.join('Diagnostic line '+str(i) for i in range(60)))
+            chooser.query_one('#copy-error').scroll_visible(top=True,animate=False)
+            await shot('profile-sharing-copy-long-error')
+            chooser.query_one('#copy-error').update('')
+            chooser.query_one('#copy-source',Select).value='plain'
+            chooser.query_one('#copy-source',Select).focus()
+            await shot('profile-sharing-copy-unavailable')
+            chooser.query_one('#copy-source',Select).value='without-keys'
+            chooser.query_one('#copy-source',Select).focus()
+            await shot('profile-sharing-copy-no-keys')
+            stopped=copy.deepcopy(shared)
+            stopped.update(name='stopped',dev='stopped')
+            chooser.records['example']['dev']='stopped'
+            chooser.query_one('#copy-source',Select).value='example'
+            chooser.query_one('#copy-source',Select).focus()
+            await shot('profile-sharing-copy-stopped')
+            await app.pop_screen()
+            shared['dev']='running'
+            web=CopyWebAccess([shared,no_keys,stopped])
+            await app.push_screen(web)
+            await shot('profile-web-copy-keys')
+            web.query_one('#copy-web-source',Select).expanded=True
+            await shot('profile-web-copy-sources')
+            web.query_one('#copy-web-source',Select).expanded=False
+            web.query_one('#copy-web-source',Select).focus()
+            web.query_one('#copy-web-keys',Checkbox).value=True
+            web.query_one('#copy-web-error').update('Cannot copy Web Search API keys from example (exit 1): fixture I/O failure. Try copying again, or leave Include Web Search API keys unchecked.')
+            await shot('profile-web-copy-error')
+            web.query_one('#copy-web-error').update('')
+            web.query_one('#copy-web-source',Select).value='without-keys'
+            web.query_one('#copy-web-source',Select).focus()
+            await shot('profile-web-copy-no-keys')
+            web.query_one('#copy-web-source',Select).value='stopped'
+            web.query_one('#copy-web-source',Select).focus()
+            await shot('profile-web-copy-stopped')
+            await app.pop_screen()
+            for reuse in (False,True):
+                draft=copy_draft(shared,Path(tmp))
+                draft.update(name='new-project',share_editable_profile=reuse)
+                form=SettingsForm(draft)
+                await app.push_screen(form)
+                form.query_one('.form').scroll_home(animate=False)
+                await shot('profile-sharing-review-shared' if reuse else 'profile-sharing-review-independent')
+                await app.pop_screen()
+            await app.push_screen(EditProfile(shared))
+            await shot('profile-sharing-edit')
+            await app.pop_screen()
+            prepared=review()
+            prepared['shared_with']=shared['shared_profiles']
+            await app.push_screen(ReviewProfile(shared,prepared))
+            await shot('profile-sharing-apply-review')
+            app.screen.query_one('#profile-review-apply',Button).press()
+            await shot('profile-sharing-apply-confirm')
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
+    parser.add_argument('--mono',action='store_true')
     args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=True)
-    os.environ.pop('NO_COLOR',None)
+    if args.mono:
+        os.environ['NO_COLOR']='1'
+    else:
+        os.environ.pop('NO_COLOR',None)
     os.environ['TEXTUAL_COLOR_SYSTEM']='truecolor'
     for size in ((80,24),(120,40),(220,50)):
         asyncio.run(capture(args.output,size))

@@ -72,7 +72,7 @@ class ChatTransfer(ModalScreen):
     def compose(self):
         with Vertical(id='confirm-box'):
             title = f'{IMPORT} into {self.sandbox_name}' if self.importing else f'{EXPORT} from {self.sandbox_name}'
-            yield Label(title, markup=False)
+            yield Label(title, markup=False, classes='title')
             with VerticalScroll(id='chat-transfer-content'):
                 if self.agent != 'pi':
                     name = primary_workspace.AGENTS[self.agent]
@@ -251,7 +251,7 @@ class DeleteSandbox(ModalScreen[bool]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False)
+            yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False, classes='title')
             if self.has_config:
                 name = 'Pi and FrostPi' if self.agent == 'pi' else primary_workspace.AGENTS[self.agent]
                 yield Static(f'Saved {name} chats will be permanently deleted. '

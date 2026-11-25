@@ -1723,6 +1723,45 @@ at 80×24. Enter confirms; Escape returns to the unchanged review without starti
 a job. Keep Review and Profile and services actions within their bounded forms
 at wide terminal sizes.
 
+### Shared editable profiles
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_copy_settings test_profile_edit test_profile_services_ui test_profile_edit_ui
+PYTHONPATH=.:tests .venv/bin/python tests/profile_sharing_integration.py
+```
+
+The real fixture creates Pi and Codex sandboxes using the same editable folder,
+including a copy of a shared copy. Broken pending JSON must not affect creation
+from the applied snapshot. It checks shared Git history and file edits, separate
+homes, database data and passwords, Apply to one sandbox without updating its
+peers, and a later Apply against another sandbox's own revision. Deleting the
+original must keep the shared folder, history and working peers. It verifies
+cleanup of its labeled containers, volumes and networks. Unit tests cover all
+four agents, an absent or changed source, workspace overlap, the creation flag,
+stable checkbox help and the summaries of both copy choices.
+The credentials group names Web Search explicitly. Its copy checkbox is hidden
+when the source has no saved Web Search keys or uses a native coding agent;
+a stopped Pi sandbox with saved keys shows how to enable copying. Opening the
+dialog or continuing without the checkbox selected must not export any keys.
+The source lifecycle lock protects configuration and package copying and is
+released before image builds. An active source update is refused with a useful
+message; an interrupted source transaction is recovered before its applied
+snapshot is selected. The copy picker excludes unfinished creations. Gate a
+search-key read and check that choices stay fixed, Cancel remains responsive,
+late results cannot dismiss another screen, and a failed read preserves choices
+for retry. After focus and layout settle, short errors must remain visible;
+long diagnostics must retain every line and leave the actions visible.
+
+### Semantic text styles
+
+`test_tui_layout` checks bold field labels, plain input values, underlined section
+headings, separated command blocks and readable monochrome errors at all three
+terminal sizes. Read-only facts use `Details` so label emphasis never changes
+the literal value. `Command` separates runnable commands from help text.
+Review the profile pages with `render_profile_edit.py` and the creation,
+settings, provider, connector, editor, document-search and history fixtures in
+`render_tui.py`. Inspect populated and error states as well as empty forms.
+
 Run the actual Pi RPC and shipped FrostPi webview profile tools with the fixture's
 cached Pi image and a matching code-server binary:
 
