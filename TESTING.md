@@ -1681,6 +1681,13 @@ isolated data/passwords, and verifies persistent data across Stop/Start. It read
 the authoring guide through the applied read-only mount and copies the bundled
 example back to a host folder using the documented command. It leaves project
 instructions unchanged and removes its disposable containers, volumes and network.
+It then edits and applies the profile, registers an actual Git commit, and creates
+a new sandbox from that registered profile. Create from existing must keep the
+applied snapshot even after a Library update and invalid unapplied edits. Both
+new sandboxes must have separate application data, passwords and volumes; the
+original database and editable files must remain unchanged.
+The fixture also moves the attached editable folder, verifies that Start reports
+its saved path without changing private state, restores the folder and retries.
 
 ## Editable profiles
 
@@ -1695,8 +1702,15 @@ sandboxes. Pi uses the real creation worker with a provider selected. It checks
 the editable mount and managed instructions, invalid JSON, static validation,
 changes made after review, real build failure, package application, new hosts,
 readiness failure, build/readiness cancellation, interrupted-worker recovery,
-and a bootstrap failure after cutover. Existing runtime IDs and service data
+and a bootstrap failure after cutover. Rebuild after adding a service must use
+the applied snapshot even with invalid unapplied source files. Existing runtime IDs and service data
 are preserved on failure; same-name retry and stopped-state application are exercised. It uses synthetic credentials and removes its private resources.
+After an interrupted profile worker, ordinary lifecycle actions recover the
+pending transaction before changing the sandbox. The real fixture checks Stop
+and Start after killing the preparation worker; dispatch tests also cover
+Build and Delete using the recovered configuration.
+Client launch tests check that Open, Pi and the browser editor also resolve the
+pending transaction before selecting a runtime.
 The standalone validator runs without installing Factory inside the sandbox.
 
 Render the editing folder, empty/error and attached states, the full change
@@ -1704,6 +1718,10 @@ review and its diff, replacement confirmation and no-change review at all three
 terminal sizes. Verify Enter, Escape, visible one-row actions and late review
 completion after leaving Job details. Inspect the actual screenshots before
 committing UI changes.
+Applying a reviewed profile must first show its replacement notice, including
+at 80×24. Enter confirms; Escape returns to the unchanged review without starting
+a job. Keep Review and Profile and services actions within their bounded forms
+at wide terminal sizes.
 
 Run the actual Pi RPC and shipped FrostPi webview profile tools with the fixture's
 cached Pi image and a matching code-server binary:

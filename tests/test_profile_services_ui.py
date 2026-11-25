@@ -73,7 +73,8 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                     app.perform('rebuild', record=record)
                     await pilot.pause()
                     message = app.screen.message
-                    self.assertIn('Work in the coding-agent container stops after the build', message)
+                    self.assertIn('If the sandbox is running, work in its coding-agent container stops after the build', message)
+                    self.assertIn('If the sandbox is stopped, it stays stopped.', message)
                     self.assertIn('Profile services and their application data are kept', message)
                     self.assertNotIn('Fetch current profile sources', message)
                     await pilot.press('escape')
@@ -91,7 +92,7 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                         app.perform('rebuild', record=record)
                         await pilot.pause()
                         self.assertIn('the installed profile' if installed else 'its saved profile', app.screen.message)
-                        self.assertNotIn('stops after the build', app.screen.message)
+                        self.assertIn('If the sandbox is stopped, it stays stopped.', app.screen.message)
                         self.assertEqual(app.focused.id, 'yes')
                         with patch.object(app, 'start_rebuild') as rebuild:
                             await pilot.press('enter')

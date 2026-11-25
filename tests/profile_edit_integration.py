@@ -245,6 +245,11 @@ def exercise(agent, root):
             finally:
                 if process.poll() is None:process.kill();process.wait()
             assert (state/'profile-preparation/record.json').is_file()
+            # The next action may be ordinary lifecycle work, not another edit.
+            service.run(['down',name],log)
+            assert not (state/'profile-preparation').exists()
+            assert ids()==before_ids
+            service.run(['up',name],log)
             recovered=service.review_profile(name)
             assert recovered['revision']==waiting['revision']
             assert ids()==before_ids
@@ -263,6 +268,23 @@ def exercise(agent, root):
         if original_password:
             assert settings['database']['password']==original_password
             assert sql_marker()=='preserved'
+        # Rebuilding current Factory software must use the applied customized
+        # snapshot, keep added services and ignore unapplied source edits.
+        applied_digest = config()['profile']['digest']
+        applied_ids = ids()
+        (destination/'profile.json').write_text('{invalid unapplied edit\n')
+        try:
+            service.run(['recreate',name],log)
+            assert config()['profile']['digest']==applied_digest
+            for resource, identifier in applied_ids.items():
+                if resource in profile_services.resources(config())['container']:
+                    assert ids()[resource]==identifier
+            assert json.loads(inside('cat','/run/profile-services/connections.json').stdout)==settings
+            assert database in inside('ssh','-F','/run/profile-services/config',host+'.profile.internal',
+                                     f'psql -U {user} -d {database} -Atc "SELECT current_database()"').stdout
+        finally:
+            (destination/'profile.json').write_text(valid_manifest)
+        log('PASS '+agent+': Rebuild keeps the applied customized profile, added service IDs and credentials despite invalid unapplied source')
         applied_manifest=(destination/'profile.json').read_text()
         edit("m=json.loads((p/'profile.json').read_text()); m['services']["+repr(host)+"]['volumes']['data']='/different-data'; (p/'profile.json').write_text(json.dumps(m))")
         try:service.review_profile(name)

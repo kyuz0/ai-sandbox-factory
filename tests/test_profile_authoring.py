@@ -14,6 +14,12 @@ EXAMPLE = GUIDE / 'example'
 
 
 class ProfileAuthoringTests(unittest.TestCase):
+    def test_renaming_the_base_recipe_retains_declared_agent_support(self):
+        metadata=json.loads((sandbox.ROOT/'profiles/base/profile.json').read_text())
+        metadata['name']='team-developer'
+        for agent in profile_spec.AGENTS:
+            self.assertTrue(profile_spec.compatible(metadata,agent))
+
     def test_complete_example_declares_independent_hosts_and_shared_build_context(self):
         profile = sandbox.load_profile(str(EXAMPLE))
         self.assertEqual(set(profile['services']), {'database', 'reporting'})

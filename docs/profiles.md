@@ -82,6 +82,10 @@ available to the agent at `/opt/sandbox/profile`.
 Review its diff and choose **Apply profile changes** to install an edited image
 or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
+**Create from existing** keeps the saved, applied customization and starts with
+separate private state and application data. Its **Rebuild sandbox…** action
+keeps that saved profile; it does not fetch the original Library profile.
+
 Copy [examples/profile](../examples/profile) into a new repository. It contains:
 
 | File | Purpose |

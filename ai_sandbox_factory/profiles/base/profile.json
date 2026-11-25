@@ -1,4 +1,5 @@
 {
   "name": "base",
-  "description": "Default Developer Sandbox"
+  "description": "Default Developer Sandbox",
+  "agents": ["pi", "codex", "claude", "agy"]
 }

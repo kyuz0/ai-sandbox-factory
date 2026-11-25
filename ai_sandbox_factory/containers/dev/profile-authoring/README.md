@@ -235,6 +235,10 @@ chats, sign-ins, existing services and their data are kept. A stopped sandbox
 stays stopped. If attachment fails, Factory restores the previous runtime and
 keeps the editable copy so the same action can be retried.
 
+Keep the editable folder at its saved host path. Moving or deleting it prevents
+the sandbox from starting because its writable mount would be missing. Restore
+the folder at that path and retry; the applied profile and private data are kept.
+
 Inside the sandbox:
 
 - `/opt/sandbox/profile` is the editable source folder.
@@ -283,7 +287,8 @@ startup are tested when applying, not by the validator.
 Choose **Actions… → Edit profile… → Review changes…**. Factory freezes the
 working-tree files, including uncommitted edits, and shows their diff against the
 applied profile, any added services and the replacement consequences. Choose
-**Apply profile changes** to use exactly that revision. If files change after
+**Apply profile changes**, review the replacement notice and confirm to use
+exactly that revision. If files change after
 review, review them again before applying.
 
 Factory builds images and checks new services while the previous coding-agent
@@ -294,6 +299,8 @@ Factory can finish or restore the previous
 runtime. Build or preparation failures keep the previous runtime. Startup failure
 restores the previous containers and settings. Newly created service resources
 are removed on failure or cancellation; existing service data is preserved.
+If Factory exits during preparation or replacement, the next lifecycle action
+or client launch recovers the pending change before continuing.
 
 Package changes and **new services** can be applied to this same sandbox. New
 services initialize separate application data. Existing service containers and
@@ -314,8 +321,11 @@ The equivalent host commands are:
 ```sh
 ai-sandbox-factory profile-fork my-sandbox --directory "$HOME/sandbox-profiles/team-dev"
 ai-sandbox-factory profile-review my-sandbox
-ai-sandbox-factory profile-apply my-sandbox --revision REVISION_FROM_REVIEW
+ai-sandbox-factory profile-apply my-sandbox --revision REVIEW_ID
 ```
+
+Use the `revision` value returned by `profile-review` as `REVIEW_ID`. The TUI
+shows the same value as **Review ID**; it is different from the profile's content digest.
 
 ### Version and share your profile
 

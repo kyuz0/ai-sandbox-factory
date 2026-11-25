@@ -35,6 +35,9 @@ from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 PI_VERSION = '1.4.0'
+LIFECYCLE_COMMANDS = ('profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
+                      'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
+                      'configure', 'primary-login', 'primary-import')
 RUNTIME_ENV = {
     'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
     'http_proxy': 'http://127.0.0.1:3128', 'https_proxy': 'http://127.0.0.1:3128',
@@ -1666,6 +1669,15 @@ def configure_models(config, state, preview=False):
     initialize_models(config, state, preview=preview)
 
 
+def recover_profile(config, state):
+    """Recover an interrupted profile transaction while its lifecycle lock is held."""
+    if not (Path(state) / 'profile-preparation').exists():
+        return config
+    from . import profile_replacement
+    profile_replacement.recover_preparation(config, state)
+    return json.loads((Path(state) / 'config.json').read_text())
+
+
 def open_selected(config, state, mode=None):
     from . import browser_editor
     mode = mode or editor_settings.load(state)['mode']
@@ -1673,6 +1685,7 @@ def open_selected(config, state, mode=None):
     if mode not in editor_settings.modes(selected):
         raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
     with operation_locks.sandbox(state.name, 'open'):
+        config = recover_profile(config, state)
         if selected != 'pi' or mode == 'pi':
             up(config, state)
         if mode == 'browser':
@@ -1891,8 +1904,7 @@ def main(*, startup_notice=''):
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
-    if args.command in ('profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
-                        'configure', 'primary-login', 'primary-import'):
+    if args.command in LIFECYCLE_COMMANDS:
         try:
             with operation_locks.sandbox(args.name, args.command):
                 sandbox_command(args, state, parser)
@@ -1931,10 +1943,8 @@ def sandbox_command(args, state, parser):
             delete_incomplete(state)
             return
     config = json.loads((state / 'config.json').read_text())
-    if args.command in ('profile-fork', 'profile-review', 'profile-apply'):
-        from . import profile_replacement
-        profile_replacement.recover_preparation(config, state)
-        config = json.loads((state / 'config.json').read_text())
+    if args.command in LIFECYCLE_COMMANDS:
+        config = recover_profile(config, state)
     if args.command == 'profile-fork':
         return profile_edit.fork(config, state, args.directory, args.apply_gate)
     if args.command == 'profile-review':
@@ -2008,7 +2018,8 @@ def sandbox_command(args, state, parser):
         original = json.loads(json.dumps(config))
         if native and args.subagents is not None:
             raise ValueError('Pi subagent settings apply to Pi sandboxes.')
-        building = native or bool(config.get(profile_edit.EDIT)) or args.profile or args.subagents is not None or args.browser is not None
+        building = (native or bool(config.get(profile_edit.EDIT)) or bool(config.get('profile', {}).get('customized_from'))
+                    or args.profile or args.subagents is not None or args.browser is not None)
         replacing_profile_workspace = bool(profile_services.selected(config))
         labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + (
             ['Replace coding-agent container'] if replacing_profile_workspace else
@@ -2054,6 +2065,7 @@ def sandbox_command(args, state, parser):
             browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
         else:
             with operation_locks.sandbox(args.name, 'change the browser editor for'):
+                config = recover_profile(config, state)
                 if args.stop:
                     browser_editor.stop(state)
                 else:
@@ -2175,6 +2187,10 @@ def sandbox_command(args, state, parser):
         (state / 'squid.conf').write_text(network_policy(config, rules))
         up(config, state)
     else:
+        # Resolve an interrupted replacement before a new shell/check attaches;
+        # the interactive command itself must not retain the lifecycle lock.
+        with operation_locks.sandbox(args.name, 'connect to'):
+            config = recover_profile(config, state)
         dev = names(config)[0]
         if args.command == 'check':
             source = (ROOT / 'checks/check_inside.py').read_text()
@@ -2187,6 +2203,7 @@ def sandbox_command(args, state, parser):
                 command = command[1:]
             if args.command == 'pi':
                 with operation_locks.sandbox(args.name, 'start Pi in'):
+                    config = recover_profile(config, state)
                     up(config, state)
                     if config.get('local_model_ports') or config.get('model_providers'):
                         initialize_models(config, state)

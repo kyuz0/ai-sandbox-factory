@@ -13,10 +13,9 @@ from .tui_widgets import Bullet, Feedback
 
 def consequences(record):
     notes = []
-    if record.get('dev') == 'running':
-        notes.append(f'Running agent work, terminals and browser processes in {record["name"]} stop when its coding-agent container is replaced.')
-    else:
-        notes.append(f'{record["name"]} stays stopped after validation.')
+    # The runtime may change while review runs or this screen is open.
+    notes.append(f'If {record["name"]} is running, its agent work, terminals and browser processes stop when its coding-agent container is replaced.')
+    notes.append(f'If {record["name"]} is stopped, it stays stopped.')
     notes += ['Project files, private home, saved chats and sign-ins are kept.',
               'Existing profile services and their application data are kept.',
               'Packages installed manually in the container must be added to the Dockerfile to survive replacement.']
@@ -102,7 +101,7 @@ class ReviewProfile(Screen):
 
     def __init__(self, record, review):
         super().__init__()
-        self.add_class('profile-edit-flow')
+        self.add_class('bounded-form', 'profile-edit-flow')
         self.record, self.review = record, review
 
     def compose(self):
@@ -110,8 +109,8 @@ class ReviewProfile(Screen):
         yield Label('Review profile changes · ' + self.record['name'], classes='title focused-settings-title')
         with VerticalScroll(classes='form'):
             with Vertical(classes='setting'):
-                yield Label('Reviewed revision')
-                yield Static(self.review['profile']['digest'], markup=False)
+                yield Label('Review ID')
+                yield Static(self.review['revision'], markup=False)
             with Vertical(classes='setting'):
                 yield Label('Editable profile folder')
                 yield Static(self.review['folder'], markup=False)
@@ -151,7 +150,12 @@ class ReviewProfile(Screen):
     @on(Button.Pressed, '#profile-review-apply')
     def apply_changes(self):
         app, name = self.app, self.record['name']
-        app.pop_screen()
-        app.start_settings_job(name, 'Apply profile changes · ' + name,
-            lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
-            cooperative=True, success_message='Profile changes applied. Open the coding agent again to use them.')
+        from .sandbox_tui import Confirm
+        def confirmed(yes):
+            if yes:
+                app.pop_screen()
+                app.start_settings_job(name, 'Apply profile changes · ' + name,
+                    lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
+                    cooperative=True, success_message='Profile changes applied. Open the coding agent again to use them.')
+        app.push_screen(Confirm(f'Apply the reviewed profile changes to {name}? Factory builds and checks new services before replacing the coding-agent container.',
+                                'Apply profile changes',confirm_by_default=True,notes=consequences(self.record)),confirmed)

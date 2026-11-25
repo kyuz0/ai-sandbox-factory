@@ -1476,6 +1476,11 @@ class ApprovalHelp(ModalScreen):
         self.dismiss()
 
 
+def saved_profile_only(config):
+    return (coding_agent(config) != 'pi' or bool(config.get(profile_edit.EDIT))
+            or bool(config.get('profile', {}).get('customized_from')))
+
+
 class MoreActions(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Back')]
 
@@ -1491,10 +1496,10 @@ class MoreActions(ModalScreen[Optional[str]]):
             self.page = None
             return
         native = coding_agent(record.get('config', {})) != 'pi'
-        saved_profile_only = native or bool(record.get('config', {}).get(profile_edit.EDIT))
+        use_saved_profile = saved_profile_only(record.get('config', {}))
         opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
-                     ('Rebuild sandbox…' if saved_profile_only else 'Update sources and recreate…', 'rebuild')]
+                     ('Rebuild sandbox…' if use_saved_profile else 'Update sources and recreate…', 'rebuild')]
         if record.get('config', {}).get('engine'):
             lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
@@ -1623,7 +1628,7 @@ class AppliedProfile(Screen):
 
     def __init__(self, record, state):
         super().__init__()
-        self.add_class('profile-edit-flow')
+        self.add_class('bounded-form', 'profile-edit-flow')
         self.record, self.state = record, state
 
     def compose(self):
@@ -1634,6 +1639,13 @@ class AppliedProfile(Screen):
             with Vertical(classes='setting'):
                 yield Label(profile.get('description') or profile['name'])
                 yield Static('Saved profile revision: ' + profile['digest'], markup=False)
+                editable = self.record['config'].get(profile_edit.EDIT)
+                origin = profile.get('customized_from')
+                origin = origin or (editable and {'name': editable['origin_name'], 'digest': editable['origin_digest']})
+                if origin:
+                    yield Static('Customized from: ' + origin['name'] + ' · ' + origin['digest'], markup=False)
+                if editable:
+                    yield Static('Editable profile folder: ' + editable['path'], markup=False)
                 if profile_runtime.applied(self.state):
                     yield Static('Read-only build recipes: ' + profile_runtime.PATH, markup=False)
                 else:
@@ -2820,7 +2832,8 @@ class NewSandbox(Screen):
         self.profile_paths = {name: row['path'] for name, row in registry.installed('profile').items()}
         if self.copied_draft:
             source = settings['reused_profile']
-            profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (saved profile)'
+            title = source.get('description') or source['name']
+            profiles[settings['profile']] = title + (' (saved customized profile)' if source.get('customized_from') else ' (saved profile)')
             self.profile_paths[settings['profile']] = source['path']
         self.profiles = profiles
         yield Header()
@@ -5379,7 +5392,7 @@ class Cockpit(App):
         if not config.get('engine'):
             raise ValueError('Repair the saved configuration before editing it.')
         profile = config.get('profile', {})
-        value = {**DEFAULT_SETTINGS, **config, 'profile': profile.get('registry_name', profile.get('name', 'base')),
+        value = {**DEFAULT_SETTINGS, **config, 'profile': profile['path'] if saved_profile_only(config) else profile.get('registry_name', profile.get('name', 'base')),
                  'options': options(config.get('options')), 'local_model_ports': config.get('local_model_ports')}
         if 'model_providers' not in config and value['local_model_ports']:
             value['model_providers'] = {'local': {}}
@@ -5551,18 +5564,18 @@ class Cockpit(App):
             source = profile.get('registry_name', profile.get('name', 'base'))
             args = ['recreate', name]
             migration = [] if native else settings_effects.editor_migration(config)
-            saved_profile_only = native or bool(config.get(profile_edit.EDIT))
-            action_label = 'Rebuild sandbox' if saved_profile_only else 'Update sources and recreate'
-            if saved_profile_only:
+            use_saved_profile = saved_profile_only(config)
+            action_label = 'Rebuild sandbox' if use_saved_profile else 'Update sources and recreate'
+            if use_saved_profile:
                 question = f'Rebuild {name} using its saved profile and current Factory software?'
             else:
                 args += ['--profile', source if source in profile_titles() else profile['path']]
                 profile_source = 'the installed profile' if source in profile_titles() else 'its saved profile'
                 question = f'Update {name} to FrostPi?' if migration else f'Rebuild {name} using {profile_source} and current Factory software?'
             notes = ['Workspace files, private home and saved chats are kept.']
-            if record.get('dev') == 'running':
-                notes[0:0] = ['Work in the coding-agent container stops after the build.',
-                              'This includes active tasks, terminals and browser processes.']
+            notes[0:0] = ['If the sandbox is running, work in its coding-agent container stops after the build.',
+                          'This includes active tasks, terminals and browser processes.',
+                          'If the sandbox is stopped, it stays stopped.']
             if profile.get('services'):
                 notes.append('Profile services and their application data are kept.')
             self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),

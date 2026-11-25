@@ -97,9 +97,12 @@ def _profile(path, original):
     path = Path(path)
     metadata = profile_spec.validate(path, original.get('primary_agent', 'pi'))
     value = {key: content for key, content in original['profile'].items()
-             if key not in ('git_source', 'source_commit', 'services', 'defaults', 'agents')}
+             if key not in ('git_source', 'source_commit', 'services', 'defaults', 'agents', 'registry_name')}
     value.update(name=metadata['name'], description=metadata.get('description', ''),
                  path=str(path), digest=sandbox.tree_digest(path))
+    # A customized snapshot must never silently follow the original Library entry.
+    value['customized_from'] = original['profile'].get('customized_from') or {
+        'name': original['profile']['name'], 'digest': original['profile']['digest']}
     for key in ('agents', 'defaults'):
         if key in metadata:
             value[key] = metadata[key]

@@ -427,6 +427,7 @@ def open_browser_editor(config, state, archive=None, background=False, open_tab=
     with ExitStack() as startup, ExitStack() as editor:
         if not background:
             startup.enter_context(operation_locks.sandbox(state.name, 'open the browser editor for'))
+        config = sandbox.recover_profile(config, state)
         host_platform.check_engine(config['engine'], config.get('podman_connection'))
         current = sandbox.inspect(config, sandbox.names(config)[0])
         if not current or not current['State']['Running']:

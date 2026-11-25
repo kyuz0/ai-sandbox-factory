@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +72,74 @@ class EditTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'workspace|private sandbox state'):
                 edit.fork(self.config, self.state, path)
             self.assertFalse(path.exists())
+
+    def test_review_drops_library_identity_and_preserves_customization_origin(self):
+        self.config['profile']['registry_name'] = 'base'
+        first = self.review()
+        self.assertNotIn('registry_name',first['profile'])
+        self.assertEqual(first['profile']['customized_from'],
+                         {'name':self.profile['name'],'digest':self.saved['digest']})
+        self.config['profile'] = first['profile']
+        second = self.review('RUN printf later\n')
+        self.assertEqual(second['profile']['customized_from'],first['profile']['customized_from'])
+
+    def test_renamed_editable_base_can_be_reviewed_for_every_agent(self):
+        self.attach()
+        manifest=json.loads((self.destination/'profile.json').read_text())
+        manifest['name']='team-developer'
+        (self.destination/'profile.json').write_text(json.dumps(manifest))
+        for agent in profile_spec.AGENTS:
+            with self.subTest(agent=agent):
+                self.config['primary_agent']=agent
+                reviewed=edit.review(self.config,self.state)
+                self.assertEqual(reviewed['profile']['name'],'team-developer')
+                self.assertTrue(profile_spec.compatible(reviewed['profile'],agent))
+
+    def test_missing_editable_folder_reports_saved_path_without_mutating_state(self):
+        self.attach()
+        renamed = self.destination.with_name('moved-profile')
+        self.destination.rename(renamed)
+        with self.assertRaisesRegex(ValueError,'Editable profile folder .* is missing.*Restore it'):
+            edit.freeze(self.config,self.state)
+        self.assertTrue(Path(self.saved['path']).is_dir())
+        renamed.rename(self.destination)
+        self.assertEqual(edit.freeze(self.config,self.state)['digest'],self.saved['digest'])
+
+    def test_lifecycle_actions_recover_interrupted_profile_before_using_saved_config(self):
+        (self.state/'profile-preparation').mkdir()
+        for action in ('up','down','delete','build'):
+            with self.subTest(action=action):
+                sandbox.write_json(self.state/'config.json',self.config)
+                def recover(config,state):
+                    sandbox.write_json(state/'config.json',{**config,'recovered':'previous-runtime'})
+                with patch.object(profile_replacement,'recover_preparation',side_effect=recover) as recovery, \
+                        patch.object(sandbox,action) as operation:
+                    sandbox.sandbox_command(SimpleNamespace(command=action),self.state,None)
+                recovery.assert_called_once()
+                self.assertEqual(operation.call_args.args[0]['recovered'],'previous-runtime')
+
+    def test_open_pi_and_browser_resolve_pending_recovery_before_using_a_runtime(self):
+        from ai_sandbox_factory import browser_editor
+        (self.state/'profile-preparation').mkdir()
+        sandbox.write_json(self.state/'config.json',self.config)
+        def recover(config,state):
+            sandbox.write_json(state/'config.json',{**config,'recovered':'previous-runtime'})
+        with patch.object(profile_replacement,'recover_preparation',side_effect=recover), \
+                patch.object(sandbox.operation_locks,'private_runtime_dir',return_value=self.root), \
+                patch.object(sandbox,'up') as start, patch.object(sandbox,'run'), \
+                patch.object(sandbox,'names',wraps=sandbox.names) as names:
+            sandbox.open_selected(self.config,self.state,'pi')
+            self.assertEqual(start.call_args.args[0]['recovered'],'previous-runtime')
+            for command in ('pi','exec','shell','check'):
+                sandbox.sandbox_command(SimpleNamespace(command=command,name='example',args=['--','true'],
+                                                       allowed_url='https://example.test'),self.state,None)
+                self.assertEqual(names.call_args.args[0]['recovered'],'previous-runtime')
+        with patch.object(profile_replacement,'recover_preparation',side_effect=recover), \
+                patch.object(sandbox.operation_locks,'private_runtime_dir',return_value=self.root), \
+                patch('ai_sandbox_factory.host_platform.check_engine'), patch.object(sandbox,'inspect',return_value=None) as inspect:
+            with self.assertRaisesRegex(ValueError,'Start the sandbox'):
+                browser_editor.open_browser_editor(self.config,self.state,background=False)
+            self.assertEqual(inspect.call_args.args[0]['recovered'],'previous-runtime')
 
     def test_failed_attachment_keeps_copy_and_allows_same_folder_retry(self):
         with patch.object(profile_runtime, 'ensure_cached'), \

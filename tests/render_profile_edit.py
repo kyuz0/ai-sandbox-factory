@@ -61,6 +61,9 @@ async def capture(output,size):
                 if changed:
                     app.screen.query_one('#profile-edit-diff').scroll_visible(top=True,animate=False)
                     await shot('profile-edit-review-diff')
+                    app.screen.query_one('#profile-review-apply',Button).press()
+                    await shot('profile-edit-apply-confirm')
+                    await pilot.press('escape')
                 await app.pop_screen()
             information=record(True)
             information['config']['profile']=sandbox.load_profile('developer-postgres')

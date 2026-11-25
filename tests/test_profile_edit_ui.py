@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Input, Static
 from ai_sandbox_factory import profile_edit, sandbox
-from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
-from ai_sandbox_factory.sandbox_tui import Cockpit, MoreActions
+from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile, consequences
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions, NewSandbox, copy_draft
 from test_tui import FakeService
 from tui_geometry import check_input_layout
 
@@ -51,7 +51,7 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                 field.cursor_position=8
                 screen.query_one('#profile-edit-go',Button).press()
                 await pilot.pause()
-                self.assertIn('Running agent work',' '.join(app.screen.notes))
+                self.assertIn('its agent work',' '.join(app.screen.notes))
                 self.assertIn('example',app.screen.message)
                 await pilot.press('escape')
                 self.assertIs(app.screen,screen)
@@ -73,12 +73,26 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                     screen=ReviewProfile(record(True),review(changed))
                     await app.push_screen(screen)
                     await pilot.pause()
+                    text=' '.join(str(item.render()) for item in screen.query(Static))
+                    self.assertIn('Review ID',text)
+                    self.assertIn(review()['revision'],text)
+                    self.assertNotIn(review()['profile']['digest'],text)
                     self.assertEqual(screen.query_one('#profile-review-apply',Button).disabled,not changed)
                     if not changed:
                         await pilot.press('escape')
                     else:
                         self.assertEqual(app.focused.id,'profile-review-apply')
                         with patch.object(app,'start_settings_job') as start:
+                            await pilot.press('enter')
+                            await pilot.pause()
+                            start.assert_not_called()
+                            self.assertIn('Apply the reviewed profile changes to example?',app.screen.message)
+                            self.assertIn('saved chats',' '.join(app.screen.notes))
+                            await pilot.press('escape')
+                            self.assertIs(app.screen,screen)
+                            start.assert_not_called()
+                            await pilot.press('enter')
+                            await pilot.pause()
                             await pilot.press('enter')
                             await pilot.pause()
                             self.assertTrue(start.call_args.kwargs['cooperative'])
@@ -99,7 +113,7 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                             await app.push_screen(screen)
                             await pilot.pause()
                             check_input_layout(screen)
-                            if isinstance(screen,EditProfile):
+                            if isinstance(screen,(EditProfile,ReviewProfile)):
                                 self.assertLessEqual(screen.query_one('.form').region.width,100)
                                 self.assertEqual(screen.query_one('.form').region.width,screen.query_one('.wizard-actions').region.width)
                             for button in screen.query(Button):
@@ -138,6 +152,42 @@ class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertIs(app.screen,replacement)
                 self.assertIsNotNone(app.jobs[-1].followup)
+
+    async def test_customized_copy_rebuild_and_settings_use_saved_recipe_without_editable_mount(self):
+        row=record()
+        row['config']['profile']['customized_from']={'name':'base','digest':'original'}
+        with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+            app=Cockpit(Path(tmp),FakeService([]))
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                self.assertIn(('Rebuild sandbox…','rebuild'),MoreActions(row).actions)
+                (Path(tmp)/'example').mkdir()
+                (Path(tmp)/'example/allowlist.txt').write_text('')
+                self.assertEqual(app.configuration_draft(row)['profile'],row['config']['profile']['path'])
+                app.perform('rebuild',record=row)
+                await pilot.pause()
+                self.assertIn('saved profile',app.screen.message)
+                with patch.object(app,'start_rebuild') as rebuild:
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    rebuild.assert_called_once_with('example',['recreate','example'])
+                await app.push_screen(AppliedProfile(row,Path(tmp)/'example'))
+                await pilot.pause()
+                text=' '.join(str(item.render()) for item in app.screen.query(Static))
+                self.assertIn('Customized from: base · original',text)
+                self.assertLessEqual(app.screen.query_one('.form').region.width,100)
+                self.assertEqual(app.screen.query_one('.form').region.width,app.screen.query_one('.wizard-actions').region.width)
+                await pilot.press('escape')
+                draft=copy_draft(row,Path(tmp))
+                copied=NewSandbox(draft,search_keys={})
+                await app.push_screen(copied)
+                await pilot.pause()
+                self.assertEqual(copied.profiles[draft['profile']],
+                                 row['config']['profile']['description']+' (saved customized profile)')
+
+    def test_replacement_notice_covers_state_changes_while_review_is_open(self):
+        self.assertEqual(consequences(record(running=True)),consequences(record(running=False)))
+        self.assertIn('If example is stopped, it stays stopped.',consequences(record())[1])
 
 
 if __name__=='__main__':
