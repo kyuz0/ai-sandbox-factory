@@ -214,6 +214,13 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ### Relevance and cognitive load
 
+- HARD GATE — keep review forms to the current choices and concise summaries.
+  Put background explanations and lifecycle reference text behind a nearby
+  More information… control. Do not fill ordinary forms with help paragraphs
+  or bullet lists. Test that this text is absent until help is opened and that
+  dismissing help preserves the form. Keep necessary consequences beside the
+  affected choice or its confirmation.
+
 - Start with what the user wants to do and give each common workflow a usable default.
   Show the effect of a choice beside it. Keep provider, model and tuning options in
   clearly labeled advanced settings the user can open during setup or revisit later.

@@ -1502,6 +1502,33 @@ class ApprovalHelp(ModalScreen):
         self.dismiss()
 
 
+class ProfileServicesHelp(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('Profile services', classes='title')
+            with VerticalScroll(id='profile-details-body'):
+                for heading, text in (
+                    ('Startup', 'Profile services start with this sandbox.'),
+                    ('Stop, start and rebuild', 'Application data is kept.'),
+                    ('Create from existing…', 'Each new service initializes new application data. Existing application data is not copied.'),
+                    ('Delete sandbox', 'This sandbox’s application data is permanently deleted.'),
+                ):
+                    with Vertical(classes='setting'):
+                        yield Label(heading, classes='section-heading')
+                        yield Static(text, markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-profile-services-help', variant='primary')
+
+    def on_mount(self):
+        self.query_one('#close-profile-services-help', Button).focus()
+
+    @on(Button.Pressed, '#close-profile-services-help')
+    def action_close(self):
+        self.dismiss()
+
+
 def saved_profile_only(config):
     return (coding_agent(config) != 'pi' or bool(config.get(profile_edit.EDIT))
             or bool(config.get('profile', {}).get('customized_from')))
@@ -1684,7 +1711,9 @@ class AppliedProfile(Screen):
             if not profile.get('services'):
                 yield Static('This profile has no additional profile services.')
             else:
-                yield Label('Services', classes='group-title')
+                with Horizontal(classes='profile-guide-row review-profile-row'):
+                    yield Static('Profile services', classes='section-heading')
+                    yield Button('More information…', id='profile-services-information')
                 yield Feedback('Checking profile services…', id='profile-service-status', markup=False)
                 for name, spec in profile['services'].items():
                     with Vertical(classes='setting'):
@@ -1693,8 +1722,6 @@ class AppliedProfile(Screen):
                         yield Label('Connect with SSH', classes='command-label')
                         yield Command('ssh -F ' + profile_services.CLIENT + '/config ' + profile_services.hostname(name))
                 yield Details([('Connection settings and application credentials', profile_services.CLIENT + '/connections.json')])
-                yield Label('Application data', classes='group-title')
-                yield Static(profile_services.data_guidance(), classes='setting-help')
             if self.record['config'].get('profile_service_recovery'):
                 with Vertical(classes='setting'):
                     yield Label('Saved service data', classes='group-title')
@@ -1738,6 +1765,10 @@ class AppliedProfile(Screen):
     @on(Button.Pressed, '#profile-information-edit')
     def edit_profile(self):
         self.app.push_screen(EditProfile(self.record))
+
+    @on(Button.Pressed, '#profile-services-information')
+    def service_information(self):
+        self.app.push_screen(ProfileServicesHelp())
 
     @on(Button.Pressed, '#profile-information-data')
     def saved_service_data(self):
@@ -3288,11 +3319,10 @@ class SettingsForm(Screen):
                                           id='review-profile-copy')
             if review and self.profile.get('services'):
                 with Vertical(classes='setting', id='review-profile-services'):
-                    yield Label('Profile services', classes='group-title')
-                    for name, spec in self.profile['services'].items():
-                        yield Bullet(name + ': ' + spec['description'])
-                    yield Static('Profile services start with this sandbox.\n' + profile_services.data_guidance(),
-                                 classes='setting-help', markup=False)
+                    with Horizontal(classes='profile-guide-row review-profile-row'):
+                        yield Static('Profile services', classes='section-heading')
+                        yield Button('More information…', id='profile-services-information')
+                    yield Details([(name, spec['description']) for name, spec in self.profile['services'].items()])
             if value.get('_copy_source_agent') is not None:
                 yield Static(f'Settings that apply to every agent are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
                              classes='setting-help', id='copied-settings')
@@ -4159,6 +4189,9 @@ class SettingsForm(Screen):
         event.stop()
         action = event.button.id
         try:
+            if action == 'profile-services-information':
+                self.app.push_screen(ProfileServicesHelp())
+                return
             if action == 'review-profile-guide':
                 self.app.push_screen(ProfileGuide(self.profile.get('description') or self.profile_name, self.guide))
                 return
@@ -4795,7 +4828,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, ProfileServicesHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox, InstallSystemPackages, JobsMenu { align: center middle; background: #000000 70%; }
     ConfirmCreationConflicts #confirm-box { width: 88; height: auto; max-height: 90%; overflow: hidden; }
     ConfirmCreationConflicts VerticalScroll { height: auto; max-height: 55vh; margin: 0 0 1 0; }

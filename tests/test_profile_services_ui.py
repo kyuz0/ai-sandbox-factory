@@ -7,10 +7,10 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from textual.widgets import Button, Select, Static, Checkbox
+from textual.widgets import Button, Input, Select, Static, Checkbox
 from textual.screen import Screen
 from ai_sandbox_factory import profile_edit, sandbox, profile_services
-from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, DEFAULT_SETTINGS, NewSandbox, SettingsForm, CreateFromSandbox, preset, copy_draft
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, DEFAULT_SETTINGS, NewSandbox, ProfileServicesHelp, SettingsForm, CreateFromSandbox, preset, copy_draft
 from test_tui import FakeService
 
 
@@ -274,14 +274,73 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                         self.assertIn('database', ' '.join(str(widget.render()) for widget in form.query('#review-profile-services Static')))
                         self.assertEqual(form.query_one('#apply', Button).region.height, 1)
                         review = '\n'.join(str(widget.render()) for widget in form.query('#review-profile-services Static'))
-                        self.assertIn(profile_services.data_guidance(), review)
+                        self.assertNotIn('application data is not copied', review)
+                        self.assertNotIn('permanently deletes', review)
                         self.assertNotIn('workspace rebuild', review)
-                        row = form.query_one('#review-profile-services Bullet')
-                        marker = row.query_one('.bullet-marker')
-                        body = row.query_one('.bullet-text')
-                        self.assertEqual(body.region.x, marker.region.x + 2)
-                        self.assertEqual(body.region.y, marker.region.y)
-                        self.assertGreater(body.region.height, 1)
+                        self.assertFalse(form.query('#review-profile-services Bullet'))
+                        form.query_one('#profile-services-information',Button).press()
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen,ProfileServicesHelp)
+                        await pilot.press('escape')
+                        self.assertIs(app.screen,form)
+
+    async def test_service_reference_is_only_in_help_and_dismissal_preserves_each_page(self):
+        for size in ((80,24),(120,40),(220,50)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp, \
+                    patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                    patch('ai_sandbox_factory.profile_services.status',return_value=[{'name':'database','running':True}]):
+                app=Cockpit(Path(tmp),FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await app.workers.wait_for_complete()
+                    draft=preset('developer-postgres',copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='example',workspace='/home/example/project')
+                    pages=[SettingsForm(draft),AppliedProfile({'name':'example','config':{
+                        'profile':sandbox.load_profile('developer-postgres')}},Path(tmp))]
+                    for page in pages:
+                        await app.push_screen(page)
+                        await app.workers.wait_for_complete()
+                        if isinstance(page,SettingsForm):
+                            page.query_one('#memory',Input).value='12g'
+                            page.query_one('#open-editor',Checkbox).value=False
+                        before=copy.deepcopy(draft)
+                        text=' '.join(str(widget.render()) for widget in page.query(Static))
+                        for reference in ('Profile services start with','Existing application data is not copied',
+                                          'application data is permanently deleted','Stop, start and rebuild'):
+                            self.assertNotIn(reference,text)
+                        control=page.query_one('#profile-services-information',Button)
+                        for close in ('escape','button'):
+                            control.focus()
+                            control.scroll_visible(animate=False)
+                            await pilot.pause()
+                            await pilot.press('enter')
+                            await pilot.pause()
+                            self.assertIsInstance(app.screen,ProfileServicesHelp)
+                            self.assertEqual(app.focused.id,'close-profile-services-help')
+                            text=' '.join(str(widget.render()) for widget in app.screen.query(Static))
+                            for reference in ('Profile services start with this sandbox','Application data is kept',
+                                              'Existing application data is not copied','application data is permanently deleted'):
+                                self.assertIn(reference,text)
+                            self.assertFalse(app.screen.query('Bullet'))
+                            button=app.screen.query_one('#close-profile-services-help',Button)
+                            self.assertEqual(button.region.height,1)
+                            self.assertTrue(app.screen.query_one('#confirm-box').content_region.contains_region(button.region))
+                            if close=='escape':
+                                await pilot.press('escape')
+                            else:
+                                await pilot.click('#close-profile-services-help')
+                            await pilot.pause()
+                            self.assertIs(app.screen,page)
+                            self.assertIs(app.focused,control)
+                            self.assertEqual(draft,before)
+                            if isinstance(page,SettingsForm):
+                                self.assertEqual(page.query_one('#memory',Input).value,'12g')
+                                self.assertFalse(page.query_one('#open-editor',Checkbox).value)
+                        await app.pop_screen()
+                    plain_draft=preset('base',copy.deepcopy(DEFAULT_SETTINGS))
+                    plain_draft.update(name='example',workspace='/home/example/project')
+                    plain=SettingsForm(plain_draft)
+                    await app.push_screen(plain)
+                    self.assertFalse(plain.query('#profile-services-information'))
 
     async def test_copy_and_rebuild_explain_data_and_process_effects(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):

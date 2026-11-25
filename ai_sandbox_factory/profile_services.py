@@ -469,13 +469,6 @@ def guidance(config):
     return '\n'.join(lines) + '\n'
 
 
-def data_guidance():
-    return ('• Stop, start and rebuild keep application data.\n'
-            '• Create from existing… initializes new application data.\n'
-            '• Existing application data is not copied.\n'
-            '• Delete sandbox permanently deletes application data.')
-
-
 def status(config):
     from . import sandbox
     return [{'name': name, 'host': hostname(name), 'description': spec['description'],

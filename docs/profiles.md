@@ -181,6 +181,10 @@ declaring other agents does not translate those extensions.
 
 ## Profile services
 
+**Review sandbox** lists the services included in the selected profile.
+Choose **More information…** beside the list for startup and application-data
+details. The same help is available in **Actions… → Profile and services…**.
+
 ![Applied profile recipes and a running PostgreSQL profile service](profile-services.png)
 
 Choose **Developer + PostgreSQL** for a sandbox with a database. The database

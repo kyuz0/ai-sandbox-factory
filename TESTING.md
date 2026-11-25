@@ -1691,6 +1691,18 @@ its saved path without changing private state, restores the folder and retries.
 
 ## Editable profiles
 
+Check the compact service summaries and their optional reference popup with:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services_ui
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_service_help.py /tmp/factory-service-help
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_service_help.py /tmp/factory-service-help-mono --mono
+```
+
+The UI checks cover help being absent from the main form, opening and dismissing
+the popup by keyboard and button, unchanged form values, and profiles without services.
+The renderer captures both entry points at 80×24, 120×40 and 220×50.
+
 The fresh-sandbox CI job runs the Pi lifecycle and Codex commit-recovery fixtures
 below before release.
 
