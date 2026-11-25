@@ -1776,6 +1776,7 @@ at wide terminal sizes.
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_copy_settings test_profile_edit test_profile_services_ui test_profile_edit_ui
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_copy_help_ui
 PYTHONPATH=.:tests .venv/bin/python tests/profile_sharing_integration.py
 ```
 
@@ -1788,7 +1789,7 @@ original must keep the shared folder, history and working peers. It verifies
 cleanup of its labeled containers, volumes and networks. Unit tests cover all
 four agents, an absent or changed source, workspace overlap, the creation flag,
 stable checkbox help and the summaries of both copy choices.
-The credentials group names Web Search explicitly. Its copy checkbox is hidden
+The Web Search API key checkbox is hidden
 when the source has no saved Web Search keys or uses a native coding agent;
 a stopped Pi sandbox with saved keys shows how to enable copying. Opening the
 dialog or continuing without the checkbox selected must not export any keys.
@@ -1800,6 +1801,15 @@ search-key read and check that choices stay fixed, Cancel remains responsive,
 late results cannot dismiss another screen, and a failed read preserves choices
 for retry. After focus and layout settle, short errors must remain visible;
 long diagnostics must retain every line and leave the actions visible.
+The compact copy dialog keeps only the source and relevant choices visible.
+Its **More information…** popup preserves the profile, file, data and sign-in
+explanations. Check help for the selected source, conditional service and shared
+folder sections, both dismissal paths, unchanged checkbox values and focus,
+and disabled help while a copy is being prepared. Render these states with
+`render_profile_edit.py`, including its monochrome mode. Error captures execute
+the real copy failure handler. Check rendered monochrome title styles, available
+help height, aligned actions and keyboard scrolling; long errors must not leave
+an offscreen checkbox receiving keyboard input.
 
 ### Semantic text styles
 

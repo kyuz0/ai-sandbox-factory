@@ -11,7 +11,7 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Select
 from ai_sandbox_factory import sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
-from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, CreateFromSandbox, MoreActions, SettingsForm, copy_draft
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopySandboxHelp, CopyWebAccess, CreateFromSandbox, MoreActions, SettingsForm, copy_draft
 from test_profile_edit_ui import record, review
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
@@ -28,6 +28,11 @@ async def capture(output,size):
             async def shot(name):
                 await pilot.pause()
                 await pilot.wait_for_scheduled_animations()
+                if name in ('profile-sharing-copy-error','profile-sharing-copy-long-error'):
+                    async def settled():
+                        while any(button.has_class('-active') for button in app.screen.query(Button)):
+                            await pilot.pause(.01)
+                    await asyncio.wait_for(settled(),5)
                 check_input_layout(app.screen)
                 check_checkbox_alignment(app.screen)
                 check_dropdown_layout(app.screen)
@@ -141,6 +146,17 @@ async def capture(output,size):
             chooser=CreateFromSandbox([shared,plain,no_keys])
             await app.push_screen(chooser)
             await shot('profile-sharing-copy-independent')
+            chooser.query_one('#copy-information',Button).press()
+            await shot('profile-sharing-copy-help')
+            app.screen.query_one('#copy-help-body').scroll_end(animate=False)
+            await shot('profile-sharing-copy-help-bottom')
+            await pilot.press('escape')
+            database=copy.deepcopy(shared)
+            database['config']['profile']=sandbox.load_profile('developer-postgres')
+            await app.push_screen(CopySandboxHelp(database))
+            app.screen.query_one('#copy-help-body').scroll_end(animate=False)
+            await shot('profile-sharing-copy-database-help')
+            await pilot.press('escape')
             chooser.query_one('#copy-source',Select).expanded=True
             await shot('profile-sharing-copy-sources')
             chooser.query_one('#copy-source',Select).expanded=False
@@ -149,29 +165,35 @@ async def capture(output,size):
             chooser.query_one('#copy-share-profile',Checkbox).focus()
             await shot('profile-sharing-copy-shared')
             chooser.query_one('#copy-keys',Checkbox).value=True
-            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-continue'):
+            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-information','#copy-continue'):
                 chooser.query_one(selector).disabled=True
             chooser.query_one('#copy-continue',Button).label='Preparing…'
             await shot('profile-sharing-copy-preparing')
-            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-continue'):
+            for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-information','#copy-continue'):
                 chooser.query_one(selector).disabled=False
             chooser.query_one('#copy-continue',Button).label='Continue'
-            chooser.query_one('#copy-error').update('Cannot copy Web Search API keys from example (exit 1): fixture I/O failure. Try copying again, or leave Include Web Search API keys unchecked.')
-            chooser.query_one('#copy-keys',Checkbox).focus()
-            chooser.query_one('#copy-keys',Checkbox).scroll_visible(top=True,animate=False)
-            chooser.fit_dialog()
-            # This synthetic state bypasses the worker's final layout callback.
-            # Finish the focus scroll before revealing its manually inserted error.
+            def fail_keys(name):
+                raise OSError('fixture I/O failure')
+            app.service.search_keys=fail_keys
+            chooser.query_one('#copy-continue',Button).press()
+            await app.workers.wait_for_complete()
             await pilot.wait_for_scheduled_animations()
-            chooser.reveal_copy_feedback()
+            assert 'Cannot prepare a copy of example while copying Web Search API keys: OSError:' in str(chooser.query_one('#copy-error').render())
             await shot('profile-sharing-copy-error')
-            chooser.query_one('#copy-error').update('Cannot copy Web Search API keys from example: fixture diagnostic.\n'+'\n'.join('Diagnostic line '+str(i) for i in range(60)))
-            chooser.query_one('#copy-error').scroll_visible(top=True,animate=False)
+            def fail_long_keys(name):
+                raise OSError('fixture diagnostic.\n'+'\n'.join('Diagnostic line '+str(i) for i in range(60)))
+            app.service.search_keys=fail_long_keys
+            chooser.query_one('#copy-continue',Button).press()
+            await app.workers.wait_for_complete()
+            await pilot.wait_for_scheduled_animations()
             await shot('profile-sharing-copy-long-error')
             chooser.query_one('#copy-error').update('')
             chooser.query_one('#copy-source',Select).value='plain'
             chooser.query_one('#copy-source',Select).focus()
             await shot('profile-sharing-copy-unavailable')
+            chooser.query_one('#copy-information',Button).press()
+            await shot('profile-sharing-copy-plain-help')
+            await pilot.press('escape')
             chooser.query_one('#copy-source',Select).value='without-keys'
             chooser.query_one('#copy-source',Select).focus()
             await shot('profile-sharing-copy-no-keys')
@@ -182,6 +204,11 @@ async def capture(output,size):
             chooser.query_one('#copy-source',Select).focus()
             await shot('profile-sharing-copy-stopped')
             await app.pop_screen()
+            native=copy.deepcopy(shared)
+            native['config']['primary_agent']='codex'
+            await app.push_screen(CopySandboxHelp(native))
+            await shot('profile-sharing-copy-native-help')
+            await pilot.press('escape')
             shared['dev']='running'
             web=CopyWebAccess([shared,no_keys,stopped])
             await app.push_screen(web)

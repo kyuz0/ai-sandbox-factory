@@ -2842,6 +2842,71 @@ class InstallPackage(Screen):
     def action_back(self):self.app.pop_screen()
 
 
+class CopySandboxHelp(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.record = record
+
+    def compose(self):
+        config = self.record['config']
+        with Vertical(id='confirm-box'):
+            yield Label('Copying a sandbox', classes='title')
+            with VerticalScroll(id='copy-help-body'):
+                with Vertical(classes='setting'):
+                    yield Label('Settings', classes='section-heading')
+                    yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
+                                 'Next, choose a new name and workspace, then review.', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Profile', classes='section-heading')
+                    yield Static('The new sandbox starts with the profile version installed in the source sandbox, ' + self.record['name'] + '.', markup=False)
+                    if editable := config.get(profile_edit.EDIT):
+                        yield Details([('Profile folder', editable['path'])])
+                if editable:
+                    with Vertical(classes='setting'):
+                        yield Label('Sharing the profile folder', classes='section-heading')
+                        yield Static('Select Share the profile folder so both sandboxes use the same profile files. '
+                                     'Leave it unchecked for a separate copy of the installed profile.', markup=False)
+                    with Vertical(classes='setting'):
+                        yield Label('Installing later profile edits', classes='section-heading')
+                        yield Static('Editing files does not update either sandbox. In each sandbox you want to update, choose '
+                                     'Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes.', markup=False)
+                        yield Static('To edit a separate copy later, choose Actions… → Profile and services… → Edit profile…', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Project files', classes='section-heading')
+                    yield Static('Project files are not copied. Choosing the same workspace shares its files.', markup=False)
+                if profile_services.selected(config):
+                    with Vertical(classes='setting'):
+                        yield Label('Application data', classes='section-heading')
+                        yield Static('Application data, such as databases, is not copied. Profile services initialize new data.', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Credentials and chats', classes='section-heading')
+                    yield Static('Model and advisor credentials, including sign-ins, are not copied. Set them up on Review sandbox.', markup=False)
+                    yield Static('SSH keys, browser sessions and saved chats are not copied.', markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-copy-help', variant='primary')
+
+    def on_mount(self):
+        self.query_one('#close-copy-help', Button).focus()
+        self.call_after_refresh(self.fit_dialog)
+
+    def on_resize(self):
+        self.call_after_refresh(self.fit_dialog)
+
+    def fit_dialog(self):
+        if not self.is_attached:
+            return
+        dialog, body = self.query_one('#confirm-box'), self.query_one('#copy-help-body')
+        if dialog.region.height and body.region.height:
+            content = body.get_content_height(dialog.content_size, self.app.size, body.content_size.width)
+            dialog.styles.height = dialog.region.height - body.content_size.height + content
+
+    @on(Button.Pressed, '#close-copy-help')
+    def action_close(self):
+        self.dismiss()
+
+
 class CreateFromSandbox(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
@@ -2849,7 +2914,7 @@ class CreateFromSandbox(EntryDialog):
     #copy-sandbox-dialog { width: 72; max-width: 95%; height: auto; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #copy-sandbox-dialog Static { height: auto; }
     #copy-sandbox-fields { height: 1fr; }
-    #copy-keys-help { margin: 0 0 1 0; }
+    #copy-source-label { width: 1fr; }
     #copy-error { margin: 1 0 0 0; }
     """
 
@@ -2866,30 +2931,19 @@ class CreateFromSandbox(EntryDialog):
     def compose(self):
         with Vertical(id='copy-sandbox-dialog'):
             yield Label('Create from existing sandbox', classes='title')
-            with VerticalScroll(id='copy-sandbox-fields'):
-                yield Label('Copy settings from', id='copy-source-label')
-                yield Select([(name, name) for name in self.records], value=self.selected,
-                             allow_blank=False, id='copy-source')
-                yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
-                             'Choose a new name and workspace, then review.', classes='section-intro')
-                yield Static('', id='copy-profile-version', classes='section-intro', markup=False)
+            with VerticalScroll(id='copy-sandbox-fields', classes='spaced-form-fields'):
+                with Vertical(classes='setting', id='copy-source-setting'):
+                    with Horizontal(classes='profile-guide-row'):
+                        yield Label('Copy settings from', id='copy-source-label')
+                        yield Button('More information…', id='copy-information')
+                    yield Select([(name, name) for name in self.records], value=self.selected,
+                                 allow_blank=False, id='copy-source')
                 with Vertical(classes='setting', id='copy-profile-setting'):
-                    yield Details([], id='copy-profile-folder')
                     yield Checkbox('Share the profile folder', value=False, id='copy-share-profile')
-                    yield Bullet('Both sandboxes see the same profile files.')
-                    yield Bullet('Editing files does not update either sandbox. To install the edits, open '
-                                 'Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes in each sandbox you want to update.')
-                    yield Bullet('Leave unchecked for a separate copy. You can edit it later from Actions… → Profile and services… → Edit profile…')
-                yield Static('Application data, such as databases, is not copied. Profile services initialize new data.',
-                             classes='setting-help', id='copy-data-help')
-                yield Static('Project files are not copied: choosing the same workspace shares its files.',
-                             classes='setting-help section-intro', id='copy-project-help')
+                    yield Static('Both sandboxes use the same editable profile files.', classes='setting-help', id='copy-share-help')
                 with Vertical(classes='setting', id='copy-credentials'):
-                    yield Label('Credentials and sign-ins', classes='group-title')
                     yield Checkbox('Include Web Search API keys', value=False, id='copy-keys')
-                    yield Static('', id='copy-keys-help', markup=False)
-                    yield Bullet('', id='copy-sign-in-help')
-                    yield Bullet('SSH keys, browser sessions and saved chats are not copied.')
+                    yield Static('', id='copy-keys-help', classes='setting-help', markup=False)
                 yield Feedback('', id='copy-error', classes='error', markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='copy-cancel')
@@ -2900,6 +2954,7 @@ class CreateFromSandbox(EntryDialog):
         self.query_one('#copy-source', Select).disabled = False
         self.query_one('#copy-share-profile', Checkbox).disabled = False
         self.query_one('#copy-continue', Button).disabled = False
+        self.query_one('#copy-information', Button).disabled = False
         self.query_one('#copy-continue', Button).label = 'Continue'
         self.source_changed()
 
@@ -2922,6 +2977,11 @@ class CreateFromSandbox(EntryDialog):
             return
         error = self.query_one('#copy-error', Feedback)
         if error.display:
+            fields = self.query_one('#copy-sandbox-fields')
+            focused = self.app.focused
+            if (self.app.screen is self and focused is not None and fields in focused.ancestors
+                    and focused.region.height + error.outer_size.height > fields.content_size.height):
+                fields.focus()
             error.scroll_visible(animate=False, immediate=True)
         elif self.app.focused is self.query_one('#copy-source', Select):
             self.query_one('#copy-sandbox-fields').scroll_home(animate=False, immediate=True)
@@ -2932,24 +2992,21 @@ class CreateFromSandbox(EntryDialog):
             return
         self.query_one('#copy-error', Static).update('')
         record = self.records[self.query_one('#copy-source', Select).value]
-        self.query_one('#copy-data-help').display = bool(profile_services.selected(record.get('config', {})))
         self.query_one('#copy-profile-setting').display = bool(record.get('config', {}).get(profile_edit.EDIT))
         self.query_one('#copy-share-profile', Checkbox).value = False
-        version = 'The new sandbox starts with the profile version installed in ' + record['name'] + '.'
-        self.query_one('#copy-profile-version', Static).update(version)
-        self.query_one('#copy-profile-folder', Details).set_rows([
-            ('Profile folder', record.get('config', {}).get(profile_edit.EDIT, {}).get('path', ''))])
         checkbox = self.query_one('#copy-keys', Checkbox)
         checkbox.value = False
         native = coding_agent(record.get('config', {})) != 'pi'
         checkbox.display = not native and has_web_search_keys(record.get('config', {}))
+        self.query_one('#copy-credentials').display = checkbox.display
         checkbox.disabled = native or record['dev'] != 'running'
         help_text = self.query_one('#copy-keys-help', Static)
         help_text.display = checkbox.display and checkbox.disabled
         help_text.update('Start the source sandbox to copy its Web Search API keys, or continue without them.')
-        self.query_one('#copy-sign-in-help .bullet-text', Static).update(
-            'Choose a sign-in on Review sandbox.' if native else
-            'Model and advisor credentials are not copied. Set them up on Review sandbox.')
+        groups = [self.query_one('#' + name) for name in ('copy-source-setting','copy-profile-setting','copy-credentials')]
+        last = next(group for group in reversed(groups) if group.display)
+        for group in groups:
+            group.set_class(group is last, 'last-copy-setting')
         self.query_one('#copy-sandbox-fields').scroll_home(animate=False)
         self.call_after_refresh(self.fit_dialog)
 
@@ -2968,6 +3025,12 @@ class CreateFromSandbox(EntryDialog):
         if event.button.id == 'copy-cancel':
             self.action_cancel()
             return
+        if event.button.id == 'copy-information':
+            if self._copy_request is None:
+                self.app.push_screen(CopySandboxHelp(self.records[self.query_one('#copy-source', Select).value]))
+            return
+        if event.button.id != 'copy-continue':
+            return
         if self._copy_request is not None:
             return
         request = self._copy_request = object()
@@ -2979,7 +3042,7 @@ class CreateFromSandbox(EntryDialog):
         keys = self.query_one('#copy-keys', Checkbox)
         include_keys = keys.display and not keys.disabled and keys.value
         disabled = {selector: self.query_one(selector).disabled for selector in
-                    ('#copy-source', '#copy-share-profile', '#copy-keys')}
+                    ('#copy-source', '#copy-share-profile', '#copy-keys', '#copy-information')}
         button.disabled = True
         button.label = 'Preparing…'
         for selector in disabled:
@@ -4684,6 +4747,12 @@ class Cockpit(App):
     .dialog-actions { align-horizontal: right; height: 1; min-height: 1; margin: 1 0 0 0; }
     .dialog-actions Button { min-width: 12; padding: 0 2; }
     CreateFromSandbox #copy-continue { min-width: 16; }
+    CreateFromSandbox #copy-source { margin: 1 0 0 0; }
+    CreateFromSandbox #copy-sandbox-fields > .last-copy-setting { margin: 0; }
+    CreateFromSandbox #copy-sandbox-dialog > .dialog-actions { padding: 0 1 0 0; }
+    CreateFromSandbox:nocolor .title, CopySandboxHelp:nocolor #confirm-box > .title { color: white; text-style: bold; }
+    CopySandboxHelp #copy-help-body { height: 1fr; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
+    CopySandboxHelp #copy-help-body > .setting:last-child { margin: 0; }
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
@@ -4872,7 +4941,7 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, ProfileServicesHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, ProfileServicesHelp, CopySandboxHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox, InstallSystemPackages, JobsMenu { align: center middle; background: #000000 70%; }
     ConfirmCreationConflicts #confirm-box { width: 88; height: auto; max-height: 90%; overflow: hidden; }
     ConfirmCreationConflicts VerticalScroll { height: auto; max-height: 55vh; margin: 0 0 1 0; }

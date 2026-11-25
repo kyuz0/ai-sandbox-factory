@@ -59,6 +59,8 @@ reuse, then choose the coding agent and a new name. The workspace is filled in
 from the source sandbox. Keep it or choose another folder. Review the profile, model providers,
 network rules, features, and advisors before creating it. Factory includes the
 source’s added skills. Clear any you don’t need under **Skills**.
+Open **More information…** in the copy dialog for profile, application-data and
+sign-in details.
 
 You can choose Pi, Codex, Claude Code or Antigravity. When switching from Pi
 to another agent, the new sandbox uses that agent’s sign-in flow. Choose a profile
@@ -69,7 +71,7 @@ are carried over, along with Git identity, browser and editor choices, and a cus
 system prompt. Agent-specific settings use the selected agent’s defaults.
 The approval choice also carries over between Codex, Claude Code and Antigravity.
 
-Under **Credentials and sign-ins**, select **Include Web Search API keys** to copy
+Select **Include Web Search API keys** to copy
 those keys from a running source. This option appears only when the source has
 saved Web Search keys. Model and advisor credentials are not copied;
 configure them on **Review sandbox**. The new sandbox has its own package copies. It starts with fresh chats,

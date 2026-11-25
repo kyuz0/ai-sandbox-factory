@@ -10,7 +10,7 @@ from unittest.mock import patch
 from textual.widgets import Button, Input, Select, Static, Checkbox
 from textual.screen import Screen
 from ai_sandbox_factory import profile_edit, sandbox, profile_services
-from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, DEFAULT_SETTINGS, NewSandbox, ProfileServicesHelp, SettingsForm, CreateFromSandbox, preset, copy_draft
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, CopyWebAccess, DEFAULT_SETTINGS, NewSandbox, ProfileServicesHelp, SettingsForm, CreateFromSandbox, CopySandboxHelp, preset, copy_draft
 from test_tui import FakeService
 
 
@@ -94,7 +94,7 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                 screen.query_one('#copy-continue',Button).press()
                 try:
                     self.assertTrue(await asyncio.to_thread(entered.wait,10))
-                    for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-continue'):
+                    for selector in ('#copy-source','#copy-share-profile','#copy-keys','#copy-information','#copy-continue'):
                         self.assertTrue(screen.query_one(selector).disabled)
                     screen.query_one('#copy-cancel',Button).press()
                     await pilot.pause()
@@ -158,6 +158,10 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertIn('Diagnostic line 59',str(retry.query_one('#copy-error',Static).render()))
                 feedback=retry.query_one('#copy-error',Static)
+                self.assertIs(app.focused,retry.query_one('#copy-sandbox-fields'))
+                selected=retry.query_one('#copy-keys',Checkbox).value
+                await pilot.press('space')
+                self.assertEqual(retry.query_one('#copy-keys',Checkbox).value,selected)
                 self.assertGreaterEqual(feedback.region.y,fields.content_region.y)
                 self.assertLess(feedback.region.y,fields.content_region.bottom)
                 for action in ('copy-cancel','copy-continue'):
@@ -212,19 +216,23 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 share=screen.query_one('#copy-share-profile',Checkbox)
                 self.assertEqual(str(screen.query_one('#copy-keys',Checkbox).label),'Include Web Search API keys')
-                self.assertEqual(str(screen.query_one('#copy-credentials Label').render()),'Credentials and sign-ins')
-                credentials=str(screen.query_one('#copy-sign-in-help .bullet-text',Static).render())
-                self.assertIn('Model and advisor credentials are not copied',credentials)
+                self.assertFalse(screen.query('#copy-sign-in-help'))
+                screen.query_one('#copy-information',Button).press()
+                await pilot.pause()
+                self.assertIsInstance(app.screen,CopySandboxHelp)
+                credentials=' '.join(str(widget.render()) for widget in app.screen.query(Static))
+                self.assertIn('Model and advisor credentials, including sign-ins, are not copied',credentials)
                 self.assertIn('Review sandbox',credentials)
+                await pilot.press('escape')
                 self.assertFalse(share.value)
                 self.assertTrue(screen.query_one('#copy-profile-setting').display)
                 def sharing_help():
                     return ' '.join(str(widget.render()) for widget in screen.query('#copy-profile-setting Static')
                                     if not isinstance(widget,Checkbox))
                 before=(str(share.label),sharing_help())
-                self.assertIn('Both sandboxes see the same profile files',before[1])
+                self.assertIn('Both sandboxes use the same editable profile files',before[1])
                 self.assertNotIn('own Apply',before[1])
-                self.assertNotIn('not installed automatically',str(screen.query_one('#copy-profile-version',Static).render()))
+                self.assertFalse(screen.query('#copy-profile-version'))
                 share.value=True
                 await pilot.pause()
                 self.assertEqual(before,(str(share.label),sharing_help()))
@@ -355,14 +363,20 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertGreaterEqual(screen.query_one('#copy-source-label').region.y,
                                         screen.query_one('#copy-sandbox-fields').content_region.y)
-                self.assertEqual(screen.query_one('#copy-credentials Label').region.y
-                                 - screen.query_one('#copy-project-help').region.bottom, 1)
-                self.assertFalse(screen.query_one('#copy-keys').display)
-                self.assertTrue(screen.query_one('#copy-data-help').display)
-                self.assertIn('not copied', str(screen.query_one('#copy-data-help', Static).render()))
+                self.assertFalse(screen.query_one('#copy-credentials').display)
+                self.assertFalse(screen.query('#copy-data-help'))
+                screen.query_one('#copy-information',Button).press()
+                await pilot.pause()
+                text=' '.join(str(widget.render()) for widget in app.screen.query(Static))
+                self.assertIn('Application data, such as databases, is not copied',text)
+                await pilot.press('escape')
                 screen.query_one('#copy-source', Select).value = 'plain-project'
                 await pilot.pause()
-                self.assertFalse(screen.query_one('#copy-data-help').display)
+                screen.query_one('#copy-information',Button).press()
+                await pilot.pause()
+                text=' '.join(str(widget.render()) for widget in app.screen.query(Static))
+                self.assertNotIn('Application data',text)
+                await pilot.press('escape')
                 await pilot.press('escape')
                 for agent in ('pi','codex','claude','agy'):
                     record = copy.deepcopy(records[0])
