@@ -19,7 +19,8 @@ def record(editable=False, running=True):
     config={'primary_agent':'pi','engine':'podman','workspace':'/home/example/project',
             'profile':sandbox.load_profile('base')}
     if editable:
-        config[profile_edit.EDIT]={'path':'/home/example/sandbox-profiles/my-profile'}
+        config[profile_edit.EDIT]={'path':'/home/example/sandbox-profiles/my-profile',
+                                   'origin_name':config['profile']['name'],'origin_digest':config['profile']['digest']}
     return {'name':'example','dev':'running' if running else 'stopped','config':config}
 
 

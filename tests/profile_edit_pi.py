@@ -28,8 +28,11 @@ def main():
             assert not (event.get('type')=='extension_ui_request' and event.get('method') in ('select','confirm','input','editor')),(event,errors)
             if event.get('type')=='agent_settled':break
         results=[event for event in events if event.get('type')=='tool_execution_end']
-        assert [event['toolName'] for event in results]==['read','write','write','write','bash','bash'],(events,errors)
+        assert [event['toolName'] for event in results]==['read','write','write','write','bash','bash','bash','bash','bash'],(events,errors)
         assert 'Static checks passed' in json.dumps(results[4]),results[4]
+        assert not results[5].get('isError'),results[5]
+        assert results[6].get('isError') and 'git repository' in json.dumps(results[6]),results[6]
+        assert 'PROFILE_GIT_PUSHED' in json.dumps(results[7]),results[7]
         assert 'FACTORY PROFILE EDITING VERIFIED' in json.dumps(events),(events,errors)
         print('FACTORY PROFILE EDITING VERIFIED',flush=True)
     finally:

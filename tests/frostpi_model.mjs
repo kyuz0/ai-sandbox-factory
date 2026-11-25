@@ -189,9 +189,12 @@ http.createServer((request, response) => {
           ['write', {path:root + '/services/reporting/Dockerfile',content:readFileSync(base + '/authoring/example/services/postgres/Dockerfile','utf8')}],
           ['write', {path:root + '/profile.json',content:JSON.stringify(metadata,null,2) + '\n'}],
           ['bash', {command:'python3 -I - ' + root + ' --agent pi < ' + base + '/authoring/validate.py'}],
+          ['bash', {command:'git -C ' + root + ' init -b main && git -C ' + root + ' config user.name "Example Maintainer" && git -C ' + root + ' config user.email maintainer@example.test && git init --bare ' + root + '/.git/fixture-origin && git -C ' + root + ' remote add origin ' + root + '/.git/fixture-origin && git -C ' + root + ' add . && git -C ' + root + ' commit -m "Track editable profile"'}],
+          ['bash', {command:'git -C ' + root + ' push ' + root + '/.git/missing-origin main'}],
+          ['bash', {command:'git -C ' + root + ' push -u origin main && printf PROFILE_GIT_PUSHED'}],
           ['bash', {command:'printf UNALLOWED_PROFILE_WRITE >> ' + base + '/profile/profile.md'}],
         ];
-        if (!system.includes(root) || !system.includes('Review changes')) {
+        if (!system.includes(root) || !system.includes('Review changes') || !system.includes('Ask whether the user wants this profile tracked in Git') || !system.includes('forked from')) {
           delta = {content:'FACTORY PROFILE EDITING FAILED managed instructions missing'};
         } else if (results.length < steps.length) {
           const [tool,args] = steps[results.length];
@@ -200,6 +203,9 @@ http.createServer((request, response) => {
         } else {
           const valid = String(results[0].content).includes('Author a profile with multiple hosts') &&
             String(results[4].content).includes('Static checks passed') &&
+            String(results[6].content).includes('git repository') &&
+            String(results[7].content).includes('PROFILE_GIT_PUSHED') &&
+            readFileSync(root + '/.git/fixture-origin/refs/heads/main','utf8') === readFileSync(root + '/.git/refs/heads/main','utf8') &&
             !readFileSync(base + '/profile/profile.md','utf8').includes('UNALLOWED_PROFILE_WRITE') &&
             JSON.parse(readFileSync(root + '/profile.json','utf8')).services.reporting;
           delta = {content: valid ? 'FACTORY PROFILE EDITING VERIFIED' : 'FACTORY PROFILE EDITING FAILED ' + JSON.stringify(results)};

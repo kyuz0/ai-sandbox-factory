@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--image',required=True)
     parser.add_argument('--proxy-image',required=True)
     parser.add_argument('--profile-root',type=Path,required=True,help='Writable parent folder on the host filesystem being checked')
+    parser.add_argument('--git-maintenance',action='store_true',help='Also check Git commits/local-origin pushes and restart persistence; use a filesystem supporting Git lock-file metadata')
     args=parser.parse_args()
     args.profile_root.mkdir(parents=True,exist_ok=True)
     destination=args.profile_root/('factory-profile-edit-'+uuid4().hex[:8])
@@ -47,9 +48,49 @@ def main():
                 (destination/'agent-proof.txt').write_text('host can edit the same file')
                 assert inside('cat','/opt/sandbox/profile/agent-proof.txt').stdout=='host can edit the same file'
                 assert 'Static checks passed' in inside('python3',profile_runtime.PATH+'/authoring/validate.py',profile_edit.PATH,'--agent','pi').stdout
-                assert profile_edit.PATH in inside('cat','/home/node/.pi/agent/AGENTS.md').stdout
+                initial=inside('cat','/home/node/.pi/agent/AGENTS.md').stdout
+                assert 'The writable profile source is '+profile_edit.PATH in initial, 'The image did not load the editable profile instructions; use a current Pi image with the matching Factory bootstrap'
+                assert current[profile_edit.EDIT]['origin_digest'] in initial, ('Missing original profile revision',initial)
                 assert inside('sh','-c','echo wrong >> '+profile_runtime.PATH+'/profile/profile.md',check=False).returncode
                 assert (project/'AGENTS.md').read_text()=='USER_PROJECT_UNCHANGED\n'
+                if args.git_maintenance:
+                    # A local bare origin exercises real Git writes/pushes without
+                    # external accounts or granting the fixture another host mount.
+                    def git(*args):
+                        return inside('git','-C',profile_edit.PATH,*args).stdout.strip()
+                    git('init','-b','main')
+                    git('config','user.name','Example Profile Maintainer')
+                    git('config','user.email','maintainer@example.test')
+                    remote=profile_edit.PATH+'/.git/fixture-origin'
+                    inside('git','init','--bare',remote)
+                    git('remote','add','origin',remote)
+                    git('add','.')
+                    git('commit','-m','Track this editable profile')
+                    git('push','-u','origin','main')
+                    first=git('rev-parse','HEAD')
+                    assert inside('git','--git-dir',remote,'rev-parse','refs/heads/main').stdout.strip()==first
+                    with (destination/'profile.md').open('a') as stream:
+                        stream.write('\nMaintain this profile in its approved Git origin.\n')
+                    git('add','profile.md')
+                    git('commit','-m','Document profile maintenance')
+                    git('push')
+                    latest=git('rev-parse','HEAD')
+                    assert latest!=first
+                    (destination/'uncommitted.txt').write_text('keep this edit across restart')
+                    reviewed=profile_edit.review(current,state)
+                    assert not (Path(reviewed['profile']['path'])/'.git').exists()
+                    sandbox.down(current)
+                    sandbox.up(current,state,prepare_sign_in=False)
+                    context=inside('cat','/home/node/.pi/agent/AGENTS.md').stdout
+                    assert current[profile_edit.EDIT]['origin_digest'] in context, ('Missing original profile revision after restart',context)
+                    assert 'forked from '+repr(current[profile_edit.EDIT]['origin_name']) in context
+                    assert 'Ask whether the user wants this profile tracked in Git' in context
+                    assert 'inspect this folder’s Git status, log and remotes' in context
+                    assert git('rev-parse','HEAD')==latest
+                    assert git('remote','get-url','origin')==remote
+                    assert 'uncommitted.txt' in git('status','--short')
+                    assert inside('git','--git-dir',remote,'rev-parse','refs/heads/main').stdout.strip()==latest
+                    print('PASS Git profile maintenance: commits, local-origin pushes, history/origin and uncommitted edits survive restart; original/applied/editable context remains available',flush=True)
                 sandbox.delete(current,state)
                 assert (destination/'agent-proof.txt').exists(),'sandbox deletion erased the user-owned profile folder'
                 print('PASS cached-image editable mount: agent and host writes, shared validation/context, read-only applied record, unchanged project and retained host profile',flush=True)

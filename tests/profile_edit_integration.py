@@ -77,6 +77,18 @@ def exercise(agent, root):
             assert expected in context, (agent,expected)
         assert inside('sh','-c','echo wrong >> '+profile_runtime.PATH+'/profile/profile.md',check=False).returncode
         assert not (destination/'.git').exists()
+        def git(*args):
+            return inside('git','-C',profile_edit.PATH,*args).stdout.strip()
+        git('init','-b','main')
+        git('config','user.name','Example Profile Maintainer')
+        git('config','user.email','maintainer@example.test')
+        origin=profile_edit.PATH+'/.git/fixture-origin'
+        inside('git','init','--bare',origin)
+        git('remote','add','origin',origin)
+        git('add','.')
+        git('commit','-m','Track the editable profile')
+        git('push','-u','origin','main')
+        first_commit=git('rev-parse','HEAD')
         if agent != 'pi':
             settings = json.loads((state/'primary-runtime/settings.json').read_text())
             assert profile_edit.PATH in settings['write_roots']
@@ -259,13 +271,30 @@ def exercise(agent, root):
         else:raise AssertionError('Existing service storage was silently changed')
         (destination/'profile.json').write_text(applied_manifest)
         assert config()['profile']['digest'] == profile_runtime.applied(state)['profile_digest']
+        maintenance='Maintain this profile at its approved origin; preserve user edits.'
+        with (destination/'profile.md').open('a') as stream: stream.write('\n'+maintenance+'\n')
+        git('add','.')
+        git('commit','-m','Record approved profile maintenance')
+        git('push')
+        committed=git('rev-parse','HEAD')
+        assert committed!=first_commit
         service.run(['down',name],log)
-        with (destination/'profile.md').open('a') as stream: stream.write('\nAdditional profile instructions.\n')
         apply(service.review_profile(name))
         for resource in ids():
             assert not sandbox.inspect(config(),resource)['State']['Running'], resource
+        (destination/'uncommitted.txt').write_text('Keep this working edit')
         service.run(['up',name],log)
         assert inside('cat','/home/node/profile-edit-marker').stdout == 'KEEP_PRIVATE_HOME'
+        assert git('rev-parse','HEAD')==committed
+        assert git('remote','get-url','origin')==origin
+        assert 'uncommitted.txt' in git('status','--short')
+        assert inside('git','--git-dir',origin,'rev-parse','refs/heads/main').stdout.strip()==committed
+        context=inside('cat',context_path).stdout
+        assert original['profile']['digest'] in context
+        assert config()['profile']['digest'] in context
+        assert 'forked from '+repr(original['profile']['name']) in context
+        assert maintenance in context
+        print('PASS '+agent+': profile Git history/origin, uncommitted edits and original/applied/editable context survive Apply and restart',flush=True)
         print('PASS '+agent+': new host, diagnostic readiness failure, cooperative cancel, exact rollback/retry and stopped-state apply',flush=True)
     finally:
         if (state/'config.json').exists():

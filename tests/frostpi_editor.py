@@ -992,7 +992,8 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 from ai_sandbox_factory import profile_edit
                 editable = root / 'editable-profile'
                 shutil.copytree(config['profile']['path'], editable)
-                config[profile_edit.EDIT] = {'path':str(editable)}
+                config[profile_edit.EDIT] = {'path':str(editable), 'origin_name':config['profile']['name'],
+                                             'origin_digest':config['profile']['digest']}
             profile_services.build(config)
             with patch.object(sandbox, 'image_names', return_value=(image, 'localhost/pi-sandbox-factory-proxy:1')):
                 with profile_runtime.recording(config, root):
@@ -1126,7 +1127,7 @@ p.write_text(json.dumps(v))
                     script = Path(__file__).with_name('profile_edit_pi.py').read_text()
                     cli = podman('exec', '-i', '--workdir', cwd, name, 'python3', '-c', script, stdin=subprocess.DEVNULL)
                     assert 'FACTORY PROFILE EDITING VERIFIED' in cli, cli
-                    print('PASS Pi CLI: actual read/write/Bash tools edit package/service files, validate, and preserve the read-only applied profile.',flush=True)
+                    print('PASS Pi CLI: actual read/write/Bash tools edit package/service files, validate, commit/push to a local Git origin, and preserve the read-only applied profile.',flush=True)
                     for item in editable.iterdir():
                         shutil.rmtree(item) if item.is_dir() else item.unlink()
                     shutil.copytree(config['profile']['path'], editable, dirs_exist_ok=True)
@@ -1194,7 +1195,7 @@ p.write_text(json.dumps(v))
                     page.screenshot(path=str(output / 'profile-editing.png'))
                     assert not errors, errors
                     browser.close()
-                    print('PASS shipped FrostPi webview: actual profile read/write/Bash validation and read-only applied-record protection.',flush=True)
+                    print('PASS shipped FrostPi webview: actual profile read/write/Bash validation, Git commit/local-origin push and read-only applied-record protection.',flush=True)
                     return
                 if profile_services_check:
                     send('Factory profile service fixture')

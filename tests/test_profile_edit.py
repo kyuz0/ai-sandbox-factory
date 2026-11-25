@@ -183,9 +183,33 @@ class EditTests(unittest.TestCase):
                 self.assertIn('Review changes', context)
                 self.assertIn('Dockerfile', context)
                 self.assertIn('services entry in profile.json', context)
+                self.assertIn('forked from '+repr(self.saved['name']),context)
+                self.assertIn(self.saved['digest'],context)
+                self.assertIn('Ask whether the user wants this profile tracked in Git',context)
+                self.assertIn('supplied origin for authorized pushes',context)
+                self.assertIn('honor an existing ongoing maintenance instruction without asking again',context)
+                self.assertIn('preserve uncommitted edits',context)
+                self.assertIn('future sessions receive them after Apply',context)
                 self.assertNotIn(str(self.destination), context)
         self.assertNotIn((edit.PATH, False), folders.roots({}))
         self.assertIn('create an editable copy', edit.guidance({}))
+
+    def test_applied_edits_keep_the_original_fork_identity_in_future_agent_context(self):
+        reviewed=self.review()
+        changed={**self.config,'profile':reviewed['profile']}
+        self.assertNotEqual(changed['profile']['digest'],self.saved['digest'])
+        with patch.object(profile_runtime,'applied',return_value={
+                'name':changed['profile']['name'],'profile_digest':changed['profile']['digest']}):
+            for agent in profile_spec.AGENTS:
+                from ai_sandbox_factory import primary_agents
+                config={**changed,'primary_agent':agent}
+                context=profile_runtime.guidance(self.state,config) if agent=='pi' else primary_agents.guidance(config,self.state)
+                self.assertIn(changed['profile']['digest'],context)
+                self.assertIn(self.saved['digest'],context)
+                self.assertIn('forked from '+repr(self.saved['name']),context)
+                self.assertIn(edit.PATH,context)
+                self.assertIn('Ask whether the user wants this profile tracked in Git',context)
+                self.assertIn('inspect this folder’s Git status, log and remotes',context)
 
     def test_additions_and_metadata_are_allowed_but_existing_service_runtime_changes_are_refused(self):
         original = {**self.config, 'profile':sandbox.load_profile('developer-postgres')}

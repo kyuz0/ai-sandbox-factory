@@ -1713,8 +1713,10 @@ PYTHONPATH=.:tests .venv/bin/python tests/frostpi_editor.py --image "$PI_IMAGE" 
 ```
 
 The synthetic model drives real read, write and Bash tools to change a package
-and add a service. Both clients run the documented validator and attempt a write
-to the read-only applied record, which must remain unchanged.
+and add a service. Both clients run the documented validator, commit the editable
+profile and push to a disposable local Git origin after a diagnostic failed push
+and retry. They attempt a write to the read-only applied record, which must remain
+unchanged. No remote account is used.
 
 For an explicitly authorized live authoring check with the host's Claude sign-in:
 
@@ -1723,16 +1725,24 @@ PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_opus.py --live --output /
 ```
 
 The live agent reads the bundled guide, repairs invalid JSON, edits package and
-service recipes, validates, and explains the user's review/apply steps. The fixture
-applies those edits and checks the package and SQL service. Keep its model output
+service recipes, validates, commits and pushes to an authorized disposable local
+origin, and explains the user's review/apply steps. The fixture applies those edits
+and checks the package and SQL service. A fresh model session after restart reads
+the original/applied/editable profile context and existing maintenance instruction. Keep its model output
 outside the checkout. This opt-in check uses the account's model quota.
 
-Check an editable folder on a Windows-backed WSL2 filesystem with cached images:
+Check an editable folder on a Windows-backed WSL2 filesystem with cached images.
+Use a Pi image with the matching Factory bootstrap from the revision under test;
+an older image cannot validate the new managed profile context:
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_mounts.py --image "$PI_IMAGE" --proxy-image "$PROXY_IMAGE" --profile-root /mnt/c/Users/Public
 ```
 
 This checks host/agent writes, standalone validation, managed instructions,
-read-only applied files and retained profile files after sandbox deletion. It
-uses cached images and does not establish an image-build result.
+read-only applied files and retained profile files after sandbox deletion. To
+also check Git history, local-origin pushes and dirty edits across restart, add
+`--git-maintenance` and use a parent folder in the Linux home, for example
+`--profile-root "$HOME/sandbox-profiles"`. Git requires lock-file metadata changes
+that some Windows drive mounts reject. These checks use cached images and do not
+establish an image-build result.

@@ -309,8 +309,33 @@ ai-sandbox-factory profile-apply my-sandbox --revision REVISION_FROM_REVIEW
 
 ### Version and share your profile
 
-Factory does not initialize Git or publish the editable folder. The user can
-commit it and set a remote when ready. Keep manifest `version: 1`; use Git tags or
+Factory does not initialize Git or publish the editable folder. After attaching
+an editable copy, the agent asks whether the user wants Git tracking unless that
+choice has already been made. The user can ask the agent to initialize a separate
+repository, commit approved changes and maintain it at a supplied origin. Agree
+whether commits stay local or are pushed, and whether that is a one-time action
+or an ongoing maintenance instruction. A declined offer leaves an ordinary folder.
+
+For an SSH origin, the agent uses the existing SSH & Git connector for authentication. If
+access is missing, configure **Settings → Connectors → SSH & Git** and any required
+**Network** destinations. Keep private keys and credential-bearing URLs out of the
+profile. A Git push shares the profile; it does not apply it to the sandbox.
+
+For Git tracking in WSL, use the default profile folder under your Linux home,
+for example `~/sandbox-profiles/team-dev`. Some Windows drive mounts reject the
+lock-file permission changes Git needs, even when ordinary file editing works.
+
+The editable folder and its Git history survive restarts and image replacements.
+Factory's managed context identifies the original profile name and revision, the
+currently applied revision and the writable source. The agent checks Git status,
+log and remotes before resuming, preserving uncommitted edits. Record the user's
+tracking choice and approved ongoing maintenance instructions in `profile.md`.
+The agent reads the editable file for choices saved since the last Apply;
+unapplied package and service changes remain proposals. After Apply, the saved
+instructions are also included in future agent sessions. They must reflect the user's actual
+choice, not turn a one-time push into standing authorization.
+
+The user can also maintain the repository directly on the host. Keep manifest `version: 1`; use Git tags or
 commits to identify profile revisions. For example, after editing:
 
 ```sh

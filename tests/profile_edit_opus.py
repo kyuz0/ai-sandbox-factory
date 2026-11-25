@@ -42,6 +42,8 @@ def main():
             # The agent must diagnose a real validator error, not just be told
             # that its own valid edits passed.
             (source/'profile.json').write_text('{"name":"base","version":1,}\n')
+            origin=profile_edit.PATH+'/.git/fixture-origin'
+            inside('git','init','--bare',origin)
             prompt=("This is an authorized profile-editing test in a disposable AI Sandbox Factory sandbox. "
                 "Only edit /opt/sandbox/profile, never /workspace or the read-only applied record. "
                 "Read the bundled authoring guide in your Factory instructions. First run its validator; "
@@ -50,22 +52,30 @@ def main():
                 "to the coding-agent Dockerfile, and add one PostgreSQL service named reporting using the "
                 "bundled two-host example's reporting service and its SSH-capable Dockerfile. "
                 "Explain this host in profile.md. Validate the finished profile for Claude. "
-                "Do not apply it, initialize Git, publish it, install packages in the current container or "
-                "change permissions/network settings. Finish by telling the user what changed, the exact "
+                "I also authorize Git tracking for this profile. Use Example Maintainer <maintainer@example.test> "
+                "as this repository’s Git author. Initialize its repository on branch main, "
+                "commit these changes and push to the supplied disposable local origin at " + origin + ". "
+                "Record my ongoing instruction in profile.md: maintain this profile in its approved Git origin, "
+                "preserving user edits. No other remote or publication is authorized. "
+                "Do not apply it, install packages in the current container or change permissions/network settings. "
+                "Finish by telling the user what changed, the exact "
                 "Factory UI path to review and apply it, and what application will interrupt and preserve.")
-            output=args.output/'opus-profile-edit.jsonl'
-            errors=args.output/'opus-profile-edit.stderr'
-            dev=sandbox.names(service.config(name))[0]
-            with output.open('w') as stdout,errors.open('w') as stderr:
-                process=subprocess.Popen(['podman','exec','-i','-w','/workspace',dev,'/usr/local/bin/claude',
-                    '--print','--verbose','--output-format','stream-json','--model','opus','--effort','medium',prompt],
-                    stdout=stdout,stderr=stderr,stdin=subprocess.DEVNULL)
-                code=process.wait()
-            events=[json.loads(line) for line in output.read_text().splitlines() if line.startswith('{')]
-            terminal=next((event for event in reversed(events) if event.get('type')=='result'),{})
-            assert code==0 and terminal and not terminal.get('is_error'), f'Native Opus failed (exit {code}); inspect private output in {args.output}'
-            result=terminal.get('result','')
-            (args.output/'opus-next-steps.txt').write_text(result)
+            def ask_opus(message,stem):
+                output=args.output/(stem+'.jsonl')
+                errors=args.output/(stem+'.stderr')
+                dev=sandbox.names(service.config(name))[0]
+                with output.open('w') as stdout,errors.open('w') as stderr:
+                    process=subprocess.Popen(['podman','exec','-i','-w','/workspace',dev,'/usr/local/bin/claude',
+                        '--print','--verbose','--output-format','stream-json','--model','opus','--effort','medium',message],
+                        stdout=stdout,stderr=stderr,stdin=subprocess.DEVNULL)
+                    code=process.wait()
+                events=[json.loads(line) for line in output.read_text().splitlines() if line.startswith('{')]
+                terminal=next((event for event in reversed(events) if event.get('type')=='result'),{})
+                assert code==0 and terminal and not terminal.get('is_error'), f'Native Opus failed (exit {code}); inspect private output in {args.output}'
+                result=terminal.get('result','')
+                (args.output/(stem+'-next-steps.txt')).write_text(result)
+                return events,result
+            events,result=ask_opus(prompt,'opus-profile-edit')
             calls=[part for event in events for part in event.get('message',{}).get('content',[]) if isinstance(part,dict) and part.get('type')=='tool_use']
             serialized=json.dumps(calls)
             assert 'README.md' in serialized and 'validate.py' in serialized,'Opus did not read the guide and invoke validation'
@@ -78,12 +88,36 @@ def main():
             assert reviewed['added_services']==['reporting'],reviewed['added_services']
             assert any('Dockerfile' in change for change in reviewed['changes'])
             assert (project/'AGENTS.md').read_text()=='USER_PROJECT_RULES_UNCHANGED\n'
+            def git(*args):
+                return inside('git','-C',profile_edit.PATH,*args).stdout.strip()
+            commit=git('rev-parse','HEAD')
+            assert inside('git','--git-dir',origin,'rev-parse','refs/heads/main').stdout.strip()==commit
+            assert git('remote','get-url','origin')==origin
+            assert not git('status','--porcelain'),'Opus left the approved edits uncommitted'
+            original=service.config(name)[profile_edit.EDIT].copy()
+            expected_instructions=(source/'profile.md').read_text().rstrip()
             service.run(['profile-apply',name,'--revision',reviewed['revision']],log)
             assert inside('sh','-c','command -v figlet').returncode==0
             connections=json.loads(inside('cat',profile_services.CLIENT+'/connections.json').stdout)['reporting']
             command='psql -U '+shlex.quote(connections['user'])+' -d '+shlex.quote(connections['database'])+' -Atc '+shlex.quote('SELECT 42')
             assert inside('ssh','-F',profile_services.CLIENT+'/config',connections['host'],command).stdout.strip()=='42'
-            print('PASS live native Opus: read authoring guide, repaired invalid JSON, edited package/service Dockerfiles and instructions, validated, explained review/apply, and produced a working image and SQL host',flush=True)
+            service.run(['down',name],log)
+            service.run(['up',name],log)
+            context=inside('cat','/run/primary-runtime/context.md').stdout
+            assert original['origin_digest'] in context
+            assert service.config(name)['profile']['digest'] in context
+            assert expected_instructions in context,'The saved profile instructions were missing from the restarted agent context'
+            assert git('rev-parse','HEAD')==commit
+            restarted,answer=ask_opus('This is a new session after the profile was applied and the sandbox restarted. '
+                'Read your Factory profile context and inspect the editable profile Git status and origin. '
+                'Explain the original fork, applied record, editable source, existing maintenance instruction and '
+                'the exact UI steps for any future changes to be applied. Do not change files or push.',
+                'opus-profile-restart')
+            assert profile_edit.PATH in answer and profile_runtime.PATH in answer,answer
+            assert 'Review changes' in answer and 'Apply profile changes' in answer,answer
+            assert git('rev-parse','HEAD')==commit
+            print('PASS live native Opus: repaired invalid JSON, edited package/service recipes, validated, committed/pushed to the authorized local origin, explained Apply, and understood original/applied/editable profile maintenance in a fresh session after restart; package and SQL checks passed',flush=True)
+
         finally:
             if (state/'config.json').exists():
                 current=service.config(name)
