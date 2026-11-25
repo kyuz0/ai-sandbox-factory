@@ -7,7 +7,7 @@ profile can work with a local or hosted model.
 
 ## What profiles inherit
 
-**Default Developer Sandbox** is the built-in profile (`base`). Its coding-agent container
+**Default Developer Sandbox** is the built-in profile (`base`). Its main agent sandbox
 includes Node.js, Python, Git and document tools. Factory adds the selected coding
 agent; Pi sandboxes include Pi, FrostPi and the Pi sandbox components.
 
@@ -57,7 +57,7 @@ ai-sandbox-factory recreate reports --profile reporting
 
 Use `profile update` for profiles and `provider update` for provider plugins.
 The update fetches the selected branch or ref. `recreate` builds the updated
-image before stopping the old coding-agent container. It keeps the project folder, saved chats and private home; unchanged
+image before stopping the old main agent sandbox. It keeps the project folder, saved chats and private home; unchanged
 profile services keep their running or stopped state. Close the editor first. Updating a pinned
 commit keeps that commit.
 
@@ -82,7 +82,7 @@ copy outside the project, available to the agent at `/opt/sandbox/profile`.
 Review its diff and choose **Apply profile changes** to install an edited image
 or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
-Attaching or applying an editable profile replaces the coding-agent container.
+Attaching or applying an editable profile replaces the main agent sandbox.
 An open browser editor restarts at the same address with its existing password
 and connection settings. Reload that tab if it has not reconnected. Terminal
 clients must be reopened. If replacement fails, Factory restores the previous
@@ -195,12 +195,12 @@ details. The same help is available in **Actions… → Profile and services…*
 
 Choose **Developer + PostgreSQL** for a sandbox with a database. The database
 starts with the sandbox and is reachable at `database.profile.internal:5432`.
-Read `/run/profile-services/connections.json` inside the coding-agent container for its
+Read `/run/profile-services/connections.json` inside the main agent sandbox for its
 application username, database and generated password. The agent can use those
 credentials. Factory-managed model, SSH connector and cloud credentials stay in
 separate Factory helper containers.
 
-The coding-agent container has administrative SSH access to the actual database container:
+The main agent sandbox has administrative SSH access to the actual database container:
 
 ```sh
 ssh -F /run/profile-services/config database.profile.internal
@@ -215,7 +215,7 @@ approvals off, use a sandbox terminal or enable approvals. Codex, Claude Code,
 Antigravity and sandbox terminals connect directly to the profile host. Follow
 any shell approval required by the selected coding agent.
 
-Profile containers share one private network with the coding-agent container. They can
+Profile containers share one private network with the main agent sandbox. They can
 connect to each other directly, including ping, database clients and SSH. Their
 external requests use the sandbox's approved proxy destinations. Factory does
 not publish application ports on the host or give profiles control over
@@ -223,7 +223,7 @@ Factory helper containers. Profile services currently require rootless
 Podman and Restricted networking.
 
 Add optional `services` to `profile.json`. The profile’s top-level Dockerfile
-for the coding-agent container is not listed in `services`. Each service chooses
+for the main agent sandbox is not listed in `services`. Each service chooses
 an existing image or a build context. Add one entry per host; the
 [complete two-host example](../ai_sandbox_factory/containers/dev/profile-authoring/example/profile.json)
 uses separate data and credentials for each:
@@ -284,10 +284,10 @@ that service container's environment. Generated values belong to one sandbox
 and service; using the same name in another service does not share the password.
 
 The agent's managed instructions point to `/run/profile-services/connections.json`;
-they do not contain its passwords. An application in the coding-agent container
+they do not contain its passwords. An application in the main agent sandbox
 can read that file and use its values at runtime. Factory does not automatically
 set application environment variables there. **Resources & environment → Credentials
-environment file** supplies user-selected variables to the coding-agent container
+environment file** supplies user-selected variables to the main agent sandbox
 only, not to profile services.
 
 Automatic injection of a shared password into several service containers is not
@@ -296,7 +296,7 @@ for environment routing and credential handling.
 
 Stopping and starting a sandbox keeps its profile containers, application data,
 generated passwords and SSH keys. A rebuild keeps running profile services running and leaves a stopped sandbox
-stopped when it finishes. If a rebuild fails, Factory restores the previous coding-agent container,
+stopped when it finishes. If a rebuild fails, Factory restores the previous main agent sandbox,
 Factory helper containers and settings. **Edit profile… → Review changes… → Apply profile changes**
 can add, replace or remove services. Review lists affected services and the data
 volumes that will be kept. Factory builds images before stopping affected

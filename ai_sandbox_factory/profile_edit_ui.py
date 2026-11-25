@@ -14,7 +14,7 @@ from .tui_widgets import Bullet, Details, Feedback
 def consequences(record, review=None):
     notes = []
     # The runtime may change while review runs or this screen is open.
-    notes.append(f'If {record["name"]} is running, its agent work, terminals and browser processes stop when its coding-agent container is replaced.')
+    notes.append(f'If {record["name"]} is running, its agent work, terminals and browser processes stop when its main agent sandbox is replaced.')
     notes.append(f'If {record["name"]} is stopped, it stays stopped.')
     notes.append('Project files, private home, saved chats and sign-ins are kept.')
     affected = (review or {}).get('replaced_services', []) + (review or {}).get('removed_services', [])
@@ -65,7 +65,7 @@ class EditProfile(Screen):
                     yield Feedback(self.error, id='profile-edit-error', markup=False)
                     yield Static('Choose a new or empty folder outside the project. Your agent will edit it at ' + profile_edit.PATH + '.',
                                  classes='setting-help', markup=False)
-                yield Static('Attaching the copy replaces the coding-agent container. You will review the consequences before continuing.', classes='section-intro')
+                yield Static('Attaching the copy replaces the main agent sandbox. You will review the consequences before continuing.', classes='section-intro')
             if editable:
                 yield Feedback(self.error, id='profile-edit-error', markup=False)
         with Horizontal(classes='wizard-actions'):
@@ -158,7 +158,7 @@ class ReviewProfile(Screen):
                             yield Bullet(name)
                 with Vertical(classes='setting'):
                     yield Label('When you apply', classes='section-heading')
-                    yield Bullet('Factory builds images first, then prepares services before replacing the coding-agent container.')
+                    yield Bullet('Factory builds images first, then prepares services before replacing the main agent sandbox.')
                     for note in consequences(self.record, self.review):
                         yield Bullet(note)
                     yield Bullet('You can cancel preparation. Factory stops the active build or removes newly prepared service resources before reporting cancellation.')
@@ -188,6 +188,6 @@ class ReviewProfile(Screen):
                     lambda log, update: app.service.run_update(['profile-apply', name, '--revision', self.review['revision']], log, update),
                     cooperative=True, success_message='Profile changes applied.')
         target=name+' only' if self.review.get('shared_with') else name
-        app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds images first, then prepares services before replacing the coding-agent container.',
+        app.push_screen(Confirm(f'Apply the reviewed profile changes to {target}? Factory builds images first, then prepares services before replacing the main agent sandbox.',
                                 'Apply profile changes',confirm_by_default=not bool(self.review.get('removed_services')),
                                 notes=consequences(self.record, self.review)),confirmed)

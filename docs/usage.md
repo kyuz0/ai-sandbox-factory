@@ -16,7 +16,7 @@ is selected by default. To start a fresh login, choose **Sign in inside the sand
 For Antigravity, use personal Google OAuth. Enterprise login, Application Default
 Credentials (ADC) and API keys are outside this sign-in flow.
 
-The agent and its tools run in the workspace. A separate container keeps the
+The agent and its tools run in the **Main agent sandbox**. A separate container keeps the
 real sign-in and uses it only for the provider’s approved endpoints.
 [How Factory protects the sign-in](architecture.md#native-agent-subscription-authentication)
 
@@ -90,6 +90,12 @@ press **A**, press **Shift+F10**, or choose **Actions…**. The menu includes
 opening, settings, and controls to start, stop, update, or delete the sandbox.
 Choose **Troubleshooting… → Containers…** to see what each container does
 and whether it’s running. **Esc** returns from a submenu to Actions.
+
+**Main agent sandbox** identifies the container with your project files, shell
+and development tools. Additional profile services and credential containers are
+listed separately. The same name appears on **Profile and services…** and in the
+agent’s sandbox instructions.
+
 Press **D** on the dashboard to change the defaults for new sandboxes.
 
 Closing Factory or the editor leaves the sandbox running. Deleting it removes
@@ -236,18 +242,18 @@ and shows both paths so you can resolve the conflict.
 | Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
 | Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
-| Connectors → AWS | Connecting AWS for the first time can require replacing the workspace container. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
+| Connectors → AWS | Connecting AWS for the first time can require replacing the main agent sandbox. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
 | Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
 | Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Choose **Open** to reopen with the saved settings. |
-| Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
+| Model Providers: hosted connection or endpoint | Saved without recreating the main agent sandbox; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
 | Model Providers: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
 | Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
 | Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
 Use **Resources & environment** for the container memory limit and environment file.
-**Credentials environment file** supplies variables to the coding-agent container,
+**Credentials environment file** supplies variables to the main agent sandbox,
 not to profile service containers. Keep this host file outside a shared profile
 repository. Profile services declare their own variables and can use
 [generated application passwords](profiles.md#application-credentials).
@@ -424,7 +430,7 @@ when available. WSL can use an available Linux Secret Service.
 
 Each sandbox has its own active key in its inference companion. Factory checks a
 replacement before assigning it. Subsequent requests use the new assignment
-without recreating the development container. Replacing or forgetting a saved
+without recreating the main agent sandbox. Replacing or forgetting a saved
 key affects the workstation picker. Other sandboxes keep their current copies
 until you change or disconnect their assignments.
 
@@ -561,7 +567,7 @@ that event, and rows missing the selected date stay at the bottom.
 To preview a local web app, ask Pi to start its development server and open
 `http://localhost:PORT` in the agent browser. Pi starts the server with
 `bash_escalate` because the browser can’t reach servers started with ordinary
-`bash`. The server runs inside the development container. You can also start
+`bash`. The server runs inside the main agent sandbox. You can also start
 it yourself from the editor terminal.
 
 With `bash_escalate`, run the server in the background and write its output to

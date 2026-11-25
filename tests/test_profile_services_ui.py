@@ -15,6 +15,32 @@ from test_tui import FakeService
 
 
 class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
+    async def test_profile_page_identifies_the_main_agent_separately_from_services(self):
+        for size in ((80,24), (120,40), (220,50)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp, \
+                    patch('ai_sandbox_factory.updates.available_update', return_value=None), \
+                    patch('ai_sandbox_factory.profile_services.status', return_value=[{'name':'database','running':True}]):
+                app = Cockpit(Path(tmp), FakeService([]))
+                async with app.run_test(size=size) as pilot:
+                    await app.workers.wait_for_complete()
+                    for profile in ('base', 'developer-postgres'):
+                        config = {'profile': sandbox.load_profile(profile)}
+                        page = AppliedProfile({'name':'example', 'config':config}, Path(tmp))
+                        await app.push_screen(page)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        heading = page.query_one('#profile-main-agent', Static)
+                        self.assertEqual(str(heading.render()), 'Main agent sandbox')
+                        self.assertTrue(heading.styles.text_style.bold)
+                        self.assertTrue(page.query_one('.form').content_region.contains_region(heading.region))
+                        text = ' '.join(str(widget.render()) for widget in page.query(Static))
+                        self.assertIn(config['profile']['description'], text)
+                        self.assertEqual(bool(page.query('#profile-service-database')), profile == 'developer-postgres')
+                        back = page.query_one('#profile-information-back', Button)
+                        self.assertEqual(back.region.height, 1)
+                        self.assertLess(back.region.bottom, size[1])
+                        await pilot.press('escape')
+
     async def test_copy_hides_search_keys_when_absent_and_explains_a_stopped_source_with_keys(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
             root=Path(tmp)
@@ -384,7 +410,7 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                     app.perform('rebuild', record=record)
                     await pilot.pause()
                     message = app.screen.message
-                    self.assertIn('If the sandbox is running, work in its coding-agent container stops after the build', message)
+                    self.assertIn('If the sandbox is running, work in its main agent sandbox stops after the build', message)
                     self.assertIn('If the sandbox is stopped, it stays stopped.', message)
                     self.assertIn('Profile services and their application data are kept', message)
                     self.assertNotIn('Fetch current profile sources', message)

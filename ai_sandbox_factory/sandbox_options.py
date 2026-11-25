@@ -9,6 +9,7 @@ from .settings_catalog import CATEGORIES, INSTALL_SYSTEM_PACKAGES, NETWORK_PATH
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
 RESOURCE_PREFIX = 'pi-sandbox-factory-'
+MAIN_AGENT_SANDBOX = 'Main agent sandbox'
 # The longest generated name is a Podman volume stored as a Linux directory.
 SANDBOX_NAME_LIMIT = 255 - len(RESOURCE_PREFIX + '-inference-socket')
 SANDBOX_NAME = re.compile(rf'[a-z0-9][a-z0-9-]{{0,{SANDBOX_NAME_LIMIT - 1}}}')
@@ -35,7 +36,7 @@ APPROVAL_MODES = {
                'read and write ask for approval when their permission rules require it.'),
     'off': ('YOLO (no approvals)',
             'Runs without approval prompts or reviewer checks.',
-            'skips approval prompts and reviewer checks. To run Bash directly in the development container, '
+            'skips approval prompts and reviewer checks. To run Bash directly in the main agent sandbox, '
             'turn off the inner sandbox too. If you leave it on, Bash stays inside it.'),
 }
 DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'native_approval': 'automatic', 'inner_sandbox': True, 'goals': True,
@@ -202,7 +203,9 @@ def write_json(path, value):
 
 def access_guidance(network):
     lines = [
-        'You are working in an AI Sandbox Factory workspace. The agent and workspace terminal run without sudo. '
+        'You are working in an AI Sandbox Factory workspace. Your shell commands and development tools '
+        f'run in the {MAIN_AGENT_SANDBOX}, with access to your project files. '
+        'The agent and workspace terminal run without sudo. '
         f'If a system package is missing, tell the user which Debian package the task needs and why. Ask them to use '
         f'Actions → {INSTALL_SYSTEM_PACKAGES} on this sandbox in Factory.',
     ]
@@ -233,7 +236,7 @@ def guidance(selected, subagents=False, *, network='allowlist'):
                       'manual': 'Boundary requests require human approval. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'off': 'Approval prompts are disabled. Requests beyond the inner sandbox are refused; bash_escalate is unavailable.'}[mode])
     else:
-        lines.append('The inner command sandbox is disabled. Bash executes inside the outer devcontainer. '
+        lines.append('The inner command sandbox is disabled. Bash executes inside the main agent sandbox. '
                      + {'automatic': 'Shell commands require automatic review without human approval dialogs. Failures return a reason to the agent.',
                         'assisted': 'The reviewer checks shell commands. Pi asks the user if the reviewer rejects a command or leaves the decision open. If the reviewer fails, the command stays blocked.',
                         'manual': 'Shell commands require human approval.',

@@ -29,7 +29,7 @@ import time
 from urllib.parse import urlsplit
 from types import SimpleNamespace
 from uuid import uuid4
-from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
+from .sandbox_options import (MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
                               options, memory_limit, permissions, write_json, guidance)
 
 ROOT = Path(__file__).resolve().parent
@@ -515,12 +515,12 @@ def describe_containers(config, states, state=None):
     dev, gateway, *_ = names(config)
     advisor, advisor_gateway, *_ = sandbox_advisors.names(config)
     roles = {
-        dev: ('Development', 'Runs Pi, the editor backend and development tools.'),
-        gateway: ('Network gateway', 'Lets the development container reach only allowed destinations.'),
-        inference.names(config)[0]: ('Model connections', 'Connects Pi to model providers and keeps their API keys separate.'),
+        dev: (MAIN_AGENT_SANDBOX, 'Runs shell commands, the editor backend and development tools. Your project files are available here.'),
+        gateway: ('Network gateway', 'Lets the main agent sandbox reach only allowed destinations.'),
+        inference.names(config)[0]: ('Model connections', 'Connects to model providers and keeps their API keys separate.'),
         aws_access.worker_name(config): ('AWS access', 'Sends requests using the AWS permissions granted to this sandbox.'),
         sandbox_ssh.names(config)[0]: ('SSH access', 'Authenticates to configured SSH hosts and keeps private keys separate.'),
-        advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
+        advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from the main agent sandbox.'),
         advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
     }
     for identifier in config.get('connector_ids', []):
@@ -541,7 +541,6 @@ def describe_containers(config, states, state=None):
     selected = primary_workspace.agent(config)
     if selected != 'pi':
         from . import primary_agents
-        roles[dev] = ('Workspace', 'Runs commands and holds project files and development tools.')
         roles.update(primary_agents.describe(config))
     ordered = [name for name in roles if name in states]
     ordered.extend(sorted(states.keys() - roles.keys()))
@@ -1686,7 +1685,7 @@ def update_network(config, state, text, groups=None, *, download_curlie=True, cu
             restart_existing(config, proxy)
             ensure_gateway(config)
         raise
-    print('Network rules updated. Development container and terminals preserved; gateway connections may need to reconnect.')
+    print('Network rules updated. Main agent sandbox and terminals preserved; gateway connections may need to reconnect.')
     return updated
 
 
@@ -2096,7 +2095,7 @@ def sandbox_command(args, state, parser):
                     or args.profile or args.subagents is not None or args.browser is not None)
         replacing_profile_workspace = bool(profile_services.selected(config))
         labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + (
-            ['Replace coding-agent container'] if replacing_profile_workspace else
+            ['Replace main agent sandbox'] if replacing_profile_workspace else
             ['Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers'])
         progress = Progress(labels)
         if args.subagents is not None:
@@ -2123,8 +2122,8 @@ def sandbox_command(args, state, parser):
                 return
             if profile_services.selected(original) or profile_services.selected(config):
                 from . import profile_replacement
-                with progress.stage('Replace coding-agent container'):
-                    print('Keeping profile containers and data while replacing the coding-agent container.', flush=True)
+                with progress.stage('Replace main agent sandbox'):
+                    print('Keeping profile containers and data while replacing the main agent sandbox.', flush=True)
                     profile_replacement.apply(original, config, state)
                 return
             with progress.stage('Save sandbox configuration'):

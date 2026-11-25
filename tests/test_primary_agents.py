@@ -21,6 +21,53 @@ class PrimaryAgentIsolation(unittest.TestCase):
         self.config = {'name': 'test', 'engine': 'podman', 'uid': 1000, 'gid': 1000,
                        'primary_agent': 'claude', 'workspace': workspace.name}
 
+    def test_main_agent_label_is_shared_without_renaming_engine_resources(self):
+        from ai_sandbox_factory import profile_services
+        for agent in ('pi', 'codex', 'claude', 'agy'):
+            for status in ('running', 'exited'):
+                with self.subTest(agent=agent, status=status):
+                    config = {**self.config, 'primary_agent': agent,
+                              'profile': sandbox.load_profile('developer-postgres')}
+                    main = sandbox.names(config)[0]
+                    self.assertEqual(main, 'pi-sandbox-factory-test')
+                    service = profile_services.container(config, 'database')
+                    states = {main: status, service: status, main + '-unknown': status}
+                    states[sandbox.inference.names(config)[0]] = status
+                    states[sandbox.sandbox_advisors.names(config)[0]] = status
+                    if agent != 'pi':
+                        states[primary_agents.names(config)[0]] = status
+                    rows = sandbox.describe_containers(config, states)
+                    self.assertEqual({row['name']: row['status'] for row in rows}, states)
+                    self.assertEqual(rows[0]['name'], main)
+                    self.assertEqual(rows[0]['role'], 'Main agent sandbox')
+                    self.assertIn('shell commands', rows[0]['purpose'])
+                    self.assertEqual(sum(row['role'] == 'Main agent sandbox' for row in rows), 1)
+                    by_name = {row['name']: row for row in rows}
+                    self.assertEqual(by_name[service]['role'], 'Profile · database')
+                    self.assertEqual(by_name[main + '-unknown']['role'], 'Additional container')
+                    self.assertNotIn('Pi', by_name[sandbox.inference.names(config)[0]]['purpose'])
+                    self.assertNotIn('Pi', by_name[sandbox.sandbox_advisors.names(config)[0]]['purpose'])
+                    if agent != 'pi':
+                        controller = by_name[primary_agents.names(config)[0]]
+                        self.assertEqual(controller['role'], primary_agents.AGENTS[agent] + ' sign-in')
+                        self.assertIn('sign-in outside the main agent sandbox', controller['purpose'])
+
+    def test_user_and_profile_authoring_docs_use_the_same_main_agent_name(self):
+        root = sandbox.ROOT.parent
+        documents = [root / 'README.md', root / 'TESTING.md', *(root / 'docs').rglob('*.md')]
+        for directory in ('profiles', 'containers/dev/profile-authoring',
+                          'containers/dev/browser', 'containers/dev/security'):
+            documents.extend((sandbox.ROOT / directory).rglob('*.md'))
+        for path in documents:
+            with self.subTest(path=str(path.relative_to(root))):
+                text = ' '.join(path.read_text().lower().split())
+                for old in ('coding-agent container', 'development container', 'workspace container', 'devcontainer'):
+                    self.assertFalse(old in text, f'{path.relative_to(root)} still uses {old!r}')
+        self.assertIn('main agent sandbox', (root / 'docs/usage.md').read_text().lower())
+        guide = (sandbox.ROOT / 'containers/dev/profile-authoring/README.md').read_text()
+        self.assertIn('`pi-sandbox-factory-my-box`', guide)
+        self.assertNotIn('`pi-sandbox-factory-my-box-agent`', guide)
+
     def test_full_profile_instructions_reach_each_native_client_context(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -38,6 +85,7 @@ class PrimaryAgentIsolation(unittest.TestCase):
                     primary_agents.write_context(config, state)
                     for target in ('primary-agent/context.md', 'primary-runtime/context.md'):
                         context = (state / target).read_text()
+                        self.assertIn('run in the Main agent sandbox, with access to your project files.', context)
                         self.assertIn(instructions.rstrip(), context)
                         self.assertEqual(context.count('FULL_PROFILE_INSTRUCTIONS'), 1)
             self.assertEqual(project.read_text(), 'USER_PROJECT_INSTRUCTIONS\n')

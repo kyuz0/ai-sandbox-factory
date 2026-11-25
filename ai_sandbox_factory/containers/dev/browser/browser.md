@@ -7,7 +7,7 @@ Enabling browser support allows native `browser` calls without per-action approv
 The selected outer network policy and download controls still apply.
 Ad-blocking rules are seeded from the image's build-time snapshot.
 
-The browser runs on a private display inside this devcontainer. Its CDP connection
+The browser runs on a private display inside this main agent sandbox. Its CDP connection
 and display socket stay private to the container. The launcher provides an
 authenticated loopback viewer for the user. The outer network
 policy applies to external browser traffic, including redirects and subresources. Local

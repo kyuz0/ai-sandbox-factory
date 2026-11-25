@@ -148,7 +148,7 @@ See the sections below for the reusable fixture commands.
 
 In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Open Pi with the first provider as the chat model.
 
-For a live approval test, put a harmless receipt outside the inner shell's readable folders. Run these commands on the host, replacing `CONTAINER` with the disposable workspace container's name.
+For a live approval test, put a harmless receipt outside the inner shell's readable folders. Run these commands on the host, replacing `CONTAINER` with the disposable main agent sandbox's name.
 
 ```sh
 podman exec --user 0 CONTAINER mkdir /var/lib/factory-review-test
@@ -1138,7 +1138,7 @@ rejected. The runner restores the search configuration afterward.
 When changing category rules, verify an allowed domain, a misleading suffix such
 as `python.org.example.net`, an unselected site, a redirect to an unselected site,
 and a category hostname resolving to loopback. Existing explicit local-model
-ports must still work. Category refresh must not restart the development container.
+ports must still work. Category refresh must not restart the main agent sandbox.
 
 For the bundled Microsoft sign-in category, use the built proxy image:
 
@@ -1660,11 +1660,14 @@ profile integration fixture runs the corresponding actual Pi CLI check.
 
 The profile-instruction checks cover the full saved `profile.md`, changes and
 removal across launches, retained global user rules and unchanged project
-instructions. The Codex image suite checks the `developer_instructions` launcher
+instructions. Naming checks distinguish the main agent sandbox from profile
+services and sign-in containers for all four agents, preserve engine resource
+names, and compare terminology across user and profile-authoring documentation.
+The Codex image suite checks the `developer_instructions` launcher
 override, its precedence over trusted project settings through the pinned native
 app-server, Unicode and control characters, and actionable diagnostics for the OS
 argument limit. The real profile fixture checks managed instructions inside all
-four coding-agent containers and new database data in Create from existing.
+four main agent sandboxes and new database data in Create from existing.
 
 The bundled [profile authoring guide](ai_sandbox_factory/containers/dev/profile-authoring/README.md)
 has a complete two-host example. Check its manifest, independent Git revisions,

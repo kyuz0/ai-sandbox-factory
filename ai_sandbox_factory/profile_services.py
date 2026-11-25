@@ -8,7 +8,7 @@ import subprocess
 import time
 
 from . import host_platform
-from .sandbox_options import RESOURCE_PREFIX, write_json
+from .sandbox_options import MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, write_json
 
 CLIENT = '/run/profile-services'
 DOMAIN = 'profile.internal'
@@ -407,7 +407,7 @@ def ready(config, state, *, check_ssh=True, cancelled=None, service=None):
         check = _run(config, 'exec', dev, 'ssh', '-F', CLIENT + '/config', '-T', hostname(name), 'true',
                      capture=True, check=False, stderr=subprocess.PIPE)
         if check.returncode:
-            raise ValueError(f'Could not authenticate SSH from the coding-agent container to profile service {name!r} '
+            raise ValueError(f'Could not authenticate SSH from the main agent sandbox to profile service {name!r} '
                              f'(exit {check.returncode}): {(check.stderr or check.stdout).strip()}. '
                              'Inspect the service SSH setup and retry Start.')
 
@@ -442,7 +442,7 @@ def guidance(config):
     if not selected(config):
         return ''
     lines = ['\n## Profile services', '',
-             'Each profile service runs in its own container on a private network shared with your coding-agent container. '
+             f'Each profile service runs in its own container on a private network shared with your {MAIN_AGENT_SANDBOX}. '
              'You have administrative SSH access inside each one. External requests follow Factory proxy rules. '
              f'Read {CLIENT}/connections.json for application connection settings and credentials. '
              'These credentials are deliberately available to you; they are separate from Factory connector credentials. '

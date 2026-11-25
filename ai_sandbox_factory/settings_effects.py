@@ -20,7 +20,7 @@ def reconnect(mode='browser', *, opened=False):
 
 
 REOPEN = bullets(reconnect())
-RECREATE = 'Replaces the coding-agent container and stops its active tasks, terminals and browser processes.'
+RECREATE = 'Replaces the main agent sandbox and stops its active tasks, terminals and browser processes.'
 NETWORK = bullets(['Rules apply to new connections.', 'Retry any interrupted connections. No editor reload is needed.'])
 MODELS = bullets(['Reopen the client to refresh model connections.', 'Select a model in the chat.'])
 FOLDER = 'The new starting folder applies when you next open the client.'

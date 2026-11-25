@@ -27,7 +27,7 @@ from ai_sandbox_factory import aws_profiles
 from ai_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
 from ai_sandbox_factory.creation import Creation
 from ai_sandbox_factory.settings_catalog import EDIT_FORMS
-from ai_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, ContainersScreen, SandboxAlerts, confirm_aws_installation
 from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, settings_effects, web_access, copy_draft
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
@@ -884,6 +884,19 @@ async def capture(size):
                     await shot('containers-empty', ContainersScreen({**record, 'containers': []}))
                     await shot('containers-offline', ContainersScreen({**record, 'containers': None}))
                     await shot('containers-invalid', ContainersScreen({**record, 'engine': None}))
+                    from ai_sandbox_factory import primary_agents, profile_runtime, profile_services
+                    for agent in ('pi', 'codex', 'claude', 'agy'):
+                        selected = {**config, 'primary_agent': agent,
+                                    'profile': sandbox.load_profile('developer-postgres')}
+                        current = {**states, profile_services.container(selected, 'database'): 'running'}
+                        if agent != 'pi':
+                            controller, proxy, *_ = primary_agents.names(selected)
+                            current.update({controller: 'running', proxy: 'running'})
+                        await shot('containers-' + agent, ContainersScreen({**owned, 'config': selected,
+                            'containers': sandbox.describe_containers(selected, current)}))
+                    with patch.object(profile_runtime, 'applied', return_value={'path':'/synthetic/applied'}), \
+                            patch.object(profile_services, 'status', return_value=[{'name':'database','running':True}]):
+                        await shot('containers-profile', AppliedProfile({**owned, 'config': selected}, state))
                     return
                 if args.only and all(name.startswith('providers-') for name in args.only):
                     plugin = {'name': 'example', 'settings': {}, 'manifest': {

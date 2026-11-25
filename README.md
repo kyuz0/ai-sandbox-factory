@@ -8,6 +8,7 @@ You can also use the selected agent’s CLI. FrostPi and Pi CLI use the same Pi 
 
 ![AI Sandbox Factory dashboard](docs/sandboxes.png)
 
+Your agent’s tools and project files are in the **Main agent sandbox**.
 Profiles can also add profile services, each in its own container.
 **Developer + PostgreSQL** adds a private database that the coding agent can
 administer over SSH. Its data is kept until you delete the sandbox. The agent
@@ -96,7 +97,7 @@ Upgrade Factory with **Upgrade now** or `pipx upgrade ai-sandbox-factory`.
 For Pi, use **Actions… → Update sources and recreate…** to rebuild using the
 installed profile (or its saved profile if no longer installed) and current
 Factory software. Codex, Claude Code and Antigravity use **Actions… → Rebuild sandbox…**. Factory builds the new image
-first, then replaces the coding-agent container. Project files, saved chats and
+first, then replaces the main agent sandbox. Project files, saved chats and
 application data are kept. Running profile services keep running; a stopped
 sandbox stays stopped after rebuilding. **Alerts** offers **Update to FrostPi…**
 for older

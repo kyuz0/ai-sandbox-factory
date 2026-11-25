@@ -58,7 +58,7 @@ from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from . import operation_locks
 from .updating import Update
-from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
+from .sandbox_options import (APPROVAL_MODES, DEFAULTS, MAIN_AGENT_SANDBOX, SKILLS, PROFILE_SKILLS, options,
                               endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
                               SANDBOX_NAME_ERROR, SANDBOX_NAME_LIMIT)
 
@@ -1693,7 +1693,8 @@ class AppliedProfile(Screen):
         with VerticalScroll(classes='form'):
             profile = self.record['config']['profile']
             with Vertical(classes='setting'):
-                yield Label(profile.get('description') or profile['name'], classes='group-title', markup=False)
+                yield Label(MAIN_AGENT_SANDBOX, id='profile-main-agent', classes='group-title', markup=False)
+                yield Details([('Profile', profile.get('description') or profile['name'])])
                 yield Details([('Installed profile version', profile['digest'])])
                 editable = self.record['config'].get(profile_edit.EDIT)
                 origin = profile.get('customized_from')
@@ -1707,7 +1708,7 @@ class AppliedProfile(Screen):
                 if profile_runtime.applied(self.state):
                     yield Details([('Read-only build files', profile_runtime.PATH)])
                 else:
-                    yield Static('Rebuild this sandbox to make its applied recipes available inside the coding-agent container.', markup=False)
+                    yield Static('Rebuild this sandbox to make its applied recipes available inside the main agent sandbox.', markup=False)
                 yield Static('The profile and base-image recipes are separate from your project files.', classes='setting-help')
             if not profile.get('services'):
                 yield Static('This profile has no additional profile services.')
@@ -5913,7 +5914,7 @@ class Cockpit(App):
                 profile_source = 'the installed profile' if source in profile_titles() else 'its saved profile'
                 question = f'Update {name} to FrostPi?' if migration else f'Rebuild {name} using {profile_source} and current Factory software?'
             notes = ['Workspace files, private home and saved chats are kept.']
-            notes[0:0] = ['If the sandbox is running, work in its coding-agent container stops after the build.',
+            notes[0:0] = ['If the sandbox is running, work in its main agent sandbox stops after the build.',
                           'This includes active tasks, terminals and browser processes.',
                           'If the sandbox is stopped, it stays stopped.']
             if profile.get('services'):

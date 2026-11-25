@@ -78,7 +78,8 @@ class SkillPermissionTests(unittest.TestCase):
     def test_agent_can_identify_disabled_settings_and_ask_for_access(self):
         text = guidance({'question_forms': False, 'browser': False, 'scheduling': False, 'goals': False,
                          'compaction_recall': 'off'}, network='unrestricted')
-        for message in ('AI Sandbox Factory workspace', 'without sudo', 'wait for confirmation',
+        for message in ('AI Sandbox Factory workspace', 'run in the Main agent sandbox, with access to your project files.',
+                        'without sudo', 'wait for confirmation',
                         'Network is Unrestricted', 'Question forms are off', 'The Factory browser is off',
                         'Scheduled prompts are off', 'Goals are off', 'Subagents are off',
                         'Conversation recall is set to Off', 'Web Search is off', 'Settings → Pi features',

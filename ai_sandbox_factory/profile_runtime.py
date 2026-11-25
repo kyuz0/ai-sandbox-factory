@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from .sandbox_options import MAIN_AGENT_SANDBOX
 
 PATH = '/opt/sandbox/base-profile'
 AUTHORING = PATH + '/authoring/README.md'
@@ -74,7 +75,7 @@ def recording(config, state):
             if (sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker') != native_recipe_digest
                     or any(file.read_bytes() != (sandbox.ROOT / 'containers/primary' / file.name).read_bytes()
                            for file in client.iterdir())):
-                raise ValueError('The coding-agent container sources changed while building. Retry the build with unchanged sources.')
+                raise ValueError('The main agent sandbox sources changed while building. Retry the build with unchanged sources.')
         image = sandbox.image_names(config)[0]
         result = sandbox.run([config['engine'], 'image', 'inspect', image], capture=True)
         try:
@@ -167,11 +168,11 @@ def guidance(state, config=None):
     value = applied(state)
     if not value:
         return ''
-    extra = ('workspace/ contains the coding-agent container recipe; it is unrelated to /workspace. '
+    extra = ('workspace/ contains the main agent sandbox recipe; it is unrelated to /workspace. '
              if value.get('agent', 'pi') != 'pi' else '')
     authoring = (f' For profile format, additional hosts and versioning, read {AUTHORING}. '
                  if value.get('path') and (Path(value['path']) / 'authoring/README.md').is_file() else '')
-    return (f'\n## Applied profile\n\nYour coding-agent container was built from profile {value["name"]!r}, '
+    return (f'\n## Applied profile\n\nYour {MAIN_AGENT_SANDBOX} was built from profile {value["name"]!r}, '
             f'revision {value["profile_digest"]}. Its read-only build recipes are at {PATH}. '
             "This directory holds this sandbox's own profile, not just the built-in base profile. "
             'profile/ contains the profile files and base/ contains Factory base-image inputs. '

@@ -1,6 +1,6 @@
 # Author a profile with multiple hosts
 
-A profile describes the coding-agent container and any additional **profile
+A profile describes the main agent sandbox and any additional **profile
 services**. Each service runs in its own container with its own hostname. These
 hosts share the sandbox's private network; they are not separate virtual machines.
 Start with the complete [two-database example](example/profile.json).
@@ -10,7 +10,7 @@ Start with the complete [two-database example](example/profile.json).
 ```text
 my-profile/
 ├── profile.json                 # Package identity, supported agents and services
-├── Dockerfile                   # Tools in the coding-agent container
+├── Dockerfile                   # Tools in the main agent sandbox
 ├── profile.md                   # Instructions delivered to the coding agent
 ├── start-here.md                 # Optional guide for the user
 └── services/
@@ -31,7 +31,7 @@ In `profile.json`, set `version: 1`, choose a `name` and give a short `descripti
 manifest format, not the release number of your profile.** Keep it at `1` when
 making a new Git revision. The name used by `profile add team-dev ...` is its
 registration name in Factory and can differ from the manifest's `name`. Omit
-`services` for a profile with only the coding-agent container.
+`services` for a profile with only the main agent sandbox.
 Declare supported coding agents with `agents`, using
 `pi`, `codex`, `claude` and/or `agy`. Without that list, an ordinary profile is
 Pi-only. Declaring another agent does not translate Pi extensions or resources.
@@ -96,7 +96,7 @@ Use Factory's runtime keys instead of baking your own into the image, and do
 not replace the application's entrypoint with `sshd`. The application's
 entrypoint stays PID 1; Factory starts the SSH server separately in that container.
 
-The coding-agent container receives a client key and configuration for all profile
+The main agent sandbox receives a client key and configuration for all profile
 hosts. For the example:
 
 ```sh
@@ -114,8 +114,8 @@ container IP addresses. Hosts can reach each other directly on this private
 network. Use full hostnames in HTTP URLs, such as
 `http://reporting.profile.internal:8080`, so requests bypass the outbound proxy
 even from a container started before that service was added.
-Factory's SSH client configuration is supplied to the coding-agent
-container; configure application-owned credentials if another service needs its
+Factory's SSH client configuration is supplied to the main agent sandbox;
+configure application-owned credentials if another service needs its
 own authenticated connections to a peer.
 
 With Pi's inner sandbox enabled, the agent uses the existing `bash_escalate`
@@ -145,14 +145,14 @@ Factory saves generated values in the sandbox's private state, outside the
 profile folder. Stop, start and rebuild retain them; a new sandbox gets new values.
 Do not hardcode passwords in `profile.json`, Dockerfiles or `profile.md`.
 
-The coding-agent container reads the declared `connections` values through
+The main agent sandbox reads the declared `connections` values through
 `/run/profile-services/connections.json`. An application running there can read
 that file and pass the required values to its process at runtime. Factory does
 not automatically set `DATABASE_URL`, `PGPASSWORD` or other application variables
-in the coding-agent container. Its managed agent instructions identify the file
+in the main agent sandbox. Its managed agent instructions identify the file
 and available services; they do not contain the generated passwords.
 
-For user-supplied variables in the coding-agent container, select a host file in
+For user-supplied variables in the main agent sandbox, select a host file in
 **Resources & environment → Credentials environment file**. That file does not
 set variables in profile service containers. Keep it outside the profile repository.
 
@@ -209,10 +209,9 @@ ai-sandbox-factory profile show team-dev
 ```
 
 For an installed Factory without its source checkout, copy the bundled example
-from an existing sandbox. Run `podman ps --format '{{.Names}}'` on the host and
-replace `CONTAINER` below with its coding-agent container name: for example,
-`pi-sandbox-factory-my-box` for Pi or `pi-sandbox-factory-my-box-agent` for another
-coding agent. The sandbox must have been created or rebuilt with a Factory version
+from an existing sandbox. Find the main agent sandbox under **Actions… →
+Troubleshooting… → Containers…** and replace `CONTAINER` below with its container
+name, for example `pi-sandbox-factory-my-box`. The sandbox must have been created or rebuilt with a Factory version
 that includes this guide, and be running with the applied profile mounted:
 
 ```sh
@@ -231,10 +230,10 @@ Run the SSH and direct TCP SQL checks in `start-here.md`, then verify:
 
 - Both hostnames resolve and each host accepts its documented SSH command.
 - Each SSH SQL command returns its own database name (`app` or `reports`).
-- Direct SQL from the coding-agent container uses the hostname, port and credentials from `connections.json`.
+- Direct SQL from the main agent sandbox uses the hostname, port and credentials from `connections.json`.
 - Data written to one host is absent from the other.
 - Stop/start keeps both hosts' data and generated credentials.
-- Rebuilding the coding-agent container keeps the profile services and their data.
+- Rebuilding the main agent sandbox keeps the profile services and their data.
 
 Use a disposable sandbox for these checks. **Delete sandbox** deletes its profile
 service data as well as its other private data; it keeps host project files.
@@ -242,7 +241,7 @@ service data as well as its other private data; it keeps host project files.
 ## Edit the profile of an existing sandbox
 
 Profile customization is occasional environment setup and maintenance. Use it
-when the project needs persistent system tools in the coding-agent container,
+when the project needs persistent system tools in the main agent sandbox,
 a service such as a database, a change to those requirements, or maintenance
 requested by the user. Once the tools and services meet the task's needs, work
 in the existing environment. Starting
@@ -257,7 +256,7 @@ source files; it does not fetch a newer upstream revision or modify the Library.
 A profile originally installed from a repository subfolder becomes a standalone
 folder. The host folder is yours to keep and version, independently of the project.
 
-Attaching this folder replaces the coding-agent container so it can acquire the
+Attaching this folder replaces the main agent sandbox so it can acquire the
 new mount. Running agent work and terminals stop. Project files, private home,
 chats, sign-ins, existing services and their data are kept. A stopped sandbox
 stays stopped. If attachment fails, Factory restores the previous runtime and

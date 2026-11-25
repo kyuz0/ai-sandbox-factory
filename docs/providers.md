@@ -21,7 +21,7 @@ which API requests it needs, Factory can keep the key in a separate container
 and let the package discover models through a local proxy.
 
 You can also configure a service by editing Pi’s `models.json`. In that case the
-key lives in the development container. If your sandbox uses **Restricted**
+key lives in the main agent sandbox. If your sandbox uses **Restricted**
 networking, allow the service’s host and port under
 **Settings → Network and Web Search → Network**.
 
@@ -71,7 +71,7 @@ ai-sandbox-factory configure project --provider company --status
 
 With an `inference` declaration, keys pass over stdin into the companion and never
 reach the adapter. Without it, the adapter receives the key and owns its storage
-inside the development container.
+inside the main agent sandbox.
 
 Omit `local` to use only other sources; use `{}` to configure no providers. Already
 saved model entries and credentials are preserved when a source is disabled.
@@ -96,7 +96,7 @@ Copy [examples/provider](../examples/provider). Its manifest declares:
 - `version: 1`, `name`, `description`, and a relative `entry` module.
 - Optional `settings`: text fields, plus one secret field for the credential.
   Set `network: true` on a text field containing an HTTP(S) API endpoint.
-- Optional `network`: fixed `host:port` destinations for the development container.
+- Optional `network`: fixed `host:port` destinations for the main agent sandbox.
 - Optional `inference`: an HTTPS origin, API base path, authentication and allowed operations.
 - Optional `extensions` and `skills`: paths relative to the package.
 - Optional `git_source` and `git_ref`: another repository exported into `source/`.

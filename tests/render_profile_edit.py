@@ -17,7 +17,7 @@ from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout, check_input_layout
 
 
-async def capture(output,size):
+async def capture(output,size,only=None):
     with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
             patch.dict(os.environ,SANDBOX_REGISTRY_DIR=str(Path(tmp)/'library')):
         dashboard=record()
@@ -28,6 +28,8 @@ async def capture(output,size):
             async def shot(name):
                 await pilot.pause()
                 await pilot.wait_for_scheduled_animations()
+                if only and name not in only:
+                    return
                 if name in ('profile-sharing-copy-error','profile-sharing-copy-long-error'):
                     async def settled():
                         while any(button.has_class('-active') for button in app.screen.query(Button)):
@@ -251,6 +253,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
     parser.add_argument('--mono',action='store_true')
+    parser.add_argument('--only',nargs='+',help='Capture only these named states')
     args=parser.parse_args()
     args.output.mkdir(parents=True,exist_ok=True)
     if args.mono:
@@ -259,7 +262,7 @@ def main():
         os.environ.pop('NO_COLOR',None)
     os.environ['TEXTUAL_COLOR_SYSTEM']='truecolor'
     for size in ((80,24),(120,40),(220,50)):
-        asyncio.run(capture(args.output,size))
+        asyncio.run(capture(args.output,size,args.only))
 
 
 if __name__=='__main__':

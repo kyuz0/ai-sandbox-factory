@@ -155,6 +155,7 @@ class ProfileServicesTests(unittest.TestCase):
         for agent in ('pi','codex','claude','agy'):
             with self.subTest(agent=agent):
                 text=services.guidance(dict(self.config,primary_agent=agent))
+                self.assertIn('private network shared with your Main agent sandbox.',text)
                 self.assertIn('ssh -F /run/profile-services/config database.profile.internal',text)
                 self.assertIn('already enables batch mode and pins each service’s host key',text)
                 self.assertIn('without identity or host-key overrides',text)
@@ -285,7 +286,7 @@ class AppliedRecipeTests(unittest.TestCase):
             for changed in (worker/'Dockerfile',client/'worker-tools.mjs'):
                 with self.subTest(changed=changed.name), patch.object(sandbox,'ROOT',source):
                     state = root / changed.name
-                    with self.assertRaisesRegex(ValueError,'coding-agent container sources changed'):
+                    with self.assertRaisesRegex(ValueError,'main agent sandbox sources changed'):
                         with profile_runtime.recording(config,state):
                             changed.write_text('changed while building\n')
                     self.assertFalse(list((state/'applied-profiles').iterdir()))

@@ -5,7 +5,7 @@ Pi can ask Codex (OpenAI), Claude (Anthropic) or Antigravity (Google) for a seco
 ## Setup
 
 1. Open **Advisors (Codex/Claude/Antigravity)** in **Review sandbox** or in **Settings**.
-   **Apply** builds the companion and restarts the development container, preserving
+   **Apply** builds the companion and restarts the main agent sandbox, preserving
    its workspace and private home.
 2. Select **Copy credentials from host** before applying, or return to the advisor
    settings afterward and choose **Sign in**. Login becomes available
@@ -82,7 +82,7 @@ Images in the chat are not automatically sent to an advisor.
 ```mermaid
 flowchart LR
     USER[You in the terminal manager] -->|interactive login| CLI
-    subgraph DEV[Development container]
+    subgraph DEV[Main agent sandbox]
         PI[Pi + FrostPi] --> EXT[advisor_ask extension]
         PI --> TOOLS[Local file and shell tools]
     end
@@ -96,7 +96,7 @@ flowchart LR
     RPC -->|reply, usage and conversation reference| EXT
 ```
 
-The companion has no direct network. Its gateway has a separate allowlist: enabling advisors does not widen the development container's network policy. Provider hosts are supplied as defaults; add exact hosts and ports under **Usage and network** if your account's login route requires others.
+The companion has no direct network. Its gateway has a separate allowlist: enabling advisors does not widen the main agent sandbox's network policy. Provider hosts are supplied as defaults; add exact hosts and ports under **Usage and network** if your account's login route requires others.
 
 Provider tools are disabled; Pi carries out suggested work through its own tools and approval rules.
 

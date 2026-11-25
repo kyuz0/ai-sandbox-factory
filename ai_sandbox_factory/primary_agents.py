@@ -53,7 +53,7 @@ def describe(config):
         return {}
     controller, proxy, *_ = names(config)
     return {
-        controller: (AGENTS[agent(config)], 'Keeps your account sign-in outside the workspace.'),
+        controller: (AGENTS[agent(config)] + ' sign-in', 'Keeps your account sign-in outside the main agent sandbox.'),
         proxy: ('Sign-in network gateway', 'Connects the coding agent to its provider.'),
     }
 
@@ -116,10 +116,10 @@ def guidance(config, state):
     lines = access_guidance(core.network_mode(config)) + [
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
-        'Run shell commands and access files through the native tools, which run inside this coding-agent container.',
+        'Run shell commands and access files through the native tools, which run inside this main agent sandbox.',
         'Follow approval requests from the native client. For a change to mounted folders or connector access, '
         'ask the user to review Settings → Folders or Settings → Connectors in Factory.',
-        'This coding-agent container has the following mounts:',
+        'This main agent sandbox has the following mounts:',
     ]
     lines.extend(f'- {json.dumps(path)} ({"read-only" if read_only else "read and write"})'
                  for path, read_only in folders.roots(config))

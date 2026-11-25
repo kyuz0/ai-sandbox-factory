@@ -442,7 +442,7 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         if failures:
             raise ValueError(f'Profile replacement failed: {error}. Some recovery steps need attention: '
                              + '; '.join(failures) + '. Project files and private volumes were not deleted.') from error
-        print('The rebuild failed. The previous coding-agent container, Factory helper containers and settings were restored; profile containers and their data were kept.', flush=True)
+        print('The rebuild failed. The previous main agent sandbox, Factory helper containers and settings were restored; profile containers and their data were kept.', flush=True)
         raise
     if not retain_previous:
         for name, container_id in moved.items():

@@ -61,6 +61,7 @@ class ProfileAuthoringTests(unittest.TestCase):
                     copied = sandbox.load_profile(str(applied / 'authoring/example'))
                     self.assertEqual(set(copied['services']), {'database', 'reporting'})
                     self.assertIn(profile_runtime.AUTHORING, profile_runtime.guidance(state))
+                    self.assertIn('Your Main agent sandbox was built from profile', profile_runtime.guidance(state))
                     self.assertIn(profile_runtime.AUTHORING, primary_agents.guidance(config, state))
                     self.assertIn('Actions… → Profile and services… → Edit profile…', profile_runtime.guidance(state, config))
                     self.assertEqual((applied / 'authoring/validate.py').read_bytes(), Path(profile_spec.__file__).read_bytes())

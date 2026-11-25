@@ -1,6 +1,6 @@
 # Developer + PostgreSQL
 
-This sandbox's coding-agent container has the normal development tools and the
+The main agent sandbox has the normal development tools and the
 PostgreSQL client. The `database` profile service runs PostgreSQL 17 in its own
 container at
 `database.profile.internal:5432`. Its database and user are both `app`.
@@ -26,7 +26,7 @@ ssh -F /run/profile-services/config database.profile.internal "psql -U app -d ap
 Use this database for the user's project.
 
 - Stopping and starting this sandbox keeps its database data.
-- Rebuilding the coding-agent container keeps this database container and its data.
+- Rebuilding the main agent sandbox keeps this database container and its data.
 - **Create from existing…** in Factory creates another sandbox using this sandbox's
   configuration. The new sandbox gets a new, empty PostgreSQL database. This
   database's data is not copied.

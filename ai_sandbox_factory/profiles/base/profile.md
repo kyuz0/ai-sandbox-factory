@@ -1,4 +1,4 @@
-The current environment is a development container. The project is mounted at /workspace.
+You are working in the main agent sandbox. The project is mounted at /workspace.
 This base profile supplies Node.js, Git, system Python (python3), and common
 command-line tools. Factory adds the selected coding agent. Pi sandboxes include Pi.
 The profile does not create an application Python virtual environment.

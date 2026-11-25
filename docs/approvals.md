@@ -22,7 +22,7 @@ you want the new mode to take effect. [Native agent approval controls](browser-e
 | **Auto (non-interactive)** | The reviewer decides. If it declines, Pi gets the reason. This is the default. |
 | **Auto (interactive)** | The reviewer goes first. If it declines or asks you to decide, Pi shows the action and the reason. You can allow it once or refuse. If the reviewer rates it critical, Pi asks you to type `APPROVE` to allow it. |
 | **Manual approval (ask me)** | You decide. With the inner sandbox on, ordinary Bash can run there without asking. Pi asks before running a command outside it. With the inner sandbox off, Pi asks before every Bash command. File tools ask when their own rules require permission. |
-| **YOLO (no approvals)** | Pi skips approval prompts and reviewer checks. Ordinary Bash stays in the inner sandbox while it’s on. Turning it off runs Bash directly in the development container. |
+| **YOLO (no approvals)** | Pi skips approval prompts and reviewer checks. Ordinary Bash stays in the inner sandbox while it’s on. Turning it off runs Bash directly in the main agent sandbox. |
 
 Pi shows approval prompts in its terminal or in FrostPi. If the reviewer fails,
 the action stays blocked in both Auto modes. File and network restrictions still
@@ -52,7 +52,7 @@ flowchart LR
     ASK -->|deny or cancel| STOP[Action stays blocked]
     REVIEW -->|deny or defer in Auto non-interactive| STOP
     REVIEW -->|reviewer failure| STOP
-    GRANT --> RUN[Execute inside the development container]
+    GRANT --> RUN[Execute inside the main agent sandbox]
 ```
 
 You can sign in through the agent browser, then authorize a command-line tool to
@@ -85,7 +85,7 @@ accepts optional turn and cost limits.
 
 The inner sandbox blocks Unix sockets, so changing tmux's socket directory does
 not make it work there. Escalated commands still require review and run inside
-the development container. Its network rules still apply. Keys held in separate
+the main agent sandbox. Its network rules still apply. Keys held in separate
 SSH and inference containers stay there. Permission to read an installed file
 does not also let Pi edit it.
 

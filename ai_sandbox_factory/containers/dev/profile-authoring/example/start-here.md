@@ -12,7 +12,7 @@ ssh -F /run/profile-services/config database.profile.internal "psql -U app -d ap
 ssh -F /run/profile-services/config reporting.profile.internal "psql -U reporter -d reports -c 'SELECT current_database();'"
 ```
 
-Connect directly from the coding-agent container using the saved connection
+Connect directly from the main agent sandbox using the saved connection
 settings and password:
 
 ```sh
@@ -31,6 +31,6 @@ Pi's inner sandbox requires `bash_escalate` for these direct network commands.
 The current approval mode applies. If approvals are off, enable approvals or use
 a sandbox terminal.
 
-Stop/start and coding-agent container rebuilds keep the databases. Create from
+Stop/start and main agent sandbox rebuilds keep the databases. Create from
 existing creates new databases without copying their data. Delete sandbox deletes
 both databases' data. Export any needed database data before deletion.
