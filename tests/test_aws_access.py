@@ -138,7 +138,7 @@ class AWSAccessTests(unittest.TestCase):
                     sandbox.apply_aws_settings(config, state, self.value, approval=effect)
                 updated = json.loads((state / 'config.json').read_text())
                 self.assertEqual(updated['aws_access'], self.value)
-                operations.build.assert_called_once_with(updated)
+                operations.build.assert_called_once_with(updated, state)
                 commands = [args[0] for args, _ in operations.engine.call_args_list]
                 self.assertIn(['podman', 'rm', 'old-workspace'], commands)
                 self.assertFalse(any(cmd[1] == 'volume' for cmd in commands))
