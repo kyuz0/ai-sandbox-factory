@@ -84,7 +84,9 @@ def main():
                     context=inside('cat','/home/node/.pi/agent/AGENTS.md').stdout
                     assert current[profile_edit.EDIT]['origin_digest'] in context, ('Missing original profile revision after restart',context)
                     assert 'forked from '+repr(current[profile_edit.EDIT]['origin_name']) in context
-                    assert 'Ask whether the user wants this profile tracked in Git' in context
+                    assert 'ask whether to track this folder with Git' in context, context
+                    assert 'whether that is one-time or ongoing' in context, context
+                    assert 'Follow standing maintenance instructions without asking again' in context, context
                     assert 'inspect this folder’s Git status, log and remotes' in context
                     assert git('rev-parse','HEAD')==latest
                     assert git('remote','get-url','origin')==remote
