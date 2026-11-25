@@ -13,6 +13,16 @@ from . import profile_runtime, profile_services, profile_spec
 PATH = '/opt/sandbox/profile'
 EDIT = 'editable_profile'
 
+PURPOSE = (
+    'Profile customization is occasional environment setup and maintenance. '
+    'Propose it when a task needs persistent system software in the coding-agent container, '
+    'a service such as a database, a change to those environment requirements, or user-requested environment maintenance. '
+    'Once the installed software and services meet the task’s needs, use the existing environment '
+    'and leave the profile unchanged. A new task, session or day alone is not a reason to fork, '
+    'rebuild or modify the profile. Manage ordinary project dependencies in the project as usual. '
+    'For later necessary changes, reuse an existing editable profile unless the user wants a separate fork.'
+)
+
 
 def roots(config):
     return [(PATH, False)] if config.get(EDIT) else []
@@ -28,7 +38,7 @@ def mounts(config):
 def guidance(config):
     agent = config.get('primary_agent', 'pi')
     if not config.get(EDIT):
-        return ('\nTo make permanent changes to this profile, ask the user to choose '
+        return ('\n' + PURPOSE + '\n\nTo make permanent changes to this profile, ask the user to choose '
                 'Actions… → Edit profile… and create an editable copy. This is separate from the project. '
                 'You can propose this fork when permanent package or service changes are useful. '
                 'After the copy is attached, ask whether the user wants it tracked in Git. '
@@ -36,10 +46,10 @@ def guidance(config):
     editable = config[EDIT]
     origin = (f'This editable profile was forked from {editable["origin_name"]!r}, '
               f'revision {editable["origin_digest"]}. ')
-    return (f'\n## Edit this sandbox’s profile\n\nThe writable profile source is {PATH}, separate from /workspace. '
+    return (f'\n## Edit this sandbox’s profile\n\n{PURPOSE}\n\nThe writable profile source is {PATH}, separate from /workspace. '
             + origin + f'The applied build record at {profile_runtime.PATH} is read-only and describes the current image. '
             'The editable folder survives restarts and image replacements and may contain changes not yet applied. '
-            'Editing the source does not change the running sandbox. Agree permanent changes with the user. '
+            'Editing the source does not change the running sandbox. Use the user’s existing authorization for profile maintenance; ask before expanding it. '
             'For packages, edit the top-level Dockerfile; for an additional host, add its Dockerfile and a '
             'services entry in profile.json. Update profile.md to explain the host and its connections. '
             f'Read {profile_runtime.AUTHORING} for the format and complete examples. '
@@ -51,15 +61,15 @@ def guidance(config):
             'services and data are kept. New services can be added. Replacing or removing an existing service '
             'requires a separate sandbox and application-specific data export/import. '
             'Do not claim an edit is installed until the user has applied it successfully. '
-            'Ask whether the user wants this profile tracked in Git if that choice has not been made. '
+            'Ask whether the user wants this profile tracked in Git when planning a necessary profile change, if that choice has not been made. '
             'If authorized, initialize a separate repository here, commit the approved profile changes, and '
             'use the supplied origin for authorized pushes. If not already specified, agree whether commits stay local or are pushed; '
             'honor an existing ongoing maintenance instruction without asking again. '
             'Use the configured SSH & Git connector for SSH-origin authentication; never copy its private keys into the profile. '
             'If access is missing, ask the user to configure Settings → Connectors → SSH & Git and any required Network destinations. '
-            'After a restart, inspect this folder’s Git status, log and remotes before continuing; preserve uncommitted edits. '
+            'When resuming profile maintenance, inspect this folder’s Git status, log and remotes before continuing; preserve uncommitted edits. '
             'Record the user’s Git tracking choice and approved ongoing maintenance instructions in profile.md so future sessions receive them after Apply. '
-            'When resuming, read the editable profile.md for choices saved since the last Apply; its unapplied package and service changes are still only proposals. '
+            'When resuming profile maintenance, read the editable profile.md for choices saved since the last Apply; its unapplied package and service changes are still only proposals. '
             'Keep the profile repository separate from the project repository and never initialize Git or publish without authorization.\n')
 
 

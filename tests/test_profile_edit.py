@@ -194,6 +194,27 @@ class EditTests(unittest.TestCase):
         self.assertNotIn((edit.PATH, False), folders.roots({}))
         self.assertIn('create an editable copy', edit.guidance({}))
 
+    def test_profile_customization_is_need_based_in_every_agent_context(self):
+        self.attach()
+        for agent in profile_spec.AGENTS:
+            for attached in (False,True):
+                with self.subTest(agent=agent,attached=attached):
+                    config={**self.config,'primary_agent':agent}
+                    if not attached:config.pop(edit.EDIT)
+                    context=edit.guidance(config)
+                    self.assertIn('occasional environment setup and maintenance',context)
+                    self.assertIn('persistent system software',context)
+                    self.assertIn('a service such as a database',context)
+                    self.assertIn('use the existing environment and leave the profile unchanged',context)
+                    self.assertIn('A new task, session or day alone is not a reason',context)
+                    self.assertIn('ordinary project dependencies in the project',context)
+                    self.assertIn('reuse an existing editable profile unless the user wants a separate fork',context)
+                    if attached:
+                        self.assertIn('When resuming profile maintenance, inspect',context)
+                        self.assertIn('When resuming profile maintenance, read',context)
+                        self.assertIn('when planning a necessary profile change',context)
+                        self.assertNotIn('After a restart, inspect',context)
+
     def test_applied_edits_keep_the_original_fork_identity_in_future_agent_context(self):
         reviewed=self.review()
         changed={**self.config,'profile':reviewed['profile']}
@@ -207,6 +228,7 @@ class EditTests(unittest.TestCase):
                 self.assertIn(changed['profile']['digest'],context)
                 self.assertIn(self.saved['digest'],context)
                 self.assertIn('forked from '+repr(self.saved['name']),context)
+                self.assertIn('occasional environment setup and maintenance',context)
                 self.assertIn(edit.PATH,context)
                 self.assertIn('Ask whether the user wants this profile tracked in Git',context)
                 self.assertIn('inspect this folder’s Git status, log and remotes',context)

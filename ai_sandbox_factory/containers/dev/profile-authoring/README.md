@@ -213,6 +213,15 @@ service data as well as its other private data; it keeps host project files.
 
 ## Edit the profile of an existing sandbox
 
+Profile customization is occasional environment setup and maintenance. Use it
+when the project needs persistent system tools in the coding-agent container,
+a service such as a database, a change to those requirements, or maintenance
+requested by the user. Once the tools and services meet the task's needs, work
+in the existing environment. Starting
+a new task, session or day does not require a fork, rebuild or profile edit.
+Manage ordinary project dependencies in the project. Reuse an attached editable
+profile for later necessary changes unless a separate fork is wanted.
+
 Choose **Actions… → Edit profile…**. Select a new or empty host folder outside
 the project and choose **Create editable copy…**. Review the replacement notice
 and confirm. Factory copies the sandbox's saved profile, including its saved
@@ -235,8 +244,9 @@ Inside the sandbox:
 Open the coding agent again after attachment. Factory's managed instructions tell
 it where to edit, where to read this guide, how to validate and what the user must
 choose to apply the changes. Editing a file does not change the running image.
-The agent should agree permanent changes with the user and explain the proposed
-replacement before asking the user to apply them.
+The agent works within the user's existing authorization and asks before
+expanding it. It explains the proposed replacement before asking the user to
+apply the changes.
 
 To add packages, edit the top-level Dockerfile. To add another host:
 
@@ -327,11 +337,12 @@ lock-file permission changes Git needs, even when ordinary file editing works.
 
 The editable folder and its Git history survive restarts and image replacements.
 Factory's managed context identifies the original profile name and revision, the
-currently applied revision and the writable source. The agent checks Git status,
-log and remotes before resuming, preserving uncommitted edits. Record the user's
-tracking choice and approved ongoing maintenance instructions in `profile.md`.
-The agent reads the editable file for choices saved since the last Apply;
-unapplied package and service changes remain proposals. After Apply, the saved
+currently applied revision and the writable source. When resuming profile
+maintenance, the agent checks Git status, log and remotes, preserving uncommitted
+edits. Record the user's tracking choice and approved ongoing maintenance
+instructions in `profile.md`. During profile maintenance, the agent reads the
+editable file for choices saved since the last Apply. Unapplied package and
+service changes remain proposals. After Apply, the saved
 instructions are also included in future agent sessions. They must reflect the user's actual
 choice, not turn a one-time push into standing authorization.
 
