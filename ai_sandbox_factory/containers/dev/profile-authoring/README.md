@@ -81,9 +81,7 @@ one service, reusing a generated-value name reuses that value. The example
 [Dockerfile](example/services/postgres/Dockerfile) installs OpenSSH alongside
 PostgreSQL and unlocks the root account for Factory's public key without setting a usable password.
 Generated values contain 43 URL-safe letters, digits, underscores and hyphens.
-They cannot be shared between services through a generated-value reference. For
-applications that need a shared password, a literal value in both services'
-`environment` settings works, but is visible in the profile source.
+They cannot be shared between services through a generated-value reference.
 
 Factory creates ordinary named volumes. An application's entrypoint must prepare
 its data directory for the user that runs the application, as PostgreSQL's does.
@@ -132,6 +130,30 @@ service format does not accept Compose configuration, host-published `ports`,
 credentials remain in Factory's helper containers; they are not profile services.
 Application passwords declared in `connections` are deliberately readable by the
 coding agent. Keep generated passwords out of source files and Git commits.
+
+## Environment variables and application passwords
+
+Use `services.<name>.environment` for variables in that service container. Use
+literal strings for ordinary settings and `{"generate": "name"}` for passwords.
+Factory saves generated values in the sandbox's private state, outside the
+profile folder. Stop, start and rebuild retain them; a new sandbox gets new values.
+Do not hardcode passwords in `profile.json`, Dockerfiles or `profile.md`.
+
+The coding-agent container reads the declared `connections` values through
+`/run/profile-services/connections.json`. An application running there can read
+that file and pass the required values to its process at runtime. Factory does
+not automatically set `DATABASE_URL`, `PGPASSWORD` or other application variables
+in the coding-agent container. Its managed agent instructions identify the file
+and available services; they do not contain the generated passwords.
+
+For user-supplied variables in the coding-agent container, select a host file in
+**Resources & environment → Credentials environment file**. That file does not
+set variables in profile service containers. Keep it outside the profile repository.
+
+Factory currently has no shared-secret reference or external credentials-file
+setting for profile services. Another service container does not receive
+`connections.json`; a profile cannot yet automatically inject one generated
+password into both a database and a separate application container.
 
 ## Tell the agent how to use the hosts
 

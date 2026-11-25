@@ -93,6 +93,28 @@ class ProfileServicesTests(unittest.TestCase):
         self.assertIn('MULTILINE=line1\nline2', argv)
         self.assertNotIn('env', run.call_args.kwargs)
 
+    def test_application_passwords_are_service_scoped_and_not_in_agent_instructions(self):
+        spec = copy.deepcopy(self.config['profile']['services']['database'])
+        self.config['profile']['services']['reporting'] = spec
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / 'profile-services'
+            services.prepare(self.config, Path(tmp))
+            connections = json.loads((directory / 'client/connections.json').read_text())
+            passwords = {name: entry['password'] for name, entry in connections.items()}
+            self.assertNotEqual(passwords['database'], passwords['reporting'])
+            for name, password in passwords.items():
+                environment = json.loads((directory / f'servers/{name}/environment.json').read_text())
+                self.assertEqual(environment['POSTGRES_PASSWORD'], password)
+                self.assertNotIn(password, json.dumps(self.config['profile']))
+            for agent in ('pi', 'codex', 'claude', 'agy'):
+                with self.subTest(agent=agent):
+                    text = services.guidance(dict(self.config, primary_agent=agent))
+                    self.assertIn('/run/profile-services/connections.json', text)
+                    self.assertIn('Read them at runtime', text)
+                    self.assertIn('do not put passwords in profile sources or Git', text)
+                    for password in passwords.values():
+                        self.assertNotIn(password, text)
+
     def test_start_error_preserves_diagnostic_and_redacts_container_values(self):
         with patch.object(sandbox, 'inspect', return_value=None), patch.object(sandbox, 'run',
                 return_value=subprocess.CompletedProcess([], 125, '', 'runtime denied secret-value')):

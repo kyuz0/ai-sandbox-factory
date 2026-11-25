@@ -418,7 +418,8 @@ def guidance(config):
              'Each profile service runs in its own container on a private network shared with your coding-agent container. '
              'You have administrative SSH access inside each one. External requests follow Factory proxy rules. '
              f'Read {CLIENT}/connections.json for application connection settings and credentials. '
-             'These credentials are deliberately available to you; they are separate from Factory connector credentials.']
+             'These credentials are deliberately available to you; they are separate from Factory connector credentials. '
+             'Read them at runtime when configuring an application; do not put passwords in profile sources or Git.']
     for name, spec in selected(config).items():
         lines.append(f'- {name}: {spec["description"]}. SSH: ssh -F {CLIENT}/config {hostname(name)} '
                      f'(user {spec["ssh"]["user"]}, port {spec["ssh"]["port"]}).')

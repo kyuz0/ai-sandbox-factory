@@ -262,6 +262,25 @@ agent-readable text, numbers and references to those environment values.
 `volumes` maps persistent volume names to paths inside that service. Factory
 chooses the engine names, mounts, private network and proxy settings.
 
+### Application credentials
+
+Keep passwords out of shareable profiles. Declare `{"generate": "database-password"}`
+instead of a password string, as above. Factory generates and saves the value in
+the sandbox's private state, outside the profile folder, and injects it into
+that service container's environment. Generated values belong to one sandbox
+and service; using the same name in another service does not share the password.
+
+The agent's managed instructions point to `/run/profile-services/connections.json`;
+they do not contain its passwords. An application in the coding-agent container
+can read that file and use its values at runtime. Factory does not automatically
+set application environment variables there. **Resources & environment → Credentials
+environment file** supplies user-selected variables to the coding-agent container
+only, not to profile services.
+
+Automatic injection of a shared password into several service containers is not
+supported yet. See the [profile authoring guide](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#environment-variables-and-application-passwords)
+for environment routing and credential handling.
+
 Stopping and starting a sandbox keeps its profile containers, application data,
 generated passwords and SSH keys. A rebuild keeps running profile services running and leaves a stopped sandbox
 stopped when it finishes. If a rebuild fails, Factory restores the previous coding-agent container,

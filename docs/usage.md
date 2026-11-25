@@ -245,6 +245,10 @@ and shows both paths so you can resolve the conflict.
 | Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
 Use **Resources & environment** for the container memory limit and environment file.
+**Credentials environment file** supplies variables to the coding-agent container,
+not to profile service containers. Keep this host file outside a shared profile
+repository. Profile services declare their own variables and can use
+[generated application passwords](profiles.md#application-credentials).
 
 Factory gives Pi, Codex, Claude Code and Antigravity instructions about the
 sandbox’s network, mounted folders and enabled features. If a task needs access
