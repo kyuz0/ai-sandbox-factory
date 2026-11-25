@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, OptionList, Static
 from ai_sandbox_factory import profile_edit, sandbox
 from ai_sandbox_factory.profile_edit_ui import EditProfile, ReviewProfile, consequences
 from ai_sandbox_factory.chat_history_ui import DeleteSandbox
@@ -34,6 +34,115 @@ def review(changed=True):
 
 
 class ProfileEditUI(unittest.IsolatedAsyncioTestCase):
+    def test_actions_group_profile_details_and_guide_without_duplicate_controls(self):
+        row=record()
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp)/'start-here.md').write_text('Profile guide')
+            row['config']['profile']['path']=temp
+            with patch('ai_sandbox_factory.sandbox_tui.sandbox_alerts',return_value=['fixture']):
+                menu=MoreActions(row,browser_running=True)
+            self.assertEqual([key for _,key in menu.groups[2]],
+                             ['profile-information','profile-guide','chats','diagnostics','alerts'])
+            self.assertNotIn('edit-profile',[key for _,key in menu.actions])
+            self.assertNotIn('saved-service-data',[key for _,key in menu.actions])
+
+    async def test_keyboard_opens_profile_then_edit_and_respects_running_job(self):
+        for size in ((80,24),(120,40),(220,50)):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as temp, \
+                    patch('ai_sandbox_factory.updates.available_update',return_value=None):
+                row=record()
+                service=FakeService([])
+                service.config=lambda name:copy.deepcopy(row['config'])
+                app=Cockpit(Path(temp),service)
+                async with app.run_test(size=size) as pilot:
+                    await app.workers.wait_for_complete()
+                    menu=MoreActions(row)
+                    await app.push_screen(menu,lambda action:app.perform(action,record=row) if action else None)
+                    menu.query_one(OptionList).highlighted=next(i for i,(_,key) in enumerate(menu.actions) if key=='profile-information')
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen,AppliedProfile)
+                    page=app.screen
+                    self.assertEqual(app.focused.id,'profile-information-back')
+                    await pilot.press('tab','enter')
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen,EditProfile)
+                    await pilot.press('escape')
+                    await app.workers.wait_for_complete()
+                    self.assertIs(app.screen,page)
+                    with patch.object(app,'active_job',return_value=object()) as active, \
+                            patch.object(app,'show_job') as show:
+                        page.query_one('#profile-information-edit',Button).focus()
+                        await pilot.press('enter')
+                        await pilot.pause()
+                        active.assert_called_with('example')
+                        show.assert_called_once()
+                        self.assertIs(app.screen,page)
+
+    async def test_returning_from_edit_refreshes_the_profile_page(self):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+            service=FakeService([])
+            updated=record(True)
+            service.config=lambda name:copy.deepcopy(updated['config'])
+            app=Cockpit(Path(temp),service)
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(record(),Path(temp))
+                await app.push_screen(page)
+                page.query_one('#profile-information-edit',Button).press()
+                await pilot.pause()
+                await pilot.press('escape')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(page.record['config'],updated['config'])
+                self.assertEqual(app.focused.id,'profile-information-edit')
+                self.assertIn(updated['config'][profile_edit.EDIT]['path'],
+                              ' '.join(str(widget.render()) for widget in page.query(Static)))
+
+    async def test_failed_profile_refresh_keeps_the_page_and_reports_the_cause(self):
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+            app=Cockpit(Path(temp),FakeService([]))
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(record(),Path(temp))
+                await app.push_screen(page)
+                page.query_one('#profile-information-edit',Button).press()
+                await pilot.pause()
+                with patch.object(app.service,'config',side_effect=ValueError('config.json: expected a comma at line 4')):
+                    await pilot.press('escape')
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                self.assertIs(app.screen,page)
+                self.assertEqual(app.focused.id,'profile-information-edit')
+                self.assertIn('expected a comma at line 4',str(page.query_one('#profile-information-error').render()))
+
+    async def test_dismissed_profile_refresh_cannot_update_another_screen(self):
+        entered,release=threading.Event(),threading.Event()
+        def config(name):
+            entered.set();release.wait()
+            return record(True)['config']
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
+            service=FakeService([])
+            service.config=config
+            app=Cockpit(Path(temp),service)
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(record(),Path(temp))
+                await app.push_screen(page)
+                page.query_one('#profile-information-edit',Button).press()
+                await pilot.pause()
+                await app.pop_screen()
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait,10))
+                    await app.pop_screen()
+                    replacement=EditProfile(record())
+                    await app.push_screen(replacement)
+                finally:
+                    release.set()
+                await pilot.pause()
+                self.assertIs(app.screen,replacement)
+                self.assertEqual(app.focused.id,'profile-edit-folder')
+
     async def test_replace_only_and_package_only_confirmations_show_only_relevant_effects(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update',return_value=None):
             for size in ((80,24),(120,40),(220,50)):

@@ -25,7 +25,7 @@ def consequences(record, review=None):
         if review.get('removed_services'):
             notes.append('Removed service containers are deleted. Their data volumes are kept until you delete this sandbox.')
         if (review or {}).get('retained_volumes'):
-            notes.append('Factory keeps the previous service data in Actions… → Saved service data…, where you can export or restore it.')
+            notes.append('Factory keeps the previous service data in Actions… → Profile and services… → Saved service data…, where you can export or restore it.')
         notes.append('Factory does not perform application-specific data migrations.')
     else:
         notes.append('Existing profile services and their application data are kept.')
@@ -95,7 +95,7 @@ class EditProfile(Screen):
             return
         destination = self.query_one('#profile-edit-folder', Input).value.strip()
         if not destination:
-            self.query_one('#profile-edit-error', Feedback).update('Enter a new or empty host folder for the editable profile.')
+            self.query_one('#profile-edit-error', Feedback).update('Enter a new or empty folder on this computer for the editable profile.')
             self.query_one('#profile-edit-folder', Input).focus()
             return
         self.query_one('#profile-edit-error', Feedback).update('')

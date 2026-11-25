@@ -77,8 +77,8 @@ or use different build folders and images.
 The same guide and example are readable inside new sandboxes at
 `/opt/sandbox/base-profile/authoring/README.md`. Factory tells the agent where to
 find them when explaining its applied profile. Applied files are read-only.
-**Actions… → Edit profile…** creates a separate writable copy outside the project,
-available to the agent at `/opt/sandbox/profile`.
+**Actions… → Profile and services… → Edit profile…** creates a separate writable
+copy outside the project, available to the agent at `/opt/sandbox/profile`.
 Review its diff and choose **Apply profile changes** to install an edited image
 or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
@@ -93,7 +93,7 @@ separate private state and application data. Its **Rebuild sandbox…** action
 keeps that saved profile; it does not fetch the original Library profile.
 If the source has an editable profile, **Share the profile folder** shares its
 folder. Both sandboxes see the same files, but editing them does not update either
-sandbox automatically. To install edits, choose **Actions… → Edit profile… → Review changes… →
+sandbox automatically. To install edits, choose **Actions… → Profile and services… → Edit profile… → Review changes… →
 Apply profile changes** in each sandbox you want to update. Databases and private state remain separate.
 
 Copy [examples/profile](../examples/profile) into a new repository. It contains:
@@ -313,9 +313,9 @@ A normal rebuild uses the saved applied service layout.
 
 ### Find, export or restore previous service data
 
-Open **Actions… → Saved service data…**. Factory lists each service's saved data
-with its date, source image, profile version and data volumes. The same page is
-available from **Profile and services…**, including after removing all services.
+Open **Actions… → Profile and services… → Saved service data…**. Factory lists
+each service's saved data with its date, source image, profile version and data
+volumes. Saved data remains available after removing all services.
 These are Podman volumes on your computer, separate from your project files.
 Factory keeps them when you apply changes that replace or remove a service,
 and before restoring saved data. This is not a scheduled backup of running services.

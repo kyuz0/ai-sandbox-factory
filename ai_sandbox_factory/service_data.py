@@ -97,7 +97,7 @@ def restore(config, state, set_id, target_service, gate=None):
     entry = _entry(config, set_id)
     spec = profile_services.selected(config).get(target_service)
     if spec is None:
-        raise ValueError(f'Service {target_service!r} is absent from this sandbox. Add it through Edit profile and Apply profile changes, or choose an existing service.')
+        raise ValueError(f'Service {target_service!r} is absent from this sandbox. Add it through Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes, or choose an existing service.')
     missing = entry['volumes'].keys() - spec['volumes'].keys()
     if missing:
         raise ValueError(f'Service {target_service!r} lacks saved volume keys {", ".join(sorted(missing))}. Choose a service that declares all saved volume keys.')

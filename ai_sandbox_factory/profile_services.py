@@ -145,7 +145,7 @@ def validate_update(original, updated, *, allow_service_changes=False):
     if any(changes(original, updated).values()):
         raise ValueError('This profile changes the sandbox’s profile services. '
                          'Nothing was stopped; the existing services and their data are unchanged. '
-                         'Use Edit profile → Review changes → Apply profile changes to install service changes. '
+                         'Use Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes to install service changes. '
                          'Rebuilds that leave profile services unchanged keep their containers and data.')
 
 

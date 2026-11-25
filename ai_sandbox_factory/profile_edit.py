@@ -67,7 +67,7 @@ def guidance(config):
         copied = ('This sandbox has an independent applied profile copy; no editable folder is attached. '
                   if config.get('profile', {}).get('customized_from') else '')
         return ('\n' + PURPOSE + '\n\n' + copied + f'The applied profile at {profile_runtime.PATH} is read-only. For a needed change, ask the user to choose '
-                'Actions… → Edit profile… and create an editable copy outside the project. '
+                'Actions… → Profile and services… → Edit profile… and create an editable copy outside the project. '
                 'Attaching it replaces this container and stops this session; continue in a new one.\n')
     editable = config[EDIT]
     origin = (f'This editable profile was forked from {editable["origin_name"]!r}, '
@@ -82,12 +82,12 @@ def guidance(config):
             f'Read {profile_runtime.AUTHORING} for the format and examples. '
             f'Validate with `python3 -I - {PATH} --agent {agent} < {profile_runtime.PATH}/authoring/validate.py`. '
             'Fix reported files or fields and validate again. Static checks do not build images or test startup.\n\n'
-            'Tell the user what changed and direct them to Actions… → Edit profile… → Review changes… → Apply profile changes. '
-            'Then reopen the coding agent. '
+            'Tell the user what changed and direct them to Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes. '
+            'Then resume your saved conversation. '
             'Factory builds before replacement. Replacement stops running agent work and terminals, and keeps project files, '
             'home, chats and sign-ins. Apply can add, replace or remove services. Affected services stop during preparation; '
             'replacements use copies of their data volumes. Factory keeps the previous data from replaced or removed services '
-            'under Actions… → Saved service data… for export or restore. '
+            'under Actions… → Profile and services… → Saved service data… for export or restore. '
             'Factory does not perform application-specific data migrations. '
             'Never claim an edit is installed until Apply succeeds.\n\n'
             'If undecided, ask whether to track this folder with Git, whether commits stay local or are pushed, '
@@ -183,7 +183,7 @@ def differences(before, after):
 def review(config, state):
     from . import sandbox
     if not config.get(EDIT):
-        raise ValueError('This sandbox has no editable profile. Choose Actions… → Edit profile… to create a copy first.')
+        raise ValueError('This sandbox has no editable profile. Choose Actions… → Profile and services… → Edit profile… to create a copy first.')
     value = freeze(config, state)
     updated = dict(config, profile=value)
     profile_services.validate(updated)
@@ -335,4 +335,4 @@ def apply(config, state, revision, gate=None):
         for row in service_data.entries(updated):
             if row['id'] not in previous_ids:
                 print(f'Saved service data: {row["service"]} · {row["time"]} · {row["reason"]}', flush=True)
-        print('Find the service, date and profile version in Actions… → Saved service data…. You can export or restore the saved data there.', flush=True)
+        print('Find the service, date and profile version in Actions… → Profile and services… → Saved service data… You can export or restore the saved data there.', flush=True)

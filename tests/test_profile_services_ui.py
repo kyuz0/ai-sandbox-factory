@@ -449,3 +449,51 @@ class ProfileServicesUI(unittest.IsolatedAsyncioTestCase):
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertIs(app.screen, app.screen_stack[0])
+
+    async def test_old_service_status_cannot_update_a_refreshed_profile_page(self):
+        for fail in (False,True):
+            entered, release=threading.Event(),threading.Event()
+            next_entered,next_release=threading.Event(),threading.Event()
+            calls=[]
+            def status(config):
+                calls.append(config)
+                if len(calls)==1:
+                    entered.set();release.wait()
+                    if fail: raise ValueError('obsolete service failed')
+                    return [{'name':'database','running':True}]
+                next_entered.set();next_release.wait()
+                return [{'name':'database','running':False}]
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as tmp, \
+                    patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                    patch('ai_sandbox_factory.profile_services.status',side_effect=status):
+                service=FakeService([])
+                app=Cockpit(Path(tmp),service)
+                async with app.run_test(size=(80,24)) as pilot:
+                    await app.workers.wait_for_complete()
+                    row={'name':'example','config':{'profile':sandbox.load_profile('developer-postgres')}}
+                    page=AppliedProfile(row,Path(tmp))
+                    try:
+                        await app.push_screen(page)
+                        self.assertTrue(await asyncio.to_thread(entered.wait,10))
+                        old_worker=next(worker for worker in app.workers if worker.name=='load_status')
+                        await app.push_screen(ProfileServicesHelp())
+                        updated=copy.deepcopy(row)
+                        updated['config']['profile']['services']['database']['description']='Updated database description'
+                        service.config=lambda name:copy.deepcopy(updated['config'])
+                        page.return_focus='profile-information-back'
+                        await pilot.press('escape')
+                        self.assertTrue(await asyncio.to_thread(next_entered.wait,10))
+                        status_widget=page.query_one('#profile-service-status')
+                        label=page.query_one('#profile-service-database')
+                        before=(str(status_widget.render()),status_widget.display,str(label.render()))
+                        release.set()
+                        await old_worker.wait()
+                        await pilot.pause()
+                        self.assertIsNone(old_worker.error)
+                        self.assertEqual((str(status_widget.render()),status_widget.display,str(label.render())),before)
+                        next_release.set()
+                        await app.workers.wait_for_complete()
+                        self.assertIn('Stopped',str(label.render()))
+                        self.assertTrue(all(worker.error is None for worker in app.workers))
+                    finally:
+                        release.set();next_release.set()

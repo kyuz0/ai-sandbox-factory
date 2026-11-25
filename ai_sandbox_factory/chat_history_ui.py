@@ -271,7 +271,7 @@ class DeleteSandbox(ModalScreen[bool]):
                     yield Static('Factory kept old service data when you applied profile changes or restored saved data. '
                                  'It is stored in Podman volumes on this computer. '
                                  'Deleting this sandbox permanently deletes that data. '
-                                 'Cancel and open Actions… → Saved service data… to see each service and date, '
+                                 'Cancel and open Actions… → Profile and services… → Saved service data… to see each service and date, '
                                  'and export anything you want to keep.',
                                  classes='chat-note', markup=False)
                     with WrappingCollapsible(title='Command-line export', collapsed=True):

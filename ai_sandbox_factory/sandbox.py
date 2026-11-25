@@ -2014,7 +2014,7 @@ def sandbox_command(args, state, parser):
                 print(f'Service data exported to {path}. Saved volumes and running services were unchanged.', flush=True)
                 return
             service_data.restore(config, state, args.saved, args.service, gate=args.apply_gate)
-            print(f'Service data restored to {args.service}. Find its previous data in Actions… → Saved service data….', flush=True)
+            print(f'Service data restored to {args.service}. Find its previous data in Actions… → Profile and services… → Saved service data…', flush=True)
             return
         except updating.UpdateCancelled:
             print('Service data operation cancelled. Existing service data was kept.', flush=True)

@@ -77,8 +77,8 @@ client, choose **Actions… → Open with…** and pick one, such as Pi CLI. [Us
 Add Debian packages to a running sandbox with **Actions… → Install system packages…**.
 [Installing system packages](docs/usage.md#install-system-packages)
 
-Make permanent profile changes with **Actions… → Edit profile…**. Factory creates
-a writable copy outside the project for you or your agent. Review its diff, then
+Make permanent profile changes with **Actions… → Profile and services… → Edit profile…**.
+Factory creates a writable copy outside the project for you or your agent. Review its diff, then
 apply package changes or add services while keeping existing application data.
 [Edit and validate profiles](ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 

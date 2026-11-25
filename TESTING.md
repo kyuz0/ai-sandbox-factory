@@ -1702,6 +1702,14 @@ PYTHONPATH=.:tests .venv/bin/python tests/render_profile_service_help.py /tmp/fa
 The UI checks cover help being absent from the main form, opening and dismissing
 the popup by keyboard and button, unchanged form values, and profiles without services.
 The renderer captures both entry points at 80×24, 120×40 and 220×50.
+The Actions menu has one **Profile and services…** entry. Its page owns
+**Edit profile…** and shows **Saved service data…** only when data exists.
+Keyboard checks cover both paths, returning after editing, and redirecting to
+an existing job. Returning reads the saved configuration without waiting for the
+sandbox list and restores focus to the initiating control. Delayed service-status
+successes and failures must not overwrite a refreshed profile page.
+`render_service_data.py` also captures the full menu with an open
+browser editor, a profile guide and alerts.
 
 The fresh-sandbox CI job runs the Pi lifecycle and Codex commit-recovery fixtures
 below before release.

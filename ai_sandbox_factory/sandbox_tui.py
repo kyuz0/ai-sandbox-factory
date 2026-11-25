@@ -1557,13 +1557,13 @@ class MoreActions(ModalScreen[Optional[str]]):
             lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
             lifecycle.append(('Stop browser editor', 'stop-editor'))
-        related = [('Troubleshooting…', 'diagnostics')]
+        related = []
         saved_profile = record.get('config', {}).get('profile')
         if isinstance(saved_profile, dict) and all(key in saved_profile for key in ('name', 'digest', 'path')):
-            related.insert(0, ('Profile and services…', 'profile-information'))
-            related.insert(1, ('Edit profile…', 'edit-profile'))
-        if record.get('config', {}).get('profile_service_recovery'):
-            related.insert(2, ('Saved service data…', 'saved-service-data'))
+            related.append(('Profile and services…', 'profile-information'))
+        profile = record.get('config', {}).get('profile') or {}
+        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
+            related.append(('Getting started…', 'profile-guide'))
         diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
         if not native:
             diagnostics.append(('Test MCP connections', 'connections'))
@@ -1572,9 +1572,7 @@ class MoreActions(ModalScreen[Optional[str]]):
             related.append(('Chat history…', 'chats'))
             self.pages['chats'] = ('Chat history', [(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats'),
                                                    ('Continue in another sandbox…', 'copy-chat')])
-        profile = record.get('config', {}).get('profile') or {}
-        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
-            related.append(('Getting started…', 'profile-guide'))
+        related.append(('Troubleshooting…', 'diagnostics'))
         if count := len(sandbox_alerts(record)):
             related.append((f'Alerts ({count})', 'alerts'))
         self.groups = [opening, lifecycle, related, [('Delete sandbox…', 'delete')]]
@@ -1685,10 +1683,13 @@ class AppliedProfile(Screen):
         super().__init__()
         self.add_class('bounded-form', 'profile-edit-flow')
         self.record, self.state = record, state
+        self.return_focus = None
+        self.refresh_request = None
 
     def compose(self):
         yield Header()
         yield Label('Profile and services · ' + self.record['name'], classes='title focused-settings-title')
+        yield Feedback('', id='profile-information-error', classes='profile-page-feedback', markup=False)
         with VerticalScroll(classes='form'):
             profile = self.record['config']['profile']
             with Vertical(classes='setting'):
@@ -1724,9 +1725,8 @@ class AppliedProfile(Screen):
                 yield Details([('Connection settings and application credentials', profile_services.CLIENT + '/connections.json')])
             if self.record['config'].get('profile_service_recovery'):
                 with Vertical(classes='setting'):
-                    yield Label('Saved service data', classes='group-title')
-                    yield Static('Factory kept previous service data. Export or restore it here.', classes='setting-help')
                     yield Button('Saved service data…', id='profile-information-data')
+                    yield Static('Export or restore service data kept by Factory.', classes='setting-help')
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='profile-information-back')
             yield Button('Edit profile…', id='profile-information-edit', variant='primary')
@@ -1737,14 +1737,49 @@ class AppliedProfile(Screen):
         if self.record['config']['profile'].get('services'):
             self.load_status()
 
+    def on_screen_resume(self):
+        if self.return_focus and self.app.screen is self:
+            self.refresh_saved_config()
+
+    @work(exit_on_error=False)
+    async def refresh_saved_config(self):
+        target = self.return_focus
+        if not target or self.app.screen is not self:
+            return
+        request = self.refresh_request = object()
+        try:
+            config = await asyncio.to_thread(self.app.service.config, self.record['name'])
+            error = ''
+        except (OSError, ValueError) as failure:
+            config = self.record['config']
+            error = f'Could not refresh the profile for {self.record["name"]}: {safe_text(failure)}. Check its saved configuration and reopen this page.'
+        if not self.is_attached or self.refresh_request is not request:
+            return
+        if config != self.record['config']:
+            self.record = {**self.record, 'config': config}
+            await self.recompose()
+            if self.record['config']['profile'].get('services'):
+                self.load_status()
+        self.query_one('#profile-information-error', Feedback).update(error)
+        if self.app.screen is self:
+            self.return_focus = None
+            self.call_after_refresh(self.restore_return_focus, target, request)
+
+    def restore_return_focus(self, target, request):
+        if self.is_attached and self.app.screen is self and self.refresh_request is request:
+            control = self.query_one_optional('#' + target, Button) or self.query_one('#profile-information-back', Button)
+            control.focus()
+            control.scroll_visible(animate=False)
+
     @work(exit_on_error=False)
     async def load_status(self):
+        config = self.record['config']
         try:
-            rows = await asyncio.to_thread(profile_services.status, self.record['config'])
+            rows = await asyncio.to_thread(profile_services.status, config)
             text = ''
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             text = 'Could not read profile service status: ' + safe_text(error) + '. Check the container engine and reopen this page.'
-        if self.is_attached:
+        if self.is_attached and self.record['config'] is config:
             message = self.query_one('#profile-service-status', Static)
             message.update(text)
             message.display = bool(text)
@@ -1764,7 +1799,11 @@ class AppliedProfile(Screen):
 
     @on(Button.Pressed, '#profile-information-edit')
     def edit_profile(self):
-        self.app.push_screen(EditProfile(self.record))
+        self.return_focus = 'profile-information-edit'
+        self.refresh_request = None
+        self.app.perform('edit-profile', record=self.record)
+        if self.app.screen is self:
+            self.return_focus = None
 
     @on(Button.Pressed, '#profile-services-information')
     def service_information(self):
@@ -1772,7 +1811,11 @@ class AppliedProfile(Screen):
 
     @on(Button.Pressed, '#profile-information-data')
     def saved_service_data(self):
+        self.return_focus = 'profile-information-data'
+        self.refresh_request = None
         self.app.perform('saved-service-data', record=self.record)
+        if self.app.screen is self:
+            self.return_focus = None
 
     def action_back(self):
         self.app.pop_screen()
@@ -2835,8 +2878,8 @@ class CreateFromSandbox(EntryDialog):
                     yield Checkbox('Share the profile folder', value=False, id='copy-share-profile')
                     yield Bullet('Both sandboxes see the same profile files.')
                     yield Bullet('Editing files does not update either sandbox. To install the edits, open '
-                                 'Actions… → Edit profile… → Review changes… → Apply profile changes in each sandbox you want to update.')
-                    yield Bullet('Leave unchecked for a separate copy. You can edit it later from Actions… → Edit profile….')
+                                 'Actions… → Profile and services… → Edit profile… → Review changes… → Apply profile changes in each sandbox you want to update.')
+                    yield Bullet('Leave unchecked for a separate copy. You can edit it later from Actions… → Profile and services… → Edit profile…')
                 yield Static('Application data, such as databases, is not copied. Profile services initialize new data.',
                              classes='setting-help', id='copy-data-help')
                 yield Static('Project files are not copied: choosing the same workspace shares its files.',
@@ -3315,7 +3358,7 @@ class SettingsForm(Screen):
                             yield Details([('Profile folder', 'shared with ' + value['reuse_from'] + '. Editing files does not update either sandbox automatically.')],
                                           id='review-profile-copy')
                         else:
-                            yield Details([('Profile folder', 'not shared. To edit the new sandbox’s profile later, choose Actions… → Edit profile….')],
+                            yield Details([('Profile folder', 'not shared. To edit the new sandbox’s profile later, choose Actions… → Profile and services… → Edit profile…')],
                                           id='review-profile-copy')
             if review and self.profile.get('services'):
                 with Vertical(classes='setting', id='review-profile-services'):
@@ -4550,6 +4593,7 @@ class Cockpit(App):
     .bounded-form > .form, .bounded-form > .wizard-actions,
     .native-primary-form > .form, .native-primary-form > .wizard-actions,
     .settings-review > .form, .settings-review > .wizard-actions { max-width: 100; }
+    .bounded-form > .profile-page-feedback { width: 100%; max-width: 100; height: auto; max-height: 25vh; padding: 1 3 0 3; overflow-y: auto; }
     .native-primary-form EditorFields > .setting { margin: 0 0 1 0; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 2 0 0; }
@@ -4864,7 +4908,7 @@ class Cockpit(App):
     Screen:nocolor #system-package-names.-invalid { border-left: thick #b8bdc3; }
     MoreActions #confirm-box { max-height: 100%; }
     MoreActions #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
-    MoreActions #more-actions { max-height: 15; }
+    MoreActions #more-actions { max-height: 55vh; }
     MoreActions #confirm-box .dialog-actions { margin: 0; }
     JobsMenu #confirm-box > OptionList { max-height: 55vh; }
     #job-log-error { height: auto; color: #ffb3a7; }

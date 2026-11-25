@@ -256,7 +256,7 @@ class RestoreServiceData(Screen):
                 args = ['service-data-restore', name, '--saved', self.saved['id'], '--service', target]
                 app.start_settings_job(name, 'Restore service data · ' + name,
                     lambda log, update: app.service.run_update(args, log, update), cooperative=True,
-                    success_message=f'Saved data restored to {target}. Its previous data is available in Actions… → Saved service data….')
+                    success_message=f'Saved data restored to {target}. Its previous data is available in Actions… → Profile and services… → Saved service data…')
         notes = ['Factory stops this service during restore.', 'Its current data is kept for recovery.',
                  'Its current image and connection settings are kept.', 'The image must be able to read the saved data format.',
                  'Other services and coding-agent work are unchanged.']

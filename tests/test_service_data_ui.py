@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Input, Select, Static
 
-from ai_sandbox_factory.sandbox_tui import Cockpit, MoreActions
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, Cockpit, MoreActions
 from ai_sandbox_factory.service_data_ui import ExportServiceData, RestoreServiceData, SavedServiceData
 from test_profile_edit_ui import record
 from test_tui import FakeService
@@ -58,13 +58,101 @@ class ServiceDataUI(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.screen.selected()['id'],'newest')
 
-    async def test_menu_only_shows_saved_data_when_it_exists(self):
+    async def test_profile_page_only_shows_saved_data_when_it_exists(self):
         plain = record()
         with_data, _ = recovery_record()
-        self.assertNotIn(('Saved service data…','saved-service-data'),MoreActions(plain).actions)
-        self.assertIn(('Saved service data…','saved-service-data'),MoreActions(with_data).actions)
-        with_data['config']['profile'].pop('services')
-        self.assertIn(('Saved service data…','saved-service-data'),MoreActions(with_data).actions)
+        removed=copy.deepcopy(with_data)
+        removed['config']['profile'].pop('services')
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                patch('ai_sandbox_factory.profile_services.status',return_value=[]):
+            app=Cockpit(Path(temp),FakeService([]))
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                for row,present in ((plain,False),(with_data,True),(removed,True)):
+                    actions=MoreActions(row).actions
+                    self.assertIn(('Profile and services…','profile-information'),actions)
+                    self.assertNotIn(('Edit profile…','edit-profile'),actions)
+                    self.assertNotIn(('Saved service data…','saved-service-data'),actions)
+                    page=AppliedProfile(row,Path(temp))
+                    await app.push_screen(page)
+                    await pilot.pause()
+                    self.assertEqual(bool(page.query('#profile-information-data')),present)
+                    await pilot.press('escape')
+
+    async def test_profile_data_entry_is_keyboard_accessible_and_respects_running_job(self):
+        row,_=recovery_record()
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                patch('ai_sandbox_factory.profile_services.status',return_value=[]):
+            service=FakeService([])
+            service.config=lambda name:copy.deepcopy(row['config'])
+            app=Cockpit(Path(temp),service)
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(row,Path(temp))
+                await app.push_screen(page)
+                page.query_one('#profile-information-data',Button).focus()
+                await pilot.pause()
+                self.assertTrue(page.query_one('.form').content_region.contains_region(app.focused.region))
+                with patch.object(app.service,'config',return_value=row['config']):
+                    await pilot.press('enter')
+                    await pilot.pause()
+                self.assertIsInstance(app.screen,SavedServiceData)
+                updated=copy.deepcopy(row['config'])
+                updated['profile_service_recovery'].append({**updated['profile_service_recovery'][0],'id':'latest-copy'})
+                service.config=lambda name:copy.deepcopy(updated)
+                await pilot.press('escape')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(app.focused.id,'profile-information-data')
+                self.assertTrue(page.query_one('.form').content_region.contains_region(app.focused.region))
+                with patch.object(app,'active_job',return_value=object()),patch.object(app,'show_job') as show:
+                    page.query_one('#profile-information-data',Button).focus()
+                    await pilot.press('enter')
+                    await pilot.pause()
+                    show.assert_called_once()
+                    self.assertIs(app.screen,page)
+
+    async def test_profile_refresh_error_stays_visible_when_returning_to_saved_data(self):
+        row,_=recovery_record()
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                patch('ai_sandbox_factory.profile_services.status',return_value=[]):
+            service=FakeService([])
+            service.config=lambda name:copy.deepcopy(row['config'])
+            app=Cockpit(Path(temp),service)
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(row,Path(temp))
+                await app.push_screen(page)
+                page.query_one('#profile-information-data',Button).focus()
+                await pilot.press('enter')
+                with patch.object(service,'config',side_effect=ValueError('config.json: unreadable saved profile')):
+                    await pilot.press('escape')
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                self.assertEqual(app.focused.id,'profile-information-data')
+                error=page.query_one('#profile-information-error')
+                self.assertIn('unreadable saved profile',str(error.render()))
+                self.assertTrue(page.region.contains_region(error.region))
+                self.assertLessEqual(error.region.bottom,page.query_one('.form').region.y)
+                self.assertTrue(page.query_one('.form').content_region.contains_region(app.focused.region))
+
+    async def test_failed_saved_data_open_does_not_leave_a_return_action(self):
+        row,_=recovery_record()
+        with tempfile.TemporaryDirectory() as temp, patch('ai_sandbox_factory.updates.available_update',return_value=None), \
+                patch('ai_sandbox_factory.profile_services.status',return_value=[]):
+            app=Cockpit(Path(temp),FakeService([]))
+            async with app.run_test(size=(80,24)) as pilot:
+                await app.workers.wait_for_complete()
+                page=AppliedProfile(row,Path(temp))
+                await app.push_screen(page)
+                with patch.object(app.service,'config',side_effect=ValueError('saved config unreadable')) as read:
+                    page.query_one('#profile-information-data',Button).press()
+                    await pilot.pause()
+                    self.assertIsNone(page.return_focus)
+                    page.query_one('#profile-services-information',Button).focus()
+                    await pilot.press('enter','escape')
+                    await app.workers.wait_for_complete()
+                    self.assertEqual(read.call_count,1)
 
     async def test_three_sizes_find_export_restore_and_cancel(self):
         for size in ((80,24),(120,40),(220,50)):
