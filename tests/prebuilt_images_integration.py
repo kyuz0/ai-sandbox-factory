@@ -297,7 +297,7 @@ def main():
     sys.path.insert(0, str(CHECKOUT))
     from ai_sandbox_factory import sandbox, image_builds, image_sources, sandbox_ssh, inference
     from image_registry import export, serve
-    config = {'engine': 'podman', 'uid': 1000, 'gid': 1000, 'image_source': 'local',
+    config = {'engine': 'podman', 'uid': os.getuid(), 'gid': os.getgid(), 'image_source': 'local',
               'common': sandbox.common_profile(), 'profile': sandbox.load_profile(str(sandbox.ROOT / 'profiles/base'))}
     stock = args.stock_image or 'localhost/factory-prebuilt-integration-stock:' + uuid4().hex[:10]
     if not args.stock_image:
