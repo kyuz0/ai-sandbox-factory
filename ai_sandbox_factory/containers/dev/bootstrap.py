@@ -7,6 +7,18 @@ import subprocess
 import sys
 import tempfile
 
+def profile_instructions():
+    saved = Path('/opt/sandbox/base-profile/profile')
+    profile = saved / 'profile.md' if saved.is_dir() else Path('/opt/sandbox/profile.md')
+    if not saved.is_dir() and not profile.exists():
+        return ''
+    try:
+        return profile.read_text(encoding='utf-8').rstrip()
+    except (OSError, UnicodeError) as error:
+        raise SystemExit(f'Cannot read profile instructions from {profile}: {error}. '
+                         'Restore the saved profile files or create a sandbox from the profile again.') from None
+
+
 os.umask(0o077)
 agent = Path('/home/node/.pi/agent')
 agent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -231,7 +243,7 @@ if subagents_enabled and Path(subagent_extensions[-1]).exists():
 settings_file.write_text(json.dumps(settings, indent=2) + '\n')
 
 # Pi natively reads this file; preserve user instructions around the managed block.
-profile = Path('/opt/sandbox/profile.md')
+profile_text = profile_instructions()
 append_file = agent / 'AGENTS.md'
 begin, end = '<!-- sandbox-profile -->', '<!-- /sandbox-profile -->'
 previous_append = agent / 'APPEND_SYSTEM.md'
@@ -248,21 +260,18 @@ if begin in contents and end in contents:
     contents = contents[:start] + contents[finish:]
 profile_prompt_file = Path('/opt/pi-security/config/profile-system-prompt.json')
 profile_prompt = json.loads(profile_prompt_file.read_text()).get('text', '') if profile_prompt_file.is_file() else ''
-if profile.exists() or profile_prompt:
+profile_context_file = Path('/opt/pi-security/config/profile-context.json')
+profile_context = json.loads(profile_context_file.read_text()).get('text', '') if profile_context_file.is_file() else ''
+if profile_text or profile_prompt or profile_context:
     guidance = '\n\n'.join(text for text in (
-        profile_prompt, profile.read_text().rstrip() if profile.exists() else '',
+        profile_prompt, profile_context, profile_text,
     ) if text)
-    for common in ('document-tools.md', 'security.md'):
-        extra = (Path('/opt/pi-security/config/security.md') if selection and common == 'security.md'
-                 else Path('/opt/sandbox') / common)
+    # Pi caches AGENTS.md for the session. The per-turn extension supplies the
+    # applied security guidance for configured sandboxes.
+    for common in (('document-tools.md',) if selection else ('document-tools.md', 'security.md')):
+        extra = Path('/opt/sandbox') / common
         if extra.exists():
             guidance += '\n\n' + extra.read_text().rstrip()
-    if selection:
-        guidance += ('\n\nSaved agent settings: approval=' + approval
-                     + ', inner sandbox=' + str(inner_sandbox)
-                     + ', goals=' + str(goals_enabled) + ', scheduling=' + str(scheduling_enabled)
-                     + '. These saved settings override generic feature descriptions above. '
-                     + 'Only use tools and skills actually present in this session.')
     if browser_enabled:
         guidance += '\n\n' + Path('/opt/betterwright/browser.md').read_text().rstrip()
     ssh_targets = Path('/etc/sandbox-ssh/targets.json')

@@ -563,7 +563,7 @@ with operation_locks.sandbox(state.name, 'create'):
                 sandbox.list_sandboxes(root, structured=True)
             demo, empty, offline = json.loads(output.getvalue())
             self.assertEqual([row['role'] for row in demo['containers']],
-                             ['Development', 'Network gateway', 'Model connections',
+                         ['Main agent sandbox', 'Network gateway', 'Model connections',
                               'Advisors', 'Advisor network gateway', 'Additional container'])
             self.assertEqual(demo['containers'][3]['status'], 'exited')
             self.assertTrue(all(row['purpose'] for row in demo['containers']))
@@ -697,6 +697,9 @@ class RecoveryTests(LifecycleTestCase):
             self.assertEqual(len(starts), 1)
             command = starts[0]
             self.assertIn('--network=bridge', command)
+            self.assertIn('--http-proxy=false', command)
+            self.assertIn('NO_PROXY=localhost,127.0.0.1,::1', command)
+            self.assertIn('no_proxy=localhost,127.0.0.1,::1', command)
             self.assertIn('--cap-drop=ALL', command)
             self.assertIn('--security-opt=no-new-privileges', command)
             self.assertIn('--security-opt=label=disable', command)
@@ -731,6 +734,8 @@ class RecoveryTests(LifecycleTestCase):
                     self.assertEqual(len(starts), 2)
                     proxy, dev = starts
                     self.assertIn('--pids-limit=-1', proxy)
+                    self.assertNotIn('--http-proxy=false', proxy)
+                    self.assertEqual('--http-proxy=false' in dev, engine == 'podman')
                     self.assertIn('--pids-limit=-1', dev)
                     self.assertNotIn('--security-opt=label=disable', proxy)
                     self.assertIn(f'{state / "squid.conf"}:/etc/squid/sandbox.conf:ro,Z', proxy)
@@ -743,6 +748,30 @@ class RecoveryTests(LifecycleTestCase):
                     self.assertIn('/absolute/path/to/project:/workspace:rw', dev)
                     self.assertIn('/absolute/path/to/agent:/pi-config:ro', dev)
                     self.assertFalse(any(arg.endswith((':z', ':Z', ',z', ',Z')) for arg in dev))
+
+    def test_unrestricted_native_workspace_bypasses_proxy_for_local_development_servers(self):
+        from ai_sandbox_factory import primary_agents
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / 'sandboxes' / 'demo'
+            state.mkdir(parents=True)
+            workspace = Path(tmp) / 'project'
+            workspace.mkdir()
+            config = dict(self.config, network='unrestricted', primary_agent='claude', profile={'name': 'base'},
+                          uid=1000, gid=1000, workspace=str(workspace))
+            (state / 'allowlist.txt').write_text('')
+            sandbox.write_json(state / 'config.json', config)
+            with (patch.object(primary_agents, 'up'), patch.object(primary_agents, 'check_ownership'),
+                  patch.object(primary_agents, 'worker_start'), patch.object(sandbox, 'inspect', return_value=None),
+                  patch.object(sandbox, 'image_names', return_value=('dev-image', 'proxy-image')),
+                  patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)) as run):
+                sandbox.up(config, state)
+            command = next(call.args[0] for call in run.call_args_list if call.args[0][1] == 'run')
+            self.assertIn('--http-proxy=false', command)
+            self.assertIn('NO_PROXY=localhost,127.0.0.1,::1', command)
+            self.assertIn('no_proxy=localhost,127.0.0.1,::1', command)
+            self.assertIn(f'{state / "primary-runtime"}:/run/primary-runtime:ro', command)
+            self.assertEqual(json.loads((state / 'primary-runtime/sandbox-state.json').read_text())['network'],
+                             'unrestricted')
 
     def test_up_preserves_healthy_containers_without_requiring_image_tags(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -9,6 +9,7 @@ from .settings_catalog import CATEGORIES, INSTALL_SYSTEM_PACKAGES, NETWORK_PATH
 SKILLS = {}
 PROFILE_SKILLS = {'base': []}
 RESOURCE_PREFIX = 'pi-sandbox-factory-'
+MAIN_AGENT_SANDBOX = 'Main agent sandbox'
 # The longest generated name is a Podman volume stored as a Linux directory.
 SANDBOX_NAME_LIMIT = 255 - len(RESOURCE_PREFIX + '-inference-socket')
 SANDBOX_NAME = re.compile(rf'[a-z0-9][a-z0-9-]{{0,{SANDBOX_NAME_LIMIT - 1}}}')
@@ -35,7 +36,7 @@ APPROVAL_MODES = {
                'read and write ask for approval when their permission rules require it.'),
     'off': ('YOLO (no approvals)',
             'Runs without approval prompts or reviewer checks.',
-            'skips approval prompts and reviewer checks. To run Bash directly in the development container, '
+            'skips approval prompts and reviewer checks. To run Bash directly in the main agent sandbox, '
             'turn off the inner sandbox too. If you leave it on, Bash stays inside it.'),
 }
 DEFAULTS = {'approval': 'automatic', 'approval_model': 'current', 'native_approval': 'automatic', 'inner_sandbox': True, 'goals': True,
@@ -202,7 +203,9 @@ def write_json(path, value):
 
 def access_guidance(network):
     lines = [
-        'You are working in an AI Sandbox Factory workspace. The agent and workspace terminal run without sudo. '
+        'You are working in an AI Sandbox Factory workspace. Your shell commands and development tools '
+        f'run in the {MAIN_AGENT_SANDBOX}, with access to your project files. '
+        'The agent and workspace terminal run without sudo. '
         f'If a system package is missing, tell the user which Debian package the task needs and why. Ask them to use '
         f'Actions → {INSTALL_SYSTEM_PACKAGES} on this sandbox in Factory.',
     ]
@@ -210,10 +213,17 @@ def access_guidance(network):
         lines.append('Network is Restricted. Workspace requests use the inherited proxy and configured allowlist. '
                      f'If access is denied, ask the user to allow the specific hostname and port under {NETWORK_PATH}.')
     else:
-        lines.append('Network is Unrestricted at the container boundary.')
-    lines.append('If the task needs a capability that is off or unavailable, explain why, ask the user for the smallest '
+        lines.append('Network is Unrestricted at the container boundary. Use ordinary network connections; '
+                     'do not configure the Restricted gateway. Keep the native client’s managed sign-in transport unchanged.')
+    lines.append('The user can change this sandbox’s settings in Factory. '
+                 'If the task needs a capability that is off or unavailable, explain why, ask the user for the smallest '
                  'change that would unblock the task, and wait for confirmation before using it. '
                  'Check the tools available in the current session after a change.')
+    lines.append('After settings change, expect a Factory notice on a subsequent turn beginning '
+                 '"Sandbox update: current Factory settings." '
+                 'Use the changed settings in place of older Factory settings; project instructions still apply.')
+    lines.append('Factory maintains /opt/sandbox/context.md with the current sandbox configuration, '
+                 'full guidance and examples. Read it when you need to review this sandbox’s settings.')
     return lines
 
 
@@ -233,7 +243,7 @@ def guidance(selected, subagents=False, *, network='allowlist'):
                       'manual': 'Boundary requests require human approval. Use bash_escalate with an exact command and justification when access outside the inner sandbox is required.',
                       'off': 'Approval prompts are disabled. Requests beyond the inner sandbox are refused; bash_escalate is unavailable.'}[mode])
     else:
-        lines.append('The inner command sandbox is disabled. Bash executes inside the outer devcontainer. '
+        lines.append('The inner command sandbox is disabled. Bash executes inside the main agent sandbox. '
                      + {'automatic': 'Shell commands require automatic review without human approval dialogs. Failures return a reason to the agent.',
                         'assisted': 'The reviewer checks shell commands. Pi asks the user if the reviewer rejects a command or leaves the decision open. If the reviewer fails, the command stays blocked.',
                         'manual': 'Shell commands require human approval.',
@@ -304,6 +314,6 @@ def guidance(selected, subagents=False, *, network='allowlist'):
     else:
         lines.append(f'Scheduled prompts are off in Settings → {features}.')
     lines.append(f'Conversation recall is set to {selected["compaction_recall"].capitalize()} under Settings → {features}.')
-    lines.append(web_access.guidance(selected['web_access']) or
+    lines.append(web_access.guidance(selected['web_access'], network == 'allowlist') or
                  f'Web Search is off. Ask the user to configure it under Settings → {search_settings} if a search is needed.')
     return '\n\n'.join(x for x in lines if x) + '\n'

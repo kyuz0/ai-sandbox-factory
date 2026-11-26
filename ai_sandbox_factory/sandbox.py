@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create and manage coding agent sandboxes with Podman or Docker."""
 import argparse
-from . import activity
+from . import activity, runtime_context
 from .cli import COMMAND
 from . import sandbox_skills
 from . import sandbox_extensions
@@ -9,7 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import editor_settings, operation_locks, system_packages
+from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit, service_data
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -24,20 +24,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextvars import ContextVar
 import time
 from urllib.parse import urlsplit
 from types import SimpleNamespace
 from uuid import uuid4
-from .sandbox_options import (RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
+from .sandbox_options import (MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, SANDBOX_NAME, SANDBOX_NAME_ERROR,
                               options, memory_limit, permissions, write_json, guidance)
 
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 PI_VERSION = '1.4.0'
+LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
+                      'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
+                      'configure', 'primary-login', 'primary-import')
+LOOPBACK_ENV = {'NO_PROXY': 'localhost,127.0.0.1,::1', 'no_proxy': 'localhost,127.0.0.1,::1'}
 RUNTIME_ENV = {
     'HTTP_PROXY': 'http://127.0.0.1:3128', 'HTTPS_PROXY': 'http://127.0.0.1:3128',
     'http_proxy': 'http://127.0.0.1:3128', 'https_proxy': 'http://127.0.0.1:3128',
-    'NO_PROXY': 'localhost,127.0.0.1,::1', 'no_proxy': 'localhost,127.0.0.1,::1',
+    **LOOPBACK_ENV,
     'NODE_USE_ENV_PROXY': '1',
 }
 
@@ -65,6 +70,11 @@ def load_profile(value):
             raise ValueError(f'Profile is missing {filename}: {path}')
     profile = {'name': metadata['name'], 'description': metadata.get('description', ''),
                'path': str(path), 'digest': tree_digest(path), 'registry_name': value}
+    services = profile_spec.services(metadata, path)
+    if services:
+        profile['services'] = services
+    if 'agents' in metadata:
+        profile['agents'] = metadata['agents']
     if metadata.get('defaults'):
         profile['defaults'] = metadata['defaults']
     if 'git_source' in metadata:
@@ -73,8 +83,11 @@ def load_profile(value):
                 or source.startswith('-') or any(c.isspace() for c in source)):
             raise ValueError('git_source must be a Git repository URL without whitespace')
         if (path / 'source').exists():
-            raise ValueError('git_source profiles must reserve source/ for fetched files')
-        profile['git_source'] = source
+            if not registry.bundled_source(path):
+                raise ValueError('This profile declares git_source but source/ has no saved source-revisions.json. '
+                                 'Remove git_source and git_ref to use these bundled files, or remove source/ to fetch the repository.')
+        else:
+            profile['git_source'] = source
     return profile
 
 
@@ -136,7 +149,43 @@ def common_profile():
                 **json.loads((path / 'package-source.json').read_text()))
 
 
+_build_cancelled = ContextVar('profile_build_cancelled', default=None)
+
+
+@contextmanager
+def cancellable_build(cancelled):
+    token = _build_cancelled.set(cancelled)
+    try:
+        yield
+    finally:
+        _build_cancelled.reset(token)
+
+
 def run(argv, capture=False, check=True, **kwargs):
+    cancelled = _build_cancelled.get()
+    if cancelled is not None:
+        if cancelled():
+            raise updating.UpdateCancelled()
+        command = [str(x) for x in argv]
+        process = subprocess.Popen(command, text=True, start_new_session=True,
+                                   stdout=subprocess.PIPE if capture else None, **kwargs)
+        try:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancelled():
+                        raise updating.UpdateCancelled()
+        except BaseException as error:
+            if process.poll() is None:
+                if not host_platform.stop_process_group(process):
+                    raise updating.StopFailed(f'Cannot stop profile build process {process.pid}. Its sandbox has not been replaced; inspect the process before retrying.') from error
+                process.communicate()
+            raise
+        if check and process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     return subprocess.run([str(x) for x in argv], check=check, text=True,
                           stdout=subprocess.PIPE if capture else None, **kwargs)
 
@@ -357,13 +406,18 @@ def image_graph(config):
     return operation_locks.image_graph(config['engine'], key)
 
 
-def build(config):
+def build(config, state=None):
     with image_graph(config):
-        _build(config)
+        with profile_runtime.recording(config, state):
+            _build(config)
 
 
 def _build(config):
     host_platform.check_engine(config['engine'], config.get('podman_connection'))
+    for part in ('profile', 'common'):
+        if part in config and tree_digest(Path(config[part]['path'])) != config[part]['digest']:
+            raise ValueError(f'The saved {part} sources were modified. Select the profile again before building.')
+    profile_services.build(config)
     dev, proxy = image_names(config)
     if primary_workspace.agent(config) != 'pi':
         with operation_locks.proxy_image(config['engine']):
@@ -462,12 +516,12 @@ def describe_containers(config, states, state=None):
     dev, gateway, *_ = names(config)
     advisor, advisor_gateway, *_ = sandbox_advisors.names(config)
     roles = {
-        dev: ('Development', 'Runs Pi, the editor backend and development tools.'),
-        gateway: ('Network gateway', 'Lets the development container reach only allowed destinations.'),
-        inference.names(config)[0]: ('Model connections', 'Connects Pi to model providers and keeps their API keys separate.'),
+        dev: (MAIN_AGENT_SANDBOX, 'Runs shell commands, the editor backend and development tools. Your project files are available here.'),
+        gateway: ('Network gateway', 'Lets the main agent sandbox reach only allowed destinations.'),
+        inference.names(config)[0]: ('Model connections', 'Connects to model providers and keeps their API keys separate.'),
         aws_access.worker_name(config): ('AWS access', 'Sends requests using the AWS permissions granted to this sandbox.'),
         sandbox_ssh.names(config)[0]: ('SSH access', 'Authenticates to configured SSH hosts and keeps private keys separate.'),
-        advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from Pi.'),
+        advisor: ('Advisors', 'Runs advisor tools and keeps their sign-ins separate from the main agent sandbox.'),
         advisor_gateway: ('Advisor network gateway', 'Lets the advisor container reach only allowed destinations.'),
     }
     for identifier in config.get('connector_ids', []):
@@ -480,10 +534,14 @@ def describe_containers(config, states, state=None):
                 pass  # A damaged manifest must not hide an existing container.
         roles[connectors.worker_name(config, identifier)] = ('Connector · ' + title,
             'Sends requests for the operations granted to this sandbox.')
+    for name, spec in profile_services.selected(config).items():
+        roles[profile_services.container(config, name)] = ('Profile · ' + name, spec['description'])
+    if profile_services.selected(config):
+        roles[profile_services.prefix(config) + '-gateway'] = ('Profile network gateway', 'Applies allowed external destinations for profile applications.')
+        roles[profile_services.prefix(config) + '-proxy'] = ('Profile proxy', 'Connects profile applications to their external gateway.')
     selected = primary_workspace.agent(config)
     if selected != 'pi':
         from . import primary_agents
-        roles[dev] = ('Workspace', 'Runs commands and holds project files and development tools.')
         roles.update(primary_agents.describe(config))
     ordered = [name for name in roles if name in states]
     ordered.extend(sorted(states.keys() - roles.keys()))
@@ -586,6 +644,19 @@ def list_sandboxes(state_root, structured=False):
         inventory.append(entry)
         rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-')))
     if structured:
+        groups = {}
+        for entry in inventory:
+            editable = entry['config'].get(profile_edit.EDIT)
+            folder = editable.get('path') if isinstance(editable, dict) else None
+            if isinstance(folder, str) and folder:
+                try:
+                    key = str(host_platform.comparison_path(folder))
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                groups.setdefault(key, []).append(entry)
+        for entries in groups.values():
+            for entry in entries:
+                entry['shared_profiles'] = sorted(other['name'] for other in entries if other is not entry)
         print(json.dumps(inventory))
         return
     # Keep paths and other saved values from introducing terminal control codes.
@@ -661,6 +732,7 @@ def native_chat_lock(state):
         yield
 
 
+@runtime_context.publish_after
 def up(config, state, *, prepare_sign_in=True):
     with native_chat_lock(state):
         return _up(config, state, prepare_sign_in=prepare_sign_in)
@@ -670,6 +742,8 @@ def _up(config, state, *, prepare_sign_in=True):
     from . import primary_agents
 
     folders.validate_config(config, state.parent, saved=True)
+    if config.get(profile_edit.EDIT):
+        profile_edit._folder(config[profile_edit.EDIT]['path'], config, state)
     engine = config['engine']
     dev, proxy, socket_volume, home_volume = names(config)
     restricted = network_mode(config) == 'allowlist'
@@ -682,6 +756,7 @@ def _up(config, state, *, prepare_sign_in=True):
     inference.check_ownership(config)
     # Verify both ownership labels before starting or recovering either one.
     current = {name: inspect(config, name) for name in (proxy, dev)}
+    profile_runtime.select(config, state, current[dev])
     if restricted:
         host_platform.check_model_gateway(config)
         upgrade_gateway_config(state)
@@ -698,6 +773,8 @@ def _up(config, state, *, prepare_sign_in=True):
             if current[name] is None and run([engine, 'image', 'inspect', tag], capture=True,
                                             check=False, stderr=subprocess.DEVNULL).returncode:
                 raise ValueError('Images are missing; run the build command first')
+    if current[dev] is None:
+        profile_runtime.ensure_cached(config, state)
     # Report blocked endpoints in an optional host seed; private models remain
     # writable inside the sandbox, and the proxy enforces their runtime policy.
     rules = parse_rules((state / 'allowlist.txt').read_text())
@@ -715,6 +792,7 @@ def _up(config, state, *, prepare_sign_in=True):
         prepared_connectors = connectors.prepare(config, state)
         prior_connector_start = {**connector_settings.helper_states(config), **{name: current[name] for name in active}}
     connector_settings.refresh_agent_context(config, state)
+    profile_services.up(config, state)
     sandbox_advisors.up(config, state)
     sandbox_ssh.up(config, state)
     inference.up(config, state)
@@ -754,7 +832,7 @@ def _up(config, state, *, prepare_sign_in=True):
             # labels. Mount-time :z relabeling cannot make later imports usable.
             # Disable label separation only for the development container;
             # the gateway keeps its SELinux confinement and labeled volumes.
-            args = ['--network=' + ('none' if restricted else 'bridge'), '--cap-drop=ALL',
+            args = (profile_services.network_args(config) or ['--network=' + ('none' if restricted else 'bridge')]) + ['--cap-drop=ALL',
                     # Allow ordinary echo requests without granting raw sockets.
                     '--sysctl', f'net.ipv4.ping_group_range={config["gid"]} {config["gid"]}',
                     '--security-opt=label=disable',
@@ -762,6 +840,9 @@ def _up(config, state, *, prepare_sign_in=True):
                     '-v', f'{config["workspace"]}:/workspace:rw',
                     '-v', f'{home_volume}:/home/node']
             args += folders.mounts(config)
+            args += profile_runtime.mounts(state)
+            args += profile_edit.mounts(config)
+            args += profile_services.mounts(config, state)
             args += sandbox_ssh.mounts(config, state)
             if native:
                 args += primary_agents.mounts(config, state)
@@ -787,17 +868,18 @@ def _up(config, state, *, prepare_sign_in=True):
             if config.get('pi_config'):
                 args += ['-v', f'{config["pi_config"]}:/pi-config:ro']
             if engine == 'podman':
-                args += ['--userns=keep-id:uid=1000,gid=1000']
+                # Podman otherwise imports the workstation's proxy variables into the workspace.
+                args += ['--http-proxy=false', '--userns=keep-id:uid=1000,gid=1000']
             if config.get('env_file'):
                 validate_env(config['env_file'])
                 args += ['--env-file', config['env_file']]
-            runtime_env = RUNTIME_ENV if restricted else {'NODE_USE_ENV_PROXY': '1'}
+            runtime_env = RUNTIME_ENV if restricted else {**LOOPBACK_ENV, 'NODE_USE_ENV_PROXY': '1'}
             if config.get('local_model_gateway'):
                 args += ['--env', 'LOCAL_MODEL_PORTS=' + config['local_model_ports']]
             args += ['--env', 'SANDBOX_NETWORK_MODE=' + network_mode(config)]
             selected = options(config.get('options'))
             if native:
-                args += ['--env', 'SANDBOX_PROFILE=base', '--env', 'PI_SANDBOX_CONTAINER=1']
+                args += ['--env', 'SANDBOX_PROFILE=' + config['profile']['name'], '--env', 'PI_SANDBOX_CONTAINER=1']
             else:
                 args += ['--env', 'SANDBOX_SUBAGENTS=' + ('1' if config.get('subagents', False) else '0')]
                 args += ['--env', 'SANDBOX_APPROVAL_MODE=' + selected['approval']]
@@ -811,6 +893,8 @@ def _up(config, state, *, prepare_sign_in=True):
                 batch_size = inference.embedding_batch_size(config)
                 if batch_size is not None:
                     args += ['--env', f'PI_KNOWLEDGE_EMBEDDING_BATCH_SIZE={batch_size}']
+            if profile_services.selected(config):
+                runtime_env = {**runtime_env, 'NO_PROXY': profile_services.no_proxy(config), 'no_proxy': profile_services.no_proxy(config)}
             for key, value in runtime_env.items():
                 args += ['--env', f'{key}={value}']
             run(base + args + [dev_image])
@@ -846,6 +930,7 @@ def _up(config, state, *, prepare_sign_in=True):
                 except (OSError, ValueError, subprocess.SubprocessError):
                     connector_settings.restore_start(config, prior_connector_start, connector_workers)
                     raise
+            profile_services.ready(config, state)
             if started_dev:
                 activity.record(state, 'started')
             print(f'Ready: {dev}; workspace /workspace; engine {engine}; network {network_mode(config)}')
@@ -869,6 +954,7 @@ def wait_gateway(config):
 def down(config, remove=False):
     for name in names(config)[:2]:
         inspect(config, name)
+    profile_services.check_ownership(config)
     sandbox_advisors.check_ownership(config)
     sandbox_ssh.check_ownership(config)
     inference.check_ownership(config)
@@ -887,6 +973,7 @@ def down(config, remove=False):
         if inspect(config, name):
             run([config['engine'], 'rm', '-f', name] if remove
                 else [config['engine'], 'stop', name])
+    profile_services.down(config, remove=remove)
     # Named volumes are deliberately kept, including sessions and editor state.
 
 
@@ -920,6 +1007,7 @@ def _delete(config, state):
     if primary_workspace.agent(config) != 'pi':
         from . import primary_agents
         primary_agents.delete_volumes(config)
+    profile_services.delete(config)
     shutil.rmtree(state)
     print(f'Deleted {config["name"]}: containers, private volumes, and saved state. Host workspace preserved.')
 
@@ -967,26 +1055,61 @@ def configure_local_gateway(config, value, rules):
             raise ValueError(f'Add local-model.internal:{port} to the allowlist')
 
 
+@runtime_context.publish_after
 def create(args, state):
+    source = getattr(args, 'reuse_from', None)
+    if source:
+        if not SANDBOX_NAME.fullmatch(source):
+            raise ValueError(f'Invalid source sandbox name {source!r}. {SANDBOX_NAME_ERROR}')
+        # Keep config and saved packages consistent while copying. Image builds
+        # run after this command returns and do not retain the source lock.
+        with operation_locks.sandbox(source, 'copy settings from'):
+            return _create(args, state)
+    return _create(args, state)
+
+
+def _create(args, state):
     selected = primary_workspace.agent({'primary_agent': getattr(args, 'primary_agent', 'pi') or 'pi'})
     auth_method = primary_workspace.auth({'primary_auth': getattr(args, 'primary_auth', None) or primary_workspace.DEFAULT_AUTH})
     native = selected != 'pi'
     reuse = {}
     if getattr(args, 'reuse_from', None):
-        if not SANDBOX_NAME.fullmatch(args.reuse_from):
-            raise ValueError('Invalid source sandbox name')
-        reuse = json.loads((state.parent / args.reuse_from / 'config.json').read_text())
+        source = state.parent / args.reuse_from
+        try:
+            reuse = json.loads((source / 'config.json').read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError(f'Cannot copy settings from {args.reuse_from}: cannot read {source / "config.json"}: {error}. '
+                             'Check its saved configuration or choose another completed sandbox.') from error
+        before_recovery = reuse.get('profile', {}).get('path')
+        reuse = recover_profile(reuse, source)
+        if (getattr(args, 'profile', None) == before_recovery
+                and reuse.get('profile', {}).get('path') != before_recovery):
+            raise ValueError(f'The applied profile for {args.reuse_from} changed during recovery. '
+                             'Start Create from existing again to review its recovered profile before copying.')
+    sharing = bool(getattr(args, 'reuse_editable_profile', False))
+    if sharing and not reuse:
+        raise ValueError('--reuse-editable-profile requires --reuse-from NAME. Select a source sandbox with an editable profile.')
+    if not getattr(args, 'profile', None):
+        args.profile = reuse['profile']['path'] if sharing else 'base'
+    if sharing and args.profile != reuse['profile']['path']:
+        raise ValueError(f'Sharing requires the source sandbox’s applied profile {reuse["profile"]["path"]!r}; '
+                         f'the selected profile is {args.profile!r}. '
+                         'Start Create from existing again to use its current profile, or copy without sharing.')
+    if sharing and not reuse.get(profile_edit.EDIT):
+        raise ValueError('The source sandbox has no editable profile folder to share. Choose another source or copy without sharing its profile folder.')
     prompt_file = getattr(args, 'system_prompt_file', None)
     saved_prompt = (prompt_library.prompt(json.loads(Path(prompt_file).read_text(encoding='utf-8'))) if prompt_file else
                     (prompt_library.selection(state.parent / args.reuse_from) if reuse else None))
-    if native:
-        profile = load_profile('base')
-    elif reuse and args.profile == reuse['profile']['path']:
+    if reuse and args.profile == reuse['profile']['path']:
         profile = reuse['profile']
         if tree_digest(Path(profile['path'])) != profile['digest']:
-            raise ValueError('Source profile snapshot was modified')
+            raise ValueError(f'Cannot copy settings from {args.reuse_from}: its saved profile snapshot at '
+                             f'{profile["path"]} was modified and no longer matches revision {profile["digest"]}. '
+                             'Restore the saved snapshot or choose another source sandbox.')
     else:
         profile = load_profile(args.profile)
+    if not profile_spec.compatible(profile, selected):
+        raise ValueError(f'Profile {profile["name"]!r} does not declare support for {primary_workspace.AGENTS[selected]}. Choose a compatible profile.')
     mode = getattr(args, 'network', 'allowlist')
     if mode == 'unrestricted' and (args.allowlist or args.allow_domain):
         raise ValueError('--network unrestricted cannot be combined with an allowlist')
@@ -1047,6 +1170,8 @@ def create(args, state):
     config['extra_folders'] = folders.validate(
         json.loads(Path(args.folders_file).read_text()) if getattr(args, 'folders_file', None) else [],
         workspace, state.parent, private_paths=[shared])
+    if sharing:
+        config[profile_edit.EDIT] = profile_edit.shared_source(reuse, config, state)
     if native:
         if shared or getattr(args, 'local_model_ports', None) or getattr(args, 'model_provider', None) or getattr(args, 'advisor', []):
             raise ValueError('Pi configuration, model providers, local models and advisors apply to Pi sandboxes.')
@@ -1062,7 +1187,8 @@ def create(args, state):
         config['ssh'] = sandbox_ssh.validate(json.loads(Path(args.ssh_file).read_text()))
     ids, grants = connector_settings.parse_cli_grants(getattr(args, 'connector', None) or [])
     from .creation import resource_conflicts
-    resource_conflicts({**config, 'connector_ids': ids}).require_available()
+    resource_conflicts({**config, 'profile': profile, 'connector_ids': ids}).require_available()
+    profile_services.validate({**config, 'profile': profile})
     config['website_groups'] = (network_groups.snapshots(options(config.get('options'))['website_groups'],
         curlie_revision=getattr(args, 'curlie_list', None)) if mode == 'allowlist' else {})
     if not native:
@@ -1104,7 +1230,9 @@ def create(args, state):
                 continue
             source = Path(skill['path'])
             if tree_digest(source) != skill['digest']:
-                raise ValueError('Source skill snapshot was modified: ' + skill['name'])
+                raise ValueError(f'Cannot copy settings from {args.reuse_from}: its saved skill {skill["name"]!r} '
+                                 f'at {skill["path"]} was modified and no longer matches revision {skill["digest"]}. '
+                                 'Restore the saved skill snapshot, omit that skill, or choose another source sandbox.')
             target = state / 'skills' / skill['digest']
             if not target.exists():
                 shutil.copytree(source, target)
@@ -1165,6 +1293,7 @@ def prepare_options(config, state):
     target = state / 'runtime-config'
     target.mkdir(exist_ok=True, mode=0o700)
     profile = selected_profile(config)
+    write_json(target / 'profile-context.json', {'text': profile_runtime.guidance(state, config) + profile_services.guidance(config)})
     write_json(target / 'profile-system-prompt.json', {
         'text': registry.profile_system_prompt(profile['path'], profile['name']),
     })
@@ -1186,15 +1315,36 @@ def prepare_options(config, state):
                 value['trustedModelEndpoints'] = inference.trusted_model_endpoints(config)
         if path.name == 'permissions.json':
             value = folders.permissions(permissions(value, selected), config)
+            for surface, action in (('external_directory_read', 'allow'), ('external_directory_write', 'deny')):
+                rules = value['permission'].setdefault(surface, {})
+                for reference in (runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'):
+                    rules[reference] = action
+            for reference in (runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'):
+                value['permission'].setdefault('path', {})[reference] = 'allow'
+            if profile_services.selected(config):
+                for surface, action in (('external_directory_read', 'allow'), ('external_directory_write', 'deny')):
+                    rules = value['permission'].setdefault(surface, {})
+                    rules[profile_services.CLIENT] = action
+                    rules[profile_services.CLIENT + '/*'] = action
+            if profile_runtime.applied(state):
+                for surface, action in (('external_directory_read', 'allow'), ('external_directory_write', 'deny')):
+                    rules = value['permission'].setdefault(surface, {})
+                    rules[profile_runtime.PATH] = action
+                    rules[profile_runtime.PATH + '/*'] = action
         if path.name == 'sandbox.json':
             filesystem = value.setdefault('filesystem', {})
+            filesystem.setdefault('additionalAllowRead', []).extend(
+                [runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'])
+            if profile_services.selected(config):
+                filesystem.setdefault('additionalAllowRead', []).append(profile_services.CLIENT)
+            if profile_runtime.applied(state):
+                filesystem.setdefault('additionalAllowRead', []).append(profile_runtime.PATH)
             filesystem['additionalWriteRoots'] = [p for p, ro in folders.roots(config) + folders.scratch_roots() if not ro]
             value.setdefault('network', {}).update(shell_network_policy(config, state))
             filesystem['protectCommonCredentialFiles'] = selected['protect_credentials']
         write_json(target / path.name, value)
     guide = target / 'security.md'
-    guide.write_text(guidance(selected, config.get('subagents', False), network=network_mode(config))
-                     + folders.guidance(config))
+    guide.write_text(runtime_context.pi_security(config, selected, network_mode(config)))
     guide.chmod(0o600)
 
 
@@ -1223,6 +1373,7 @@ def aws_installation(config, state, access):
 
 def replace_for_aws(config, updated, state, effect, containers):
     """Keep the old writable layers until the new runtime is ready."""
+    from . import browser_editor
     engine = config['engine']
     policy = state / 'squid.conf'
     prior_policy = policy.read_text()
@@ -1231,7 +1382,10 @@ def replace_for_aws(config, updated, state, effect, containers):
     stopped = []
     if effect == 'restart':
         aws_access.up(updated, state)  # Check the host sign-in before interrupting work.
+    browser = browser_editor.replacement_connection(config, state)
     try:
+        if browser:
+            browser_editor.stop(state)
         for name, info in containers.items():
             container_id = info['Id']
             if info['State']['Running']:
@@ -1246,8 +1400,12 @@ def replace_for_aws(config, updated, state, effect, containers):
                  'command -v aws >/dev/null && test -S /run/aws-access/request.sock'])
         connector_settings.refresh_agent_context(updated, state)
         activity.save_config(state, updated)
-    except Exception:
+        if browser:
+            browser_editor.resume_connection(updated, state, browser)
+    except Exception as failure:
         try:
+            if browser and browser_editor.active(state):
+                browser_editor.stop(state)
             for name in names(config)[:2]:
                 current = inspect(updated, name)
                 old = containers.get(name, {})
@@ -1266,9 +1424,11 @@ def replace_for_aws(config, updated, state, effect, containers):
                 for _, container_id in reversed(stopped):
                     run([engine, 'start', container_id])
             write_json(state / 'config.json', config)
+            if browser:
+                browser_editor.resume_connection(config, state, browser)
         except Exception as error:
-            raise ValueError('AWS setup failed and Factory could not restore the previous runtime. '
-                             'Your project files and saved chats remain. See the output above.') from error
+            raise ValueError(f'AWS setup failed: {failure}. Restoring the previous runtime also failed: {error}. '
+                             'Your project files and saved chats remain; fix the reported error and retry AWS setup.') from error
         print('AWS setup failed. Factory restored the previous containers and settings.', flush=True)
         raise
     for container_id in moved.values():
@@ -1287,7 +1447,7 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
     if approval is not None and effect != approval:
         raise ValueError('The sandbox changed while AWS access was open. Open AWS access to review the change again.')
     if effect in ('restart', 'replace', 'prepare'):
-        build(updated)
+        build(updated, state)
         latest_effect, latest_containers = aws_installation(config, state, value)
         if latest_effect != effect or {n: c['Id'] for n, c in latest_containers.items()} != {
                 n: c['Id'] for n, c in containers.items()}:
@@ -1344,6 +1504,7 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
     print('AWS permissions updated.' if value else 'AWS disconnected.')
 
 
+@runtime_context.publish_after_save
 def apply_settings(config, state, changes, *, apply_gate=None):
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
@@ -1486,22 +1647,17 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     model_providers.validate_network(updated, rules)
     # Refresh common inputs so old sandboxes acquire configurable bootstrap.
     updated['common'] = snapshot_profile(common_profile(), state)
-    build(updated)  # Leave the old running container intact if the build fails.
+    build(updated, state)  # Leave the old running container intact if the build fails.
     if not updating.begin_apply(apply_gate):
         return
     # Verify the first AWS session while the previous workspace is still running.
     if updated.get('aws_access') and not config.get('aws_access'):
         aws_access.up(updated, state)
-    print('Applying settings: recreating containers; saved workspace and home are preserved.')
-    down(config, remove=True)
-    activity.save_config(state, updated)
-    (state / 'allowlist.txt').write_text(text)
-    (state / 'squid.conf').write_text(network_policy(updated, rules))
-    if text != old_text:
-        activity.record(state, 'edited')
-    up(updated, state)
+    from . import profile_replacement
+    profile_replacement.apply(config, updated, state, text=text)
 
 
+@runtime_context.publish_after
 def update_network(config, state, text, groups=None, *, download_curlie=True, curlie_revision=None):
     if network_mode(config) != 'allowlist':
         raise ValueError('Use Settings to switch to restricted networking first.')
@@ -1528,6 +1684,7 @@ def update_network(config, state, text, groups=None, *, download_curlie=True, cu
             restart_existing(config, proxy)
             ensure_gateway(config)
         (state / 'allowlist.txt').write_text(text)
+        profile_services.update_policy(updated, state, text, updated.get('website_groups', {}))
         refresh_shell_network(updated, state)
         activity.save_config(state, updated)
         if old_text != text:
@@ -1535,12 +1692,13 @@ def update_network(config, state, text, groups=None, *, download_curlie=True, cu
     except Exception:
         (state / 'squid.conf').write_text(old_policy)
         (state / 'allowlist.txt').write_text(old_text)
+        profile_services.update_policy(config, state, old_text, config.get('website_groups', {}))
         refresh_shell_network(config, state)
         if current and current['State']['Running']:
             restart_existing(config, proxy)
             ensure_gateway(config)
         raise
-    print('Network rules updated. Development container and terminals preserved; gateway connections may need to reconnect.')
+    print('Network rules updated. Main agent sandbox and terminals preserved; gateway connections may need to reconnect.')
     return updated
 
 
@@ -1574,6 +1732,15 @@ def configure_models(config, state, preview=False):
     initialize_models(config, state, preview=preview)
 
 
+def recover_profile(config, state):
+    """Recover an interrupted profile transaction while its lifecycle lock is held."""
+    if not (Path(state) / 'profile-preparation').exists():
+        return config
+    from . import profile_replacement
+    profile_replacement.recover_preparation(config, state)
+    return json.loads((Path(state) / 'config.json').read_text())
+
+
 def open_selected(config, state, mode=None):
     from . import browser_editor
     mode = mode or editor_settings.load(state)['mode']
@@ -1581,6 +1748,7 @@ def open_selected(config, state, mode=None):
     if mode not in editor_settings.modes(selected):
         raise ValueError('Choose a client available for this coding agent in Settings → Editor.')
     with operation_locks.sandbox(state.name, 'open'):
+        config = recover_profile(config, state)
         if selected != 'pi' or mode == 'pi':
             up(config, state)
         if mode == 'browser':
@@ -1603,7 +1771,10 @@ def package_command(args):
             print(f'{name}: {description}')
         return
     name = args.package_name
-    if action == 'show':
+    if action == 'validate':
+        profile_spec.validate(registry.resolve('profile', name), args.agent)
+        print('Static checks passed: profile.json, required files, paths, agents and services. Dockerfiles and service startup are checked when you apply.')
+    elif action == 'show':
         path = registry.resolve(kind, name)
         print(json.dumps(registry.installed(kind).get(name) or registry.manifest(kind, path), indent=2))
     elif action == 'add':
@@ -1637,6 +1808,10 @@ def main(*, startup_notice=''):
         add.add_argument('--subdir', default='.', help='Plugin folder inside the source repository')
         for operation in ('update','remove','show'):
             item=operations.add_parser(operation);item.add_argument('package_name')
+        if kind == 'profile':
+            item = operations.add_parser('validate', help='Check a profile folder or installed profile without building')
+            item.add_argument('package_name')
+            item.add_argument('--agent', choices=profile_spec.AGENTS)
     listing = sub.add_parser('list', help='List saved sandboxes, container states, and workspace paths')
     listing.add_argument('--json', action='store_true', help='Structured saved inventory')
     new = sub.add_parser('create', help='Validate and save a new sandbox configuration')
@@ -1645,12 +1820,13 @@ def main(*, startup_notice=''):
                      help='Coding agent to open (default: Pi)')
     new.add_argument('--primary-auth', choices=['copy', 'login'], default=primary_workspace.DEFAULT_AUTH,
                      help='Copy the host sign-in (default), or sign in inside the sandbox')
-    new.add_argument('--profile', default='base', help='Installed profile name or custom profile directory (default: base)')
+    new.add_argument('--profile', help='Installed profile name or custom folder. Defaults to base, or the source’s applied profile with --reuse-editable-profile.')
     new.add_argument('--workspace', required=True)
     new.add_argument('--creation-token', help=argparse.SUPPRESS)
     new.add_argument('--working-directory', default='.', help='Starting folder relative to the workspace')
     new.add_argument('--folders-file', help='JSON list of additional host folders: source, name, read_only')
     new.add_argument('--reuse-from', help='Reuse saved provider and skill packages and advisor settings from NAME; other settings use the supplied flags')
+    new.add_argument('--reuse-editable-profile', action='store_true', help='With --reuse-from, share its editable profile folder. Starts with its applied profile; Apply updates each sandbox separately.')
     new.add_argument('--omit-skill', action='append', default=[], help='Omit an added skill when using --reuse-from')
     new.add_argument('--model-provider', action='append', help='Installed provider name; repeat for multiple sources (default: local)')
     new.add_argument('--providers-file', help='JSON object mapping provider names to non-secret settings')
@@ -1702,11 +1878,24 @@ def main(*, startup_notice=''):
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('service-data-list', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
-        if command in ('update', 'recreate', 'install-system-packages'):
+        if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
+        if command in ('service-data-export', 'service-data-restore'):
+            cmd.add_argument('--saved', required=True, help='Saved service data ID from service-data-list')
+        if command == 'service-data-export':
+            cmd.add_argument('--volume', required=True, help='Declared data volume key')
+            cmd.add_argument('--output', required=True, type=Path, help='New archive file on this computer')
+        if command == 'service-data-restore':
+            cmd.add_argument('--service', required=True, help='Service whose data will be replaced')
+        if command == 'profile-fork':
+            cmd.add_argument('--directory', required=True, help='New or empty host folder outside the project')
+        if command == 'profile-review':
+            cmd.add_argument('--output', type=Path, help='Write the structured review to this JSON file')
+        if command == 'profile-apply':
+            cmd.add_argument('--revision', required=True, help='Frozen revision returned by profile-review')
         if command == 'install-system-packages':
             cmd.add_argument('packages', nargs='+', help='Debian package names')
         if command == 'browser-editor':
@@ -1786,13 +1975,20 @@ def main(*, startup_notice=''):
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
     state = Path(args.state_dir).expanduser().resolve() / args.name
-    if args.command in ('create', 'build', 'up', 'down', 'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
-                        'configure', 'primary-login', 'primary-import'):
-        with operation_locks.sandbox(args.name, args.command):
-            sandbox_command(args, state, parser)
+    if args.command in LIFECYCLE_COMMANDS:
+        try:
+            with operation_locks.sandbox(args.name, args.command):
+                sandbox_command(args, state, parser)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            if not args.command.startswith(('profile-', 'service-data-')):
+                raise
+            parser.exit(1, f'Error: {error}\n')
         if args.command == 'create' and args.open:
             open_selected(json.loads((state / 'config.json').read_text()), state)
         return
+    if args.command == 'web-key' and not (args.status or args.export_keys):
+        with operation_locks.sandbox(args.name, 'update web search'), runtime_context.applied(state):
+            return sandbox_command(args, state, parser)
     return sandbox_command(args, state, parser)
 
 
@@ -1803,7 +1999,7 @@ def sandbox_command(args, state, parser):
         create(args, state)
         if args.start:
             config = json.loads((state / 'config.json').read_text())
-            build(config)
+            build(config, state)
             up(config, state)
             if not args.open and (config.get('local_model_ports') or config.get('model_providers')):
                 initialize_models(config, state)
@@ -1821,6 +2017,38 @@ def sandbox_command(args, state, parser):
             delete_incomplete(state)
             return
     config = json.loads((state / 'config.json').read_text())
+    if args.command in LIFECYCLE_COMMANDS:
+        config = recover_profile(config, state)
+    if args.command == 'service-data-list':
+        print(json.dumps(service_data.entries(config), indent=2))
+        return
+    if args.command in ('service-data-export', 'service-data-restore'):
+        try:
+            if args.command == 'service-data-export':
+                path = service_data.export(config, state, args.saved, args.volume, args.output, gate=args.apply_gate)
+                print(f'Service data exported to {path}. Saved volumes and running services were unchanged.', flush=True)
+                return
+            service_data.restore(config, state, args.saved, args.service, gate=args.apply_gate)
+            print(f'Service data restored to {args.service}. Find its previous data in Actions… → Profile and services… → Saved service data…', flush=True)
+            return
+        except updating.UpdateCancelled:
+            print('Service data operation cancelled. Existing service data was kept.', flush=True)
+            return
+    if args.command == 'profile-fork':
+        return profile_edit.fork(config, state, args.directory, args.apply_gate)
+    if args.command == 'profile-review':
+        reviewed = profile_edit.review(config, state)
+        if args.output:
+            write_json(args.output, reviewed)
+        else:
+            print(json.dumps(reviewed, indent=2))
+        return
+    if args.command == 'profile-apply':
+        try:
+            return profile_edit.apply(config, state, args.revision, args.apply_gate)
+        except updating.UpdateCancelled:
+            print('Profile preparation cancelled. The previous sandbox is unchanged.', flush=True)
+            return
     native = primary_workspace.agent(config) != 'pi'
     if native and args.command in ('configure', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check'):
         raise ValueError('This command applies to Pi sandboxes. Use open to launch the selected coding agent.')
@@ -1831,7 +2059,7 @@ def sandbox_command(args, state, parser):
         if not config.get('common'):
             config['common'] = snapshot_profile(common_profile(), state)
             activity.save_config(state, config)
-        build(config)
+        build(config, state)
     elif args.command == 'ssh-import-key':
         sandbox_ssh.import_key(config, state, args.key_file, args.duration)
         activity.record(state, 'edited')
@@ -1876,11 +2104,12 @@ def sandbox_command(args, state, parser):
             raise SystemExit(f'Error: {error}') from None
     elif args.command == 'recreate':
         from .job_progress import Progress
-        if native and (args.profile or args.subagents is not None):
-            raise ValueError('Profiles and Pi subagent settings apply to Pi sandboxes.')
-        building = native or args.profile or args.subagents is not None or args.browser is not None
-        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + [
-            'Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers']
+        original = json.loads(json.dumps(config))
+        if native and args.subagents is not None:
+            raise ValueError('Pi subagent settings apply to Pi sandboxes.')
+        building = (native or bool(config.get(profile_edit.EDIT)) or bool(config.get('profile', {}).get('customized_from'))
+                    or args.profile or args.subagents is not None or args.browser is not None)
+        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + ['Replace main agent sandbox']
         progress = Progress(labels)
         if args.subagents is not None:
             config['subagents'] = args.subagents
@@ -1888,34 +2117,33 @@ def sandbox_command(args, state, parser):
             config['options'] = options({**config.get('options', {}), 'browser': args.browser})
         if building:
             with progress.stage('Prepare sandbox sources'):
-                if native:
-                    config['common'] = snapshot_profile(common_profile(), state)
-                else:
-                    profile = config.get('profile')
-                    if args.profile or not profile:
-                        profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)
-                    updated = dict(config, profile=profile, common=snapshot_profile(common_profile(), state))
-                    if 'model_providers' in config:
-                        updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
-                    config = updated
+                profile = config.get('profile')
+                if args.profile or not profile:
+                    profile = snapshot_profile(load_profile(args.profile) if args.profile else selected_profile(config), state)
+                if not profile_spec.compatible(profile, primary_workspace.agent(config)):
+                    raise ValueError(f'Profile {profile["name"]!r} does not support the selected coding agent.')
+                updated = dict(config, profile=profile, common=snapshot_profile(common_profile(), state))
+                if 'model_providers' in config:
+                    updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
+                config = updated
+        profile_services.validate_update(original, config)
         with image_graph(config):
             if building:
                 with progress.stage('Build sandbox images'):
-                    build(config)
+                    build(config, state)
             if not updating.begin_apply(args.apply_gate):
                 return
-            with progress.stage('Save sandbox configuration'):
-                activity.save_config(state, config)
-            with progress.stage('Stop sandbox containers'):
-                down(config, remove=True)
-            with progress.stage('Start sandbox containers'):
-                up(config, state)
+            from . import profile_replacement
+            with progress.stage('Replace main agent sandbox'):
+                print('Replacing the main agent sandbox; saved workspace and home are preserved.', flush=True)
+                profile_replacement.apply(original, config, state)
     elif args.command == 'browser-editor':
         from . import browser_editor
         if not args.stop and not args.background:
             browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
         else:
             with operation_locks.sandbox(args.name, 'change the browser editor for'):
+                config = recover_profile(config, state)
                 if args.stop:
                     browser_editor.stop(state)
                 else:
@@ -2024,13 +2252,15 @@ def sandbox_command(args, state, parser):
         rules = parse_rules(text)
         if args.network == 'allowlist' and config.get('pi_config'):
             validate_models(Path(config['pi_config']), rules, strict=False)
-        down(config, remove=True)
-        config['network'] = args.network
-        activity.save_config(state, config)
-        (state / 'allowlist.txt').write_text(text)
-        (state / 'squid.conf').write_text(network_policy(config, rules))
-        up(config, state)
+        updated = dict(config, network=args.network)
+        profile_services.validate(updated)
+        from . import profile_replacement
+        profile_replacement.apply(config, updated, state, text=text)
     else:
+        # Resolve an interrupted replacement before a new shell/check attaches;
+        # the interactive command itself must not retain the lifecycle lock.
+        with operation_locks.sandbox(args.name, 'connect to'):
+            config = recover_profile(config, state)
         dev = names(config)[0]
         if args.command == 'check':
             source = (ROOT / 'checks/check_inside.py').read_text()
@@ -2043,6 +2273,7 @@ def sandbox_command(args, state, parser):
                 command = command[1:]
             if args.command == 'pi':
                 with operation_locks.sandbox(args.name, 'start Pi in'):
+                    config = recover_profile(config, state)
                     up(config, state)
                     if config.get('local_model_ports') or config.get('model_providers'):
                         initialize_models(config, state)

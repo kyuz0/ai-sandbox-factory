@@ -5,7 +5,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea
 
-from . import activity, prompt_library
+from . import activity, operation_locks, prompt_library
 from .settings_catalog import NO_SYSTEM_PROMPT_ADD_ON, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL
 from .tui_widgets import Feedback
 
@@ -21,7 +21,7 @@ class EditPrompt(ModalScreen[bool]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.title_text)
+            yield Label(self.title_text, classes='title')
             with VerticalScroll(id='prompt-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Name')
@@ -242,9 +242,10 @@ class SandboxPromptScreen(Screen):
     def save(self):
         selected = self.query_one(PromptChoice).selected()
         try:
-            changed = prompt_library.assign(self.state, selected)
-            if changed:
-                activity.record(self.state, 'edited')
+            with operation_locks.sandbox(self.sandbox_name, 'save the system prompt add-on for'):
+                changed = prompt_library.assign(self.state, selected)
+                if changed:
+                    activity.record(self.state, 'edited')
         except (OSError, ValueError) as error:
             self.query_one('#sandbox-prompt-error', Feedback).update(str(error))
             return

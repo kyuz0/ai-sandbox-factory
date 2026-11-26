@@ -98,9 +98,11 @@ def image(config):
     digest = hashlib.sha256()
     for filename in worker_files:
         digest.update((source / filename).read_bytes())
-    digest.update(sandbox.tree_digest(sandbox.ROOT / 'containers/dev/cli-tools').encode())
+    digest.update(sandbox.tree_digest(Path(config.get('common', {}).get('path', sandbox.ROOT / 'containers/dev')) / 'cli-tools').encode())
     worker_source = sandbox.tree_digest(sandbox.ROOT / 'containers/primary-worker')
     identity = f'{agent(config)}-{config["uid"]}-{config["gid"]}-{worker_source}-{digest.hexdigest()[:16]}'
+    if config.get('profile'):
+        identity += '-profile-' + config['profile']['digest']
     selected = options(config.get('options'))
     if selected['browser']:
         common = Path(config['common']['path'])
@@ -132,7 +134,12 @@ def build(config, target):
     sandbox.run([engine, 'build', '-t', worker, '--build-arg', f'USER_UID={config["uid"]}',
                  '--build-arg', f'USER_GID={config["gid"]}',
                  '--build-context', f'primary-files={sandbox.ROOT / "containers/primary"}',
-                 '--build-context', f'primary-dev={sandbox.ROOT / "containers/dev"}', root])
+                 '--build-context', f'primary-dev={common}', root])
+    if config.get('profile'):
+        profile_image = sandbox.stage_image(target, '-profile')
+        sandbox.run([engine, 'build', '-t', profile_image, '--build-arg', f'BASE_IMAGE={worker}',
+                     config['profile']['path']])
+        worker = profile_image
     if agent(config) in ('codex', 'claude', 'agy'):
         native = sandbox.stage_image(target, '-' + agent(config))
         sandbox.run([engine, 'build', '-t', native, '--build-arg', f'BASE_IMAGE={worker}',

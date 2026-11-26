@@ -18,7 +18,9 @@ from rich.text import Text
 from typing import NamedTuple, Optional
 from inspect import isawaitable
 
-from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages
+from . import sandbox, editor_settings, sandbox_ssh, prompt_library, system_packages, profile_spec, profile_services, profile_runtime, profile_edit
+from .profile_edit_ui import EditProfile
+from .service_data_ui import SavedServiceData
 from . import chat_history
 from .sandbox_jobs import CreationJob, Job, RebuildJob
 from .sandbox_jobs_ui import JobDetails, JobsMenu
@@ -42,7 +44,7 @@ from .credentials_ui import (CredentialDialog, LocalKeysDialog, LOCAL_KEYS_LABEL
 from .repository_ui import SSHDestinationFields
 from .connector_fields import ConnectorFields, connector_summary
 from . import hosted_models, inference, provider_credentials
-from .tui_widgets import EntryDialog, Checkbox, Feedback
+from .tui_widgets import WrappingCollapsible, Bullet, Command, Details, EntryDialog, Checkbox, Feedback
 from .aws_ui import AWSProfileChoices, AWSProfilePicker
 from .document_search_ui import CUSTOM, DocumentSearchDialog, DocumentSearchHelp, search_description, search_summary
 from . import embedding_models
@@ -56,7 +58,7 @@ from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from . import operation_locks
 from .updating import Update
-from .sandbox_options import (APPROVAL_MODES, DEFAULTS, SKILLS, PROFILE_SKILLS, options,
+from .sandbox_options import (APPROVAL_MODES, DEFAULTS, MAIN_AGENT_SANDBOX, SKILLS, PROFILE_SKILLS, options,
                               endpoint_rule, memory_limit, write_json, SANDBOX_NAME,
                               SANDBOX_NAME_ERROR, SANDBOX_NAME_LIMIT)
 
@@ -205,6 +207,8 @@ def copy_draft(record, state_root):
                  name='', workspace=config['workspace'], workspace_parent=config['workspace'],
                  env_file='', pi_config='', working_directory='.',
                  reuse_from=record['name'], reused_profile=copy.deepcopy(config['profile']))
+    value['share_editable_profile'] = False
+    value['source_editable_profile'] = copy.deepcopy(config.get(profile_edit.EDIT))
     value['options']['approval_model'] = 'current'  # Copies start without provider credentials.
     value['editor'] = editor_settings.copy_choice(editor_settings.load(Path(state_root) / record['name']))
     value['allowlist'] = (Path(state_root) / record['name'] / 'allowlist.txt').read_text()
@@ -212,6 +216,15 @@ def copy_draft(record, state_root):
     for row in value['options']['web_access']['providers'].values():
         row['has_key'] = False
     return value
+
+
+def shares_editable_profile(draft):
+    return bool(draft.get('share_editable_profile') and draft.get('source_editable_profile')
+                and draft.get('reused_profile', {}).get('path') == draft.get('profile'))
+
+
+def has_web_search_keys(config):
+    return any(row['has_key'] for row in options(config.get('options'))['web_access']['providers'].values())
 
 
 def copy_for_agent(value, agent):
@@ -293,6 +306,19 @@ class Service:
     def config(self, name):
         return json.loads((self.state / name / 'config.json').read_text())
 
+    def review_profile(self, name):
+        with tempfile.TemporaryDirectory(prefix='factory-profile-review-') as temporary:
+            path = Path(temporary) / 'review.json'
+            result = self.capture('profile-review', name, '--output', str(path))
+            if result.returncode:
+                raise ValueError(f'Cannot review the profile for {name} (exit {result.returncode}): '
+                                 + (result.stderr.strip() or result.stdout.strip() or 'The review worker returned no diagnostic output.'))
+            try:
+                return json.loads(path.read_text())
+            except (OSError, ValueError) as error:
+                raise ValueError(f'Cannot read the profile review for {name}: {error}. '
+                                 f'Worker output: {result.stdout}. Retry Review changes.') from error
+
     def export_chats(self, name, path):
         return chat_history.export_chats(self.chat_config(name), self.state / name, path)
 
@@ -316,7 +342,10 @@ class Service:
     def search_keys(self, name):
         result = subprocess.run(self.command('web-key', name, '--export-keys'), text=True, capture_output=True)
         if result.returncode:
-            raise ValueError('Could not read saved search keys. Make sure the sandbox is running.')
+            # stdout is the credential export; never include it in an error.
+            cause = model_providers.diagnostic(result.stderr) or 'The key export command returned no diagnostic output.'
+            raise ValueError(f'Cannot copy Web Search API keys from {name} (exit {result.returncode}): {cause}. '
+                             'Try copying again, or leave Include Web Search API keys unchecked.')
         return json.loads(result.stdout)
 
     def check_creation(self, draft, approved=None):
@@ -376,6 +405,8 @@ class Service:
             args += ['--folders-file', str(folder_file), '--working-directory', draft.get('working_directory', '.')]
             if draft.get('reuse_from'):
                 args += ['--reuse-from', draft['reuse_from']]
+                if shares_editable_profile(draft):
+                    args += ['--reuse-editable-profile']
                 for skill in draft.get('remove_skills', []):
                     args += ['--omit-skill', skill]
             if draft['network'] == 'allowlist':
@@ -455,10 +486,12 @@ class Service:
         return hosted_models.request(config, action, **values)
 
     def hosted_save(self, name, value):
-        return hosted_models.save(self.config(name), self.state / name, value)
+        with operation_locks.sandbox(name, 'save the model connection for'):
+            return hosted_models.save(self.config(name), self.state / name, value)
 
     def hosted_remove(self, name, provider):
-        return hosted_models.remove(self.config(name), self.state / name, provider)
+        with operation_locks.sandbox(name, 'remove the model connection for'):
+            return hosted_models.remove(self.config(name), self.state / name, provider)
 
     def hosted_select(self, name, provider, model, **values):
         result = hosted_models.select(self.config(name), provider, model, **values)
@@ -919,8 +952,9 @@ class CopyWebAccess(EntryDialog):
             with Vertical(classes='setting'):
                 yield Label('Source sandbox')
                 yield Select([(name, name) for name in self.records], value=next(iter(self.records)), allow_blank=False, id='copy-web-source')
-            with Vertical(classes='setting'):
-                yield Checkbox('Include search API keys', value=True, id='copy-web-keys')
+            yield Static('Copies Web Search settings into this form. The source sandbox is unchanged.', classes='setting-help')
+            with Vertical(classes='setting', id='copy-web-key-setting'):
+                yield Checkbox('Include Web Search API keys', value=True, id='copy-web-keys')
                 yield Static('', id='copy-web-help', markup=False, classes='setting-help')
             yield Feedback('', id='copy-web-error', markup=False, classes='error')
             with Horizontal(classes='buttons dialog-actions'):
@@ -934,10 +968,13 @@ class CopyWebAccess(EntryDialog):
     def source_changed(self):
         record = self.records[self.query_one('#copy-web-source', Select).value]
         checkbox = self.query_one('#copy-web-keys', Checkbox)
+        checkbox.display = has_web_search_keys(record['config'])
+        self.query_one('#copy-web-key-setting').display = checkbox.display
         checkbox.disabled = record['dev'] != 'running'
-        checkbox.value = not checkbox.disabled
+        checkbox.value = False
+        self.query_one('#copy-web-help', Static).display = checkbox.display and checkbox.disabled
         self.query_one('#copy-web-help', Static).update(
-            'Start this sandbox to include its saved API keys.' if checkbox.disabled else
+            'Start the source sandbox to copy its Web Search API keys.' if checkbox.disabled else
             'Copies provider settings and selected keys into this form. The source sandbox is unchanged.')
 
     def action_cancel(self):
@@ -954,7 +991,8 @@ class CopyWebAccess(EntryDialog):
         try:
             record = self.records[self.query_one('#copy-web-source', Select).value]
             value = web_access.settings(options(record['config'].get('options'))['web_access'])
-            include_keys = self.query_one('#copy-web-keys', Checkbox).value
+            choice = self.query_one('#copy-web-keys', Checkbox)
+            include_keys = choice.display and not choice.disabled and choice.value
             keys = {}
             if include_keys:
                 stored = await asyncio.to_thread(self.app.service.search_keys, record['name'])
@@ -1237,19 +1275,29 @@ class Confirm(ModalScreen[bool]):
     def action_cancel(self):
         self.dismiss(False)
 
-    def __init__(self, message, action, *, confirm_by_default, cancel_label='Cancel', title=None):
+    def __init__(self, message, action, *, confirm_by_default, cancel_label='Cancel', title=None, notes=()):
         super().__init__(classes='titled-confirm' if title else None)
         self.message, self.action = message, action
         self.cancel_label = cancel_label
         self.title_text = title
         self.confirm_by_default = confirm_by_default
+        self.notes = notes
+        self.set_class(bool(notes), 'with-notes')
         self.AUTO_FOCUS = '#yes' if confirm_by_default else '#cancel'
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            if self.title_text:
-                yield Label(self.title_text, markup=False)
-            yield Static(self.message, markup=False)
+            if self.notes:
+                with VerticalScroll(classes='confirm-notes'):
+                    if self.title_text:
+                        yield Label(self.title_text, markup=False, classes='title')
+                    yield Static(self.message, markup=False, classes='confirm-message')
+                    for note in self.notes:
+                        yield Bullet(note)
+            else:
+                if self.title_text:
+                    yield Label(self.title_text, markup=False, classes='title')
+                yield Static(self.message, markup=False)
             yield from self.action_buttons()
 
     def action_buttons(self):
@@ -1294,7 +1342,7 @@ class ConfirmCreationConflicts(Confirm):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.title_text, markup=False)
+            yield Label(self.title_text, markup=False, classes='title')
             with VerticalScroll():
                 yield Static(self.message, id='creation-conflict-list', markup=False)
             yield from self.action_buttons()
@@ -1309,7 +1357,7 @@ class InstallSystemPackages(EntryDialog):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Install system packages · ' + self.sandbox_name, markup=False)
+            yield Label('Install system packages · ' + self.sandbox_name, markup=False, classes='title')
             with VerticalScroll(id='system-packages-fields'):
                 with Vertical(classes='setting'):
                     yield Label('Debian package names')
@@ -1382,7 +1430,7 @@ class FactoryUpdateDetails(ModalScreen[None]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.heading)
+            yield Label(self.heading, classes='title')
             with VerticalScroll(id='factory-update-details'):
                 yield Static(self.message, markup=False)
             with Horizontal(classes='dialog-actions'):
@@ -1433,7 +1481,7 @@ class ApprovalHelp(ModalScreen):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Approval modes')
+            yield Label('Approval modes', classes='title')
             with VerticalScroll(id='approval-help'):
                 for label, _, explanation in APPROVAL_MODES.values():
                     with Horizontal(classes='approval-mode-help'):
@@ -1456,6 +1504,38 @@ class ApprovalHelp(ModalScreen):
         self.dismiss()
 
 
+class ProfileServicesHelp(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def compose(self):
+        with Vertical(id='confirm-box'):
+            yield Label('Profile services', classes='title')
+            with VerticalScroll(id='profile-details-body'):
+                for heading, text in (
+                    ('Startup', 'Profile services start with this sandbox.'),
+                    ('Stop, start and rebuild', 'Application data is kept.'),
+                    ('Create from existing…', 'Each new service initializes new application data. Existing application data is not copied.'),
+                    ('Delete sandbox', 'This sandbox’s application data is permanently deleted.'),
+                ):
+                    with Vertical(classes='setting'):
+                        yield Label(heading, classes='section-heading')
+                        yield Static(text, markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-profile-services-help', variant='primary')
+
+    def on_mount(self):
+        self.query_one('#close-profile-services-help', Button).focus()
+
+    @on(Button.Pressed, '#close-profile-services-help')
+    def action_close(self):
+        self.dismiss()
+
+
+def saved_profile_only(config):
+    return (coding_agent(config) != 'pi' or bool(config.get(profile_edit.EDIT))
+            or bool(config.get('profile', {}).get('customized_from')))
+
+
 class MoreActions(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Back')]
 
@@ -1471,14 +1551,21 @@ class MoreActions(ModalScreen[Optional[str]]):
             self.page = None
             return
         native = coding_agent(record.get('config', {})) != 'pi'
+        use_saved_profile = saved_profile_only(record.get('config', {}))
         opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
-                     ('Rebuild sandbox…' if native else 'Update sources and recreate…', 'rebuild')]
+                     ('Rebuild sandbox…' if use_saved_profile else 'Update sources and recreate…', 'rebuild')]
         if record.get('config', {}).get('engine'):
             lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
             lifecycle.append(('Stop browser editor', 'stop-editor'))
-        related = [('Troubleshooting…', 'diagnostics')]
+        related = []
+        saved_profile = record.get('config', {}).get('profile')
+        if isinstance(saved_profile, dict) and all(key in saved_profile for key in ('name', 'digest', 'path')):
+            related.append(('Profile and services…', 'profile-information'))
+        profile = record.get('config', {}).get('profile') or {}
+        if profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
+            related.append(('Getting started…', 'profile-guide'))
         diagnostics = [('Containers…', 'containers'), ('Container logs', 'logs'), ('Container shell', 'shell')]
         if not native:
             diagnostics.append(('Test MCP connections', 'connections'))
@@ -1487,9 +1574,7 @@ class MoreActions(ModalScreen[Optional[str]]):
             related.append(('Chat history…', 'chats'))
             self.pages['chats'] = ('Chat history', [(f'{EXPORT}…', 'export-chats'), (f'{IMPORT}…', 'import-chats'),
                                                    ('Continue in another sandbox…', 'copy-chat')])
-        profile = record.get('config', {}).get('profile') or {}
-        if not native and profile.get('path') and (Path(profile['path']) / 'start-here.md').is_file():
-            related.append(('Getting started…', 'profile-guide'))
+        related.append(('Troubleshooting…', 'diagnostics'))
         if count := len(sandbox_alerts(record)):
             related.append((f'Alerts ({count})', 'alerts'))
         self.groups = [opening, lifecycle, related, [('Delete sandbox…', 'delete')]]
@@ -1505,7 +1590,7 @@ class MoreActions(ModalScreen[Optional[str]]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Actions · ' + self.sandbox_name)
+            yield Label('Actions · ' + self.sandbox_name, classes='title')
             yield OptionList(*self.root_options(), id='more-actions', compact=True)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='more-cancel')
@@ -1593,6 +1678,152 @@ class ContainersScreen(Screen):
         self.app.pop_screen()
 
 
+class AppliedProfile(Screen):
+    BINDINGS = [('escape', 'back', 'Back')]
+
+    def __init__(self, record, state):
+        super().__init__()
+        self.add_class('bounded-form', 'profile-edit-flow')
+        self.record, self.state = record, state
+        self.return_focus = None
+        self.refresh_request = None
+
+    def compose(self):
+        yield Header()
+        yield Label('Profile and services · ' + self.record['name'], classes='title focused-settings-title')
+        yield Feedback('', id='profile-information-error', classes='profile-page-feedback', markup=False)
+        with VerticalScroll(classes='form'):
+            profile = self.record['config']['profile']
+            with Vertical(classes='setting'):
+                yield Label(MAIN_AGENT_SANDBOX, id='profile-main-agent', classes='group-title', markup=False)
+                yield Details([('Profile', profile.get('description') or profile['name'])])
+                yield Details([('Installed profile version', profile['digest'])])
+                editable = self.record['config'].get(profile_edit.EDIT)
+                origin = profile.get('customized_from')
+                origin = origin or (editable and {'name': editable['origin_name'], 'digest': editable['origin_digest']})
+                if origin:
+                    yield Details([('Customized from', origin['name'] + ' · ' + origin['digest'])])
+                if editable:
+                    yield Details([('Profile folder', editable['path'])])
+                    if self.record.get('shared_profiles'):
+                        yield Details([('Shared with', ', '.join(self.record['shared_profiles']))])
+                if profile_runtime.applied(self.state):
+                    yield Details([('Read-only build files', profile_runtime.PATH)])
+                else:
+                    yield Static('Rebuild this sandbox to make its applied recipes available inside the main agent sandbox.', markup=False)
+                yield Static('The profile and base-image recipes are separate from your project files.', classes='setting-help')
+            if not profile.get('services'):
+                yield Static('This profile has no additional profile services.')
+            else:
+                with Horizontal(classes='profile-guide-row review-profile-row'):
+                    yield Static('Profile services', classes='section-heading')
+                    yield Button('More information…', id='profile-services-information')
+                yield Feedback('Checking profile services…', id='profile-service-status', markup=False)
+                for name, spec in profile['services'].items():
+                    with Vertical(classes='setting'):
+                        yield Label(name + ' · Checking…', id='profile-service-' + name)
+                        yield Static(spec['description'], markup=False)
+                        yield Label('Connect with SSH', classes='command-label')
+                        yield Command('ssh -F ' + profile_services.CLIENT + '/config ' + profile_services.hostname(name))
+                yield Details([('Connection settings and application credentials', profile_services.CLIENT + '/connections.json')])
+            if self.record['config'].get('profile_service_recovery'):
+                with Vertical(classes='setting'):
+                    yield Button('Saved service data…', id='profile-information-data')
+                    yield Static('Export or restore service data kept by Factory.', classes='setting-help')
+        with Horizontal(classes='wizard-actions'):
+            yield Button('Back', id='profile-information-back')
+            yield Button(profile_edit.action_label(self.record['config']), id='profile-information-edit', variant='primary')
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one('#profile-information-back').focus()
+        if self.record['config']['profile'].get('services'):
+            self.load_status()
+
+    def on_screen_resume(self):
+        if self.return_focus and self.app.screen is self:
+            self.refresh_saved_config()
+
+    @work(exit_on_error=False)
+    async def refresh_saved_config(self):
+        target = self.return_focus
+        if not target or self.app.screen is not self:
+            return
+        request = self.refresh_request = object()
+        try:
+            config = await asyncio.to_thread(self.app.service.config, self.record['name'])
+            error = ''
+        except (OSError, ValueError) as failure:
+            config = self.record['config']
+            error = f'Could not refresh the profile for {self.record["name"]}: {safe_text(failure)}. Check its saved configuration and reopen this page.'
+        if not self.is_attached or self.refresh_request is not request:
+            return
+        if config != self.record['config']:
+            self.record = {**self.record, 'config': config}
+            await self.recompose()
+            if self.record['config']['profile'].get('services'):
+                self.load_status()
+        self.query_one('#profile-information-error', Feedback).update(error)
+        if self.app.screen is self:
+            self.return_focus = None
+            self.call_after_refresh(self.restore_return_focus, target, request)
+
+    def restore_return_focus(self, target, request):
+        if self.is_attached and self.app.screen is self and self.refresh_request is request:
+            control = self.query_one_optional('#' + target, Button) or self.query_one('#profile-information-back', Button)
+            control.focus()
+            control.scroll_visible(animate=False)
+
+    @work(exit_on_error=False)
+    async def load_status(self):
+        config = self.record['config']
+        try:
+            rows = await asyncio.to_thread(profile_services.status, config)
+            text = ''
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            text = 'Could not read profile service status: ' + safe_text(error) + '. Check the container engine and reopen this page.'
+        if self.is_attached and self.record['config'] is config:
+            message = self.query_one('#profile-service-status', Static)
+            message.update(text)
+            message.display = bool(text)
+            message.set_class(bool(text), 'error')
+            if text:
+                for name in self.record['config']['profile']['services']:
+                    self.query_one('#profile-service-' + name, Label).update(name + ' · Status unavailable')
+            if not text:
+                for row in rows:
+                    self.query_one('#profile-service-' + row['name'], Label).update(
+                        row['name'] + ' · ' + ('Running' if row['running'] else 'Stopped'))
+
+    @on(Button.Pressed, '#profile-information-back')
+    def back_pressed(self, event):
+        event.stop()
+        self.action_back()
+
+    @on(Button.Pressed, '#profile-information-edit')
+    def edit_profile(self):
+        self.return_focus = 'profile-information-edit'
+        self.refresh_request = None
+        self.app.perform('edit-profile', record=self.record)
+        if self.app.screen is self:
+            self.return_focus = None
+
+    @on(Button.Pressed, '#profile-services-information')
+    def service_information(self):
+        self.app.push_screen(ProfileServicesHelp())
+
+    @on(Button.Pressed, '#profile-information-data')
+    def saved_service_data(self):
+        self.return_focus = 'profile-information-data'
+        self.refresh_request = None
+        self.app.perform('saved-service-data', record=self.record)
+        if self.app.screen is self:
+            self.return_focus = None
+
+    def action_back(self):
+        self.app.pop_screen()
+
+
 class SettingsMenu(ModalScreen[Optional[str]]):
     BINDINGS = [('escape', 'cancel', 'Close')]
     ACTIONS = [(category.label, action) for action, category in CATEGORIES.items()]
@@ -1640,7 +1871,7 @@ class SettingsMenu(ModalScreen[Optional[str]]):
                 prompt.append(' · ' + summary, style='dim')
             prompts.append(prompt)
         with Vertical(id='confirm-box'):
-            yield Label('Settings · ' + self.sandbox_name)
+            yield Label('Settings · ' + self.sandbox_name, classes='title')
             yield OptionList(*prompts, id='settings-actions')
             with Horizontal(classes='dialog-actions'):
                 yield Button('Close', id='settings-back')
@@ -1855,7 +2086,7 @@ class SandboxAlerts(ModalScreen[Optional[str]]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Alerts · ' + self.name_label)
+            yield Label('Alerts · ' + self.name_label, classes='title')
             with VerticalScroll(id='sandbox-alerts-list'):
                 for alert in self.alerts:
                     classes = 'sandbox-alert -blocking' if alert.blocking else 'sandbox-alert'
@@ -2367,7 +2598,7 @@ class ProfileGuide(ModalScreen[None]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(f'Getting started · {self.profile_name}', markup=False)
+            yield Label(f'Getting started · {self.profile_name}', markup=False, classes='title')
             with VerticalScroll(id='profile-details-body'):
                 yield Markdown(safe_text(self.guide))
             with Horizontal(classes='dialog-actions'):
@@ -2389,7 +2620,7 @@ class ProfileDetails(ModalScreen[None]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Profile · ' + self.profile_name, markup=False)
+            yield Label('Profile · ' + self.profile_name, markup=False, classes='title')
             with VerticalScroll(id='profile-details-body'):
                 if self.description and self.description != self.profile_name:
                     yield Static(safe_text(self.description), classes='section-intro', markup=False)
@@ -2614,80 +2845,266 @@ class InstallPackage(Screen):
     def action_back(self):self.app.pop_screen()
 
 
+class CopySandboxHelp(ModalScreen[None]):
+    BINDINGS = [('escape', 'close', 'Close')]
+
+    def __init__(self, record):
+        super().__init__()
+        self.record = record
+
+    def compose(self):
+        config = self.record['config']
+        with Vertical(id='confirm-box'):
+            yield Label('Copying a sandbox', classes='title')
+            with VerticalScroll(id='copy-help-body'):
+                with Vertical(classes='setting'):
+                    yield Label('Settings', classes='section-heading')
+                    yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
+                                 'Next, choose a new name and workspace, then review.', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Profile', classes='section-heading')
+                    yield Static('The new sandbox starts with the profile version installed in the source sandbox, ' + self.record['name'] + '.', markup=False)
+                    if editable := config.get(profile_edit.EDIT):
+                        yield Details([('Profile folder', editable['path'])])
+                if editable:
+                    with Vertical(classes='setting'):
+                        yield Label('Sharing the profile folder', classes='section-heading')
+                        yield Static('Select Share the profile folder so both sandboxes use the same profile files. '
+                                     'Leave it unchecked for a separate copy of the installed profile.', markup=False)
+                    with Vertical(classes='setting'):
+                        yield Label('Installing later profile edits', classes='section-heading')
+                        yield Static('Editing files does not update either sandbox. In each sandbox you want to update, choose '
+                                     'Actions… → Profile and services… → Editable profile… → Review changes… → Apply profile changes.', markup=False)
+                        yield Static('To edit a separate copy later, choose Actions… → Profile and services… → Make profile editable…', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Project files', classes='section-heading')
+                    yield Static('Project files are not copied. Choosing the same workspace shares its files.', markup=False)
+                if profile_services.selected(config):
+                    with Vertical(classes='setting'):
+                        yield Label('Application data', classes='section-heading')
+                        yield Static('Application data, such as databases, is not copied. Profile services initialize new data.', markup=False)
+                with Vertical(classes='setting'):
+                    yield Label('Credentials and chats', classes='section-heading')
+                    yield Static('Model and advisor credentials, including sign-ins, are not copied. Set them up on Review sandbox.', markup=False)
+                    yield Static('SSH keys, browser sessions and saved chats are not copied.', markup=False)
+            with Horizontal(classes='dialog-actions'):
+                yield Button('Close', id='close-copy-help', variant='primary')
+
+    def on_mount(self):
+        self.query_one('#close-copy-help', Button).focus()
+        self.call_after_refresh(self.fit_dialog)
+
+    def on_resize(self):
+        self.call_after_refresh(self.fit_dialog)
+
+    def fit_dialog(self):
+        if not self.is_attached:
+            return
+        dialog, body = self.query_one('#confirm-box'), self.query_one('#copy-help-body')
+        if dialog.region.height and body.region.height:
+            content = body.get_content_height(dialog.content_size, self.app.size, body.content_size.width)
+            dialog.styles.height = dialog.region.height - body.content_size.height + content
+
+    @on(Button.Pressed, '#close-copy-help')
+    def action_close(self):
+        self.dismiss()
+
+
 class CreateFromSandbox(EntryDialog):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     CreateFromSandbox { align: center middle; background: #000000 70%; }
-    #copy-sandbox-dialog { width: 72; max-width: 95%; height: 24; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
+    #copy-sandbox-dialog { width: 72; max-width: 95%; height: auto; max-height: 95%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     #copy-sandbox-dialog Static { height: auto; }
     #copy-sandbox-fields { height: 1fr; }
-    #copy-keys-help { margin: 0 0 1 0; }
+    #copy-source-label { width: 1fr; }
+    #copy-error { margin: 1 0 0 0; }
     """
 
     def __init__(self, records, selected=None):
         super().__init__()
-        self.records = {r['name']: r for r in records}
+        self.records = {r['name']: r for r in records if not r.get('creation')
+                        and isinstance(r.get('config', {}).get('profile'), dict)
+                        and all(key in r['config']['profile'] for key in ('name', 'path', 'digest'))}
+        if not self.records:
+            raise ValueError('No completed sandbox is available to copy. Finish creating a sandbox, then try Create from existing again.')
         self.selected = selected if selected in self.records else next(iter(self.records))
+        self._copy_request = None
 
     def compose(self):
         with Vertical(id='copy-sandbox-dialog'):
             yield Label('Create from existing sandbox', classes='title')
-            with VerticalScroll(id='copy-sandbox-fields'):
-                yield Label('Copy settings from')
-                yield Select([(name, name) for name in self.records], value=self.selected,
-                             allow_blank=False, id='copy-source')
-                yield Static('The new sandbox copies the source’s network rules, tools and other settings. '
-                             'Choose a new name and workspace, then review.', classes='section-intro')
-                yield Checkbox('Include search API keys', value=False, id='copy-keys')
-                yield Static('', id='copy-keys-help', markup=False)
-                yield Static('', id='copy-sign-in-help', classes='setting-help')
-            yield Feedback('', id='copy-error', classes='error', markup=False)
+            with VerticalScroll(id='copy-sandbox-fields', classes='spaced-form-fields'):
+                with Vertical(classes='setting', id='copy-source-setting'):
+                    with Horizontal(classes='profile-guide-row'):
+                        yield Label('Copy settings from', id='copy-source-label')
+                        yield Button('More information…', id='copy-information')
+                    yield Select([(name, name) for name in self.records], value=self.selected,
+                                 allow_blank=False, id='copy-source')
+                with Vertical(classes='setting', id='copy-profile-setting'):
+                    yield Checkbox('Share the profile folder', value=False, id='copy-share-profile')
+                    yield Static('Both sandboxes use the same editable profile files.', classes='setting-help', id='copy-share-help')
+                with Vertical(classes='setting', id='copy-credentials'):
+                    yield Checkbox('Include Web Search API keys', value=False, id='copy-keys')
+                    yield Static('', id='copy-keys-help', classes='setting-help', markup=False)
+                yield Feedback('', id='copy-error', classes='error', markup=False)
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='copy-cancel')
                 yield Button('Continue', id='copy-continue', variant='primary')
 
     def on_mount(self):
+        self._copy_request = None
+        self.query_one('#copy-source', Select).disabled = False
+        self.query_one('#copy-share-profile', Checkbox).disabled = False
+        self.query_one('#copy-continue', Button).disabled = False
+        self.query_one('#copy-information', Button).disabled = False
+        self.query_one('#copy-continue', Button).label = 'Continue'
         self.source_changed()
+
+    def on_resize(self):
+        self.call_after_refresh(self.fit_dialog)
+
+    def fit_dialog(self):
+        if not self.is_mounted:
+            return
+        dialog = self.query_one('#copy-sandbox-dialog')
+        fields = self.query_one('#copy-sandbox-fields')
+        if dialog.region.height and fields.region.height:
+            # Fit the content and fixed actions; CSS caps it at the viewport.
+            content = fields.get_content_height(dialog.content_size, self.app.size, fields.content_size.width)
+            dialog.styles.height = dialog.region.height - fields.content_size.height + content
+            self.call_after_refresh(self.reveal_copy_feedback)
+
+    def reveal_copy_feedback(self):
+        if not self.is_mounted:
+            return
+        error = self.query_one('#copy-error', Feedback)
+        if error.display:
+            fields = self.query_one('#copy-sandbox-fields')
+            focused = self.app.focused
+            if (self.app.screen is self and focused is not None and fields in focused.ancestors
+                    and focused.region.height + error.outer_size.height > fields.content_size.height):
+                fields.focus()
+            error.scroll_visible(animate=False, immediate=True)
+        elif self.app.focused is self.query_one('#copy-source', Select):
+            self.query_one('#copy-sandbox-fields').scroll_home(animate=False, immediate=True)
 
     @on(Select.Changed, '#copy-source')
     def source_changed(self):
+        if self._copy_request is not None:
+            return
+        self.query_one('#copy-error', Static).update('')
         record = self.records[self.query_one('#copy-source', Select).value]
+        self.query_one('#copy-profile-setting').display = bool(record.get('config', {}).get(profile_edit.EDIT))
+        self.query_one('#copy-share-profile', Checkbox).value = False
         checkbox = self.query_one('#copy-keys', Checkbox)
         checkbox.value = False
         native = coding_agent(record.get('config', {})) != 'pi'
-        checkbox.display = not native
+        checkbox.display = not native and has_web_search_keys(record.get('config', {}))
+        self.query_one('#copy-credentials').display = checkbox.display
         checkbox.disabled = native or record['dev'] != 'running'
         help_text = self.query_one('#copy-keys-help', Static)
-        help_text.display = checkbox.disabled and not native
-        help_text.update('You can continue without search API keys. Start the source sandbox if you want to copy them.')
-        self.query_one('#copy-sign-in-help', Static).update(
-            'Choose a sign-in for the new sandbox. SSH keys and saved chats stay with the original.'
-            if native else 'Sign in to models and advisors again; SSH keys, browser sessions and chat history are not copied.')
+        help_text.display = checkbox.display and checkbox.disabled
+        help_text.update('Start the source sandbox to copy its Web Search API keys, or continue without them.')
+        groups = [self.query_one('#' + name) for name in ('copy-source-setting','copy-profile-setting','copy-credentials')]
+        last = next(group for group in reversed(groups) if group.display)
+        for group in groups:
+            group.set_class(group is last, 'last-copy-setting')
+        self.query_one('#copy-sandbox-fields').scroll_home(animate=False)
+        self.call_after_refresh(self.fit_dialog)
 
     def action_cancel(self):
+        self._copy_request = None
         self.dismiss(None)
 
+    def on_unmount(self):
+        self._copy_request = None
+
     @on(Button.Pressed)
-    async def pressed(self, event):
+    def pressed(self, event):
         event.stop()
+        if not self.is_mounted:
+            return
         if event.button.id == 'copy-cancel':
             self.action_cancel()
             return
+        if event.button.id == 'copy-information':
+            if self._copy_request is None:
+                self.app.push_screen(CopySandboxHelp(self.records[self.query_one('#copy-source', Select).value]))
+            return
+        if event.button.id != 'copy-continue':
+            return
+        if self._copy_request is not None:
+            return
+        request = self._copy_request = object()
+        self.query_one('#copy-error', Static).update('')
+        self.call_after_refresh(self.fit_dialog)
         button = self.query_one('#copy-continue', Button)
+        record = self.records[self.query_one('#copy-source', Select).value]
+        shared = bool(record['config'].get(profile_edit.EDIT)) and self.query_one('#copy-share-profile', Checkbox).value
+        keys = self.query_one('#copy-keys', Checkbox)
+        include_keys = keys.display and not keys.disabled and keys.value
+        disabled = {selector: self.query_one(selector).disabled for selector in
+                    ('#copy-source', '#copy-share-profile', '#copy-keys', '#copy-information')}
         button.disabled = True
+        button.label = 'Preparing…'
+        for selector in disabled:
+            self.query_one(selector).disabled = True
+        self.prepare_copy(request, record, shared, include_keys, disabled)
+
+    @work(exit_on_error=False)
+    async def prepare_copy(self, request, record, shared, include_keys, disabled):
+        if self._copy_request is not request or not self.is_mounted:
+            return
+        completed = False
+        phase = 'reading saved settings'
         try:
-            record = self.records[self.query_one('#copy-source', Select).value]
-            draft = copy_draft(record, self.app.state_root)
+            draft = await asyncio.to_thread(copy_draft, record, self.app.state_root)
+            if self._copy_request is not request or not self.is_mounted:
+                return
+            draft['share_editable_profile'] = shared
             keys = {}
-            if self.query_one('#copy-keys', Checkbox).value:
+            if include_keys:
+                phase = 'copying Web Search API keys'
                 stored = await asyncio.to_thread(self.app.service.search_keys, record['name'])
+                if self._copy_request is not request or not self.is_mounted:
+                    return
                 keys = web_access.matching_keys(stored, options(record['config'].get('options'))['web_access'])
+            phase = 'preparing copied settings'
             for name, row in draft['options']['web_access']['providers'].items():
                 row['has_key'] = bool(keys.get(name))
+            if self._copy_request is request and self.is_mounted:
+                completed = True
+                self.app.call_after_refresh(self.finish_copy, request, draft, keys)
+        except Exception as error:
+            if self._copy_request is request and self.is_mounted:
+                advice = ('Try copying again, or leave Include Web Search API keys unchecked.'
+                          if phase == 'copying Web Search API keys' else
+                          'Check the source settings, then try Continue again.')
+                cause = safe_text(error).strip() or 'No error details were returned'
+                punctuation = '' if cause.endswith(('.', '!', '?')) else '.'
+                next_step = '' if cause.endswith(advice) else ' ' + advice
+                self.query_one('#copy-error', Static).update(
+                    f'Cannot prepare a copy of {record["name"]} while {phase}: '
+                    f'{type(error).__name__}: {cause}{punctuation}{next_step}')
+                self.query_one('#copy-error').scroll_visible(animate=False)
+                if phase == 'copying Web Search API keys':
+                    self.query_one('#copy-keys', Checkbox).focus()
+                    self.query_one('#copy-keys', Checkbox).scroll_visible(top=True, animate=False)
+        finally:
+            if self._copy_request is request and not completed:
+                self._copy_request = None
+                if self.is_mounted:
+                    button = self.query_one('#copy-continue', Button)
+                    button.disabled = False
+                    button.label = 'Continue'
+                    for selector, previous in disabled.items():
+                        self.query_one(selector).disabled = previous
+                    self.call_after_refresh(self.fit_dialog)
+
+    def finish_copy(self, request, draft, keys):
+        if self._copy_request is request and self.is_mounted:
             self.dismiss((draft, keys))
-        except (OSError, ValueError, KeyError) as error:
-            self.query_one('#copy-error', Static).update(safe_text(error))
-            button.disabled = False
 
 
 class CreationRequest(NamedTuple):
@@ -2714,8 +3131,10 @@ class NewSandbox(Screen):
         self.profile_paths = {name: row['path'] for name, row in registry.installed('profile').items()}
         if self.copied_draft:
             source = settings['reused_profile']
-            profiles[settings['profile']] = profiles.get(source.get('registry_name'), source['name']) + ' (copied)'
+            title = source.get('description') or source['name']
+            profiles[settings['profile']] = title + (' (saved customized profile)' if source.get('customized_from') else ' (saved profile)')
             self.profile_paths[settings['profile']] = source['path']
+        self.profiles = profiles
         yield Header()
         yield Label('New sandbox · 1 of 2' + (' · from ' + settings['reuse_from'] if self.copied_draft else ''),
                     classes='title focused-settings-title', id='new-title')
@@ -2751,22 +3170,37 @@ class NewSandbox(Screen):
         yield Footer()
 
     def on_mount(self):
+        self.refresh_profiles()
         self.profile_changed()
+
+    def refresh_profiles(self):
+        agent = self.query_one('#primary-agent', Select).value
+        selector = self.query_one('#profile', Select)
+        choices = []
+        for name, label in self.profiles.items():
+            try:
+                metadata = (self.copied_draft['reused_profile'] if self.copied_draft and name == self.copied_draft['profile']
+                            else json.loads((Path(self.profile_paths.get(name, sandbox.ROOT / 'profiles' / name))
+                                             / 'profile.json').read_text()))
+                if profile_spec.compatible(metadata, agent):
+                    choices.append((label, name))
+            except (OSError, ValueError):
+                continue
+        current = selector.value
+        selector.set_options([*choices, ('Custom profile…', 'custom')])
+        selector.value = current if current == 'custom' or any(value == current for _, value in choices) else 'base'
 
     @on(Select.Changed, '#primary-agent')
     def coding_agent_changed(self):
+        self.refresh_profiles()
         self.profile_changed()
         self.suggest_name()
 
     @on(Select.Changed, '#profile')
     def profile_changed(self):
         profile = self.query_one('#profile', Select).value
-        pi = self.query_one('#primary-agent', Select).value == 'pi'
-        self.query_one('#profile-setting').display = pi
-        self.query_one('#custom-profile-fields').display = pi and profile == 'custom'
-        if not pi:
-            self.guide = ''
-            return
+        self.query_one('#profile-setting').display = True
+        self.query_one('#custom-profile-fields').display = profile == 'custom'
         summary = '' if self.copied_draft else self.summaries.get(profile, '')
         helper = self.query_one('#profile-summary', Static)
         helper.update(shorten(safe_text(summary), width=130, placeholder='…'))
@@ -2804,12 +3238,18 @@ class NewSandbox(Screen):
             focus = '#profile'
             try:
                 agent = self.query_one('#primary-agent', Select).value
-                profile = self.query_one('#profile', Select).value if agent == 'pi' else 'base'
+                profile = self.query_one('#profile', Select).value
                 if profile == 'custom':
                     focus = '#custom-profile'
                     profile = self.query_one('#custom-profile', Input).value
+                    path = host_platform.local_path(profile)
+                    if not path.is_dir():
+                        problem = 'does not exist' if not path.exists() else 'is not a folder'
+                        raise ValueError(f'Profile folder {profile!r} {problem}. Choose an existing folder containing profile.json, Dockerfile and profile.md.')
                 metadata = (self.copied_draft['reused_profile'] if self.copied_draft and profile == self.copied_draft['reused_profile']['path']
                             else sandbox.load_profile(profile))
+                if not profile_spec.compatible(metadata, agent):
+                    raise ValueError(f'Profile {metadata["name"]!r} does not declare support for {PRIMARY_AGENTS[agent]}. Choose a compatible profile.')
                 focus = '#name'
                 name = self.query_one('#name', Input).value.strip()
                 if not SANDBOX_NAME.fullmatch(name):
@@ -2940,7 +3380,7 @@ class SettingsForm(Screen):
         self.profile = (draft['reused_profile'] if draft.get('reused_profile') and draft['profile'] == draft['reused_profile']['path']
                         else sandbox.load_profile(draft['profile']))
         self.profile_name = self.profile['name']
-        self.guide = registry.profile_guide(self.profile['path']) if not (editing or defaults or self.native) else ''
+        self.guide = registry.profile_guide(self.profile['path']) if not (editing or defaults) else ''
 
     def compose(self):
         value, selected = self.draft, options(self.draft.get('options'))
@@ -2966,20 +3406,34 @@ class SettingsForm(Screen):
                     yield Label('Workspace parent folder')
                     yield PathField('workspace-parent', value.get('workspace_parent', ''), title='Choose workspace parent folder')
             if not self.defaults_mode and not self.setting:
-                with Horizontal(classes='profile-guide-row review-profile-row'):
-                    if self.native:
-                        summary = PRIMARY_AGENTS[self.primary] + ' · ' + value['name'] + ' · ' + value['workspace']
-                    else:
-                        summary = ('Profile: ' + profile_titles().get(self.profile_name, self.profile_name)
-                                   + '\nWorkspace: ' + value['workspace'])
-                    project = Static(summary, id='review-project', markup=False,
-                                     classes='primary-review-summary' if self.native else 'pi-review-summary')
+                with Vertical(classes='setting review-profile-summary'):
+                    with Horizontal(classes='profile-guide-row review-profile-row'):
+                        yield Static(PRIMARY_AGENTS[self.primary] + ' · ' + value['name'], markup=False)
+                        if self.guide:
+                            yield Button('Getting started…', id='review-profile-guide')
+                    copied_profile = value.get('reuse_from') and value.get('reused_profile', {}).get('path') == value['profile']
+                    title = self.profile.get('description') or self.profile_name
+                    if copied_profile:
+                        title += ' (saved customized profile)' if self.profile.get('customized_from') else ' (saved profile)'
+                    project = Details([('Profile', title if copied_profile else profile_titles().get(self.profile_name, self.profile_name)),
+                                       ('Workspace', value['workspace'])], id='review-project')
                     project.tooltip = value['workspace']
                     yield project
-                    if self.guide:
-                        yield Button('Getting started…', id='review-profile-guide')
+                    if copied_profile and value.get('source_editable_profile'):
+                        if shares_editable_profile(value):
+                            yield Details([('Profile folder', 'shared with ' + value['reuse_from'] + '. Editing files does not update either sandbox automatically.')],
+                                          id='review-profile-copy')
+                        else:
+                            yield Details([('Profile folder', 'not shared. To edit the new sandbox’s profile later, choose Actions… → Profile and services… → Make profile editable…')],
+                                          id='review-profile-copy')
+            if review and self.profile.get('services'):
+                with Vertical(classes='setting', id='review-profile-services'):
+                    with Horizontal(classes='profile-guide-row review-profile-row'):
+                        yield Static('Profile services', classes='section-heading')
+                        yield Button('More information…', id='profile-services-information')
+                    yield Details([(name, spec['description']) for name, spec in self.profile['services'].items()])
             if value.get('_copy_source_agent') is not None:
-                yield Static(f'Shared settings are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
+                yield Static(f'Settings that apply to every agent are copied. {PRIMARY_AGENTS[self.primary]} model and feature settings use defaults.',
                              classes='setting-help', id='copied-settings')
             for action, category in self.categories.items():
                 if self.native and self.editing and action != self.setting:
@@ -3286,7 +3740,7 @@ class SettingsForm(Screen):
         with Collapsible(title=category.label + ' · ' + self.document_search_summary(),
                          collapsed=True, id=category.section):
             if self.setting == 'document-search':
-                yield Static('Search mode: ' + self.document_search_summary(), id='document-search-summary')
+                yield Details([('Search mode', self.document_search_summary())], id='document-search-summary')
             with Horizontal(id='document-search-actions'):
                 yield Button('Configure…', id='configure-document-search')
                 yield Button('How to search documents…', id='document-search-help')
@@ -3326,10 +3780,10 @@ class SettingsForm(Screen):
             mode = self.document_search_summary()
             self.query_one('#document-search-section', Collapsible).title = CATEGORIES['document-search'].label + ' · ' + mode
             if self.query('#document-search-summary'):
-                self.query_one('#document-search-summary', Static).update('Search mode: ' + mode)
+                self.query_one('#document-search-summary', Details).set_rows([('Search mode', mode)])
 
     def compose_agent_tools(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+        with WrappingCollapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
             with Vertical(classes='setting'):
                 yield Label('Conversation recall')
@@ -3419,7 +3873,9 @@ class SettingsForm(Screen):
                 self.query_one('#' + category.focus).focus()
             elif can_copy_primary_sign_in(self.primary):
                 self.primary_auth_changed()
-                self.set_focus(self.query_one('#primary-auth', Select), scroll_visible=False)
+                field = self.query_one('#primary-auth', Select)
+                self.set_focus(field, scroll_visible=False)
+                self.call_after_refresh(field.scroll_visible, animate=False)
             if self.setting in (None, 'primary-browser'):
                 self.primary_browser_changed()
             if self.setting in (None, 'primary-approvals'):
@@ -3842,6 +4298,9 @@ class SettingsForm(Screen):
         event.stop()
         action = event.button.id
         try:
+            if action == 'profile-services-information':
+                self.app.push_screen(ProfileServicesHelp())
+                return
             if action == 'review-profile-guide':
                 self.app.push_screen(ProfileGuide(self.profile.get('description') or self.profile_name, self.guide))
                 return
@@ -4016,13 +4475,23 @@ class SettingsForm(Screen):
         if error is not None:
             self.call_after_refresh(feedback.scroll_visible, animate=False)
             return
-        if not (conflicts.containers or conflicts.volumes):
+        if not (conflicts.containers or conflicts.volumes or conflicts.networks):
             self.submit(draft, key)
             return
 
         def remove(yes):
             if yes and app.screen is self:
                 self.begin_creation_check(draft, key, conflicts)
+
+        def confirm_networks(yes):
+            if not yes or app.screen is not self:
+                return
+            if conflicts.networks:
+                app.push_screen(ConfirmCreationConflicts(
+                    draft['name'], 'networks', conflicts.networks,
+                    'The listed private networks will be deleted. Other networks stay in place.'), remove)
+            else:
+                remove(True)
 
         def confirm_volumes(yes):
             if not yes or app.screen is not self:
@@ -4041,9 +4510,9 @@ class SettingsForm(Screen):
                 else:
                     backup += '\nSee the Docker guide on backing up volumes.'
                 app.push_screen(ConfirmCreationConflicts(
-                    draft['name'], 'volumes', conflicts.volumes, settings_effects.bullets(warning) + '\n\n' + backup), remove)
+                    draft['name'], 'volumes', conflicts.volumes, settings_effects.bullets(warning) + '\n\n' + backup), confirm_networks)
             else:
-                remove(True)
+                confirm_networks(True)
 
         if conflicts.containers:
             app.push_screen(ConfirmCreationConflicts(
@@ -4112,8 +4581,9 @@ class Cockpit(App):
     Header { background: #f2b544; color: #171a1d; }
     Footer { background: #34383d; }
     .title { color: #f2b544; text-style: bold; margin: 0 0 1 0; }
-    Label { margin: 0; height: auto; max-width: 100%; }
+    Label { margin: 0; height: auto; max-width: 100%; text-style: bold; }
     .form { width: 100%; padding: 1 3 0 3; }
+    ReviewProfile > .form { padding: 1 4 0 3; }
     .focused-settings-title { margin: 0; padding: 1 3 0 3; }
     .form > Static { height: auto; margin-bottom: 1; }
     .form > Label { margin-bottom: 0; }
@@ -4152,8 +4622,11 @@ class Cockpit(App):
     EditPrompt #confirm-box, .titled-confirm #confirm-box { width: 80; }
     Confirm #yes.-error, ExternalConnectorDialog #connector-confirm.-error { background: $error; color: white; }
     Confirm Button:focus { text-style: bold underline; }
+    Confirm.with-notes .confirm-notes { height: auto; max-height: 55vh; margin: 1 0 0 0; }
+    Confirm.with-notes .confirm-message { margin: 0 0 1 0; }
+    Confirm.with-notes Button:focus, Confirm.with-notes #cancel:focus { text-style: bold; background: #d4e0e7; color: #171a1d; }
     Confirm #cancel:focus, ExternalConnectorDialog #connector-cancel:focus,
-    .settings-review #local-provider > CollapsibleTitle:focus {
+    .settings-review CollapsibleTitle:focus {
         background: #d4e0e7; color: #171a1d; text-style: bold underline;
     }
     Confirm:nocolor #yes.-error, ExternalConnectorDialog:nocolor #connector-confirm.-error { background: #454a51; color: white; }
@@ -4183,7 +4656,10 @@ class Cockpit(App):
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
     .setting, .default-profile-setting { height: auto; }
     .setting { margin-bottom: 1; }
-    .native-primary-form > .form, .native-primary-form > .wizard-actions { max-width: 100; }
+    .bounded-form > .form, .bounded-form > .wizard-actions,
+    .native-primary-form > .form, .native-primary-form > .wizard-actions,
+    .settings-review > .form, .settings-review > .wizard-actions { max-width: 100; }
+    .bounded-form > .profile-page-feedback { width: 100%; max-width: 100; height: auto; max-height: 25vh; padding: 1 3 0 3; overflow-y: auto; }
     .native-primary-form EditorFields > .setting { margin: 0 0 1 0; }
     #approval-heading { height: 1; }
     #approval-heading Label { width: auto; margin: 0 2 0 0; }
@@ -4230,7 +4706,10 @@ class Cockpit(App):
     Select:focus > SelectCurrent > #label, Select:focus > SelectCurrent > .arrow { color: #17191b; text-style: bold; }
     Screen:nocolor Select:focus > SelectCurrent { background: white; }
     TextArea { height: 9; margin-bottom: 1; }
-    .group-title { text-style: bold; margin-bottom: 1; }
+    .group-title { text-style: bold underline; margin-bottom: 1; }
+    .section-heading { text-style: bold underline; }
+    .command-text { height: auto; padding: 0 1; background: #24292f; text-wrap: wrap; }
+    .command-label { margin: 1 0 0 0; }
     Checkbox { height: 1; border: none; padding: 0; margin: 0 0 1 0; }
     Checkbox > .toggle--button { color: #f1f3f5; background: transparent; text-style: bold; }
     Checkbox.-on > .toggle--button { color: #f2b544; background: transparent; }
@@ -4240,9 +4719,12 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
+    .profile-edit-flow Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold; }
     #hosted-section Button:focus, ModelsScreen Button:focus,
     .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
     Collapsible { margin-bottom: 1; padding: 0; border: none; }
+    CollapsibleTitle { text-style: bold; }
+    CollapsibleTitle:focus { text-style: bold underline; }
     Collapsible > Contents { padding: 1 3; }
     #local-provider > Contents { padding: 1 3 0 3; }
     #local-provider > CollapsibleTitle, #live-local-provider > CollapsibleTitle,
@@ -4262,9 +4744,18 @@ class Cockpit(App):
     .action-buttons { height: 1; }
     .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }
+    .wizard-actions .data-actions { dock: right; width: auto; height: 1; }
+    .wizard-actions .data-actions Button { dock: none; margin: 0 0 0 1; }
     .job-actions #job-cancel { dock: right; margin-right: 0; }
     .dialog-actions { align-horizontal: right; height: 1; min-height: 1; margin: 1 0 0 0; }
     .dialog-actions Button { min-width: 12; padding: 0 2; }
+    CreateFromSandbox #copy-continue { min-width: 16; }
+    CreateFromSandbox #copy-source { margin: 1 0 0 0; }
+    CreateFromSandbox #copy-sandbox-fields > .last-copy-setting { margin: 0; }
+    CreateFromSandbox #copy-sandbox-dialog > .dialog-actions { padding: 0 1 0 0; }
+    CreateFromSandbox:nocolor .title, CopySandboxHelp:nocolor #confirm-box > .title { color: white; text-style: bold; }
+    CopySandboxHelp #copy-help-body { height: 1fr; padding: 0 1 0 0; scrollbar-size-vertical: 1; }
+    CopySandboxHelp #copy-help-body > .setting:last-child { margin: 0; }
     .action-spacer { width: 1fr; height: 1; }
     .profile-guide-row { height: auto; }
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
@@ -4275,11 +4766,11 @@ class Cockpit(App):
     NewSandbox #profile { margin: 1 0 0 0; }
     NewSandbox #sandbox-name-setting { margin: 0; }
     NewSandbox #new-error { margin: 1 0; }
-    .profile-guide-row Button { padding: 0 2; margin: 0 1; }
+    .profile-guide-row Button { padding: 0 2; margin: 0 0 0 1; }
     .review-profile-row { margin: 0 0 1 0; }
     .review-profile-row Static { width: 1fr; height: auto; }
-    .review-profile-row .primary-review-summary { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
-    .review-profile-row .pi-review-summary { height: 2; text-wrap: nowrap; text-overflow: ellipsis; }
+    #review-project { height: auto; text-wrap: wrap; }
+    .review-profile-summary .review-profile-row { margin: 0; }
     Button { height: 1; max-height: 1; border: none; margin-right: 1; min-width: 8; padding: 0 1; background: #4a5058; }
     Button:hover { background: #5a616a; }
     .dialog-actions Button:last-child { margin-right: 0; }
@@ -4339,6 +4830,7 @@ class Cockpit(App):
     DeleteSandbox:nocolor #delete-export-chats.-primary { background: #4a5058; color: #f1f3f5; }
     DeleteSandbox:nocolor #delete-export-chats.-primary:focus { background: #d4e0e7; color: #171a1d; }
     .error { color: #b75b52; height: auto; }
+    Screen:nocolor .error { color: white; text-style: bold; }
     SettingsForm #form-error { color: #ffb3a7; text-style: bold; }
     SettingsForm:nocolor #form-error { color: white; text-style: bold reverse; }
     SettingsForm #form-error.checking-creation { color: #f1f3f5; text-style: none; }
@@ -4452,8 +4944,10 @@ class Cockpit(App):
     #operation-status.complete { color: #87c99b; }
     #operation-status.failed { color: #ef9a91; }
     #operation-log { height: 1fr; min-height: 5; border: round #707780; border-title-color: #b8bdc3; padding: 0 1; overflow-y: auto; scrollbar-gutter: stable; }
-    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
+    Confirm, AWSAccessDialog, AWSProfilePicker, AWSProfileTargets, DocumentSearchDialog, DocumentSearchHelp, FactoryUpdateDetails, ApprovalHelp, ProfileServicesHelp, CopySandboxHelp, FolderPicker, PickerErrors, MoreActions, SettingsMenu, PrimarySignIn, ProviderDialog, SandboxAlerts, ProfileDetails, ProfileGuide, EditPrompt,
     ChatTransfer, DeleteSandbox, InstallSystemPackages, JobsMenu { align: center middle; background: #000000 70%; }
+    ConfirmCreationConflicts #confirm-box { width: 88; height: auto; max-height: 90%; overflow: hidden; }
+    ConfirmCreationConflicts VerticalScroll { height: auto; max-height: 55vh; margin: 0 0 1 0; }
     #confirm-box { width: 75; max-width: 95%; height: auto; max-height: 90%; padding: 1 2; background: #34383d; border: solid #f2b544; }
     AWSAccessDialog #confirm-box { height: auto; max-height: 90%; }
     .aws-profile-body { height: auto; max-height: 55vh; padding: 0; scrollbar-size-vertical: 1; }
@@ -4486,7 +4980,7 @@ class Cockpit(App):
     Screen:nocolor #system-package-names.-invalid { border-left: thick #b8bdc3; }
     MoreActions #confirm-box { max-height: 100%; }
     MoreActions #confirm-box > Label { text-wrap: nowrap; text-overflow: ellipsis; }
-    MoreActions #more-actions { max-height: 15; }
+    MoreActions #more-actions { max-height: 55vh; }
     MoreActions #confirm-box .dialog-actions { margin: 0; }
     JobsMenu #confirm-box > OptionList { max-height: 55vh; }
     #job-log-error { height: auto; color: #ffb3a7; }
@@ -5005,11 +5499,13 @@ class Cockpit(App):
     def start_rebuild(self, name, args):
         return self.start_job(RebuildJob(name), lambda log, update: self.service.run_update(args, log, update))
 
-    def start_settings_job(self, name, title, task, *, success_message=''):
+    def start_settings_job(self, name, title, task, *, success_message='', cooperative=False):
         def completed(job):
             if job.result == 'Complete':
                 job.notice = success_message
-        return self.start_job(RebuildJob(name, title), task, completed)
+        job = RebuildJob(name, title)
+        job.update.cooperative = cooperative
+        return self.start_job(job, task, completed)
 
     def start_creation(self, request):
         draft = request.draft
@@ -5151,13 +5647,14 @@ class Cockpit(App):
         text = ('No matching sandboxes. Clear the search or use New sandbox (F2).'
                 if self.records else 'No sandboxes yet. Use New sandbox (F2) to create one.')
         if record:
-            text = 'Workspace: ' + str(record.get('workspace') or 'Unavailable')
-            text += '\nEngine: ' + str(record.get('engine') or 'Unknown')
-            text += ' · Gateway: ' + str(record.get('proxy', 'Unknown'))
+            text = Text.assemble(('Workspace: ', 'bold'), safe_text(record.get('workspace') or 'Unavailable'),
+                                 '\n', ('Engine: ', 'bold'), safe_text(record.get('engine') or 'Unknown'),
+                                 ' · ', ('Gateway: ', 'bold'), safe_text(record.get('proxy', 'Unknown')))
             agent = coding_agent(record['config'])
-            text += ' · Profile: ' + str(record['profile']) if agent == 'pi' else ' · Coding agent: ' + PRIMARY_AGENTS[agent]
+            label, value = ('Profile', record['profile']) if agent == 'pi' else ('Coding agent', PRIMARY_AGENTS[agent])
+            text.append(' · ').append(label + ': ', style='bold').append(safe_text(value))
         details = self.query_one('#details', Static)
-        details.update(safe_text(text))
+        details.update(text)
         details.tooltip = safe_text(record['workspace']) if record and record.get('workspace') else None
         for action in ('settings', 'more'):
             self.query_one('#' + action, Button).disabled = record is None or (action == 'settings' and bool(record.get('creation')))
@@ -5225,7 +5722,7 @@ class Cockpit(App):
         if not config.get('engine'):
             raise ValueError('Repair the saved configuration before editing it.')
         profile = config.get('profile', {})
-        value = {**DEFAULT_SETTINGS, **config, 'profile': profile.get('registry_name', profile.get('name', 'base')),
+        value = {**DEFAULT_SETTINGS, **config, 'profile': profile['path'] if saved_profile_only(config) else profile.get('registry_name', profile.get('name', 'base')),
                  'options': options(config.get('options')), 'local_model_ports': config.get('local_model_ports')}
         if 'model_providers' not in config and value['local_model_ports']:
             value['model_providers'] = {'local': {}}
@@ -5240,7 +5737,12 @@ class Cockpit(App):
             return
         if action == 'create-from':
             if self.records:
-                self.push_screen(CreateFromSandbox(self.records, self.selected_name()), self.copied_sandbox)
+                try:
+                    screen = CreateFromSandbox(self.records, self.selected_name())
+                except ValueError as error:
+                    self.notify(safe_text(error), severity='warning')
+                else:
+                    self.push_screen(screen, self.copied_sandbox)
             return
         if action == 'packages':
             self.push_screen(PackagesScreen())
@@ -5257,7 +5759,7 @@ class Cockpit(App):
             return
         name, config = record['name'], record['config']
         running_job = self.active_job(name)
-        if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'alerts'):
+        if running_job and action not in ('more', 'logs', 'containers', 'profile-guide', 'profile-information', 'alerts'):
             self.show_job(running_job)
             return
         if action == 'refresh-creation':
@@ -5280,6 +5782,15 @@ class Cockpit(App):
             self.show_sandbox_actions(name)
         elif action == 'containers':
             self.push_screen(ContainersScreen(record))
+        elif action == 'profile-information':
+            self.push_screen(AppliedProfile(record, self.state_root / name))
+        elif action == 'saved-service-data':
+            try:
+                saved = self.service.config(name)
+            except (OSError, ValueError) as error:
+                self.notify(f'Cannot read saved service data for {name}: {error}. Check the sandbox settings and retry.', severity='error')
+            else:
+                self.push_screen(SavedServiceData({**record, 'config': saved}))
         elif action == 'profile-guide':
             profile = sandbox.selected_profile(config)
             self.push_screen(ProfileGuide(profile.get('description') or profile['name'], registry.profile_guide(profile['path'])))
@@ -5355,7 +5866,9 @@ class Cockpit(App):
             from .session_transfer_ui import ContinueChat
             self.push_screen(ContinueChat(name))
         elif action == 'delete':
-            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config)),
+            self.push_screen(DeleteSandbox(name, has_config=bool(config.get('engine')), agent=coding_agent(config),
+                                           services=list(profile_services.selected(config)),
+                                           retained_volumes=config.get('profile_service_retained_volumes', [])),
                              lambda yes: self.operation('Deleting ' + name, ['delete', name]) if yes else None)
         elif action == 'pi':
             self.launch_client(name, 'pi')
@@ -5387,20 +5900,27 @@ class Cockpit(App):
                         ['install-system-packages', name, *packages], log, update))
 
             self.push_screen(InstallSystemPackages(name), install_packages)
+        elif action == 'edit-profile':
+            self.push_screen(EditProfile(record))
         elif action == 'rebuild':
             profile = config.get('profile', {})
             source = profile.get('registry_name', profile.get('name', 'base'))
             args = ['recreate', name]
             migration = [] if native else settings_effects.editor_migration(config)
-            action_label = 'Rebuild sandbox' if native else 'Update sources and recreate'
-            if native:
-                question = f'Rebuild {name} with the current workspace and coding agent software?'
+            use_saved_profile = saved_profile_only(config)
+            action_label = 'Rebuild sandbox' if use_saved_profile else 'Update sources and recreate'
+            if use_saved_profile:
+                question = f'Rebuild {name} using its saved profile and current Factory software?'
             else:
                 args += ['--profile', source if source in profile_titles() else profile['path']]
-                question = f'Update {name} to FrostPi?' if migration else f'Fetch current profile sources, build and recreate {name}?'
+                profile_source = 'the installed profile' if source in profile_titles() else 'its saved profile'
+                question = f'Update {name} to FrostPi?' if migration else f'Rebuild {name} using {profile_source} and current Factory software?'
             notes = ['Workspace files, private home and saved chats are kept.']
-            if record.get('dev') == 'running':
-                notes.insert(0, 'Active processes stop after the build.')
+            notes[0:0] = ['If the sandbox is running, work in its main agent sandbox stops after the build.',
+                          'This includes active tasks, terminals and browser processes.',
+                          'If the sandbox is stopped, it stays stopped.']
+            if profile.get('services'):
+                notes.append('Profile services and their application data are kept.')
             self.push_screen(Confirm(question + '\n' + settings_effects.bullets(notes), action_label, confirm_by_default=True),
                 lambda yes: self.start_rebuild(name, args) if yes else None)
         elif action == 'start':

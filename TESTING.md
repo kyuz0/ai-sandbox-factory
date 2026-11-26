@@ -12,7 +12,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 npm ci --prefix ai_sandbox_factory/containers/inference --ignore-scripts
-node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
+node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs tests/test_sandbox_context.mjs
 ```
 
 These suites use fixtures without account credentials. For macOS, put fixtures
@@ -23,6 +23,13 @@ export TMPDIR="$HOME/Projects/pi-sandbox-test-tmp"
 mkdir -p "$TMPDIR"
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+Before long container runs, check free space on the filesystem holding the VM
+disk as well as inside the guest. In WSL2, check the Windows volume containing
+`ext4.vhdx`: Linux reports the virtual disk's maximum capacity even when that
+Windows volume cannot accommodate it. Monitor that volume during image builds
+and remove only disposable test resources when reclaiming space. See
+[Microsoft's WSL disk-space guide](https://learn.microsoft.com/en-us/windows/wsl/disk-space).
 
 Async tests and the TUI screenshot renderer require local socket IPC. In a
 restricted agent shell, blocked socket writes can leave Python waiting in
@@ -148,7 +155,7 @@ See the sections below for the reusable fixture commands.
 
 In a disposable Pi sandbox with two connected providers, open **Settings → Approvals & sandbox**. Clear **Use current model for approvals**, select a model from the second provider, and apply the change. Open Pi with the first provider as the chat model.
 
-For a live approval test, put a harmless receipt outside the inner shell's readable folders. Run these commands on the host, replacing `CONTAINER` with the disposable workspace container's name.
+For a live approval test, put a harmless receipt outside the inner shell's readable folders. Run these commands on the host, replacing `CONTAINER` with the disposable main agent sandbox's name.
 
 ```sh
 podman exec --user 0 CONTAINER mkdir /var/lib/factory-review-test
@@ -190,6 +197,48 @@ Network tools remain subject to the sandbox's network policy; installation does
 not grant external ICMP or DNS access.
 
 ## Native agent regression checks
+
+### Current settings in saved conversations
+
+Run `test_runtime_context`, `test_sandbox_update_hooks` and
+`test_workspace_network_environment` with the Python suite. They cover successful
+publication, rollback, independent conversations, cancellation, overlapping turns,
+receipt recovery and project proxy selection without changing native sign-in
+transport. `tests/test_sandbox_context.mjs`, when run with Node, exercises Pi's
+initial context, branch-local comparisons, reloads and reversions. Update notices
+identify only changed settings, retain every changed label when values are long,
+and point to `/opt/sandbox/context.md`. Check the UTF-8 prompt budget with both
+ASCII and non-ASCII values. Full values and configuration-specific examples stay
+in the reference file. Verify publication rollback and credential exclusion for
+that file alongside the JSON snapshot.
+
+Use cached, pinned workspace images for the native client checks:
+
+```sh
+python tests/native_sandbox_updates.py --agent codex --image CODEX_WORKSPACE_IMAGE
+python tests/native_sandbox_updates.py --agent claude --image CLAUDE_WORKSPACE_IMAGE
+```
+
+These run without external networking or account credentials. Each check opens
+a conversation, resumes it after Restricted → Unrestricted → Restricted changes,
+and checks both the actual model requests and completion acknowledgments. Hook
+tests must also cover the pinned Antigravity CLI and the shipped FrostPi webview;
+configuration-file assertions alone do not establish delivery to those clients.
+The FrostPi `--system-prompt` fixture also reads the reference through actual Pi
+file and shell tools, checks that private configuration remains denied, and
+resumes a saved Pi conversation after restarting its process.
+
+Check the actual workspace network and live policy updates with a cached Pi image:
+
+```sh
+PYTHONPATH=. .venv/bin/python tests/workspace_network_runtime.py --image PI_WORKSPACE_IMAGE
+PYTHONPATH=. .venv/bin/python tests/workspace_network_runtime.py --image PI_WORKSPACE_IMAGE --providers-only
+```
+
+The first command covers direct IPv4/IPv6 denial, allowed and denied gateway
+requests, revocation, Unrestricted access, inherited host proxies and workspace
+loopback. The second checks the three native provider gateways without signing
+in: provider routes remain available and an unselected hostname is denied.
 
 Cross-agent copies use the pinned `session-migrate` helper in
 `containers/session-transfer/`. The unit suite checks confirmation, changed
@@ -265,10 +314,15 @@ Additional offline native checks run in the indicated image:
 | --- | --- | --- |
 | Claude credential image, `/opt/claude-proxy/bin/python` | `tests/native_claude_login.py --binary /usr/local/bin/factory-agent` | Official authorization-code login against local fake services; only placeholders reach native files; Auto/Manual/Plan defaults; native rejection of disabled WebSearch |
 | Antigravity credential image, `/opt/agy-proxy/bin/python` | `tests/agy_native_auth.py`, then `tests/agy_native_auth.py --fresh` | Official refresh and fresh OAuth exchange against fake services; masked Secret Service storage; HTTP 418 and its diagnostic remain visible |
+| Antigravity credential image, `/opt/agy-proxy/bin/python` | `tests/agy_sandbox_updates.py` | The pinned CLI sends network changes on the model request, suppresses unchanged updates, and refreshes a resumed chat after a rejected invocation |
 | Codex workspace image, `python3` | `tests/codex_client_tests.py` | Native configuration using the workspace's installed `tomlkit` |
 | Codex credential image, `/opt/codex-proxy/bin/python` | `tests/codex_network_tests.py` and `tests/codex_auth_transport.py` | Gateway catalogue, inherited editor environment, TLS/HTTP2, WebSockets and CONNECT transport |
 
 Use the same read-only checkout mount and `/source` working directory as above.
+For `agy_sandbox_updates.py`, also pass
+`--tmpfs /run/primary-runtime:rw,mode=1777` and
+`-v "$PWD/ai_sandbox_factory/containers/primary-worker/sandbox-update.py:/opt/sandbox/sandbox-update.py:ro"`.
+Its local service advertises native customization hooks and records the model requests.
 The OAuth fixtures issue synthetic credentials; they do not complete a real
 provider consent screen. Set `FACTORY_CODEX_HISTORY_BINARY` or
 `FACTORY_CLAUDE_HISTORY_BINARY` to the pinned executable when running its history
@@ -470,6 +524,15 @@ Screenshots and the editor log remain in the output directory. Add
 `--startup-only automatic` to test first launch without a configured model. The
 same check accepts `assisted`, `manual`, and `off`.
 
+Use `--file-references` with the same image and code-server arguments to check
+real editor selection/file context menus and `@CurrentFile` completion. The
+synthetic model verifies the exact reference marker and line range, and rejects
+file contents in the request. Sent messages must display the complete marker as
+one tag, while Copy preserves its original text. The browser checks tag editing,
+removal, keyboard Backspace/Delete, undo, clipboard copy/paste and narrow layouts. Mentioning a file
+must leave that file unchanged. The same check selects a chat answer with a mouse
+drag and verifies the browser clipboard after native-menu Copy and Ctrl+C.
+
 Repeat the browser command with `--chat-workflows` and a separate output
 directory to test steering, switching between branches in one session, and
 forking into a separate session. The check continues the original after the fork
@@ -512,10 +575,11 @@ With the Deep Web Research image and the Web Search layer, use `--deep-research`
 to verify that Pi and FrostPi load the skill, delegate a search through a
 loopback provider, read a mounted reference and save a cited report and source log.
 
-Use `--system-prompt` with the current Factory image to check that a saved add-on
-can be assigned, replaced and removed in existing Pi CLI and FrostPi conversations.
-The fixture inspects the system prompt sent to the model and checks that earlier
-FrostPi transcript entries stay intact.
+Use `--system-prompt` with the current Factory image to check existing Pi CLI
+and FrostPi conversations. The fixture publishes Restricted, Unrestricted and
+Restricted settings in sequence and checks the guidance sent to the model on
+each turn. It also assigns, replaces and removes a saved add-on, verifies that
+project instructions remain present and compares earlier FrostPi transcript entries.
 
 For authenticated local discovery, run the following after installing Playwright
 and Chromium.
@@ -1138,7 +1202,7 @@ rejected. The runner restores the search configuration afterward.
 When changing category rules, verify an allowed domain, a misleading suffix such
 as `python.org.example.net`, an unselected site, a redirect to an unselected site,
 and a category hostname resolving to loopback. Existing explicit local-model
-ports must still work. Category refresh must not restart the development container.
+ports must still work. Category refresh must not restart the main agent sandbox.
 
 For the bundled Microsoft sign-in category, use the built proxy image:
 
@@ -1314,6 +1378,23 @@ It checks passwordless startup, reopening, address reuse, password login,
 anonymous WebSocket rejection, foreign origins, HTTPS with a group-readable
 key, and occupied ports.
 It restores the saved editor settings and leaves the editor stopped.
+
+For settings updates and rebuilds without profile services, use cached Pi images
+and the pinned code-server archive. The fresh-sandbox CI job runs this check before
+release; without these arguments it builds the current checkout and downloads the
+pinned editor archive:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python tests/browser_editor_updates.py \
+  --image CACHED_PI_IMAGE --archive /path/to/code-server-4.145.2-linux-amd64.tar.gz
+```
+
+This disposable fixture opens and authenticates the actual editor before updating
+or rebuilding. It verifies the original URL and login cookie after success,
+workspace-startup rollback and editor-startup rollback, alongside project and
+private-home preservation. It also checks updates with no open editor, stopped
+sandboxes and removal of all test containers and volumes. Cached image selection
+skips compilation; container operations and editor startup use the production code.
 
 In the TUI, check **Editor** during creation and **Settings → Editor** afterward.
 Generate a password, save, open the browser and sign in. Close the manager and
@@ -1626,3 +1707,254 @@ podman run --rm -i --network=none --read-only --cap-drop=ALL \
 ```
 
 For a live test, use an isolated role, a named empty log group and a stream. Grant `ec2:DescribeRegions` and `logs:DescribeLogStreams` on their appropriate resources. Exercise both services from the sandbox, remove the Logs grant in Settings, then repeat both commands. Verify that EC2 still succeeds and AWS denies Logs. Disconnect and delete the test resources. Record their identifiers and deletion status outside the checkout.
+
+## Profile recipes and application containers
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services test_profile_replacement test_profile_instructions test_profile_services_ui test_creation_conflicts_ui
+PYTHONPATH=.:tests .venv/bin/python tests/profile_services_integration.py
+```
+
+The real Podman fixture uses disposable names, project folders and synthetic
+provider credentials. It exercises all four workspace agents, read-only applied
+recipes, direct SSH with pinned keys, authenticated PostgreSQL access, private
+networking, proxy rules, workspace replacement and rollback, Stop/Start, data
+persistence and deletion. Pi creation includes an upstream provider failure and
+same-name retry through the real creation worker. No host sign-ins are copied.
+
+Review the profile picker, creation summary, profile/service status, status error,
+network-conflict confirmation and application-data deletion warning at 80×24,
+120×40 and 220×50. Dismiss the profile page while its status query is in flight;
+the late result must not update a replacement screen.
+
+Use `tests/profile_services_runtime.py --image WORKSPACE_IMAGE --proxy-image PROXY_IMAGE`
+for the runtime checks with cached images on Linux or WSL2. This checks the
+service implementation without claiming to rebuild the cached workspace image.
+The fixture covers live destination revocation, a stopped proxy relay, direct
+SSH/SQL, external IPv4/IPv6 denial and persistent data across Stop/Start.
+
+Run `tests/frostpi_editor.py --image WORKSPACE_IMAGE --code-server CODE_SERVER_DIR
+--output OUTPUT_DIR --profile-services` for the shipped browser editor. Its
+synthetic model reads the applied profile, tries inner Bash SSH and then uses
+the existing reviewed `bash_escalate` path to query PostgreSQL. The regular
+profile integration fixture runs the corresponding actual Pi CLI check.
+
+The profile-instruction checks cover the full saved `profile.md`, changes and
+removal across launches, retained global user rules and unchanged project
+instructions. Naming checks distinguish the main agent sandbox from profile
+services and sign-in containers for all four agents, preserve engine resource
+names, and compare terminology across user and profile-authoring documentation.
+The Codex image suite checks the `developer_instructions` launcher
+override, its precedence over trusted project settings through the pinned native
+app-server, Unicode and control characters, and actionable diagnostics for the OS
+argument limit. The real profile fixture checks managed instructions inside all
+four main agent sandboxes and new database data in Create from existing.
+
+The bundled [profile authoring guide](ai_sandbox_factory/containers/dev/profile-authoring/README.md)
+has a complete two-host example. Check its manifest, independent Git revisions,
+per-service credentials, and read-only documentation delivery to all agents with:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_authoring test_profile_services
+PYTHONPATH=.:tests .venv/bin/python tests/profile_authoring_integration.py
+```
+
+The real Podman fixture installs the example, builds and starts both PostgreSQL
+hosts, runs the exact documented SSH/SQL commands, checks direct peer access and
+isolated data/passwords, and verifies persistent data across Stop/Start. It reads
+the authoring guide through the applied read-only mount and copies the bundled
+example back to a host folder using the documented command. It leaves project
+instructions unchanged and removes its disposable containers, volumes and network.
+It then edits and applies the profile, registers an actual Git commit, and creates
+a new sandbox from that registered profile. Create from existing must keep the
+applied snapshot even after a Library update and invalid unapplied edits. Both
+new sandboxes must have separate application data, passwords and volumes; the
+original database and editable files must remain unchanged.
+The fixture also moves the attached editable folder, verifies that Start reports
+its saved path without changing private state, restores the folder and retries.
+
+## Editable profiles
+
+Check the compact service summaries and their optional reference popup with:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_services_ui
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_service_help.py /tmp/factory-service-help
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_service_help.py /tmp/factory-service-help-mono --mono
+```
+
+The UI checks cover help being absent from the main form, opening and dismissing
+the popup by keyboard and button, unchanged form values, and profiles without services.
+The renderer captures both entry points at 80×24, 120×40 and 220×50.
+The Actions menu has one **Profile and services…** entry. Its page shows
+**Make profile editable…** until a copy is attached, then **Editable profile…**.
+It shows **Saved service data…** only when data exists.
+Keyboard checks cover both paths, returning after editing, and redirecting to
+an existing job. Returning reads the saved configuration without waiting for the
+sandbox list and restores focus to the initiating control. Delayed service-status
+successes and failures must not overwrite a refreshed profile page. The action
+label and page title must match the saved editable state after returning from
+creation, including failure and retry. Agent guidance and recovery errors use
+the same available action.
+Diff checks use Factory-generated patches with changed, added and removed files,
+long lines, Unicode, literal markup and binary-file notices. Added and removed
+lines have distinct colours, hunk markers are emphasized, and the original
+markers remain readable in monochrome. Wrapped lines must remain complete while
+the review scrolls and Back and Apply stay visible.
+`render_service_data.py` also captures the full menu with an open
+browser editor, a profile guide and alerts.
+
+The fresh-sandbox CI job runs the Pi lifecycle and Codex commit-recovery fixtures
+below before release.
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_profile_service_changes test_updating
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/profile_commit_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/profile_commit_integration.py --browser-editor /path/to/pinned-code-server.tar.gz
+PYTHONPATH=.:tests .venv/bin/python tests/service_data_integration.py
+PYTHONPATH=.:tests .venv/bin/python tests/render_profile_edit.py /tmp/factory-profile-edit-ui
+```
+
+The real fixture creates disposable Pi, Codex, Claude Code and Antigravity
+sandboxes. Pi uses the real creation worker with a provider selected. It checks
+the editable mount and managed instructions, invalid JSON, static validation,
+changes made after review, real build failure, package application, new hosts,
+readiness failure, build/readiness cancellation, interrupted-worker recovery,
+and a bootstrap failure after cutover. Rebuild after adding a service must use
+the applied snapshot even with invalid unapplied source files. Existing runtime IDs and service data
+are preserved on failure; same-name retry and stopped-state application are exercised. It uses synthetic credentials and removes its private resources.
+Existing-service checks change the image and environment, write into a candidate
+database before failing readiness, cancel preparation, fail workspace bootstrap
+after service readiness, and retry successfully. They verify the exact previous
+container and untouched data after rollback, retained data volumes after removal,
+fresh data when re-adding the same service name, and removal of the final service
+and its network while the sandbox is stopped. Pi also kills a replacement worker
+and recovers through Start. Delete must remove retained data volumes even when
+the applied profile no longer declares services.
+The commit fixture injects a disk-full error while publishing the transaction's
+commit marker. It verifies immediate restoration of actual container IDs,
+running state, settings, database contents and credentials, then retries the same
+review successfully and checks exact resource cleanup.
+With `--browser-editor`, it opens the actual password-protected editor before
+attaching an editable profile. Attachment, Apply and commit-failure rollback
+must restore the same URL, password settings and authenticated browser cookie.
+Relay regressions reject a conflicting original port without choosing another
+address; service-data restore must leave the workspace editor alone. Cancellation
+during service preparation must preserve an editor that has not been replaced.
+It also checks internal HTTP access with an unchanged service's proxy settings
+and exports a retained volume using the command shown in the Delete dialog.
+The saved-service-data fixture exercises the CLI inventory, export and restore
+against actual service volumes. It checks multi-volume data, retained source and
+target data, stopped services, unrelated running containers, rollback and cleanup.
+After an interrupted profile worker, ordinary lifecycle actions recover the
+pending transaction before changing the sandbox. The real fixture checks Stop
+and Start after killing the preparation worker; dispatch tests also cover
+Build and Delete using the recovered configuration.
+Client launch tests check that Open, Pi and the browser editor also resolve the
+pending transaction before selecting a runtime.
+The editor-update fixture uses Factory's rootless Podman identity (1000:1000)
+for both builds and startup, including when the host has a different UID. It
+prints container logs before cleanup if an operation fails.
+The standalone validator runs without installing Factory inside the sandbox.
+
+Render the editing folder, empty/error and attached states, the full change
+review and its diff, replacement confirmation and no-change review at all three
+terminal sizes. Verify Enter, Escape, visible one-row actions and late review
+completion after leaving Job details. Inspect the actual screenshots before
+committing UI changes.
+Applying a reviewed profile must first show its replacement notice, including
+at 80×24. Enter confirms; Escape returns to the unchanged review without starting
+a job. Keep Review and Profile and services actions within their bounded forms
+at wide terminal sizes.
+
+### Shared editable profiles
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_copy_settings test_profile_edit test_profile_services_ui test_profile_edit_ui
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_copy_help_ui
+PYTHONPATH=.:tests .venv/bin/python tests/profile_sharing_integration.py
+```
+
+The real fixture creates Pi and Codex sandboxes using the same editable folder,
+including a copy of a shared copy. Broken pending JSON must not affect creation
+from the applied snapshot. It checks shared Git history and file edits, separate
+homes, database data and passwords, Apply to one sandbox without updating its
+peers, and a later Apply against another sandbox's own revision. Deleting the
+original must keep the shared folder, history and working peers. It verifies
+cleanup of its labeled containers, volumes and networks. Unit tests cover all
+four agents, an absent or changed source, workspace overlap, the creation flag,
+stable checkbox help and the summaries of both copy choices.
+The Web Search API key checkbox is hidden
+when the source has no saved Web Search keys or uses a native coding agent;
+a stopped Pi sandbox with saved keys shows how to enable copying. Opening the
+dialog or continuing without the checkbox selected must not export any keys.
+The source lifecycle lock protects configuration and package copying and is
+released before image builds. An active source update is refused with a useful
+message; an interrupted source transaction is recovered before its applied
+snapshot is selected. The copy picker excludes unfinished creations. Gate a
+search-key read and check that choices stay fixed, Cancel remains responsive,
+late results cannot dismiss another screen, and a failed read preserves choices
+for retry. After focus and layout settle, short errors must remain visible;
+long diagnostics must retain every line and leave the actions visible.
+The compact copy dialog keeps only the source and relevant choices visible.
+Its **More information…** popup preserves the profile, file, data and sign-in
+explanations. Check help for the selected source, conditional service and shared
+folder sections, both dismissal paths, unchanged checkbox values and focus,
+and disabled help while a copy is being prepared. Render these states with
+`render_profile_edit.py`, including its monochrome mode. Error captures execute
+the real copy failure handler. Check rendered monochrome title styles, available
+help height, aligned actions and keyboard scrolling; long errors must not leave
+an offscreen checkbox receiving keyboard input.
+
+### Semantic text styles
+
+`test_tui_layout` checks bold field labels, plain input values, underlined section
+headings, separated command blocks and readable monochrome errors at all three
+terminal sizes. Read-only facts use `Details` so label emphasis never changes
+the literal value. `Command` separates runnable commands from help text.
+Review the profile pages with `render_profile_edit.py` and the creation,
+settings, provider, connector, editor, document-search and history fixtures in
+`render_tui.py`. Inspect populated and error states as well as empty forms.
+
+Run the actual Pi RPC and shipped FrostPi webview profile tools with the fixture's
+cached Pi image and a matching code-server binary:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/frostpi_editor.py --image "$PI_IMAGE" --code-server "$CODE_SERVER" --output /tmp/factory-profile-client-check --profile-edit
+```
+
+The synthetic model drives real read, write and Bash tools to change a package
+and add a service. Both clients run the documented validator, commit the editable
+profile and push to a disposable local Git origin after a diagnostic failed push
+and retry. They attempt a write to the read-only applied record, which must remain
+unchanged. No remote account is used.
+
+For an explicitly authorized live authoring check with the host's Claude sign-in:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_opus.py --live --output /tmp/factory-profile-live-check
+```
+
+The live agent reads the bundled guide, repairs invalid JSON, edits package and
+service recipes, validates, commits and pushes to an authorized disposable local
+origin, and explains the user's review/apply steps. The fixture applies those edits
+and checks the package and SQL service. A fresh model session after restart reads
+the original/applied/editable profile context and existing maintenance instruction. Keep its model output
+outside the checkout. This opt-in check uses the account's model quota.
+
+Check an editable folder on a Windows-backed WSL2 filesystem with cached images.
+Use a Pi image with the matching Factory bootstrap from the revision under test;
+an older image cannot validate the new managed profile context:
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python tests/profile_edit_mounts.py --image "$PI_IMAGE" --proxy-image "$PROXY_IMAGE" --profile-root /mnt/c/Users/Public
+```
+
+This checks host/agent writes, standalone validation, managed instructions,
+read-only applied files and retained profile files after sandbox deletion. To
+also check Git history, local-origin pushes and dirty edits across restart, add
+`--git-maintenance` and use a parent folder in the Linux home, for example
+`--profile-root "$HOME/sandbox-profiles"`. Git requires lock-file metadata changes
+that some Windows drive mounts reject. These checks use cached images and do not
+establish an image-build result.

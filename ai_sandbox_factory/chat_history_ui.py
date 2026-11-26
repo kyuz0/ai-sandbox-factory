@@ -8,9 +8,9 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from . import chat_history, primary_workspace
+from . import chat_history, primary_workspace, profile_services
 from .file_browser import PathField
-from .tui_widgets import Feedback
+from .tui_widgets import Command, Feedback, WrappingCollapsible
 
 
 EXPORT = 'Export chat history'
@@ -38,7 +38,10 @@ def backup_message(path, count):
 
 
 def delete_confirmation(app, name, agent, message=None):
-    screen = DeleteSandbox(name, has_config=True, agent=agent, backup=message)
+    record = next((row for row in getattr(app, 'records', []) if row.get('name') == name), {})
+    services = (record.get('config', {}).get('profile') or {}).get('services', {})
+    screen = DeleteSandbox(name, has_config=True, agent=agent, backup=message, services=list(services),
+                           retained_volumes=record.get('config', {}).get('profile_service_retained_volumes', []))
     app.push_screen(screen, lambda yes: app.operation('Deleting ' + name, ['delete', name]) if yes else None)
 
 
@@ -70,7 +73,7 @@ class ChatTransfer(ModalScreen):
     def compose(self):
         with Vertical(id='confirm-box'):
             title = f'{IMPORT} into {self.sandbox_name}' if self.importing else f'{EXPORT} from {self.sandbox_name}'
-            yield Label(title, markup=False)
+            yield Label(title, markup=False, classes='title')
             with VerticalScroll(id='chat-transfer-content'):
                 if self.agent != 'pi':
                     name = primary_workspace.AGENTS[self.agent]
@@ -236,28 +239,48 @@ class DeleteSandbox(ModalScreen[bool]):
     BINDINGS = [('escape', 'cancel', 'Cancel')]
     DEFAULT_CSS = """
     DeleteSandbox .chat-note, DeleteSandbox .chat-result { margin: 1 0 0 0; }
+    DeleteSandbox #delete-sandbox-content { height: auto; max-height: 55vh; scrollbar-size-vertical: 1; }
     """
 
-    def __init__(self, name, *, has_config, agent='pi', backup=None):
+    def __init__(self, name, *, has_config, agent='pi', backup=None, services=(), retained_volumes=()):
         super().__init__()
         self.sandbox_name = name
         self.has_config = has_config
         self.agent = agent
         self.can_export = has_config
         self.backup = backup
+        self.services = services
+        self.retained_volumes = retained_volumes
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False)
-            if self.has_config:
-                name = 'Pi and FrostPi' if self.agent == 'pi' else primary_workspace.AGENTS[self.agent]
-                yield Static(f'Saved {name} chats will be permanently deleted. '
-                             'Export chat history to keep a copy on this computer.', markup=False)
-            yield Static('Your workspace files stay on this computer.', classes='chat-note', markup=False)
-            if self.has_config:
-                yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
-                             'Original sign-ins and keys outside this sandbox are kept.', classes='chat-note', markup=False)
-            yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
+            yield Label(f'Delete sandbox · {self.sandbox_name}', markup=False, classes='title')
+            with VerticalScroll(id="delete-sandbox-content"):
+                if self.has_config:
+                    name = 'Pi and FrostPi' if self.agent == 'pi' else primary_workspace.AGENTS[self.agent]
+                    yield Static(f'Saved {name} chats will be permanently deleted. '
+                                 'Export chat history to keep a copy on this computer.', markup=False)
+                yield Static('Your workspace files stay on this computer.', classes='chat-note', markup=False)
+                if self.has_config:
+                    yield Static('This sandbox’s saved sign-ins, keys, settings and editor data will be deleted. '
+                                 'Original sign-ins and keys outside this sandbox are kept.', classes='chat-note', markup=False)
+                if self.services:
+                    yield Static('Application data for these profile services will be permanently deleted: ' + ', '.join(self.services)
+                                 + '. Cancel and ask your coding agent to export any needed application data before deleting.', classes='chat-note', markup=False)
+                if self.retained_volumes:
+                    yield Static('Factory kept old service data when you applied profile changes or restored saved data. '
+                                 'It is stored in Podman volumes on this computer. '
+                                 'Deleting this sandbox permanently deletes that data. '
+                                 'Cancel and open Actions… → Profile and services… → Saved service data… to see each service and date, '
+                                 'and export anything you want to keep.',
+                                 classes='chat-note', markup=False)
+                    with WrappingCollapsible(title='Command-line export', collapsed=True):
+                        yield Static('Alternatively, cancel and run these commands on this computer:', markup=False)
+                        for volume in self.retained_volumes:
+                            yield Command(profile_services.export_command(volume),classes='chat-note')
+                if self.services or self.retained_volumes:
+                    yield Static('Chat history export does not include application data.', classes='chat-note', markup=False)
+                yield Static('', id='chat-backup-status', classes='chat-result chat-success', markup=False)
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='cancel')
                 if self.can_export:

@@ -101,10 +101,19 @@ def profile_guide(path):
         raise ValueError('start-here.md must be valid UTF-8') from error
 
 
+def bundled_source(path):
+    """A saved Factory profile already carries its fetched source and provenance."""
+    return (Path(path) / 'source').is_dir() and (Path(path) / 'source-revisions.json').is_file()
+
+
 def manifest(kind, path):
     if kind not in KINDS:
         raise ValueError("Choose profile or provider")
-    data = json.loads((Path(path) / KINDS[kind]).read_text())
+    if kind == 'profile':
+        from . import profile_spec
+        data = profile_spec.validate(path)
+    else:
+        data = json.loads((Path(path) / KINDS[kind]).read_text())
     if not NAME.fullmatch(data.get("name", "")) or data.get("version", 1) != 1:
         raise ValueError("Package needs a valid name and interface version 1")
     required = ("Dockerfile", "profile.md") if kind == "profile" else (data.get("entry", ""),)
@@ -120,6 +129,9 @@ def manifest(kind, path):
     if kind == "profile":
         profile_system_prompt(path, data["name"])
         profile_guide(path)
+        from . import profile_spec
+        profile_spec.services(data, path)
+        profile_spec.compatible(data, 'pi')
         summary = data.get("summary", "")
         if not isinstance(summary, str) or '\n' in summary or '\r' in summary:
             raise ValueError("Profile summary must be a single line of text")
@@ -331,10 +343,13 @@ def _install(base, data, kind, name, source, ref, subdir):
         dependencies = {}
         if info.get("git_source"):
             if (path / "source").exists():
-                raise ValueError("source/ is reserved for the package dependency")
-            dependencies[info["git_source"]] = export(
-                info["git_source"], path / "source", info.get("git_ref")
-            )
+                if not bundled_source(path):
+                    raise ValueError('This profile declares git_source but already contains source/ without a saved source-revisions.json. '
+                                     'Remove git_source and git_ref to ship these source files, or remove source/ to fetch the declared repository.')
+            else:
+                dependencies[info["git_source"]] = export(
+                    info["git_source"], path / "source", info.get("git_ref")
+                )
             info.pop("git_source")
             info.pop("git_ref", None)
             (path / KINDS[kind]).write_text(json.dumps(info, indent=2) + "\n")

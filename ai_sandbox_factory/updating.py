@@ -30,8 +30,9 @@ def begin_apply(gate):
 
 
 class Update:
-    def __init__(self, progress=None):
+    def __init__(self, progress=None, *, cooperative=False):
         self.progress = progress
+        self.cooperative = cooperative
         self._progress_channel = None
         self._lock = threading.Lock()
         self._requested = threading.Event()
@@ -111,7 +112,8 @@ class Update:
         while not output_closed or process.poll() is None:
             self._progress_channel.poll()
             if self._requested.is_set() and not stopped:
-                stop()
+                if not self.cooperative:
+                    stop()
                 stopped = True
             try:
                 line = lines.get(timeout=0.1)
@@ -128,8 +130,11 @@ class Update:
                 self._finished = True
         # Also stop descendants if the worker exited just as cancellation won.
         if self._requested.is_set():
-            if not stopped:
+            if not stopped and not self.cooperative:
                 stop()
+            if self.cooperative and process.wait():
+                raise ValueError(f'Profile cancellation could not finish cleanly (worker exit {process.returncode}): '
+                                 + (last_output or 'No recovery diagnostic was returned; inspect the job log before retrying.'))
             raise UpdateCancelled()
         code = process.wait()
         if code:

@@ -107,6 +107,14 @@ if settings.get('native_settings') or settings.get('agent') == 'claude':
     configured.update(settings.get('native_settings', {}))
     remote_settings.write_text(json.dumps(configured))
 existing.update(values)
+if settings.get('agent') in ('codex', 'claude', 'agy'):
+    # Extension hosts retain their protected sign-in transport. Project terminals
+    # use the workspace network, including shells other than Bash.
+    terminal_environment = existing.setdefault('terminal.integrated.env.linux', {})
+    project_proxy = 'http://127.0.0.1:3128' if os.environ.get('SANDBOX_NETWORK_MODE') == 'allowlist' else None
+    for proxy_name in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
+        if terminal_environment.get(proxy_name) in (None, 'http://127.0.0.1:3128', 'http://127.0.0.1:3130'):
+            terminal_environment[proxy_name] = project_proxy
 existing.setdefault('workbench.colorTheme', 'Default Dark Modern')
 existing.setdefault('workbench.secondarySideBar.defaultVisibility', 'visible')
 user_settings.write_text(json.dumps(existing))

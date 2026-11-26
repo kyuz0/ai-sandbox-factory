@@ -5,7 +5,7 @@ coding agent: FrostPi for Pi, or the Codex, Claude Code or Antigravity extension
 VS Code with FrostPi is the recommended, most feature-rich way to use Pi.
 The browser editor is the default with rootless Podman on Linux, Windows
 through WSL2, and macOS through Podman Machine. The editor and its extensions run inside the
-workspace container. Choose **Actions… → Open with…** to use the selected agent's CLI instead.
+main agent sandbox. Choose **Actions… → Open with…** to use the selected agent's CLI instead.
 The browser editor supports amd64 and arm64 containers. [Platform setup](platforms.md)
 
 FrostPi previews images Pi receives from tools such as `read` and Betterwright.
@@ -67,6 +67,11 @@ Closing the tab or manager leaves the editor running. Choose **Open** beside the
 sandbox to return to it. **Actions… → Stop browser editor** stops the editor and its terminals,
 active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
 Stopping the sandbox stops both clients.
+
+When an update or rebuild replaces the main agent sandbox, Factory restarts an
+open editor at the same address with its existing connection settings. Refresh
+that browser tab to reconnect. If replacement fails, the previous sandbox and
+editor are restored. An editor that was closed stays closed.
 
 ## Upload files in VS Code
 

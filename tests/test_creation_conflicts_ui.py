@@ -81,3 +81,37 @@ class CreationConflictUI(unittest.IsolatedAsyncioTestCase):
                                 self.assertFalse(form.query_one('#apply', Button).disabled)
                                 continue
                             self.assertEqual([request.draft['name'] for request in submitted], ['codex-test'])
+
+    async def test_network_only_conflict_is_shown_and_can_be_cancelled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            service = FakeService([])
+            found = ResourceConflicts('podman', None, (), (), (('example-profile', 'network-id'),))
+            empty = ResourceConflicts('podman', None, (), ())
+            service.check_creation = Mock(side_effect=[found, found, empty])
+            app = Cockpit(root / 'state', service)
+            draft = preset('developer-postgres', copy.deepcopy(DEFAULT_SETTINGS))
+            draft.update(name='example', workspace=str(root), engine='podman')
+            submitted = []
+            with patch('ai_sandbox_factory.updates.available_update', return_value=None):
+                async with app.run_test(size=(80,24)) as pilot:
+                    await app.workers.wait_for_complete()
+                    form = SettingsForm(draft, on_create=submitted.append)
+                    await app.push_screen(form)
+                    for cancel in (True, False):
+                        form.begin_creation_check(draft, None)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, ConfirmCreationConflicts)
+                        self.assertIn('example-profile', str(app.screen.query_one('#creation-conflict-list', Static).render()))
+                        self.assertEqual(app.focused.id, 'cancel')
+                        if cancel:
+                            await pilot.press('escape')
+                            self.assertFalse(submitted)
+                            self.assertEqual(service.check_creation.call_count, 1)
+                        else:
+                            await pilot.click('#yes')
+                            await app.workers.wait_for_complete()
+                            await pilot.pause()
+                            self.assertEqual(service.check_creation.call_args.args[1], found)
+                            self.assertEqual(len(submitted), 1)

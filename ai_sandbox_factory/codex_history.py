@@ -318,7 +318,7 @@ def migrate(config, workspace_container, provider='codex'):
         raise ValueError(f'Cannot check preserved native chats in {workspace_container} '
                          f'(exit {checked.returncode}): '
                          f'{checked.stderr.decode(errors="replace").strip()}. '
-                         'Check the workspace container and retry the update.')
+                         'Check the main agent sandbox and retry the update.')
     script = Path(__file__).read_text()
     # Complete export before import: an exporter failure cannot install a partial
     # history or completion marker. The private spool is anonymous host storage.

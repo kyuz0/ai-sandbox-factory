@@ -9,9 +9,14 @@ RUN sh /opt/cli-tools/install.sh \
     && install -d -m 0700 -o node -g node /run/primary-workspace \
     && install -d -o node -g node /workspace \
     && printf 'Include /etc/sandbox-ssh/config\n' >/etc/ssh/ssh_config.d/10-sandbox.conf
+COPY sandbox-update.py shell-network.sh /opt/sandbox/
+RUN ln -s /run/primary-runtime/sandbox-context.md /opt/sandbox/context.md
+RUN printf '\n. /opt/sandbox/shell-network.sh\n' >> /etc/bash.bashrc \
+    && printf '. /opt/sandbox/shell-network.sh\n' > /etc/profile.d/factory-network.sh
 COPY entrypoint.py /opt/primary/entrypoint.py
 COPY --from=primary-files worker.sh worker-tools.mjs /opt/primary/
 ENV GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/opt/sandbox/git-identity.gitconfig
+ENV BASH_ENV=/opt/sandbox/shell-network.sh
 USER node
 WORKDIR /workspace
 RUN python3 /opt/cli-tools/check.py

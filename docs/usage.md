@@ -16,7 +16,7 @@ is selected by default. To start a fresh login, choose **Sign in inside the sand
 For Antigravity, use personal Google OAuth. Enterprise login, Application Default
 Credentials (ADC) and API keys are outside this sign-in flow.
 
-The agent and its tools run in the workspace. A separate container keeps the
+The agent and its tools run in the **Main agent sandbox**. A separate container keeps the
 real sign-in and uses it only for the provider’s approved endpoints.
 [How Factory protects the sign-in](architecture.md#native-agent-subscription-authentication)
 
@@ -54,23 +54,34 @@ it yourself.
 
 ## Copy a setup to a new sandbox
 
-Choose **Create from existing…** beside **New sandbox**. Pick the sandbox to
-copy, then choose the coding agent and a new name. The workspace is filled in
+Choose **Create from existing…** beside **New sandbox**. Pick the sandbox whose settings to
+reuse, then choose the coding agent and a new name. The workspace is filled in
 from the source sandbox. Keep it or choose another folder. Review the profile, model providers,
 network rules, features, and advisors before creating it. Factory includes the
 source’s added skills. Clear any you don’t need under **Skills**.
+Open **More information…** in the copy dialog for profile, application-data and
+sign-in details.
 
 You can choose Pi, Codex, Claude Code or Antigravity. When switching from Pi
-to another agent, the new sandbox uses that agent’s sign-in flow and the base
+to another agent, the new sandbox uses that agent’s sign-in flow. Choose a profile
+that supports the selected coding agent. If the source profile is incompatible,
+Factory selects Default Developer Sandbox; you can choose another compatible
 profile. Shared choices such as folders, network rules, memory and added skills
 are carried over, along with Git identity, browser and editor choices, and a custom
 system prompt. Agent-specific settings use the selected agent’s defaults.
 The approval choice also carries over between Codex, Claude Code and Antigravity.
 
-Select **Include search API keys** if you want to copy those keys from a running
-source. The new sandbox has its own package copies. It starts with fresh chats,
-browser sessions, model and advisor logins, and SSH credentials. Select any
+Select **Include Web Search API keys** to copy
+those keys from a running source. This option appears only when the source has
+saved Web Search keys. Model and advisor credentials are not copied;
+configure them on **Review sandbox**. The new sandbox has its own package copies. It starts with fresh chats,
+browser sessions and SSH credentials. Select any
 environment file or Pi configuration folder you want to use again.
+
+Application data, such as databases, is not copied. Each profile service
+initializes new data; Developer + PostgreSQL starts with an empty database.
+Project files are not copied. Choosing the same workspace folder lets both
+sandboxes edit the same host files.
 
 ## Stop, inspect, or delete a sandbox
 
@@ -79,6 +90,12 @@ press **A**, press **Shift+F10**, or choose **Actions…**. The menu includes
 opening, settings, and controls to start, stop, update, or delete the sandbox.
 Choose **Troubleshooting… → Containers…** to see what each container does
 and whether it’s running. **Esc** returns from a submenu to Actions.
+
+**Main agent sandbox** identifies the container with your project files, shell
+and development tools. Additional profile services and credential containers are
+listed separately. The same name appears on **Profile and services…** and in the
+agent’s sandbox instructions.
+
 Press **D** on the dashboard to change the defaults for new sandboxes.
 
 Closing Factory or the editor leaves the sandbox running. Deleting it removes
@@ -216,32 +233,67 @@ and shows both paths so you can resolve the conflict.
 
 ## Change approval and sandbox settings
 
+Factory includes the sandbox settings and guidance when a conversation starts.
+After settings change, the agent receives a short notice identifying the changed
+settings. The initial instructions tell the agent to expect notices beginning
+“Sandbox update: current Factory settings.” on later turns, and that it can ask
+the user to change settings when needed. These notices replace older Factory
+settings; project instructions remain in effect.
+Each notice lists all configuration changes and says Factory updated the reference
+file. The agent can consult it if it needs the full current configuration.
+When a native client starts or resumes a conversation, it first receives the
+current settings. Later notices list only changed settings.
+
+Inside the sandbox, `/opt/sandbox/context.md` is the read-only reference for its
+current configuration, full guidance and examples. Factory updates it after
+changes are successfully applied. Agents can read it whenever they need to
+review the configuration; it contains no Factory-managed sign-in secrets.
+
+When an update or rebuild replaces the main agent sandbox, Factory restarts an
+open browser editor at the same address, with its saved connection settings.
+Refresh the existing browser tab to reconnect. If replacement fails, Factory
+restores the previous sandbox and browser editor. A stopped sandbox stays stopped;
+an editor that was closed stays closed.
+
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |
-| Approvals & sandbox, Pi features, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Approvals & sandbox, Pi features, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Refresh the browser editor or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
 | Codex, Claude Code or Antigravity: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen the selected agent’s CLI or reload the VS Code window. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
-| Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
+| Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Refresh the browser editor or restart the CLI and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
-| Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
-| Connectors → AWS | Connecting AWS for the first time can require replacing the workspace container. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
-| Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. Pi receives new instructions on its next turn. Other coding agents read them at their next launch. |
-| Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
+| Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Refresh the browser editor or restart the CLI; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
+| Connectors → AWS | Connecting AWS for the first time can require replacing the main agent sandbox. Review the listed effects before continuing. Later permission changes apply to the signer. | Refresh the browser editor or restart the CLI if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
+| Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. The agent receives the current grants on its next turn. |
+| Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Refresh the browser editor or restart the CLI after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Choose **Open** to reopen with the saved settings. |
-| Model Providers: hosted connection or endpoint | Saved without recreating the development container; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
+| Model Providers: hosted connection or endpoint | Saved without recreating the main agent sandbox; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |
 | Model Providers: provider-plugin Configure/Refresh | Updates the provider's model configuration. Preview and Status are read-only. | Reopen Pi or reload VS Code to load the refreshed catalogue. |
 | Communications: Slack credentials only | The next Slack tool call reads the saved credentials. | No restart or new conversation is needed. |
 | Library or workstation defaults | Library changes do not alter saved sandbox snapshots; defaults affect future sandboxes. | Select updated library skills in Settings → Skills and apply them to an existing sandbox. |
 
 Use **Resources & environment** for the container memory limit and environment file.
+**Credentials environment file** supplies variables to the main agent sandbox,
+not to profile service containers. Keep this host file outside a shared profile
+repository. Profile services declare their own variables and can use
+[generated application passwords](profiles.md#application-credentials).
 
 Factory gives Pi, Codex, Claude Code and Antigravity instructions about the
 sandbox’s network, mounted folders and enabled features. If a task needs access
 that is off, the agent can ask you to change the relevant setting and explain
 why. Pi can use **Question forms** when enabled. The other agents can ask in chat.
-Reopen the client when a setting requires it so the agent picks up the change.
+When you continue a conversation, Factory supplies the current settings at the
+next turn, including changes to the network, folders, profile and connector grants.
+These replace older Factory instructions in that conversation. A setting that
+requires restarting the sandbox or reopening the client still needs that step
+before its tools or runtime change.
+
+With **Unrestricted** selected, project commands use ordinary network connections.
+Native clients keep their separate managed sign-in transport. Restricted sandboxes
+use the configured gateway; removing proxy variables does not grant direct external
+access. Profile services can communicate on their sandbox's private network.
 
 Reloading tools and instructions does not rewrite earlier chat messages. Engine,
 profile, workspace and seed-home choices are fixed for an existing sandbox; create
@@ -409,7 +461,7 @@ when available. WSL can use an available Linux Secret Service.
 
 Each sandbox has its own active key in its inference companion. Factory checks a
 replacement before assigning it. Subsequent requests use the new assignment
-without recreating the development container. Replacing or forgetting a saved
+without recreating the main agent sandbox. Replacing or forgetting a saved
 key affects the workstation picker. Other sandboxes keep their current copies
 until you change or disconnect their assignments.
 
@@ -546,7 +598,7 @@ that event, and rows missing the selected date stay at the bottom.
 To preview a local web app, ask Pi to start its development server and open
 `http://localhost:PORT` in the agent browser. Pi starts the server with
 `bash_escalate` because the browser can’t reach servers started with ordinary
-`bash`. The server runs inside the development container. You can also start
+`bash`. The server runs inside the main agent sandbox. You can also start
 it yourself from the editor terminal.
 
 With `bash_escalate`, run the server in the background and write its output to

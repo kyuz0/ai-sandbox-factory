@@ -26,7 +26,7 @@ class AWSAccessDialog(EntryDialog):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label(self.title_text)
+            yield Label(self.title_text, classes='title')
             with VerticalScroll(id='aws-fields', classes='spaced-form-fields'):
                 for key, title, example in [
                     ('name', 'Profile name', 'Research'),
@@ -89,7 +89,7 @@ class AWSProfileTargets(EntryDialog):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Apply profile update')
+            yield Label('Apply profile update', classes='title')
             with VerticalScroll(classes='aws-profile-body'):
                 yield Static(f'Choose which sandboxes receive “{self.profile["profile_name"]}”.',
                              markup=False, classes='section-intro')
@@ -240,7 +240,7 @@ class AWSProfilePicker(EntryDialog):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('AWS access')
+            yield Label('AWS access', classes='title')
             if self.current:
                 yield Static('Assigned to this sandbox · ' + profile_label(self.current),
                              classes='section-intro', markup=False, id='aws-assigned')

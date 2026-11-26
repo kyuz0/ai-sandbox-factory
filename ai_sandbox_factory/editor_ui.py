@@ -262,7 +262,7 @@ class OpenWith(ModalScreen):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Open with')
+            yield Label('Open with', classes='title')
             yield OptionList(*self.modes.values(), id='editor-choices')
             with Horizontal(classes='buttons dialog-actions'):
                 yield Button('Cancel', id='editor-cancel')

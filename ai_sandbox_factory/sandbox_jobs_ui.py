@@ -22,7 +22,7 @@ class JobsMenu(ModalScreen[Optional[Job]]):
 
     def compose(self):
         with Vertical(id='confirm-box'):
-            yield Label('Jobs')
+            yield Label('Jobs', classes='title')
             if self.jobs:
                 yield OptionList(id='job-choices')
             else:

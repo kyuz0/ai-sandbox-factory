@@ -8,7 +8,7 @@ from textual.widgets import Button, Input, Label, Static
 
 from . import folders
 from .file_browser import PathField
-from .tui_widgets import EntryDialog, Checkbox, Feedback
+from .tui_widgets import Details, EntryDialog, Checkbox, Feedback
 
 
 class FolderEditor(EntryDialog):
@@ -92,7 +92,7 @@ class FolderFields(Vertical):
         self.rows = copy.deepcopy(config.get('extra_folders', []))
 
     def compose(self):
-        yield Static('Main workspace: ' + str(self.config['workspace']) + ' → /workspace', markup=False, classes='section-intro')
+        yield Details([('Main workspace', str(self.config['workspace']) + ' → /workspace')], classes='section-intro')
         with Vertical(id='starting-folder-setting', classes='setting'):
             caption = ('Start Pi and VS Code in' if self.config.get('primary_agent', 'pi') == 'pi' else 'Start the coding agent in')
             yield Label(caption + ' · relative to /workspace', id='starting-folder-label')

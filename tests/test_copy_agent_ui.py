@@ -58,6 +58,8 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         selector.value = target_agent
                         await pilot.pause()
                         self.assertEqual(new.query_one('#workspace', Input).value, config['workspace'])
+                        new.query_one('#name', Input).scroll_visible(animate=False)
+                        await pilot.pause()
                         self.assertLessEqual(new.query_one('#name', Input).region.bottom,
                                              new.query_one('.form').content_region.bottom)
                         workspace = (Path(config['workspace']) if (source_agent, target_agent) == ('pi', 'codex')
@@ -83,7 +85,7 @@ class CopyAgentUITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(selected['reuse_from'], 'source')
                         self.assertEqual(selected['options']['git_identity'], config['options']['git_identity'])
                         if target_agent != 'pi':
-                            self.assertEqual(selected['profile'], 'base')
+                            self.assertEqual(selected['profile'], draft['profile'])
                             self.assertFalse(selected['model_providers'])
                             self.assertFalse(selected['advisors'].get('providers'))
                             self.assertFalse(selected['local_model_ports'])

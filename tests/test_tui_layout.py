@@ -1,6 +1,7 @@
 """Layout and navigation contracts for the terminal forms."""
 import asyncio
 import copy
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,7 @@ from ai_sandbox_factory.sandbox_tui import (
     SettingsMenu, WebAccessForm, preset,
 )
 from ai_sandbox_factory.folders_ui import FolderEditor
-from ai_sandbox_factory.tui_widgets import Checkbox
+from ai_sandbox_factory.tui_widgets import Checkbox, Command, Details
 from test_tui import FakeService
 from tui_geometry import check_checkbox_alignment, check_dropdown_layout
 
@@ -61,6 +62,42 @@ class TUILayoutTests(unittest.TestCase):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+    async def test_text_roles_distinguish_headings_labels_values_and_commands(self):
+        from ai_sandbox_factory.sandbox_tui import AppliedProfile
+        for mono in (False,True):
+            environment={'NO_COLOR':'1'} if mono else {}
+            with patch.dict('os.environ',environment,clear=False):
+                if not mono:
+                    os.environ.pop('NO_COLOR',None)
+                for size in ((80,24),(120,40),(220,50)):
+                    with self.subTest(monochrome=mono,size=size):
+                        app=self.app()
+                        async with app.run_test(size=size) as pilot:
+                            await self.ready(app,pilot)
+                            await app.push_screen(NewSandbox())
+                            await pilot.pause()
+                            label=next(widget for widget in app.screen.query(Label) if str(widget.render())=='Workspace')
+                            self.assertTrue(label.styles.text_style.bold)
+                            self.assertFalse(app.screen.query_one('#workspace',Input).styles.text_style.bold)
+                            if mono:
+                                error=app.screen.query_one('#new-error')
+                                self.assertTrue(error.styles.text_style.bold)
+                                self.assertEqual(error.styles.color.rgb,(255,255,255))
+                            await app.pop_screen()
+                            record=copy.deepcopy(self.record)
+                            record['config']['profile']=sandbox.load_profile('developer-postgres')
+                            with patch('ai_sandbox_factory.profile_services.status',return_value=[{'name':'database','running':True}]):
+                                await app.push_screen(AppliedProfile(record,self.root/'demo'))
+                                await app.workers.wait_for_complete()
+                                await pilot.pause()
+                                heading=app.screen.query_one('Label.group-title')
+                                self.assertTrue(heading.styles.text_style.bold)
+                                self.assertTrue(heading.styles.text_style.underline)
+                                self.assertTrue(app.screen.query_one('#profile-service-database',Label).styles.text_style.bold)
+                                self.assertFalse(app.screen.query_one(Details).styles.text_style.bold)
+                                self.assertGreater(app.screen.query_one(Command).styles.padding.left,0)
+                                for name in ('profile-information-back','profile-information-edit'):
+                                    self.assertTrue(app.screen.region.contains_region(app.screen.query_one('#'+name,Button).region))
     async def test_workspace_controls_align_and_remain_reachable(self):
         wide_form_width = None
         for size in ((80, 24), (120, 40), (220, 50)):
@@ -134,7 +171,7 @@ class TUILayoutTests(unittest.TestCase):
                     check_dropdown_layout(form)
                     await app.pop_screen()
 
-    async def test_review_uses_terminal_width_with_padded_actions(self):
+    async def test_review_keeps_form_and_actions_together_with_padded_edges(self):
         for size in ((80, 24), (120, 40), (220, 50)):
             app = self.app()
             async with app.run_test(size=size) as pilot:
@@ -145,10 +182,10 @@ class TUILayoutTests(unittest.TestCase):
                 form = app.screen.query_one('.form')
                 actions = app.screen.query_one('.wizard-actions')
                 primary = actions.query_one('Button.-primary', Button)
-                self.assertEqual(form.region.width, size[0])
-                self.assertEqual(actions.region.width, size[0])
-                self.assertEqual(actions.content_region.x, 3)
-                self.assertEqual(primary.region.right, size[0] - 3)
+                self.assertEqual(form.region.width, min(size[0], 100))
+                self.assertEqual(actions.region.width, form.region.width)
+                self.assertEqual(actions.content_region.x, form.region.x + 3)
+                self.assertEqual(primary.region.right, form.region.right - 3)
                 self.assertLess(primary.region.bottom,
                                 app.screen.query_one('Footer').region.y)
                 await pilot.press('escape')

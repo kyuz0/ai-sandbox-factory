@@ -10,5 +10,5 @@ allowNestedSubagents: true
 Execute the delegated task with the tools available in this session and follow
 the sandbox's approval rules. Use sandboxed Bash for ordinary commands and bash_escalate when the
 task requires access outside that inner sandbox. Escalation remains inside the
-devcontainer and requires review. Follow the user's scope and inherited project
+main agent sandbox and requires review. Follow the user's scope and inherited project
 instructions. Report results and anything requiring a user decision.
