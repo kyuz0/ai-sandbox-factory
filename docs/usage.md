@@ -241,8 +241,8 @@ the user to change settings when needed. These notices replace older Factory
 settings; project instructions remain in effect.
 Each notice lists all configuration changes and says Factory updated the reference
 file. The agent can consult it if it needs the full current configuration.
-Native clients synchronize current settings when starting or resuming a
-conversation; this first notice is labeled as synchronization rather than a change.
+When a native client starts or resumes a conversation, it first receives the
+current settings. Later notices list only changed settings.
 
 Inside the sandbox, `/opt/sandbox/context.md` is the read-only reference for its
 current configuration, full guidance and examples. Factory updates it after

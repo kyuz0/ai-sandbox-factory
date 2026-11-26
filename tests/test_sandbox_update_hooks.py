@@ -56,7 +56,7 @@ class SandboxUpdateHooksTests(unittest.TestCase):
             with self.subTest(agent=agent):
                 for client in ('first-process', 'resumed-process'):
                     text = self.text(self.call(agent, client=client))
-                    self.assertIn('This synchronizes the current settings for this conversation.', text)
+                    self.assertIn('These are the current settings for this conversation.', text)
                     self.assertNotIn('These are the only configuration changes.', text)
                     self.assertIn('Network: Restricted', text)
                     self.call(agent, 'after', client=client)

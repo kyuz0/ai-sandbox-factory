@@ -56,7 +56,7 @@ def message(state, previous=None, changed=None):
     if not fields:
         fields = [['Sandbox guidance', 'updated']]
     footer = (('These are the only configuration changes. ' if previous is not None else
-               'This synchronizes the current settings for this conversation. ')
+               'These are the current settings for this conversation. ')
               + f'Factory updated {REFERENCE} for reference if you need the full current configuration, guidance and examples.')
     def render():
         return '\n'.join([*lines, *(f'- {name}: {value}' for name, value in fields), footer])
