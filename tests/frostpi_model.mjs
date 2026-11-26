@@ -31,7 +31,7 @@ function checkSandboxPrompt(messages, label) {
   const history = JSON.stringify(messages.filter(message => message.role !== 'system'));
   const sections = system.split('Current Factory sandbox settings.');
   const current = sections[1] || '';
-  const update = current.split('Sandbox update:')[1] || '';
+  const update = current.split(/^Sandbox update: current Factory settings\.$/m)[1] || '';
   const effective = name => {
     const initial = current.split('\n').find(line => line.startsWith(name + ': '))?.slice(name.length + 2);
     const changed = update.split('\n').find(line => line.startsWith('- ' + name + ': '))?.slice(name.length + 4);
@@ -49,6 +49,9 @@ function checkSandboxPrompt(messages, label) {
     network: effective('Network') === (unrestricted ? 'Unrestricted' : 'Restricted'),
     securityGuidance: matches(system, /^Network is (Restricted|Unrestricted)\b/gm) === 'Restricted',
     guidance: current.includes('allow the specific hostname and port') && system.includes('/opt/sandbox/context.md'),
+    updateGuidance: current.includes('The user can change this sandbox’s settings in Factory') &&
+      current.includes('on a subsequent turn beginning "Sandbox update: current Factory settings."') &&
+      current.includes('Use the changed settings in place of older Factory settings; project instructions still apply.'),
     compactUpdate: update.length <= 2000 && !update.includes('Use ordinary network connections') &&
       !update.includes('The outer network allowlist still applies'),
     destinations: effective('Additional allowed destinations') === (unrestricted ? 'no longer configured' : 'downloads.example.test:443'),

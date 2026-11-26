@@ -23,6 +23,32 @@ class SandboxContextTests(unittest.TestCase):
     def read(self):
         return json.loads(self.path.read_text())
 
+    def test_all_agents_expect_update_notices_and_can_request_settings_changes(self):
+        from ai_sandbox_factory import primary_agents
+        header = 'Sandbox update: current Factory settings.'
+        for agent in ('pi', 'codex', 'claude', 'agy'):
+            for network in ('allowlist', 'unrestricted'):
+                with self.subTest(agent=agent, network=network):
+                    config = {**self.config, 'primary_agent': agent, 'network': network}
+                    write_json(self.state / 'config.json', config)
+                    runtime_context.publish_saved(self.state)
+                    if agent == 'pi':
+                        context = self.read()['securityGuidance']
+                        directory = 'runtime-config'
+                    else:
+                        context = primary_agents.guidance(config, self.state)
+                        directory = 'primary-runtime'
+                    for expected in ('The user can change this sandbox’s settings in Factory',
+                                     'ask the user for the smallest change', 'on a subsequent turn',
+                                     '"' + header + '"', 'in place of older Factory settings',
+                                     'project instructions still apply', runtime_context.REFERENCE):
+                        self.assertIn(expected, context)
+                    self.assertEqual(context.count('"' + header + '"'), 1)
+                    reference = (self.state / directory / 'sandbox-context.md').read_text()
+                    document = json.loads((self.state / directory / 'sandbox-state.json').read_text())
+                    self.assertIn('"Network": "' + document['values']['Network'] + '"', reference)
+                    self.assertIn('"' + header + '"', reference)
+
     def test_publication_uses_applied_network_and_ignores_comments_and_rule_order(self):
         config = {**self.config, 'primary_agent': 'codex'}
         write_json(self.state / 'config.json', config)

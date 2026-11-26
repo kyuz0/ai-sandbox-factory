@@ -629,6 +629,10 @@ print(matches[0].read_text(), end='')
                 connector_settings.refresh_agent_context(saved, state)
                 prompt_library.assign(state, value)
             assert prompt_library.selection(state) == value
+            snapshot = json.loads(inside('cat', '/opt/pi-security/config/sandbox-state.json'))
+            reference = inside('cat', '/opt/sandbox/context.md')
+            assert snapshot['network'] == network
+            assert '"Network": "' + snapshot['values']['Network'] + '"' in reference
             prompt = 'Factory sandbox system prompt fixture ' + label
             reply = 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
             send(prompt)
