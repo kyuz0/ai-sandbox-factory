@@ -1315,6 +1315,12 @@ def prepare_options(config, state):
                 value['trustedModelEndpoints'] = inference.trusted_model_endpoints(config)
         if path.name == 'permissions.json':
             value = folders.permissions(permissions(value, selected), config)
+            for surface, action in (('external_directory_read', 'allow'), ('external_directory_write', 'deny')):
+                rules = value['permission'].setdefault(surface, {})
+                for reference in (runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'):
+                    rules[reference] = action
+            for reference in (runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'):
+                value['permission'].setdefault('path', {})[reference] = 'allow'
             if profile_services.selected(config):
                 for surface, action in (('external_directory_read', 'allow'), ('external_directory_write', 'deny')):
                     rules = value['permission'].setdefault(surface, {})
@@ -1327,6 +1333,8 @@ def prepare_options(config, state):
                     rules[profile_runtime.PATH + '/*'] = action
         if path.name == 'sandbox.json':
             filesystem = value.setdefault('filesystem', {})
+            filesystem.setdefault('additionalAllowRead', []).extend(
+                [runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'])
             if profile_services.selected(config):
                 filesystem.setdefault('additionalAllowRead', []).append(profile_services.CLIENT)
             if profile_runtime.applied(state):

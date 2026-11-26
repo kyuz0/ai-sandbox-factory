@@ -233,6 +233,15 @@ and shows both paths so you can resolve the conflict.
 
 ## Change approval and sandbox settings
 
+Factory includes the sandbox settings and guidance when a conversation starts.
+After settings change, the agent receives a short notice identifying the changed
+settings. Project instructions remain in effect.
+
+Inside the sandbox, `/opt/sandbox/context.md` is the read-only reference for its
+current configuration, full guidance and examples. Factory updates it after
+changes are successfully applied. Agents can read it whenever they need to
+review the configuration; it contains no Factory-managed sign-in secrets.
+
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |

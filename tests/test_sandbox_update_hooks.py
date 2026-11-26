@@ -63,7 +63,9 @@ class SandboxUpdateHooksTests(unittest.TestCase):
         self.call('codex')
         path = next(self.receipts.glob('*.json'))
         for record in ({'acknowledged': {'revision': 'one', 'values': None}},
-                       {'pending': {'turn': 'one', 'state': None}}):
+                       {'pending': {'turn': 'one', 'state': None}},
+                       {'pending': {'turn': 'one', 'state': {'revision': 'one'}}},
+                       {'pending': {'turn': 'one', 'state': {'revision': 'one', 'values': {}}, 'changes': 'invalid'}}):
             path.write_text(json.dumps(record))
             self.assertIn('Network: Restricted', self.text(self.call('codex')))
 
@@ -80,7 +82,8 @@ class SandboxUpdateHooksTests(unittest.TestCase):
             self.state('two', 'unrestricted')
             text = self.text(self.call(agent, turn='two'))
             self.assertIn('Network: Unrestricted', text)
-            self.assertIn('do not configure the Restricted gateway', text)
+            self.assertNotIn('gateway', text)
+            self.assertIn('/opt/sandbox/context.md', text)
             self.assertIn('replace older Factory settings', text)
             self.call(agent, 'after', turn='two')
             self.state('three', 'allowlist')
@@ -200,6 +203,36 @@ class SandboxUpdateHooksTests(unittest.TestCase):
         text = self.text(self.call('codex', turn='latest'))
         for value in ('Network: Unrestricted', 'Browser: On', 'Connectors: SSH & Git'):
             self.assertIn(value, text)
+
+    def test_notices_contain_only_changed_settings_and_the_reference(self):
+        for agent in ('codex', 'claude', 'agy'):
+            self.state('one', 'allowlist', Browser='On', Folders='/workspace (read and write)')
+            self.call(agent); self.call(agent, 'after')
+            self.state('two', 'allowlist', Browser='Off', Folders='/workspace (read and write)')
+            text = self.text(self.call(agent, turn='changed'))
+            self.assertIn('- Browser: Off', text)
+            for unchanged in ('Network:', 'Folders:', 'gateway', 'sign-in transport'):
+                self.assertNotIn(unchanged, text)
+            self.assertIn('/opt/sandbox/context.md', text)
+            # A repeated cancellation must keep the same narrow correction.
+            self.assertEqual(self.text(self.call(agent, turn='retry')), text)
+
+    def test_prompt_budget_keeps_all_changed_labels_and_full_values_out_of_the_notice(self):
+        values = {f'Configured feature {index}': 'Long fixture value ' * 200 for index in range(36)}
+        state = {'revision': 'many', 'network': 'unrestricted', 'values': values}
+        text = hook.message(state)
+        self.assertLessEqual(len(text.encode('utf-8')), hook.MESSAGE_BYTES)
+        for label in values:
+            self.assertIn(label + ':', text)
+        self.assertNotIn('Long fixture value', text)
+        state['values'] = {label: '漢字🌍' * 10 for label in values}
+        self.assertLessEqual(len(hook.message(state).encode('utf-8')), hook.MESSAGE_BYTES)
+
+    def test_reference_only_guidance_changes_have_one_short_notice(self):
+        state = {'revision': 'two', 'network': 'allowlist', 'values': {'Network': 'Restricted'}}
+        text = hook.message(state, {**state, 'revision': 'one'})
+        self.assertIn('- Sandbox guidance: updated', text)
+        self.assertNotIn('- Network:', text)
 
     def test_antigravity_error_stop_does_not_acknowledge_delivery(self):
         self.call('agy')

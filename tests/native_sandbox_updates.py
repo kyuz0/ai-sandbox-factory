@@ -24,7 +24,13 @@ def child(agent):
     state.parent.mkdir(parents=True, exist_ok=True)
     def snapshot(revision, mode):
         state.write_text(json.dumps({'revision': revision, 'network': mode,
-            'values': {'Network': mode, 'Browser': f'Off (fixture {revision})'}}))
+            'values': {'Network': 'Restricted' if mode == 'allowlist' else 'Unrestricted',
+                       'Browser': f'Off (fixture {revision})'}}))
+        reference = Path('/reference-fixtures') / (revision + '.md')
+        (state.parent / 'sandbox-context.md').write_text(reference.read_text())
+        current = Path('/opt/sandbox/context.md').read_text()
+        assert '# Current sandbox configuration' in current and 'Examples for this sandbox' in current
+        assert ('Network is Restricted' if mode == 'allowlist' else 'Network is Unrestricted') in current
     env = {'HOME': str(home), 'PATH': os.environ['PATH'], 'TERM': 'dumb',
            'NO_COLOR': '1', 'TMPDIR': str(root),
            'NODE_OPTIONS': '--require=/factory/ai_sandbox_factory/containers/editor/watch-fallback.cjs',
@@ -73,6 +79,7 @@ def child(agent):
             expected = 'Network: Unrestricted' if mode == 'unrestricted' else 'Network: Restricted'
             assert expected in requests, f'{agent} omitted {expected}: {requests}'
             assert f'Off (fixture {revision})' in requests, f'{agent} omitted the new revision: {requests}'
+            assert '/opt/sandbox/context.md' in requests, f'{agent} omitted the full configuration reference'
             # A normal completion must acknowledge the hook context actually sent.
             records = set(receipts.glob('*.json')) - previous_records
             assert len(records) == 1, f'{agent} expected one receipt for the newly opened client: {records}'
@@ -94,12 +101,20 @@ def main():
     if not args.image:
         parser.error('--image is required')
     source = Path(__file__).resolve().parents[1]
-    command = ['podman', 'run', '--rm', '--pull=never', '--network=none', '--security-opt=label=disable',
-               '--userns=keep-id:uid=1000,gid=1000', '--tmpfs', '/run/primary-runtime:rw,mode=1777',
-               '-v', f'{source}:/factory:ro', '-v', f'{source}/ai_sandbox_factory/containers/primary-worker/sandbox-update.py:/opt/sandbox/sandbox-update.py:ro',
-               '-v', f'{source}/ai_sandbox_factory/containers/primary-worker/codex-hooks.json:/etc/codex/hooks.json:ro',
-               '--entrypoint', 'python3', args.image, '/factory/tests/native_sandbox_updates.py', '--child', '--agent', args.agent]
-    subprocess.run(command, check=True)
+    from ai_sandbox_factory import runtime_context
+    with tempfile.TemporaryDirectory(prefix='factory-native-reference-') as temporary:
+        root = Path(temporary)
+        for revision, mode in [('one', 'allowlist'), ('two', 'unrestricted'), ('three', 'allowlist')]:
+            config = {'name': 'context-fixture', 'primary_agent': args.agent, 'workspace': str(root), 'network': mode}
+            current = runtime_context.snapshot(config, root)
+            (root / (revision + '.md')).write_text(runtime_context.reference_text(config, root, current))
+        command = ['podman', 'run', '--rm', '--pull=never', '--network=none', '--security-opt=label=disable',
+                   '--userns=keep-id:uid=1000,gid=1000', '--tmpfs', '/run/primary-runtime:rw,mode=1777',
+                   '-v', f'{source}:/factory:ro', '-v', f'{root}:/reference-fixtures:ro',
+                   '-v', f'{source}/ai_sandbox_factory/containers/primary-worker/sandbox-update.py:/opt/sandbox/sandbox-update.py:ro',
+                   '-v', f'{source}/ai_sandbox_factory/containers/primary-worker/codex-hooks.json:/etc/codex/hooks.json:ro',
+                   '--entrypoint', 'python3', args.image, '/factory/tests/native_sandbox_updates.py', '--child', '--agent', args.agent]
+        subprocess.run(command, check=True)
 
 
 if __name__ == '__main__':

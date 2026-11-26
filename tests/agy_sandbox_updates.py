@@ -123,7 +123,8 @@ def turn(proc, prompt, directory, *, success=True):
 
 def set_network(mode):
     temporary = SNAPSHOT.with_suffix('.tmp')
-    temporary.write_text(json.dumps({'revision': mode, 'network': mode, 'values': {}}))
+    temporary.write_text(json.dumps({'revision': mode, 'network': mode,
+        'values': {'Network': 'Restricted' if mode == 'allowlist' else 'Unrestricted'}}))
     temporary.replace(SNAPSHOT)
 
 
@@ -153,6 +154,8 @@ def exercise(binary, directory, env):
     hooks = read_events(directory / 'hooks.jsonl')
     all_wire = read_events(directory / 'wire.jsonl')
     assert len(all_wire) == 7, all_wire
+    for notices in all_wire:
+        assert all('/opt/sandbox/context.md' in notice and len(notice) <= 2000 for notice in notices)
     for prompt in ('First update', 'Same settings', 'Mode changed', 'Still unrestricted',
                    'Rejected update', 'Resumed update', 'Same resumed settings'):
         events = [item for item in hooks if item['lastUserInput'] == prompt]
@@ -162,8 +165,8 @@ def exercise(binary, directory, env):
         assert {item['conversationId'] for item in events} == {conversation}, events
         assert len({(item['initialNumSteps'], item['invocationNum']) for item in events}) == 1, events
 
-    modes = [['Restricted' if 'Network: Restricted.' in text else
-              'Unrestricted' if 'Network: Unrestricted.' in text else 'unknown' for text in updates]
+    modes = [['Restricted' if 'Network: Restricted' in text else
+              'Unrestricted' if 'Network: Unrestricted' in text else 'unknown' for text in updates]
              for updates in all_wire]
     assert modes[0] == ['Restricted'], modes
     assert modes[1] == modes[0], modes

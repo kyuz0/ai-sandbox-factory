@@ -69,6 +69,7 @@ class ReplacementTests(unittest.TestCase):
                 for name in (workspace,helper,db): containers[name]['State']['Running']=True
         with tempfile.TemporaryDirectory() as tmp:
             state=Path(tmp)
+            config['workspace'] = str(state)
             (state/'allowlist.txt').write_text('')
             (state/'squid.conf').write_text('old policy')
             sandbox.activity.save_config(state, config)

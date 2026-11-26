@@ -205,7 +205,12 @@ Run `test_runtime_context`, `test_sandbox_update_hooks` and
 publication, rollback, independent conversations, cancellation, overlapping turns,
 receipt recovery and project proxy selection without changing native sign-in
 transport. `tests/test_sandbox_context.mjs`, when run with Node, exercises Pi's
-per-turn context loading.
+initial context, branch-local comparisons, reloads and reversions. Update notices
+identify only changed settings, retain every changed label when values are long,
+and point to `/opt/sandbox/context.md`. Check the UTF-8 prompt budget with both
+ASCII and non-ASCII values. Full values and configuration-specific examples stay
+in the reference file. Verify publication rollback and credential exclusion for
+that file alongside the JSON snapshot.
 
 Use cached, pinned workspace images for the native client checks:
 
@@ -219,6 +224,9 @@ a conversation, resumes it after Restricted → Unrestricted → Restricted chan
 and checks both the actual model requests and completion acknowledgments. Hook
 tests must also cover the pinned Antigravity CLI and the shipped FrostPi webview;
 configuration-file assertions alone do not establish delivery to those clients.
+The FrostPi `--system-prompt` fixture also reads the reference through actual Pi
+file and shell tools, checks that private configuration remains denied, and
+resumes a saved Pi conversation after restarting its process.
 
 Check the actual workspace network and live policy updates with a cached Pi image:
 

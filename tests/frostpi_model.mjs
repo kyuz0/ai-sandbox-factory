@@ -31,6 +31,12 @@ function checkSandboxPrompt(messages, label) {
   const history = JSON.stringify(messages.filter(message => message.role !== 'system'));
   const sections = system.split('Current Factory sandbox settings.');
   const current = sections[1] || '';
+  const update = current.split('Sandbox update:')[1] || '';
+  const effective = name => {
+    const initial = current.split('\n').find(line => line.startsWith(name + ': '))?.slice(name.length + 2);
+    const changed = update.split('\n').find(line => line.startsWith('- ' + name + ': '))?.slice(name.length + 4);
+    return changed ?? initial ?? '';
+  };
   const unrestricted = label === 'UNRESTRICTED';
   const expectedAddon = ['FIRST', 'UNRESTRICTED', 'RESTRICTED_AGAIN'].includes(label) ? 'FIRST' :
     label === 'SECOND' ? 'SECOND' : '';
@@ -40,15 +46,15 @@ function checkSandboxPrompt(messages, label) {
     project: system.split('FACTORY PROJECT CONTEXT MARKER').length === 2,
     base: system.includes('You are'),
     currentSettings: sections.length === 2 && current.includes('replace older Factory settings'),
-    network: matches(current, /^Network: (Restricted|Unrestricted)$/gm) === (unrestricted ? 'Unrestricted' : 'Restricted'),
-    securityGuidance: matches(system, /^Network is (Restricted|Unrestricted)\b/gm) === (unrestricted ? 'Unrestricted' : 'Restricted'),
-    guidance: unrestricted
-      ? current.includes('Use ordinary network connections') && !system.includes('The outer network allowlist still applies')
-      : current.includes('allow the specific hostname and port') && !system.includes('Network is Unrestricted at the container boundary'),
-    destinations: current.includes('Additional allowed destinations: downloads.example.test:443') === !unrestricted,
+    network: effective('Network') === (unrestricted ? 'Unrestricted' : 'Restricted'),
+    securityGuidance: matches(system, /^Network is (Restricted|Unrestricted)\b/gm) === 'Restricted',
+    guidance: current.includes('allow the specific hostname and port') && system.includes('/opt/sandbox/context.md'),
+    compactUpdate: update.length <= 2000 && !update.includes('Use ordinary network connections') &&
+      !update.includes('The outer network allowlist still applies'),
+    destinations: effective('Additional allowed destinations') === (unrestricted ? 'no longer configured' : 'downloads.example.test:443'),
     addon: matches(system, /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g) === expectedAddon,
     connectorInstructions: matches(sections[0], /fixture-connector-(first|second)/g) === expectedAlias,
-    sshSettings: matches(current, /fixture-connector-(first|second)/g) === expectedAlias,
+    sshSettings: matches(effective('SSH destinations'), /fixture-connector-(first|second)/g) === expectedAlias,
     privateValues: !system.includes('FIXTURE_PRIVATE_MARKER'),
     oldReplies: steps.slice(0, steps.indexOf(label)).every(step =>
       history.includes('FACTORY SANDBOX SYSTEM PROMPT ' + step + ' VERIFIED')),
@@ -301,6 +307,25 @@ http.createServer((request, response) => {
       const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
+    } else if (userText === 'Factory sandbox reference fixture' ||
+               (last.role === 'tool' && last.tool_call_id?.startsWith('factory-context-reference-'))) {
+      const results = messages.filter(message => message.role === 'tool' &&
+        message.tool_call_id?.startsWith('factory-context-reference-'));
+      const requests = [
+        ['read', {path:'/opt/sandbox/context.md'}],
+        ['bash', {command:'cat /opt/sandbox/context.md'}],
+        ['read', {path:'/opt/pi-security/config/sandbox.json'}],
+      ];
+      if (results.length < requests.length) {
+        const [name, args] = requests[results.length];
+        delta = {tool_calls:[{index:0,id:'factory-context-reference-' + results.length,type:'function',
+          function:{name,arguments:JSON.stringify(args)}}]};
+      } else {
+        const output = results.map(result => JSON.stringify(result.content));
+        const valid = output.slice(0,2).every(text => text.includes('# Current sandbox configuration') &&
+          text.includes('Examples for this sandbox')) && /denied|not allowed|permission|blocked|protect/i.test(output[2]);
+        delta = {content:valid ? 'FACTORY SANDBOX REFERENCE VERIFIED' : 'FACTORY SANDBOX REFERENCE FAILED ' + JSON.stringify(output)};
+      }
     } else if (userText.startsWith('Factory sandbox system prompt fixture ')) {
       delta = checkSandboxPrompt(messages, userText.split(' ').at(-1));
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {

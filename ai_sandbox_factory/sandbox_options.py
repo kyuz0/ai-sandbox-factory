@@ -218,6 +218,8 @@ def access_guidance(network):
     lines.append('If the task needs a capability that is off or unavailable, explain why, ask the user for the smallest '
                  'change that would unblock the task, and wait for confirmation before using it. '
                  'Check the tools available in the current session after a change.')
+    lines.append('Factory maintains /opt/sandbox/context.md with the current sandbox configuration, '
+                 'full guidance and examples. Read it when you need to review this sandbox’s settings.')
     return lines
 
 

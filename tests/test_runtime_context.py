@@ -13,7 +13,8 @@ class SandboxContextTests(unittest.TestCase):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.state = Path(temp.name)
-        self.config = {'name': 'settings-test', 'engine': 'podman', 'network': 'allowlist'}
+        self.config = {'name': 'settings-test', 'engine': 'podman', 'network': 'allowlist',
+                       'workspace': str(self.state)}
         write_json(self.state / 'config.json', self.config)
         (self.state / 'allowlist.txt').write_text('initial.example:443\n')
         (self.state / 'squid.conf').write_text(sandbox.network_policy(self.config, [('initial.example', 443)]))
@@ -86,7 +87,9 @@ class SandboxContextTests(unittest.TestCase):
                   'extra_folders': [{'source': '/host/private/data', 'name': 'reports', 'read_only': True}],
                   'env_file': '/host/private/credentials', 'pi_config': '/host/private/pi',
                   'profile': {'name': 'backend', 'digest': 'abc123', 'path': '/host/private/snapshot',
-                              'services': {'database': {'environment': {'PASSWORD': 'fixture-password'}}}},
+                              'services': {'database': {'description': 'Fixture database',
+                                                       'ssh': {'user': 'root', 'port': 22},
+                                                       'environment': {'PASSWORD': 'fixture-password'}}}},
                   'ssh': {'hosts': [{'alias': 'server', 'hostname': 'server.example', 'port': 22,
                                      'user': 'developer', 'host_keys': ['fixture-private-material']}]},
                   'connector_ids': ['tasks'], 'connector_operations': {'tasks': ['status']},
@@ -96,6 +99,10 @@ class SandboxContextTests(unittest.TestCase):
                   'model_providers': [{'name': 'local', 'settings': {'token': 'fixture-secret'}}]}
         write_json(self.state / 'runtime-config/sandbox-system-prompt.json',
                    {'name': 'Review', 'text': 'fixture-private-addendum'})
+        write_json(self.state / 'connector-manifests/tasks.json', {
+            'version': 1, 'id': 'tasks', 'title': 'Task status',
+            'description': 'Read a task status.', 'documentation': 'Use the status request.',
+            'operations': {'status': 'https://tasks.example.test/status'}})
         write_json(self.state / 'config.json', config)
         runtime_context.publish_saved(self.state)
         document = self.read()
@@ -107,6 +114,10 @@ class SandboxContextTests(unittest.TestCase):
         self.assertEqual(document['values']['Network'], 'Restricted')
         for private in ('fixture-password', 'fixture-private', 'fixture-secret', '/host/private'):
             self.assertNotIn(private, self.path.read_text())
+        reference = (self.state / 'runtime-config/sandbox-context.md').read_text()
+        for private in ('fixture-password', 'fixture-private-material', 'fixture-secret', '/host/private'):
+            self.assertNotIn(private, reference)
+        self.assertIn('fixture-private-addendum', reference, 'User-supplied instructions remain available')
 
     def test_large_destination_lists_preserve_every_host_and_detect_changes_after_preview(self):
         rules = [f'host-{number:03d}.example:443' for number in range(100)]
@@ -114,7 +125,7 @@ class SandboxContextTests(unittest.TestCase):
         allowlist.write_text('\n'.join(rules))
         first = runtime_context.snapshot(self.config, self.state)
         label = 'Additional allowed destinations'
-        self.assertIn('/opt/pi-security/config/sandbox-state.json', first['values'][label])
+        self.assertIn(runtime_context.REFERENCE, first['values'][label])
         self.assertNotIn(rules[-1], first['values'][label])
         self.assertEqual(first['details'][label].split(', '), rules)
         allowlist.write_text('\n'.join(rules[:-1] + ['replaced.example:443']))
@@ -132,6 +143,78 @@ class SandboxContextTests(unittest.TestCase):
         changed = {label for label in doc['values'] if doc['values'][label] != updated['values'][label]}
         self.assertEqual(changed, {'Web Search for newly opened clients'})
         self.assertNotEqual(doc['revision'], updated['revision'])
+
+    def test_embedding_endpoint_edits_are_visible_without_a_model_change(self):
+        config = {**self.config, 'options': {
+            'knowledge_embedding': 'endpoint', 'knowledge_embedding_url': 'https://embed.example.test/v1',
+            'knowledge_embedding_model': 'fixture-embedding'}}
+        before = runtime_context.snapshot(config, self.state)
+        self.assertEqual(before['values']['Document search endpoint'], 'https://embed.example.test/v1')
+        after = runtime_context.snapshot({**config, 'options': {
+            **config['options'], 'knowledge_embedding_url': 'https://other.example.test/v1'}}, self.state)
+        self.assertNotEqual(before['revision'], after['revision'])
+        self.assertEqual(before['values']['Document search embeddings'], after['values']['Document search embeddings'])
+
+    def test_reference_keeps_complete_values_guidance_and_relevant_examples(self):
+        rules = [f'host-{number:03d}.example:443' for number in range(100)]
+        (self.state / 'allowlist.txt').write_text('\n'.join(rules))
+        runtime_context.publish_saved(self.state)
+        reference = self.state / 'runtime-config/sandbox-context.md'
+        text = reference.read_text()
+        for host in rules:
+            self.assertIn(host, text)
+        self.assertIn('Network is Restricted', text)
+        self.assertIn('bash_escalate', text)
+        self.assertIn('nohup python3 -m http.server', text)
+        self.assertNotIn('https://example.com', text)
+        config = {**self.config, 'network': 'unrestricted', 'options': {'browser': False}}
+        write_json(self.state / 'config.json', config)
+        runtime_context.publish_saved(self.state)
+        text = reference.read_text()
+        self.assertIn('Network is Unrestricted', text)
+        self.assertIn('https://example.com', text)
+        self.assertNotIn('http.server', text)
+        self.assertNotIn(rules[-1], text)
+
+    def test_snapshot_write_failure_restores_the_previous_reference(self):
+        runtime_context.publish_saved(self.state)
+        reference = self.state / 'runtime-config/sandbox-context.md'
+        original = reference.read_bytes()
+        write_json(self.state / 'config.json', {**self.config, 'network': 'unrestricted'})
+        write = runtime_context.write_text
+        def fail_snapshot(path, text):
+            if path == self.path:
+                raise OSError('fixture snapshot write failed')
+            write(path, text)
+        with patch.object(runtime_context, 'write_text', side_effect=fail_snapshot):
+            with self.assertRaisesRegex(OSError, 'snapshot write failed'):
+                runtime_context.publish_saved(self.state)
+        self.assertEqual(reference.read_bytes(), original)
+
+    def test_reference_is_readable_through_pi_tools_without_opening_its_private_directory(self):
+        config = {**self.config, 'profile': sandbox.load_profile('base'),
+                  'common': {'path': str(sandbox.ROOT / 'containers/dev')}}
+        sandbox.prepare_options(config, self.state)
+        policy = json.loads((self.state / 'runtime-config/permissions.json').read_text())['permission']
+        filesystem = json.loads((self.state / 'runtime-config/sandbox.json').read_text())['filesystem']
+        for path in (runtime_context.REFERENCE, '/opt/pi-security/config/sandbox-context.md'):
+            self.assertEqual(policy['path'][path], 'allow')
+            self.assertEqual(policy['external_directory_write'][path], 'deny')
+            self.assertIn(path, filesystem['additionalAllowRead'])
+        self.assertEqual(policy['path']['/opt/pi-security/*'], 'deny')
+
+    def test_reference_guidance_changes_notify_existing_chats_without_changing_setting_values(self):
+        config = {**self.config, 'primary_agent': 'claude'}
+        write_json(self.state / 'config.json', config)
+        runtime_context.publish_saved(self.state)
+        path = self.state / 'primary-runtime/sandbox-state.json'
+        before = json.loads(path.read_text())
+        with patch.object(runtime_context, 'reference_text', return_value='Updated sandbox guidance.\n'):
+            runtime_context.publish_saved(self.state)
+        after = json.loads(path.read_text())
+        self.assertEqual(before['values'], after['values'])
+        self.assertNotEqual(before['revision'], after['revision'])
+        self.assertNotEqual(before['guidanceRevision'], after['guidanceRevision'])
 
     def test_live_pi_security_instructions_come_from_committed_choices(self):
         config = {**self.config, 'profile': sandbox.load_profile('base'), 'workspace': str(self.state),

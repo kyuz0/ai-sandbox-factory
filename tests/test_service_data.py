@@ -17,13 +17,15 @@ class ServiceDataTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.state = Path(tmp.name)
-        self.config = {'name': 'fixture', 'engine': 'podman', 'profile': {'digest': 'revision', 'services': {}}}
+        self.config = {'name': 'fixture', 'engine': 'podman', 'workspace': str(self.state),
+                       'profile': {'digest': 'revision', 'services': {}}}
         self.volumes = {}
         self.containers = {}
         self.calls = []
         specs = profile_services.selected(self.config)
         for name in ('origin', 'target', 'sibling'):
             spec = specs[name] = {'image': 'localhost/fixture', 'volumes': {'data': '/data', 'log': '/log'},
+                                  'description': 'Fixture service ' + name, 'ssh': {'user': 'root', 'port': 22},
                                   'environment': {'PASSWORD': 'never-copy-this'}}
             for key in spec['volumes']:
                 self.volumes[profile_services.data_volume(self.config, name, key)] = name + key

@@ -132,6 +132,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 - A delivery receipt records what the completed turn saw, not what the host
   currently wants. Test A → B → A changes during completion and cancellation,
   overlapping callbacks, failure/retry and unchanged-turn suppression.
+- Keep initial sandbox instructions intact. Later notices identify changed
+  settings and point to Factory's current read-only reference; do not repeat
+  standing guidance or unrelated settings. Keep full values and relevant examples
+  in that reference, and test prompt size, readable access and credential exclusion.
 
 - Give every queued UI event, timer and worker result an owner. Resolve widgets
   on the UI thread and check that the owner is still attached before rendering.

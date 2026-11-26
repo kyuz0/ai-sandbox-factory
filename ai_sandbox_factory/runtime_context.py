@@ -12,6 +12,7 @@ from .connectors.context import PREVIEW_CHARACTERS, write_text
 from .sandbox_options import APPROVAL_MODES, guidance, options
 
 _transactions = ContextVar('sandbox_settings_transactions', default=frozenset())
+REFERENCE = '/opt/sandbox/context.md'
 
 
 def _digest(public_value):
@@ -108,6 +109,8 @@ def snapshot(config, state):
         values['Conversation recall'] = selected['compaction_recall'].capitalize()
         if selected['knowledge_embedding'] != 'off':
             values['Document search embeddings'] = selected['knowledge_embedding_model'] or 'Local embeddings'
+            if selected['knowledge_embedding'] == 'endpoint':
+                values['Document search endpoint'] = selected['knowledge_embedding_url']
         values['Slack'] = _switch(selected['communications']['slack'])
         values['Advisors'] = _names(primary_workspace.AGENTS[name]
                                    for name in config.get('advisors', {}).get('providers', []))
@@ -121,12 +124,11 @@ def snapshot(config, state):
         values['Approval after sandbox restart'] = selected['native_approval'].capitalize()
     revision = _digest({'values': values, **client_context})
     details = {}
-    path = '/opt/pi-security/config/sandbox-state.json' if agent == 'pi' else '/run/primary-runtime/sandbox-state.json'
     for label, value in values.items():
         if len(value) > PREVIEW_CHARACTERS:
             # Keep long lists out of every turn while retaining the entire public value on disk.
             details[label] = value
-            values[label] = (f'{value[:PREVIEW_CHARACTERS]}… (full value in {path}, '
+            values[label] = (f'{value[:PREVIEW_CHARACTERS]}… (full value in {REFERENCE}, '
                              f'revision {_digest(value)[:12]})')
     result = {'revision': revision, 'network': mode, 'values': values, **client_context}
     if details:
@@ -144,8 +146,75 @@ def publish_saved(state):
         return
     config = json.loads(config_file.read_text())
     directory = 'runtime-config' if primary_workspace.agent(config) == 'pi' else 'primary-runtime'
-    write_text(state / directory / 'sandbox-state.json',
-               json.dumps(snapshot(config, state), ensure_ascii=False, indent=2) + '\n')
+    current = snapshot(config, state)
+    text = reference_text(config, state, current)
+    current['guidanceRevision'] = _digest(text)
+    current['revision'] = _digest([current['revision'], current['guidanceRevision']])
+    reference = state / directory / 'sandbox-context.md'
+    previous = reference.read_text() if reference.is_file() else ''
+    try:
+        write_text(reference, text)
+        write_text(state / directory / 'sandbox-state.json',
+                   json.dumps(current, ensure_ascii=False, indent=2) + '\n')
+    except Exception:
+        write_text(reference, previous)
+        raise
+
+
+def reference_text(config, state, current):
+    """Describe only agent-visible choices and instructions, never the private config object."""
+    from . import primary_agents, profile_runtime, profile_services
+    from .connectors import context
+    state = Path(state)
+    selected = options(config.get('options'))
+    pi = primary_workspace.agent(config) == 'pi'
+    values = {**current['values'], **current.get('details', {})}
+    lines = ['# Current sandbox configuration', '',
+             'Factory maintains this read-only reference after settings are successfully applied. '
+             'It describes this sandbox, including changes made after a conversation started.', '',
+             '## Settings', '', '```json', json.dumps(values, ensure_ascii=False, indent=2), '```', '',
+             '## Guidance', '']
+    if pi:
+        lines.append(current['securityGuidance'].rstrip())
+        lines.append(profile_runtime.guidance(state, config) + profile_services.guidance(config))
+        profile = config.get('profile') or {}
+        source = profile.get('path') if isinstance(profile, dict) else None
+        if source and (Path(source) / 'profile.md').is_file():
+            lines.extend(['## Profile instructions', '', (Path(source) / 'profile.md').read_text().rstrip()])
+        if source and Path(source).is_dir():
+            from . import registry
+            lines.append(registry.profile_system_prompt(source, profile.get('name', 'Profile')))
+        addon = prompt_library.selection(state)
+        if addon:
+            lines.extend(['## System prompt add-on', '', addon['text']])
+    else:
+        lines.append(primary_agents.guidance(config, state).rstrip())
+    _, connector_reference = context.render(config, state)
+    if connector_reference:
+        lines.append(connector_reference.rstrip())
+    if current['network'] == 'allowlist':
+        categories = config.get('website_groups', {})
+        if selected['website_groups']:
+            lines.extend(['## Allowed website categories', '', '```json',
+                          json.dumps({name: categories.get(name, {}).get('domains', [])
+                                      for name in selected['website_groups']}, indent=2), '```'])
+    shell = 'bash_escalate' if pi and selected['inner_sandbox'] and selected['approval'] != 'off' else 'bash'
+    lines.extend(['## Examples for this sandbox', '',
+                  'Inspect the project with the shell or file tools:', '', '```sh', 'pwd', 'ls /workspace', '```', '',
+                  'If a system package is missing, tell the user its Debian package name and why it is needed. '
+                  'Ask them to use Actions → Install system packages… in Factory.'])
+    if current['network'] == 'unrestricted':
+        lines.extend(['', 'Use an ordinary network request, for example:', '', '```sh',
+                      'curl --head --fail-with-body https://example.com', '```'])
+    else:
+        lines.extend(['', 'Use the inherited proxy settings for HTTP and HTTPS. If a required destination is blocked, '
+                      'ask the user to allow its hostname and port in Settings → Network and Web Search → Network.'])
+    if selected['browser']:
+        launch = shell if not (pi and selected['inner_sandbox'] and selected['approval'] == 'off') else 'the editor terminal'
+        lines.extend(['', f'To preview a web page, start a server through {launch}, then open '
+                      'http://localhost:8000 with the browser tool:', '', '```sh',
+                      'nohup python3 -m http.server 8000 --bind 0.0.0.0 >/tmp/preview.log 2>&1 </dev/null &', '```'])
+    return '\n\n'.join(part for part in lines if part).rstrip() + '\n'
 
 
 def _config_version(state):

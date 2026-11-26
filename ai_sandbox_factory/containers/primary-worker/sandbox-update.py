@@ -10,6 +10,8 @@ import tempfile
 
 SNAPSHOT = Path('/run/primary-runtime/sandbox-state.json')
 RECEIPTS = Path.home() / '.local/state/ai-sandbox-factory/context-receipts'
+REFERENCE = '/opt/sandbox/context.md'
+MESSAGE_BYTES = 1500
 
 
 def client_identity():
@@ -35,25 +37,35 @@ def read_snapshot(path):
     return {key: state[key] for key in ('revision', 'network', 'values')}
 
 
-def message(state, previous=None):
+def changes(state, previous=None):
+    old = previous.get('values', {}) if previous else {}
+    return [name for name, value in state['values'].items() if not previous or old.get(name) != value] + [
+        name for name in old if name not in state['values']]
+
+
+def message(state, previous=None, changed=None):
     lines = ['Sandbox update: current Factory settings.',
              'These replace older Factory settings in this conversation; project instructions still apply.']
-    if state['network'] == 'unrestricted':
-        lines.append('Network: Unrestricted. Use ordinary network connections; do not configure the Restricted gateway. '
-                     'Keep the native client’s managed sign-in transport unchanged.')
-    else:
-        lines.append('Network: Restricted. Use the inherited network settings. '
-                     'If a destination is blocked, ask for its hostname and port in Factory Settings → Network and Web Search → Network.')
-    old = previous.get('values', {}) if previous else {}
-    for name, value in state['values'].items():
-        if name != 'Network' and (not previous or old.get(name) != value):
-            lines.append(f'{name}: {value}')
-    for name in old.keys() - state['values'].keys():
-        if name != 'Network':
-            lines.append(f'{name}: no longer configured')
-    lines.append('Full current instructions: /run/primary-runtime/context.md. '
-                 'Use only tools actually available in this client.')
-    return '\n'.join(lines)
+    changed = changes(state, previous) if changed is None else changed
+    fields = []
+    for name in changed:
+        value = ' '.join(state['values'].get(name, 'no longer configured').split())
+        if len(value.encode('utf-8')) > 120:
+            value = 'updated'
+        fields.append([name, value])
+    if not fields:
+        fields = [['Sandbox guidance', 'updated']]
+    footer = f'Full current configuration, guidance and examples: {REFERENCE}.'
+    def render():
+        return '\n'.join([*lines, *(f'- {name}: {value}' for name, value in fields), footer])
+    # This is a prompt-size budget, not a limit on supported configuration.
+    # Full values remain available in the reference; every changed label stays visible.
+    for field in sorted(fields, key=lambda row: len(row[1].encode('utf-8')), reverse=True):
+        if len(render().encode('utf-8')) <= MESSAGE_BYTES:
+            break
+        if len(field[1].encode('utf-8')) > len('updated'):
+            field[1] = 'updated'
+    return render()
 
 
 def response(agent, text):
@@ -114,20 +126,28 @@ def handle(agent, stage, payload, *, snapshot=SNAPSHOT, receipts=RECEIPTS, clien
             pending = record.get('pending')
             if ((acknowledged and not isinstance(acknowledged.get('values'), dict))
                     or (pending and (not isinstance(pending.get('state'), dict)
-                                    or not isinstance(pending['state'].get('revision'), str)))):
+                                    or not isinstance(pending['state'].get('revision'), str)
+                                    or not isinstance(pending['state'].get('values'), dict)
+                                    or ('changes' in pending and (not isinstance(pending['changes'], list)
+                                        or not all(isinstance(name, str) for name in pending['changes'])))))):
                 record = {}
             acknowledged = record.get('acknowledged')
             if stage == 'before':
                 pending = record.get('pending')
                 if acknowledged and acknowledged.get('revision') == state['revision'] and not pending:
                     return {}
-                # A cancelled or failed turn may still have persisted its
-                # context. With an uncertain delivery, send all current facts.
-                text = message(state, None if pending else acknowledged)
+                changed = changes(state, acknowledged)
+                if pending:
+                    # A cancelled turn may have persisted its notice. Keep the
+                    # affected labels until a matching completion acknowledges them.
+                    for name in pending.get('changes', changes(pending['state'], acknowledged)):
+                        if name not in changed:
+                            changed.append(name)
+                text = message(state, acknowledged, changed)
                 if turn is not None:
                     # A later turn may supersede this pending delivery. Its own
                     # completion must match before it can acknowledge anything.
-                    record['pending'] = {'turn': turn, 'state': state}
+                    record['pending'] = {'turn': turn, 'state': state, 'changes': changed}
                     write_record(path, record)
                 return response(agent, text)
             pending = record.get('pending')

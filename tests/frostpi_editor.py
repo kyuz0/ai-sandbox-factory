@@ -644,6 +644,26 @@ print(matches[0].read_text(), end='')
             until(rpc_result(reply))
             until(lambda event: event.get('type') == 'agent_settled')
             print(f'PASS {label}: same Pi CLI and FrostPi conversations', flush=True)
+        send('Factory sandbox reference fixture')
+        expect(frame.get_by_text('FACTORY SANDBOX REFERENCE VERIFIED', exact=True)).to_be_visible(timeout=30000)
+        send_cli(type='prompt', message='Factory sandbox reference fixture')
+        until(rpc_result('FACTORY SANDBOX REFERENCE VERIFIED'))
+        until(lambda event: event.get('type') == 'agent_settled')
+        print('PASS Pi CLI and FrostPi read the current reference through file and shell tools; private configuration remains denied.')
+    # Stop the CLI process, change settings, then resume its saved conversation.
+    saved = {**config, 'network': 'unrestricted', 'ssh': {'hosts': [
+        {'alias': 'fixture-connector-first', 'hostname': 'build.example.test',
+         'user': 'builder', 'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}}
+    with runtime_context.applied(state):
+        sandbox.write_json(state / 'config.json', saved)
+        sandbox.prepare_options(saved, state)
+        connector_settings.refresh_agent_context(saved, state)
+        prompt_library.assign(state, {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_FIRST'})
+    with fixture_rpc(container, output, 'system-prompt-cli-resumed', session='/tmp/system-prompt-cli.jsonl') as (send_cli, until):
+        send_cli(type='prompt', message='Factory sandbox system prompt fixture UNRESTRICTED')
+        until(rpc_result('FACTORY SANDBOX SYSTEM PROMPT UNRESTRICTED VERIFIED'))
+        until(lambda event: event.get('type') == 'agent_settled')
+    print('PASS A restarted Pi process resumes its original context and receives only the current settings differences.')
     page.screenshot(path=str(output / 'system-prompt.png'))
     print('PASS Both open chats received current network settings and project instructions on every turn. Earlier FrostPi entries are unchanged.')
 

@@ -10,6 +10,7 @@ RUN sh /opt/cli-tools/install.sh \
     && install -d -o node -g node /workspace \
     && printf 'Include /etc/sandbox-ssh/config\n' >/etc/ssh/ssh_config.d/10-sandbox.conf
 COPY sandbox-update.py shell-network.sh /opt/sandbox/
+RUN ln -s /run/primary-runtime/sandbox-context.md /opt/sandbox/context.md
 RUN printf '\n. /opt/sandbox/shell-network.sh\n' >> /etc/bash.bashrc \
     && printf '. /opt/sandbox/shell-network.sh\n' > /etc/profile.d/factory-network.sh
 COPY entrypoint.py /opt/primary/entrypoint.py
