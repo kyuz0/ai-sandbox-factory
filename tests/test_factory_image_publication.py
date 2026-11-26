@@ -18,6 +18,33 @@ CHECKOUT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('factory_image_publisher', CHECKOUT / 'scripts/build_factory_images.py')
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
+spec = importlib.util.spec_from_file_location('prebuilt_image_fixture', CHECKOUT / 'tests/prebuilt_images_integration.py')
+integration = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(integration)
+
+
+class PrebuiltFixtureIdentity(unittest.TestCase):
+    def test_fixture_uses_podman_container_identity_on_a_different_host_uid(self):
+        from ai_sandbox_factory import creation, sandbox
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(sandbox.os, 'getuid', return_value=1001), \
+                    patch.object(sandbox.os, 'getgid', return_value=1002), \
+                    patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=root), \
+                    patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                    patch.object(sandbox.host_platform, 'check_engine', return_value=None), \
+                    patch.object(creation, 'resource_conflicts'), \
+                    patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0, 'true\n')) as engine, \
+                    redirect_stdout(io.StringIO()):
+                config = integration.build_configuration(root)
+            self.assertEqual((config['uid'], config['gid']), (1000, 1000))
+            self.assertEqual(config['image_refs'], {})
+            engine.assert_called_once_with(['podman', 'info', '--format', '{{.Host.Security.Rootless}}'], capture=True)
+            published = publisher.public_config()
+            for role in ('pi-common', 'pi-stock', 'ssh', 'native-common'):
+                with self.subTest(role=role):
+                    self.assertEqual(publisher.image_sources.recipe(config, role),
+                                     publisher.image_sources.recipe(published, role))
 
 
 class FakeEngine:

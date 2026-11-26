@@ -15,6 +15,24 @@ from uuid import uuid4
 CHECKOUT = Path(__file__).resolve().parents[1]
 
 
+def build_configuration(root):
+    """Use the public creation path so fixture recipes match the runtime's user mapping."""
+    from ai_sandbox_factory import sandbox
+    workspace = root / 'build-project'
+    workspace.mkdir(exist_ok=True)
+    providers = root / 'build-providers.json'
+    providers.write_text('{}')
+    state = root / 'build-state'
+    name = 'prebuilt-image-inputs-' + uuid4().hex[:10]
+    with patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(root / 'build-library')), \
+            patch.object(sys, 'argv', ['ai-sandbox-factory', '--state-dir', str(state),
+            'create', name, '--workspace', str(workspace), '--engine', 'podman',
+            '--profile', str(sandbox.ROOT / 'profiles/base'), '--primary-auth', 'login',
+            '--image-source', 'local', '--providers-file', str(providers), '--no-browser']):
+        sandbox.main()
+    return json.loads((state / name / 'config.json').read_text())
+
+
 def verify_cached_candidate(registry, reference, environment):
     from scripts.build_factory_images import inspect_image, verify_published
     with patch.dict(os.environ, environment):
@@ -297,8 +315,7 @@ def main():
     sys.path.insert(0, str(CHECKOUT))
     from ai_sandbox_factory import sandbox, image_builds, image_sources, sandbox_ssh, inference
     from image_registry import export, serve
-    config = {'engine': 'podman', 'uid': os.getuid(), 'gid': os.getgid(), 'image_source': 'local',
-              'common': sandbox.common_profile(), 'profile': sandbox.load_profile(str(sandbox.ROOT / 'profiles/base'))}
+    config = build_configuration(root)
     stock = args.stock_image or 'localhost/factory-prebuilt-integration-stock:' + uuid4().hex[:10]
     if not args.stock_image:
         image_builds.stock(config, stock, root / 'editor-downloads')
