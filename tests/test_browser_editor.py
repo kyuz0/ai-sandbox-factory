@@ -47,6 +47,28 @@ def head(target='/', headers='', host=HOST):
 
 
 class Requests(unittest.TestCase):
+    def test_editor_update_fixture_uses_current_recreate_parser_defaults(self):
+        from ai_sandbox_factory import cli_lifecycle, sandbox
+        from browser_editor_updates import recreate
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / 'fixture'
+            state.mkdir()
+            def command(args, saved, parser):
+                self.assertEqual((args.command, args.name, saved), ('recreate', state.name, state))
+                self.assertIsNone(args.image_source)
+                self.assertIsNone(args.profile)
+                self.assertIsNotNone(parser)
+                self.assertEqual(args.apply_gate.parent, state)
+                args.apply_gate.mkdir()
+            with patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(folder)), \
+                    patch.object(cli_lifecycle, 'supervise') as supervise, \
+                    patch.object(sandbox, 'sandbox_command', side_effect=command) as dispatch:
+                recreate(state)
+                recreate(state)
+            self.assertEqual(dispatch.call_count, 2)
+            supervise.assert_not_called()
+            self.assertEqual(list(state.iterdir()), [])
+
     def test_replacement_does_not_open_an_editor_for_a_terminal_only_sandbox(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(editor,'runtime') as runtime:
             self.assertIsNone(editor.replacement_connection({'engine':'podman'},Path(folder)))

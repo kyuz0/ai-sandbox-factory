@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import tempfile
-from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -20,6 +20,19 @@ def workspace_config():
     return {'engine': 'podman', 'uid': 1000, 'gid': 1000,
             'common': sandbox.common_profile(), 'profile': sandbox.load_profile('base'),
             'options': {'browser': False}}
+
+
+def recreate(state):
+    # Parse the worker command so new CLI defaults reach this fixture too.
+    # Keep execution in-process for the startup and editor fault injections.
+    gate = state / ('.editor-test-apply-' + uuid4().hex)
+    try:
+        with patch.object(sys, 'argv', ['ai-sandbox-factory', '--state-dir', str(state.parent),
+                'recreate', state.name, '--apply-gate', str(gate)]):
+            sandbox.main()
+    finally:
+        if gate.exists():
+            gate.rmdir()
 
 
 def check(root, image, proxy_image, archive):
@@ -52,8 +65,7 @@ def check(root, image, proxy_image, archive):
         sandbox.apply_settings(current, state, {'memory': '3g' if current['memory'] == '2g' else '2g'})
 
     def rebuild():
-        sandbox.sandbox_command(SimpleNamespace(command='recreate', profile=None,
-            subagents=None, browser=None, apply_gate=None), state, None)
+        recreate(state)
 
     connection = None
     cookie = None
