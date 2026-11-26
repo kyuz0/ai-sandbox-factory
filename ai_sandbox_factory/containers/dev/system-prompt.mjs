@@ -45,7 +45,7 @@ export function sandboxUpdate(state, initial) {
     'Sandbox update: current Factory settings.',
     'These replace older Factory settings in this conversation; project instructions still apply.',
     ...fields.map(([name, value]) => `- ${name}: ${value}`),
-    `Factory updated ${reference} with the full current configuration, guidance and examples. Re-read it instead of relying on earlier tool output.`,
+    `These are the only configuration changes. Factory updated ${reference} for reference if you need the full current configuration, guidance and examples.`,
   ].join('\n');
   for (const field of [...fields].sort((a, b) => Buffer.byteLength(b[1], 'utf8') - Buffer.byteLength(a[1], 'utf8'))) {
     if (Buffer.byteLength(render(), 'utf8') <= 1500) break;

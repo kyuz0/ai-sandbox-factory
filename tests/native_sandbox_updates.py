@@ -81,7 +81,9 @@ def child(agent):
             assert f'Off (fixture {revision})' in requests, f'{agent} omitted the new revision: {requests}'
             assert '/opt/sandbox/context.md' in requests, f'{agent} omitted the full configuration reference'
             assert 'Factory updated /opt/sandbox/context.md' in requests, f'{agent} omitted the reference update'
-            assert 'Re-read it instead of relying on earlier tool output.' in requests, f'{agent} omitted the freshness instruction'
+            assert 'These are the only configuration changes.' in requests, f'{agent} omitted the complete change list notice'
+            assert 'for reference if you need the full current configuration' in requests, f'{agent} omitted the optional reference'
+            assert 'Re-read it instead of relying on earlier tool output.' not in requests, f'{agent} required an unnecessary file read'
             # A normal completion must acknowledge the hook context actually sent.
             records = set(receipts.glob('*.json')) - previous_records
             assert len(records) == 1, f'{agent} expected one receipt for the newly opened client: {records}'
