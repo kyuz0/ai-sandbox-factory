@@ -1,9 +1,9 @@
 """Keep an authenticated editor at its original URL through real workspace replacements."""
 import argparse
 import json
-import os
 from pathlib import Path
 import platform
+import subprocess
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +14,14 @@ from ai_sandbox_factory import browser_editor, editor_settings, operation_locks,
 from browser_editor_lifecycle import request
 
 
+def workspace_config():
+    # Match Factory's rootless Podman identity, including hosts whose UID is not
+    # 1000. keep-id maps the host user to 1000 inside the workspace.
+    return {'engine': 'podman', 'uid': 1000, 'gid': 1000,
+            'common': sandbox.common_profile(), 'profile': sandbox.load_profile('base'),
+            'options': {'browser': False}}
+
+
 def check(root, image, proxy_image, archive):
     name = 'editor-updates-' + uuid4().hex[:12]
     state = root / 'state' / name
@@ -21,10 +29,8 @@ def check(root, image, proxy_image, archive):
     project = root / 'project'
     project.mkdir()
     (project / 'project-marker').write_text('project preserved\n')
-    config = {'name': name, 'engine': 'podman', 'workspace': str(project),
-              'uid': os.getuid(), 'gid': os.getgid(), 'network': 'allowlist', 'memory': '2g',
-              'profile': sandbox.load_profile('base'), 'options': {'browser': False},
-              'common': {'path': str(sandbox.ROOT / 'containers/dev')}}
+    config = {**workspace_config(), 'name': name, 'workspace': str(project),
+              'network': 'allowlist', 'memory': '2g'}
     (state / 'allowlist.txt').write_text('')
     (state / 'squid.conf').write_text(sandbox.network_policy(config, []))
     sandbox.write_json(state / 'config.json', config)
@@ -141,6 +147,16 @@ def check(root, image, proxy_image, archive):
                 assert not sandbox.inspect(saved(), workspace)['State']['Running']
                 assert browser_editor.runtime(state) is None
             print('PASS stopped update and rebuild keep the sandbox and editor stopped', flush=True)
+        except BaseException:
+            # Save startup diagnostics before the disposable containers vanish.
+            for container in sandbox.names(saved())[:2]:
+                try:
+                    logs = sandbox.run(['podman', 'logs', container], capture=True,
+                                       check=False, stderr=subprocess.STDOUT).stdout
+                    print(f'Container logs for {container}:\n{logs}', flush=True)
+                except (OSError, subprocess.SubprocessError) as error:
+                    print(f'Cannot collect logs for {container}: {error}', flush=True)
+            raise
         finally:
             browser_editor.stop(state)
             sandbox.delete(saved(), state)
@@ -161,9 +177,7 @@ if __name__ == '__main__':
         root = Path(folder)
         image = args.image
         if not image:
-            config = {'engine':'podman', 'uid':os.getuid(), 'gid':os.getgid(),
-                      'common':sandbox.common_profile(), 'profile':sandbox.load_profile('base'),
-                      'options':{'browser':False}}
+            config = workspace_config()
             sandbox.build(config)
             image = sandbox.image_names(config)[0]
         archive = (args.archive.resolve() if args.archive else

@@ -1853,6 +1853,9 @@ and Start after killing the preparation worker; dispatch tests also cover
 Build and Delete using the recovered configuration.
 Client launch tests check that Open, Pi and the browser editor also resolve the
 pending transaction before selecting a runtime.
+The editor-update fixture uses Factory's rootless Podman identity (1000:1000)
+for both builds and startup, including when the host has a different UID. It
+prints container logs before cleanup if an operation fails.
 The standalone validator runs without installing Factory inside the sandbox.
 
 Render the editing folder, empty/error and attached states, the full change
