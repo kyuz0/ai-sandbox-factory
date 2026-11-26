@@ -84,6 +84,8 @@ class SandboxUpdateHooksTests(unittest.TestCase):
             self.assertIn('Network: Unrestricted', text)
             self.assertNotIn('gateway', text)
             self.assertIn('/opt/sandbox/context.md', text)
+            self.assertIn('Factory updated /opt/sandbox/context.md with the full current configuration', text)
+            self.assertIn('Re-read it instead of relying on earlier tool output.', text)
             self.assertIn('replace older Factory settings', text)
             self.call(agent, 'after', turn='two')
             self.state('three', 'allowlist')

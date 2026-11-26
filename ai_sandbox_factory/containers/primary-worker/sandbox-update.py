@@ -55,7 +55,8 @@ def message(state, previous=None, changed=None):
         fields.append([name, value])
     if not fields:
         fields = [['Sandbox guidance', 'updated']]
-    footer = f'Full current configuration, guidance and examples: {REFERENCE}.'
+    footer = (f'Factory updated {REFERENCE} with the full current configuration, guidance and examples. '
+              'Re-read it instead of relying on earlier tool output.')
     def render():
         return '\n'.join([*lines, *(f'- {name}: {value}' for name, value in fields), footer])
     # This is a prompt-size budget, not a limit on supported configuration.

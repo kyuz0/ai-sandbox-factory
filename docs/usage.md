@@ -239,6 +239,8 @@ settings. The initial instructions tell the agent to expect notices beginning
 “Sandbox update: current Factory settings.” on later turns, and that it can ask
 the user to change settings when needed. These notices replace older Factory
 settings; project instructions remain in effect.
+Each notice says Factory updated the reference file and tells the agent to read
+it again rather than rely on earlier tool output.
 
 Inside the sandbox, `/opt/sandbox/context.md` is the read-only reference for its
 current configuration, full guidance and examples. Factory updates it after

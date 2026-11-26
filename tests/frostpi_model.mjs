@@ -54,6 +54,8 @@ function checkSandboxPrompt(messages, label) {
       current.includes('Use the changed settings in place of older Factory settings; project instructions still apply.'),
     compactUpdate: update.length <= 2000 && !update.includes('Use ordinary network connections') &&
       !update.includes('The outer network allowlist still applies'),
+    currentReference: !update || (update.includes('Factory updated /opt/sandbox/context.md') &&
+      update.includes('Re-read it instead of relying on earlier tool output.')),
     destinations: effective('Additional allowed destinations') === (unrestricted ? 'no longer configured' : 'downloads.example.test:443'),
     addon: matches(system, /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g) === expectedAddon,
     connectorInstructions: matches(sections[0], /fixture-connector-(first|second)/g) === expectedAlias,

@@ -49,6 +49,8 @@ test('startup keeps full guidance; later turns carry only differences from the c
   assert.match(update, /- Additional allowed destinations: no longer configured/);
   assert.doesNotMatch(update, /Browser:|Use ordinary network|configured allowlist/);
   assert.match(update, /\/opt\/sandbox\/context\.md/);
+  assert.match(update, /Factory updated \/opt\/sandbox\/context\.md with the full current configuration/);
+  assert.match(update, /Re-read it instead of relying on earlier tool output\./);
   assert.equal(run.turn(), changed, 'An unchanged turn does not accumulate another notice');
   files.set('sandbox-state.json', restrictedState);
   assert.equal(run.turn(), first, 'Reversion restores the initial context without a stale update');
