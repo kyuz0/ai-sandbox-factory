@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -152,9 +153,19 @@ def check(root, image, proxy_image, archive):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--image', required=True, help='Cached Pi workspace image')
+    parser.add_argument('--image', help='Cached Pi workspace image; otherwise build the current checkout')
     parser.add_argument('--proxy-image', default='localhost/pi-sandbox-factory-proxy:1')
-    parser.add_argument('--archive', required=True, type=Path, help='Pinned code-server archive')
+    parser.add_argument('--archive', type=Path, help='Pinned code-server archive; otherwise download it')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='factory-editor-updates-') as folder:
-        check(Path(folder), args.image, args.proxy_image, args.archive.resolve())
+        root = Path(folder)
+        image = args.image
+        if not image:
+            config = {'engine':'podman', 'uid':os.getuid(), 'gid':os.getgid(),
+                      'common':sandbox.common_profile(), 'profile':sandbox.load_profile('base'),
+                      'options':{'browser':False}}
+            sandbox.build(config)
+            image = sandbox.image_names(config)[0]
+        archive = (args.archive.resolve() if args.archive else
+                   browser_editor.checked_archive(root / 'editor-cache', arch=platform.machine()))
+        check(root, image, args.proxy_image, archive)

@@ -1380,7 +1380,9 @@ key, and occupied ports.
 It restores the saved editor settings and leaves the editor stopped.
 
 For settings updates and rebuilds without profile services, use cached Pi images
-and the pinned code-server archive:
+and the pinned code-server archive. The fresh-sandbox CI job runs this check before
+release; without these arguments it builds the current checkout and downloads the
+pinned editor archive:
 
 ```sh
 PYTHONPATH=tests:. .venv/bin/python tests/browser_editor_updates.py \
