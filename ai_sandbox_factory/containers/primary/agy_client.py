@@ -69,6 +69,10 @@ def configure_search(home):
     hooks = read_configuration(path, optional=True)
     hooks['factory-native-web-search'] = {'PreToolUse': [{'matcher': '^search_web$', 'hooks': [{
         'type': 'command', 'command': '/usr/bin/python3 -I /opt/primary/agy_client.py --factory-search-policy'}]}]}
+    hooks['factory-sandbox-updates'] = {
+        event: [{'type': 'command', 'command': f'exec /usr/bin/python3 -I /opt/sandbox/sandbox-update.py agy {stage}'}]
+        for event, stage in [('PreInvocation', 'before'), ('PostInvocation', 'after')]
+    }
     atomic_write(path, json.dumps(hooks, indent=2).encode())
 
 

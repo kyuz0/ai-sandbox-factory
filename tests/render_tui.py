@@ -27,7 +27,7 @@ from ai_sandbox_factory import aws_profiles
 from ai_sandbox_factory.aws_ui import AWSAccessDialog, AWSProfilePicker, AWSProfileTargets
 from ai_sandbox_factory.creation import Creation
 from ai_sandbox_factory.settings_catalog import EDIT_FORMS
-from ai_sandbox_factory.sandbox_tui import ContainersScreen, SandboxAlerts, confirm_aws_installation
+from ai_sandbox_factory.sandbox_tui import AppliedProfile, ContainersScreen, SandboxAlerts, confirm_aws_installation
 from ai_sandbox_factory.sandbox_tui import Cockpit, options, preset, DEFAULT_SETTINGS, NewSandbox, SettingsForm, FoldersScreen, SettingsMenu, MoreActions, ModelsScreen, PackagesScreen, AdvisorsScreen, SSHScreen, CreateFromSandbox, SearchProviderDialog, Confirm, FolderPicker, InstallPackage, CopyWebAccess, settings_effects, web_access, copy_draft
 from textual.widgets import Button, Collapsible, Input, Static, OptionList, Select, RichLog, TextArea
 from textual.containers import VerticalScroll
@@ -315,13 +315,15 @@ async def capture(size):
                             patch.object(connectors, 'has_token', return_value=True) as saved_token:
                         await shot('connector-settings-menu', SettingsMenu('demo', c, 'browser'))
                         await shot('connector-settings-empty', ConnectorSettings('demo', c))
-                        path = connectors.directory() / 'release-status' / 'connector.json'
+                        path = connectors.directory() / 'example-build' / 'connector.json'
                         path.parent.mkdir(parents=True)
                         path.write_text(json.dumps({
-                            'version': 1, 'id': 'release-status', 'title': 'Release status',
-                            'description': 'Read the current release status.',
-                            'documentation': 'Use the status request to check the latest release.',
-                            'operations': {'status': 'https://releases.example.org/api/status'},
+                            'version': 1, 'id': 'example-build', 'title': 'Example build service',
+                            'description': 'Let the coding agent read project build results from an external service.',
+                            'documentation': 'Create a read-only API token in your build service’s account settings. '
+                                             'Save it on this computer with the command above. '
+                                             'The coding agent can then read build results.',
+                            'operations': {'status': 'https://builds.example.org/api/status'},
                         }))
                         plugin = next(item for item in connectors.catalog() if item.external)
                         await shot('connector-settings-installed', ConnectorSettings('demo', c))
@@ -331,10 +333,10 @@ async def capture(size):
                         await shot('connector-settings-token', ExternalConnectorDialog(plugin, enabled=False))
                         saved_token.return_value = True
                         manifest = json.loads(path.read_text())
-                        manifest['description'] = 'Read current and past release information.'
-                        manifest['agent_instructions'] = 'Include the release date in your answer.'
-                        manifest['operations']['history'] = {'url': 'https://releases.example.org/api/history',
-                                                             'instructions': 'Use history for past releases.'}
+                        manifest['description'] = 'Let the coding agent read current and past project build results.'
+                        manifest['agent_instructions'] = 'Include the build date in your answer.'
+                        manifest['operations']['history'] = {'url': 'https://builds.example.org/api/history',
+                                                             'instructions': 'Use history for past build results.'}
                         path.write_text(json.dumps(manifest))
                         plugin = next(item for item in connectors.catalog() if item.external)
                         await shot('connector-settings-select', ExternalConnectorDialog(plugin, enabled=False))
@@ -882,6 +884,19 @@ async def capture(size):
                     await shot('containers-empty', ContainersScreen({**record, 'containers': []}))
                     await shot('containers-offline', ContainersScreen({**record, 'containers': None}))
                     await shot('containers-invalid', ContainersScreen({**record, 'engine': None}))
+                    from ai_sandbox_factory import primary_agents, profile_runtime, profile_services
+                    for agent in ('pi', 'codex', 'claude', 'agy'):
+                        selected = {**config, 'primary_agent': agent,
+                                    'profile': sandbox.load_profile('developer-postgres')}
+                        current = {**states, profile_services.container(selected, 'database'): 'running'}
+                        if agent != 'pi':
+                            controller, proxy, *_ = primary_agents.names(selected)
+                            current.update({controller: 'running', proxy: 'running'})
+                        await shot('containers-' + agent, ContainersScreen({**owned, 'config': selected,
+                            'containers': sandbox.describe_containers(selected, current)}))
+                    with patch.object(profile_runtime, 'applied', return_value={'path':'/synthetic/applied'}), \
+                            patch.object(profile_services, 'status', return_value=[{'name':'database','running':True}]):
+                        await shot('containers-profile', AppliedProfile({**owned, 'config': selected}, state))
                     return
                 if args.only and all(name.startswith('providers-') for name in args.only):
                     plugin = {'name': 'example', 'settings': {}, 'manifest': {

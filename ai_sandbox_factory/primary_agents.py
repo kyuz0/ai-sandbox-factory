@@ -53,7 +53,7 @@ def describe(config):
         return {}
     controller, proxy, *_ = names(config)
     return {
-        controller: (AGENTS[agent(config)], 'Keeps your account sign-in outside the workspace.'),
+        controller: (AGENTS[agent(config)] + ' sign-in', 'Keeps your account sign-in outside the main agent sandbox.'),
         proxy: ('Sign-in network gateway', 'Connects the coding agent to its provider.'),
     }
 
@@ -116,10 +116,10 @@ def guidance(config, state):
     lines = access_guidance(core.network_mode(config)) + [
         f'The starting directory in the workspace is {json.dumps(folders.container_cwd(config))}.',
         'Read relevant project instructions in the workspace before editing.',
-        'Run shell commands and access files through the native tools, which run inside this workspace.',
+        'Run shell commands and access files through the native tools, which run inside this main agent sandbox.',
         'Follow approval requests from the native client. For a change to mounted folders or connector access, '
         'ask the user to review Settings → Folders or Settings → Connectors in Factory.',
-        'The workspace has the following mounts:',
+        'This main agent sandbox has the following mounts:',
     ]
     lines.extend(f'- {json.dumps(path)} ({"read-only" if read_only else "read and write"})'
                  for path, read_only in folders.roots(config))
@@ -150,6 +150,20 @@ def guidance(config, state):
     if skill_catalog:
         lines += ['', 'Installed skills. Read the relevant instructions and references in the workspace before using a skill.',
                   *skill_catalog]
+    from . import profile_runtime, profile_services
+    profile_context = profile_runtime.guidance(state, config) + profile_services.guidance(config)
+    if profile_context:
+        lines.append(profile_context)
+    profile = config.get('profile') or {}
+    if isinstance(profile, dict) and profile.get('path'):
+        path = Path(profile['path']) / 'profile.md'
+        try:
+            instructions = path.read_text(encoding='utf-8').rstrip()
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f'Cannot read instructions for profile {profile["name"]!r} from {path}: {error}. '
+                             'Restore the saved profile files or create a sandbox from the profile again.') from error
+        if instructions:
+            lines.extend(['', '## Profile instructions', '', instructions])
     selected_prompt = prompt_library.selection(state)
     if selected_prompt:
         lines.extend(['', selected_prompt['text']])

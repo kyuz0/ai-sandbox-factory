@@ -135,7 +135,7 @@ with Progress(['Build selected images']).stage('Build selected images'):
     def test_recreate_plan_omits_build_when_reusing_images(self):
         from contextlib import nullcontext
         from types import SimpleNamespace
-        from ai_sandbox_factory import sandbox
+        from ai_sandbox_factory import sandbox, profile_replacement
         for building in (False, True):
             with self.subTest(building=building), tempfile.TemporaryDirectory() as tmp:
                 state = Path(tmp)
@@ -152,11 +152,10 @@ with Progress(['Build selected images']).stage('Build selected images'):
                          patch.object(sandbox, 'snapshot_profile', side_effect=lambda *a, **k: executed() or {}), \
                          patch.object(sandbox, 'build', side_effect=executed), \
                          patch.object(sandbox.activity, 'save_config', side_effect=executed), \
-                         patch.object(sandbox, 'down', side_effect=executed), \
-                         patch.object(sandbox, 'up', side_effect=executed):
+                         patch.object(profile_replacement, 'apply', side_effect=executed):
                         sandbox.sandbox_command(args, state, None)
                     expected = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + [
-                        'Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers']
+                        'Replace main agent sandbox']
                     self.assertEqual(events, [(i, len(expected), label) for i, label in enumerate(expected, 1)])
                 finally:
                     channel.close()

@@ -4,6 +4,7 @@ import base64
 from contextlib import ExitStack
 import hashlib
 import json
+import shutil
 import os
 from pathlib import Path
 import re
@@ -28,7 +29,7 @@ APPROVAL_LABELS = {
 }
 sys.path.insert(0, str(REPO))
 from knowledge_documents import write_documents
-from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, sandbox
+from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, runtime_context, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -184,7 +185,7 @@ def check_chat_workflows(page, frame, composer, send, inside, output):
     page.screenshot(path=str(output / 'fork.png'))
 
     send('Factory chat steering initial')
-    frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$')).wait_for()
+    frame.get_by_role('button', name='Stop response', exact=True).wait_for()
     composer.fill('Factory chat steer')
     frame.get_by_role('button', name='Choose streaming delivery').click()
     frame.get_by_role('option', name=re.compile('Steer')).click()
@@ -292,7 +293,7 @@ def check_tool_images(page, frame, send, inside, output):
     assert thumbnails.count() == len(expected)
 
     frame.get_by_role('button', name='Session actions', exact=True).click()
-    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
+    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart Pi process\s*$')).click()
     frame.get_by_text('FACTORY TOOL IMAGE REACHED MODEL', exact=True).nth(1).wait_for(timeout=30000)
     for index, digest in enumerate(expected):
         thumbnail = thumbnails.nth(index)
@@ -381,7 +382,7 @@ assert.equal(new ProjectTrustStore('/home/node/.pi/agent').get('/workspace/app')
 
 def check_streaming_metrics(frame, send, output):
     metrics = frame.locator('.response-metrics')
-    active = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
+    active = frame.get_by_role('button', name='Stop response', exact=True)
     answer = frame.get_by_text(re.compile(r'^FACTORY STREAMING ANSWER\.')).first
     live = re.compile(r'≈([\d,]+) output tokens · ≈([\d.]+) tok/s avg')
 
@@ -595,7 +596,7 @@ def check_deep_research(page, frame, send, inside, workspace, output):
     print('PASS Deep Web Research loads its skill, delegates web search, reads a mounted source and writes a cited report in both clients.')
 
 
-def check_system_prompt(page, frame, send, inside, state, output, container):
+def check_system_prompt(page, frame, send, inside, state, config, output, container):
     from frostpi_subagents import fixture_rpc, rpc_result
 
     earlier_history = None
@@ -607,17 +608,31 @@ assert len(matches) == 1, matches
 print(matches[0].read_text(), end='')
 '''
     with fixture_rpc(container, output, 'system-prompt-cli', session='/tmp/system-prompt-cli.jsonl') as (send_cli, until):
-        for label in ('DEFAULT', 'CONNECTOR_ONLY', 'FIRST', 'SECOND', 'NONE'):
-            custom = label in ('FIRST', 'SECOND')
-            value = {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + label} if custom else None
-            config = {}
-            if label in ('CONNECTOR_ONLY', 'FIRST', 'SECOND'):
-                alias = 'fixture-connector-' + ('second' if label == 'SECOND' else 'first')
-                config['ssh'] = {'hosts': [{'alias': alias, 'hostname': 'build.example.test', 'user': 'builder',
-                                            'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}
-            connector_settings.refresh_agent_context(config, state)
-            prompt_library.assign(state, value)
+        cases = [
+            ('DEFAULT', 'allowlist', None, None),
+            ('CONNECTOR_ONLY', 'allowlist', 'first', None),
+            ('FIRST', 'allowlist', 'first', 'FIRST'),
+            ('UNRESTRICTED', 'unrestricted', 'first', 'FIRST'),
+            ('RESTRICTED_AGAIN', 'allowlist', 'first', 'FIRST'),
+            ('SECOND', 'allowlist', 'second', 'SECOND'),
+            ('NONE', 'allowlist', None, None),
+        ]
+        for label, network, alias, custom in cases:
+            value = {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_' + custom} if custom else None
+            saved = {**config, 'network': network}
+            if alias:
+                saved['ssh'] = {'hosts': [{'alias': 'fixture-connector-' + alias, 'hostname': 'build.example.test',
+                                           'user': 'builder', 'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}
+            with runtime_context.applied(state):
+                sandbox.write_json(state / 'config.json', saved)
+                sandbox.prepare_options(saved, state)
+                connector_settings.refresh_agent_context(saved, state)
+                prompt_library.assign(state, value)
             assert prompt_library.selection(state) == value
+            snapshot = json.loads(inside('cat', '/opt/pi-security/config/sandbox-state.json'))
+            reference = inside('cat', '/opt/sandbox/context.md')
+            assert snapshot['network'] == network
+            assert '"Network": "' + snapshot['values']['Network'] + '"' in reference
             prompt = 'Factory sandbox system prompt fixture ' + label
             reply = 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
             send(prompt)
@@ -633,8 +648,28 @@ print(matches[0].read_text(), end='')
             until(rpc_result(reply))
             until(lambda event: event.get('type') == 'agent_settled')
             print(f'PASS {label}: same Pi CLI and FrostPi conversations', flush=True)
+        send('Factory sandbox reference fixture')
+        expect(frame.get_by_text('FACTORY SANDBOX REFERENCE VERIFIED', exact=True)).to_be_visible(timeout=30000)
+        send_cli(type='prompt', message='Factory sandbox reference fixture')
+        until(rpc_result('FACTORY SANDBOX REFERENCE VERIFIED'))
+        until(lambda event: event.get('type') == 'agent_settled')
+        print('PASS Pi CLI and FrostPi read the current reference through file and shell tools; private configuration remains denied.')
+    # Stop the CLI process, change settings, then resume its saved conversation.
+    saved = {**config, 'network': 'unrestricted', 'ssh': {'hosts': [
+        {'alias': 'fixture-connector-first', 'hostname': 'build.example.test',
+         'user': 'builder', 'port': 22, 'host_keys': ['FIXTURE_PRIVATE_MARKER']}]}}
+    with runtime_context.applied(state):
+        sandbox.write_json(state / 'config.json', saved)
+        sandbox.prepare_options(saved, state)
+        connector_settings.refresh_agent_context(saved, state)
+        prompt_library.assign(state, {'name': 'Fixture', 'text': 'FACTORY_SANDBOX_PROMPT_FIRST'})
+    with fixture_rpc(container, output, 'system-prompt-cli-resumed', session='/tmp/system-prompt-cli.jsonl') as (send_cli, until):
+        send_cli(type='prompt', message='Factory sandbox system prompt fixture UNRESTRICTED')
+        until(rpc_result('FACTORY SANDBOX SYSTEM PROMPT UNRESTRICTED VERIFIED'))
+        until(lambda event: event.get('type') == 'agent_settled')
+    print('PASS A restarted Pi process resumes its original context and receives only the current settings differences.')
     page.screenshot(path=str(output / 'system-prompt.png'))
-    print('PASS Pi and the same FrostPi chat read the assigned, replaced and removed prompt. Earlier chat entries are unchanged.')
+    print('PASS Both open chats received current network settings and project instructions on every turn. Earlier FrostPi entries are unchanged.')
 
 
 def check_scheduled_tasks(page, frame, send, inside, output):
@@ -655,7 +690,7 @@ def check_scheduled_tasks(page, frame, send, inside, output):
         previous = pi_processes()
         assert previous, 'The current Pi RPC process was not found'
         frame.get_by_role('button', name='Session actions').click()
-        frame.locator('.session-menu button').filter(has_text='Restart session').click(timeout=8000)
+        frame.locator('.session-menu button').filter(has_text='Restart Pi process').click(timeout=8000)
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
             current = pi_processes()
@@ -847,9 +882,14 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
           folder_access=False, streaming_metrics=False, profile_prompt=None, subagents=None,
           subagent_case=None, subagent_client=None, subagent_compaction=None, nonblocking_questions=False,
           local_knowledge=False, deep_research=False, system_prompt=False, scheduled_tasks=False,
-          reviewed_file_access=None, provider_connection_check=None, full_width=False):
+          reviewed_file_access=None, provider_connection_check=None, full_width=False, profile_services_check=False,
+          profile_edit_check=False, file_references_check=False):
+    if profile_edit_check:
+        profile_services_check = True
     output.mkdir(parents=True, exist_ok=True)
     name = 'factory-frostpi-check-' + uuid.uuid4().hex[:10]
+    if profile_services_check:
+        name = 'pi-sandbox-factory-' + name
     if subagent_compaction:
         subagents = 'automatic'
     mode = ('manual' if folder_access else provider_connection_check or reviewed_file_access or startup_only
@@ -948,6 +988,9 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 'providers': {'searxng': {'endpoint': 'http://localhost:19382'}},
             })
         cwd = '/workspace'
+        if system_prompt:
+            (root / 'workspace/AGENTS.md').write_text('FACTORY PROJECT CONTEXT MARKER\n')
+            (root / 'allowlist.txt').write_text('downloads.example.test:443\n')
         if profile_prompt:
             config['profile'] = sandbox.load_profile(str(profile_prompt.resolve()))
             project_config = root / 'workspace/.pi'
@@ -976,7 +1019,28 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                 {'name': name, 'source': str(root / name), 'read_only': name == 'reference'}
                 for name in ('reference', 'output')
             ])
+        if profile_services_check:
+            from ai_sandbox_factory import profile_runtime, profile_services
+            from unittest.mock import patch
+            config.update(name=name.removeprefix('pi-sandbox-factory-'), uid=1000, gid=1000,
+                          network='allowlist', profile=sandbox.load_profile('developer-postgres'),
+                          common=sandbox.common_profile())
+            if profile_edit_check:
+                from ai_sandbox_factory import profile_edit
+                editable = root / 'editable-profile'
+                shutil.copytree(config['profile']['path'], editable)
+                config[profile_edit.EDIT] = {'path':str(editable), 'origin_name':config['profile']['name'],
+                                             'origin_digest':config['profile']['digest']}
+            profile_services.build(config)
+            with patch.object(sandbox, 'image_names', return_value=(image, 'localhost/pi-sandbox-factory-proxy:1')):
+                with profile_runtime.recording(config, root):
+                    pass
+                profile_runtime.select(config, root)
+            profile_services.up(config, root)
+            resources.callback(profile_services.delete, config)
         sandbox.prepare_options(config, root)
+        sandbox.write_json(root / 'config.json', config)
+        runtime_context.publish_saved(root)
         if system_prompt or worker_prompt:
             os.environ['SANDBOX_REGISTRY_DIR'] = str(root / 'library')
         if worker_prompt:
@@ -1005,7 +1069,13 @@ def check(image, code_server, output, chromium, startup_only, chat_workflows, se
                            '/tmp/folder-access-cases.json', 'ro'))
         args = ['run', '-d', '--pull=never', '--name', name, '--network', 'none', '--userns', 'keep-id:uid=1000,gid=1000',
                 '--user', '1000:1000', '--security-opt', 'label=disable',
-                '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=unrestricted', '--entrypoint', 'sleep']
+                '-e', 'SANDBOX_APPROVAL_MODE=' + mode, '-e', 'SANDBOX_NETWORK_MODE=' + ('allowlist' if profile_services_check else 'unrestricted'), '--entrypoint', 'sleep']
+        if profile_services_check:
+            index = args.index('--network')
+            args[index:index + 2] = profile_services.network_args(config)
+            args += profile_runtime.mounts(root) + profile_services.mounts(config, root)
+            if profile_edit_check:
+                args += profile_edit.mounts(config)
         if subagents or deep_research:
             args += ['-e', 'SANDBOX_SUBAGENTS=' + ('1' if config['subagents'] else '0'),
                      '-e', 'PI_SUBAGENTS_TEMP_ROOT=/tmp/factory-subagent-runs']
@@ -1092,6 +1162,14 @@ p.write_text(json.dumps(v))
                                  '--approve', '--provider', 'fixture', '--model', 'fixture',
                                  'Factory profile prompt fixture')
                     assert 'FACTORY PROFILE PROMPT VERIFIED' in cli, cli
+                if profile_edit_check:
+                    script = Path(__file__).with_name('profile_edit_pi.py').read_text()
+                    cli = podman('exec', '-i', '--workdir', cwd, name, 'python3', '-c', script, stdin=subprocess.DEVNULL)
+                    assert 'FACTORY PROFILE EDITING VERIFIED' in cli, cli
+                    print('PASS Pi CLI: actual read/write/Bash tools edit package/service files, validate, commit/push to a local Git origin, and preserve the read-only applied profile.',flush=True)
+                    for item in editable.iterdir():
+                        shutil.rmtree(item) if item.is_dir() else item.unlink()
+                    shutil.copytree(config['profile']['path'], editable, dirs_exist_ok=True)
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 address = f'127.0.0.1:{port.getsockname()[1]}'
@@ -1149,6 +1227,38 @@ p.write_text(json.dumps(v))
                 assert not frame.get_by_text(re.compile(r'project is not trusted|Grant project trust')).count(), 'A fresh workspace was not trusted'
                 page.screenshot(path=str(output / 'startup.png'))
                 assert ('/auto-review-settings' in notice.inner_text()) == (mode in ('automatic', 'assisted'))
+                if file_references_check:
+                    from frostpi_references import check as check_file_references
+                    try:
+                        check_file_references(page, frame, inside, output, cwd)
+                    except Exception:
+                        try:
+                            page.screenshot(path=str(output / 'file-references-failure.png'))
+                            (output / 'file-references-failure.txt').write_text(page.locator('body').aria_snapshot())
+                        except PlaywrightError as diagnostic_error:
+                            print('Could not capture reference failure UI: ' + str(diagnostic_error), flush=True)
+                        raise
+                    assert not errors, errors
+                    browser.close()
+                    return
+                if profile_edit_check:
+                    send('Factory profile editing fixture')
+                    result = frame.get_by_text('FACTORY PROFILE EDITING VERIFIED', exact=True)
+                    result.wait_for(timeout=120000)
+                    page.screenshot(path=str(output / 'profile-editing.png'))
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS shipped FrostPi webview: actual profile read/write/Bash validation, Git commit/local-origin push and read-only applied-record protection.',flush=True)
+                    return
+                if profile_services_check:
+                    send('Factory profile service fixture')
+                    result = frame.get_by_text('FACTORY PROFILE SERVICES VERIFIED', exact=True)
+                    result.wait_for(timeout=60000)
+                    page.screenshot(path=str(output / 'profile-services.png'))
+                    assert not errors, errors
+                    browser.close()
+                    print('PASS shipped FrostPi webview: applied recipe read, blocked inner SSH and reviewed direct service SQL.')
+                    return
                 if provider_connection_check:
                     check_provider_connection(page, frame, send, inside, output, mode, root,
                                               inference.connection_checks(config)['sample']['target'])
@@ -1210,7 +1320,7 @@ p.write_text(json.dumps(v))
                     browser.close()
                     return
                 if system_prompt:
-                    check_system_prompt(page, frame, send, inside, root, output, name)
+                    check_system_prompt(page, frame, send, inside, root, config, output, name)
                     assert not errors, errors
                     browser.close()
                     return
@@ -1251,7 +1361,7 @@ p.write_text(json.dumps(v))
                     question.get_by_text('Answer when ready.', exact=True).wait_for()
                     continued = frame.get_by_text('FACTORY WORK CONTINUED', exact=True)
                     continued.first.wait_for()
-                    stop_turn = frame.get_by_role('button', name=re.compile(r'^Stop (?:Pi|turn)$'))
+                    stop_turn = frame.get_by_role('button', name='Stop response', exact=True)
                     assert stop_turn.is_visible()
                     assert question.get_by_text('Recommended', exact=True).is_visible()
                     question.screenshot(path=str(output / 'nonblocking-question.png'))
@@ -1267,8 +1377,8 @@ p.write_text(json.dumps(v))
                     assert question.is_visible(), 'Stopping the turn discarded the pending question'
                     request_label = question.get_attribute('aria-labelledby')
                     frame.get_by_role('button', name='Session actions', exact=True).click()
-                    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart session\s*$')).click()
-                    page.get_by_role('button', name='Restart session', exact=True).click()
+                    frame.locator('button').filter(has_text=re.compile(r'^\s*Restart Pi process\s*$')).click()
+                    page.get_by_role('button', name='Restart Pi process', exact=True).click()
                     expect(question).not_to_have_attribute('aria-labelledby', request_label, timeout=15000)
                     question.get_by_role('button', name='Pear', exact=True).wait_for()
                     assert question.count() == 1
@@ -1386,7 +1496,7 @@ p.write_text(json.dumps(v))
                 (output / 'fixture.log').write_text(log.stdout + log.stderr)
             raise
         finally:
-            if subagents:
+            if subagents or system_prompt:
                 log = subprocess.run(['podman', 'exec', name, 'cat', '/tmp/fixture.log'],
                                      text=True, capture_output=True)
                 (output / 'fixture.log').write_text(log.stdout + log.stderr)
@@ -1409,6 +1519,9 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--chromium', help='Path to Chromium when Playwright uses an existing installation.')
     scope = parser.add_mutually_exclusive_group()
+    scope.add_argument('--profile-services', action='store_true', help='Check profile recipes and direct SSH through the shipped FrostPi webview.')
+    scope.add_argument('--file-references', action='store_true', help='Check real editor context menus, reference chips, keyboard editing and exact Pi prompt text.')
+    scope.add_argument('--profile-edit', action='store_true', help='Check actual Pi/FrostPi profile read/write tools and validation.')
     scope.add_argument('--startup-only', choices=APPROVAL_LABELS, help='Check only the mode notice on an unconfigured sandbox.')
     scope.add_argument('--chat-workflows', action='store_true', help='Check steering, branching, forking and continuing the original chat.')
     scope.add_argument('--scheduled-tasks', action='store_true', help='Check schedule visibility, delivery and persistence across restarts.')
@@ -1447,4 +1560,5 @@ if __name__ == '__main__':
           args.streaming_metrics, args.profile_prompt, args.subagents, args.subagent_case, args.subagent_client,
           args.subagent_compaction, args.nonblocking_questions, args.local_knowledge, args.deep_research, args.system_prompt,
           scheduled_tasks=args.scheduled_tasks, reviewed_file_access=args.reviewed_file_access,
-          provider_connection_check=args.provider_connection_check)
+          provider_connection_check=args.provider_connection_check, profile_services_check=args.profile_services,
+          profile_edit_check=args.profile_edit, file_references_check=args.file_references)

@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ai_sandbox_factory import aws_access, sandbox
+from ai_sandbox_factory import aws_access, browser_editor, sandbox
 
 
 class AWSAccessTests(unittest.TestCase):
@@ -138,7 +138,7 @@ class AWSAccessTests(unittest.TestCase):
                     sandbox.apply_aws_settings(config, state, self.value, approval=effect)
                 updated = json.loads((state / 'config.json').read_text())
                 self.assertEqual(updated['aws_access'], self.value)
-                operations.build.assert_called_once_with(updated)
+                operations.build.assert_called_once_with(updated, state)
                 commands = [args[0] for args, _ in operations.engine.call_args_list]
                 self.assertIn(['podman', 'rm', 'old-workspace'], commands)
                 self.assertFalse(any(cmd[1] == 'volume' for cmd in commands))
@@ -178,3 +178,45 @@ class AWSAccessTests(unittest.TestCase):
             down.assert_called_once_with(updated)
             self.assertEqual((state / 'squid.conf').read_text(), 'previous policy')
             self.assertEqual(json.loads((state / 'config.json').read_text()), config)
+
+    def test_first_aws_connection_restores_editor_before_retiring_old_container(self):
+        for failure in (None, 'workspace', 'editor'):
+            with self.subTest(failure=failure), TemporaryDirectory() as tmp:
+                state = Path(tmp)
+                (state / 'squid.conf').write_text('previous policy')
+                (state / 'allowlist.txt').write_text('')
+                config = dict(name='test', engine='podman', network='unrestricted')
+                updated = {**config, 'aws_access': self.value}
+                dev = sandbox.names(config)[0]
+                previous = {'Id':'previous', 'State':{'Running':True}}
+                candidate = {'Id':'candidate', 'State':{'Running':True}}
+                connection = {'url':'http://127.0.0.1:12345','preferences':{'mode':'browser'}}
+                calls = []
+                def resume(current, target, snapshot):
+                    self.assertEqual(target,state)
+                    self.assertEqual(snapshot,connection)
+                    self.assertNotIn(['podman','rm','previous'],calls)
+                    self.assertEqual(json.loads((state/'config.json').read_text()),current)
+                    if failure == 'editor' and current == updated:
+                        raise ValueError('editor startup diagnostic')
+                with patch.object(browser_editor,'replacement_connection',return_value=connection), \
+                     patch.object(browser_editor,'stop') as stop, \
+                     patch.object(browser_editor,'active',return_value=False), \
+                     patch.object(browser_editor,'resume_connection',side_effect=resume) as restore, \
+                     patch.object(sandbox,'up',side_effect=[ValueError('workspace diagnostic'),None] if failure=='workspace' else None), \
+                     patch.object(sandbox,'inspect',side_effect=lambda config,name:candidate if name==dev else None), \
+                     patch.object(sandbox,'run',side_effect=lambda args,**kwargs:calls.append(args)), \
+                     patch.object(aws_access,'up'), patch.object(aws_access,'down'), \
+                     patch.object(sandbox.connector_settings,'refresh_agent_context'), \
+                     patch.object(sandbox,'refresh_shell_network'):
+                    if failure:
+                        with self.assertRaisesRegex(ValueError,'workspace diagnostic' if failure=='workspace' else 'editor startup diagnostic'):
+                            sandbox.replace_for_aws(config,updated,state,'restart',{dev:previous})
+                        self.assertEqual(json.loads((state/'config.json').read_text()),config)
+                        restore.assert_called_with(config,state,connection)
+                        self.assertNotIn(['podman','rm','previous'],calls)
+                    else:
+                        sandbox.replace_for_aws(config,updated,state,'restart',{dev:previous})
+                        restore.assert_called_once_with(updated,state,connection)
+                        self.assertIn(['podman','rm','previous'],calls)
+                    stop.assert_called_once_with(state)

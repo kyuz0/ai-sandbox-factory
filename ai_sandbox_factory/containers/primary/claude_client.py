@@ -41,6 +41,13 @@ def configure(home, settings):
         permissions['deny'] = denied
     else:
         permissions.pop('deny', None)
+    # Native prompt snapshots can survive resume. Deliver newer Factory settings
+    # through the supported per-prompt hook, preserving unrelated user hooks.
+    for event, stage in [('UserPromptSubmit', 'before'), ('Stop', 'after')]:
+        command = f'exec /usr/bin/python3 -I /opt/sandbox/sandbox-update.py claude {stage}'
+        groups = native.setdefault('hooks', {}).setdefault(event, [])
+        if not any(hook.get('command') == command for group in groups for hook in group.get('hooks', [])):
+            groups.append({'hooks': [{'type': 'command', 'command': command}]})
     atomic_write(preferences, json.dumps(native).encode())
     # Native trust records accept only the configured project. Project settings,
     # skills and hooks execute in this workspace, never beside real credentials.

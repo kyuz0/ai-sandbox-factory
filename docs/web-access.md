@@ -155,7 +155,8 @@ connection’s hostname and port, not individual pages or what the site returns.
 sandboxes.
 
 **Copy from sandbox…** loads another sandbox's web settings into the form.
-**Include search API keys** is selected initially when the source is running.
+Select **Include Web Search API keys** to copy keys from a running source.
+A source without saved Web Search keys has no key-copy checkbox.
 A stopped sandbox can supply its settings; start it first if you want its keys.
 In an existing target sandbox, leaving this unchecked keeps that target's keys
 for matching providers and endpoints. In a new sandbox, it copies no keys.

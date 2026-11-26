@@ -125,6 +125,18 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ## Async work and test isolation
 
+- Publish model-visible settings only after the owning change succeeds. Test
+  resumed conversations with the pinned clients' actual model requests, not
+  just generated hook files. Cached instructions must not contradict current
+  settings. Verify the payloads emitted by the installed hook implementation.
+- A delivery receipt records what the completed turn saw, not what the host
+  currently wants. Test A → B → A changes during completion and cancellation,
+  overlapping callbacks, failure/retry and unchanged-turn suppression.
+- Keep initial sandbox instructions intact. Later notices identify changed
+  settings and point to Factory's current read-only reference; do not repeat
+  standing guidance or unrelated settings. Keep full values and relevant examples
+  in that reference, and test prompt size, readable access and credential exclusion.
+
 - Give every queued UI event, timer and worker result an owner. Resolve widgets
   on the UI thread and check that the owner is still attached before rendering.
   Check request identity on success and failure so an older result cannot
@@ -175,6 +187,12 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   validate the replacement before interrupting work. When replacing a running
   sandbox, keep the previous runtime available until the new one works. Test
   what happens when it fails. Preserve whether the sandbox was running or stopped.
+- When keeping data for recovery, provide a named UI entry with its source and
+  date, and tested export and restore actions. Job output alone is not a usable
+  recovery workflow. State who keeps the data, when and where it is stored, and
+  what deletes it.
+- Check conditional actions inside their parent's visible area. A button with
+  the right height can still be hidden by a zero-width or clipped container.
 - Before applying an unavoidable restart or loss, name the sandbox, the work
   that will stop, the data that will be removed, and the data that will survive.
   Put those consequences and a clearly named action together. Offer a backup or
@@ -188,6 +206,9 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   beside the check and test its boundary. Remove unexplained caps on counts,
   lengths and ranges. A convenient round number or a pre-existing assertion
   is insufficient.
+- Reconcile declared profile services through reviewed Apply: additions,
+  replacements and removals are supported changes. Preserve recovery data and
+  test rollback; do not replace missing lifecycle implementation with a blanket refusal.
 - Treat an ordinary sustained editor, agent and browser session as the minimum
   workload. Capacity changes must exercise at least ten times the measured
   baseline in the affected layer, with cancellation, cleanup and fault recovery.
@@ -198,6 +219,12 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   Use backpressure for transient pressure rather than rejecting valid work.
 - A transient relay failure must not stop active editor or agent processes.
   Retrying must preserve the same destination and configured network rules.
+- Container replacement checks must begin with the actual browser editor open.
+  Preserve its address and connection settings on success and rollback; verify
+  an authenticated request at the original address. Also cover no open editor,
+  a stopped sandbox and service-only operations that leave the workspace alone.
+  Exercise ordinary settings updates and rebuilds without profile services as
+  well as profile Apply. A profile-only test does not cover the ordinary path.
 - Exercise the shipped clients with the editor's inherited environment, including
   Node preload settings. Mocked tool calls alone do not establish usability.
 
@@ -205,12 +232,25 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 
 ### Relevance and cognitive load
 
+- HARD GATE — keep review forms to the current choices and concise summaries.
+  Put background explanations and lifecycle reference text behind a nearby
+  More information… control. Do not fill ordinary forms with help paragraphs
+  or bullet lists. Test that this text is absent until help is opened and that
+  dismissing help preserves the form. Keep necessary consequences beside the
+  affected choice or its confirmation.
+
 - Start with what the user wants to do and give each common workflow a usable default.
   Show the effect of a choice beside it. Keep provider, model and tuning options in
   clearly labeled advanced settings the user can open during setup or revisit later.
   Apply this principle when reviewing the rest of Factory, including existing screens.
 
 - HARD GATE — clear, consistent labels: use plain, direct names for controls. The same concept must have the same label across screens and engines. Never expose an internal implementation term where an ordinary user-facing name exists. Keep a shared name for each repeated concept and regression-test rendered labels and errors. Review visible copy before release; inconsistent or opaque labels block release.
+
+- Give text a visible hierarchy throughout the TUI. Use section headings, bold
+  field labels, plain values, secondary help and distinct command blocks. Use
+  the shared `Details` and `Command` widgets for read-only facts and commands;
+  never guess a text role from punctuation or style untrusted values as markup.
+  Check that the roles remain distinguishable in monochrome.
 
 - HARD GATE — plain, complete instructions: give the reader enough context to
   know what the action affects. Reserve short verb phrases for controls and
@@ -243,6 +283,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   next required action. Derive change notices from the actual diff and selected
   client. Never show unrelated feature exceptions, credentials guidance or advice
   for clients the user is not using.
+  Hide an optional copy choice when the source has nothing to copy. Show a
+  disabled choice only when a concrete action can make it available.
 - HARD GATE — coherent treatment across the UI. Use the same labels, grouping,
   defaults, initial keyboard focus, shortcut hints and feedback for equivalent
   choices. Compare shared settings across coding agents and keep their labels
@@ -285,6 +327,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
 - QA must test both presence and absence of conditional notices, inspect narrow
   screens for readable bullets and visible actions, and remove irrelevant or
   repeated text before release.
+  After focus and layout settle, check that validation errors are actually visible,
+  including short errors in scrolling forms and monochrome terminals.
 
 - Group each label, control and explanation in one `.setting`. Put the help
   below its control and leave one blank row between groups. In compact forms,
@@ -357,6 +401,9 @@ the same responsive height as page actions. Indentation must express a parent/ch
 relationship, never compensate for unrelated alignment errors. In Textual CSS, use
 complete margin values when overriding one side; a more specific side override can
 clear the other margins. Verify the rendered gap, not just the stylesheet.
+Application CSS can override a screen's `DEFAULT_CSS` regardless of selector
+specificity. Put overrides at the appropriate stylesheet precedence and check
+rendered control text as well as widget bounds after a label changes.
 
 ## Changes and docs
 

@@ -81,7 +81,7 @@ git ls-remote git@github-project:OWNER/REPOSITORY.git HEAD
 
 ```mermaid
 flowchart LR
-    subgraph DEV[Development container]
+    subgraph DEV[Main agent sandbox]
         PI[Pi] -->|approved escalation| SSH[ssh / git]
     end
     subgraph COMP[SSH companion]
@@ -93,7 +93,7 @@ flowchart LR
     RELAY --> HOST[Configured SSH host]
 ```
 
-The development container receives sockets and public host configuration. The private key file stays in the companion. OpenSSH constrains its use to the configured users and trusted host identities. Each sandbox holds one imported key; use separate sandboxes for separate keys.
+The main agent sandbox receives sockets and public host configuration. The private key file stays in the companion. OpenSSH constrains its use to the configured users and trusted host identities. Each sandbox holds one imported key; use separate sandboxes for separate keys.
 
 A process in the sandbox can use the signing socket while the key is unlocked,
 including a malicious extension. Destination constraints restrict the SSH server

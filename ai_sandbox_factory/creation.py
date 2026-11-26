@@ -55,24 +55,26 @@ class ResourceConflicts:
     connection: str | None
     containers: tuple[tuple[str, str], ...]
     volumes: tuple[tuple[str, str], ...]
+    networks: tuple[tuple[str, str], ...] = ()
 
     def describe(self):
         groups = [
             heading + '\n' + '\n'.join(names)
             for heading, names in (('Containers', [name for name, _ in self.containers]),
-                                   ('Volumes', [name for name, _ in self.volumes])) if names
+                                   ('Volumes', [name for name, _ in self.volumes]),
+                                   ('Networks', [name for name, _ in self.networks])) if names
         ]
         return '\n\n'.join(groups)
 
     def require_available(self):
-        if self.containers or self.volumes:
+        if self.containers or self.volumes or self.networks:
             raise ValueError('This name is already used by container resources. Choose another sandbox name.\n\n'
                              + self.describe())
 
 
 def resource_conflicts(config):
     """Find exact names on the selected engine without changing those resources."""
-    from . import sandbox, sandbox_advisors, sandbox_ssh, inference, aws_access, primary_workspace, connectors
+    from . import sandbox, sandbox_advisors, sandbox_ssh, inference, aws_access, primary_workspace, connectors, profile_services
     dev, proxy, *volumes = sandbox.names(config)
     advisor, advisor_proxy, *advisor_volumes = sandbox_advisors.names(config)
     ssh, *ssh_volumes = sandbox_ssh.names(config)
@@ -84,12 +86,22 @@ def resource_conflicts(config):
         from . import primary_agents
         for kind, names in primary_agents.resources(config).items():
             wanted[kind].update(names)
+    services = profile_services.resources(config)
+    for kind in ('container', 'volume'):
+        wanted[kind].update(services[kind])
+    networks = ()
     engine = config['engine']
     try:
         listed = sandbox.run([engine, 'ps', '-a', '--no-trunc', '--format', '{{.Names}}\t{{.ID}}'],
                              capture=True, stderr=subprocess.PIPE).stdout.splitlines()
         volume_names = sandbox.run([engine, 'volume', 'ls', '--format', '{{.Name}}'],
                                    capture=True, stderr=subprocess.PIPE).stdout.splitlines()
+        if services['network']:
+            network_names = set(sandbox.run([engine, 'network', 'ls', '--format', '{{.Name}}'], capture=True, stderr=subprocess.PIPE).stdout.splitlines())
+            matches = sorted(network_names & services['network'])
+            if matches:
+                data = json.loads(sandbox.run([engine, 'network', 'inspect', *matches], capture=True, stderr=subprocess.PIPE).stdout)
+                networks = tuple(sorted((row.get('name', row.get('Name')), row.get('id', row.get('Id'))) for row in data))
         matching = sorted(set(volume_names) & wanted['volume'])
         if matching:
             inspected = sandbox.run([engine, 'volume', 'inspect', *matching],
@@ -106,7 +118,7 @@ def resource_conflicts(config):
     containers = (line.partition('\t')[::2] for line in listed)
     return ResourceConflicts(engine, config.get('podman_connection'),
                              tuple(sorted((name, identifier) for name, identifier in containers if name in wanted['container'])),
-                             volumes)
+                             volumes, networks)
 
 
 def check_name(state):
@@ -116,7 +128,7 @@ def check_name(state):
 
 def check_draft(state_root, draft, approved=None):
     """Check before scheduling creation, and remove only resources the user approved."""
-    from . import sandbox
+    from . import sandbox, profile_services
     name = draft['name']
     if not SANDBOX_NAME.fullmatch(name):
         raise ValueError(SANDBOX_NAME_ERROR)
@@ -125,6 +137,7 @@ def check_draft(state_root, draft, approved=None):
         engine = sandbox.choose_engine(draft['engine'], quiet=True)
         connection = host_platform.check_engine(engine, full=False)
         config = {**draft, 'engine': engine, 'podman_connection': connection}
+        profile_services.validate(config)
         current = resource_conflicts(config)
         if approved is None:
             return current
@@ -139,6 +152,10 @@ def check_draft(state_root, draft, approved=None):
                     raise ValueError('The conflicting volumes changed. Check the name again and review the current list.')
                 sandbox.run([engine, 'volume', 'rm', *(volume for volume, _ in approved.volumes)],
                             capture=True, stderr=subprocess.PIPE)
+            if approved.networks:
+                if resource_conflicts(config).networks != approved.networks:
+                    raise ValueError('The conflicting networks changed. Check the name again and review the current list.')
+                sandbox.run([engine, 'network', 'rm', *(name for name, _ in approved.networks)], capture=True, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as error:
             detail = (error.stderr or '').strip()
             raise ValueError(f'Could not remove all the listed {engine} resources (exit {error.returncode}). '

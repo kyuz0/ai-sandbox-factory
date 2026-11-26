@@ -1,5 +1,6 @@
 """Start the official Codex client in the workspace with protected authentication."""
 import json
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -93,10 +94,19 @@ def main():
     prepare()
     if sys.argv[1:] == ['--factory-prepare']:
         return
-    context = Path('/run/primary-runtime/context.md').read_text()
-    args = ['-c', 'developer_instructions=' + json.dumps(context), *sys.argv[1:]]
+    context_path = Path('/run/primary-runtime/context.md')
+    context = context_path.read_text()
+    args = ['-c', 'developer_instructions=' + tomlkit.string(context).as_string(), *sys.argv[1:]]
     # No JSON-RPC filtering or tool remapping: this is the official executable.
-    os.execv('/usr/local/bin/factory-agent', ['codex', *args])
+    try:
+        os.execv('/usr/local/bin/factory-agent', ['codex', *args])
+    except OSError as error:
+        if error.errno != errno.E2BIG:
+            raise
+        size = len(args[1].encode())
+        raise SystemExit(f'Cannot start Codex: the operating system rejected its command-line size '
+                         f'({size} bytes for managed instructions from {context_path}): {error}. '
+                         'Shorten the profile instructions or custom prompt add-on, then retry.') from None
 
 
 if __name__ == '__main__':

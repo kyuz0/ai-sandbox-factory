@@ -69,7 +69,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/check_dependency_main.py
       - run: npm ci --prefix ai_sandbox_factory/containers/inference --ignore-scripts
-      - run: node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs
+      - run: node --test tests/test_knowledge_policy.mjs tests/test_provider_runtime.mjs tests/test_web_search_policy.mjs tests/test_inference_broker.mjs tests/test_editor_watch_fallback.cjs tests/test_sandbox_context.mjs
       - run: |
           python -m pip wheel --no-deps . -w dist
           python -m venv /tmp/factory-package
@@ -106,6 +106,15 @@ jobs:
       - name: Exercise background creation, rebuild and cancellation in the TUI
         shell: bash
         run: python tests/sandbox_jobs_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/jobs.log
+      - name: Require profile service replacement, removal and recovery
+        shell: bash
+        run: python tests/profile_edit_integration.py --agent pi 2>&1 | tee /tmp/factory-fresh-sandbox/profile-edit.log
+      - name: Require immediate recovery from a failed profile commit
+        shell: bash
+        run: python tests/profile_commit_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/profile-commit.log
+      - name: Restore saved service data
+        shell: bash
+        run: python tests/service_data_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/service-data.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

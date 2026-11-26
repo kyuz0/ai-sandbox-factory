@@ -23,6 +23,59 @@ function sendReply(response, delta) {
   response.end('data: [DONE]\n\n');
 }
 
+function checkSandboxPrompt(messages, label) {
+  const steps = ['DEFAULT', 'CONNECTOR_ONLY', 'FIRST', 'UNRESTRICTED', 'RESTRICTED_AGAIN', 'SECOND', 'NONE'];
+  const systems = messages.filter(message => message.role === 'system');
+  const system = systems.map(message => typeof message.content === 'string' ? message.content :
+    message.content.map(part => part.text).join('\n')).join('\n');
+  const history = JSON.stringify(messages.filter(message => message.role !== 'system'));
+  const sections = system.split('Current Factory sandbox settings.');
+  const current = sections[1] || '';
+  const update = current.split(/^Sandbox update: current Factory settings\.$/m)[1] || '';
+  const effective = name => {
+    const initial = current.split('\n').find(line => line.startsWith(name + ': '))?.slice(name.length + 2);
+    const changed = update.split('\n').find(line => line.startsWith('- ' + name + ': '))?.slice(name.length + 4);
+    return changed ?? initial ?? '';
+  };
+  const unrestricted = label === 'UNRESTRICTED';
+  const expectedAddon = ['FIRST', 'UNRESTRICTED', 'RESTRICTED_AGAIN'].includes(label) ? 'FIRST' :
+    label === 'SECOND' ? 'SECOND' : '';
+  const expectedAlias = ['DEFAULT', 'NONE'].includes(label) ? '' : label === 'SECOND' ? 'second' : 'first';
+  const matches = (text, regex) => [...text.matchAll(regex)].map(match => match[1]).join(',');
+  const checks = {
+    project: system.split('FACTORY PROJECT CONTEXT MARKER').length === 2,
+    base: system.includes('You are'),
+    currentSettings: sections.length === 2 && current.includes('replace older Factory settings'),
+    network: effective('Network') === (unrestricted ? 'Unrestricted' : 'Restricted'),
+    securityGuidance: matches(system, /^Network is (Restricted|Unrestricted)\b/gm) === 'Restricted',
+    guidance: current.includes('allow the specific hostname and port') && system.includes('/opt/sandbox/context.md'),
+    updateGuidance: current.includes('The user can change this sandbox’s settings in Factory') &&
+      current.includes('on a subsequent turn beginning "Sandbox update: current Factory settings."') &&
+      current.includes('Use the changed settings in place of older Factory settings; project instructions still apply.'),
+    compactUpdate: update.length <= 2000 && !update.includes('Use ordinary network connections') &&
+      !update.includes('The outer network allowlist still applies'),
+    currentReference: !update || (update.includes('These are the only configuration changes.') &&
+      update.includes('Factory updated /opt/sandbox/context.md for reference if you need the full current configuration') &&
+      !update.includes('Re-read')),
+    destinations: effective('Additional allowed destinations') === (unrestricted ? 'no longer configured' : 'downloads.example.test:443'),
+    addon: matches(system, /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g) === expectedAddon,
+    connectorInstructions: matches(sections[0], /fixture-connector-(first|second)/g) === expectedAlias,
+    sshSettings: matches(effective('SSH destinations'), /fixture-connector-(first|second)/g) === expectedAlias,
+    privateValues: !system.includes('FIXTURE_PRIVATE_MARKER'),
+    oldReplies: steps.slice(0, steps.indexOf(label)).every(step =>
+      history.includes('FACTORY SANDBOX SYSTEM PROMPT ' + step + ' VERIFIED')),
+    cleanHistory: !/FACTORY_SANDBOX_PROMPT_|Current Factory sandbox settings\./.test(history),
+  };
+  const failed = Object.keys(checks).filter(key => !checks[key]);
+  console.log('Sandbox prompt', label, JSON.stringify({
+    applied: current.split('\n').find(line => line.startsWith('Network: ')),
+    securityGuidance: system.split('\n').filter(line => /^Network is (Restricted|Unrestricted)/.test(line)),
+    failed,
+  }));
+  return {content: failed.length ? 'FACTORY SANDBOX PROMPT FAILED ' + label + ' ' + failed.join(', ') :
+    'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'};
+}
+
 async function streamReasoningAndAnswer(response) {
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   writeChunk(response, { role: 'assistant' });
@@ -171,6 +224,86 @@ http.createServer((request, response) => {
         return;
       }
       delta = { content: userText.includes('Read the Factory image fixture.') ? 'Inspect tool images' : 'Fix sign-in errors' };
+    } else if (userText.startsWith('Factory file reference fixture ')) {
+      const path = 'reference docs/Quarterly Observatory Instrument Calibration Notes.tex';
+      const kind = userText.slice('Factory file reference fixture '.length).split(' ')[0];
+      const expected = 'Factory file reference fixture ' + kind + ' ref:`' + path + (kind === 'selection' ? ':2-3' : '') + '`';
+      if (!['selection', 'file', 'completion'].includes(kind) || userText !== expected || context.includes('REFERENCE_BODY_MUST_NOT_BE_SENT_624')) {
+        const reason = context.includes('REFERENCE_BODY_MUST_NOT_BE_SENT_624')
+          ? 'Referenced file body was included in the prompt'
+          : 'Unexpected file reference marker or line range for ' + kind;
+        response.writeHead(400, {'content-type':'application/json'});
+        response.end(JSON.stringify({error:{message:reason}}));
+        return;
+      }
+      const fs = await import('node:fs');
+      const receipt = '/tmp/factory-reference-receipts.json';
+      const previous = fs.existsSync(receipt) ? JSON.parse(fs.readFileSync(receipt, 'utf8')) : [];
+      fs.writeFileSync(receipt, JSON.stringify([...previous, kind]));
+      delta = { content: 'FACTORY FILE REFERENCE ' + kind + ' VERIFIED' };
+    } else if (context.includes('Factory profile editing fixture')) {
+      if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+        delta = {content: JSON.stringify({outcome:'allow',risk_level:'low',user_authorization:'high',rationale:'Disposable profile file-edit regression.'})};
+      } else {
+        const results = messages.filter(message => message.role === 'tool' && message.tool_call_id?.startsWith('factory-profile-edit-'));
+        const system = JSON.stringify(messages.filter(message => message.role === 'system' || message.role === 'developer'));
+        const root = '/opt/sandbox/profile';
+        const base = '/opt/sandbox/base-profile';
+        const metadata = JSON.parse(readFileSync(base + '/profile/profile.json', 'utf8'));
+        const reporting = JSON.parse(readFileSync(base + '/authoring/example/profile.json', 'utf8')).services.reporting;
+        reporting.build.context = 'services/reporting';
+        metadata.services = {...metadata.services, reporting};
+        const steps = [
+          ['read', {path:base + '/authoring/README.md'}],
+          ['write', {path:root + '/Dockerfile',content:readFileSync(base + '/profile/Dockerfile','utf8') + '\nUSER root\nRUN apt-get update && apt-get install -y figlet\nUSER node\n'}],
+          ['write', {path:root + '/services/reporting/Dockerfile',content:readFileSync(base + '/authoring/example/services/postgres/Dockerfile','utf8')}],
+          ['write', {path:root + '/profile.json',content:JSON.stringify(metadata,null,2) + '\n'}],
+          ['bash', {command:'python3 -I - ' + root + ' --agent pi < ' + base + '/authoring/validate.py'}],
+          ['bash', {command:'git -C ' + root + ' init -b main && git -C ' + root + ' config user.name "Example Maintainer" && git -C ' + root + ' config user.email maintainer@example.test && git init --bare ' + root + '/.git/fixture-origin && git -C ' + root + ' remote add origin ' + root + '/.git/fixture-origin && git -C ' + root + ' add . && git -C ' + root + ' commit -m "Track editable profile"'}],
+          ['bash', {command:'git -C ' + root + ' push ' + root + '/.git/missing-origin main'}],
+          ['bash', {command:'git -C ' + root + ' push -u origin main && printf PROFILE_GIT_PUSHED'}],
+          ['bash', {command:'printf UNALLOWED_PROFILE_WRITE >> ' + base + '/profile/profile.md'}],
+        ];
+        if (!system.includes(root) || !system.includes('Review changes') || !system.includes('Ask whether the user wants this profile tracked in Git') || !system.includes('forked from')) {
+          delta = {content:'FACTORY PROFILE EDITING FAILED managed instructions missing'};
+        } else if (results.length < steps.length) {
+          const [tool,args] = steps[results.length];
+          delta = choice(tool,args);
+          delta.tool_calls[0].id = 'factory-profile-edit-' + results.length;
+        } else {
+          const valid = String(results[0].content).includes('Author a profile with multiple hosts') &&
+            String(results[4].content).includes('Static checks passed') &&
+            String(results[6].content).includes('git repository') &&
+            String(results[7].content).includes('PROFILE_GIT_PUSHED') &&
+            readFileSync(root + '/.git/fixture-origin/refs/heads/main','utf8') === readFileSync(root + '/.git/refs/heads/main','utf8') &&
+            !readFileSync(base + '/profile/profile.md','utf8').includes('UNALLOWED_PROFILE_WRITE') &&
+            JSON.parse(readFileSync(root + '/profile.json','utf8')).services.reporting;
+          delta = {content: valid ? 'FACTORY PROFILE EDITING VERIFIED' : 'FACTORY PROFILE EDITING FAILED ' + JSON.stringify(results)};
+        }
+      }
+    } else if (context.includes('Factory profile service fixture')) {
+      if (/Review one proposed coding-agent action|You are a fail-closed permission reviewer/.test(context)) {
+        delta = {content: JSON.stringify({outcome:'allow',risk_level:'medium',user_authorization:'high',rationale:'Disposable profile regression.'})};
+      } else {
+        const results = messages.filter(message => message.role === 'tool');
+        const system = messages.filter(message => message.role === 'system' || message.role === 'developer')
+          .map(message => typeof message.content === 'string' ? message.content :
+            (message.content ?? []).map(part => part.text ?? '').join('\n')).join('\n');
+        const profile = readFileSync('/opt/sandbox/base-profile/profile/profile.md', 'utf8').trimEnd();
+        if (!system.includes(profile) || !system.includes('/opt/sandbox/base-profile') || !system.includes('database.profile.internal') || !system.includes('bash_escalate')) {
+          delta = {content:'FACTORY PROFILE SERVICES FAILED missing managed instructions'};
+        } else if (results.length === 0) {
+          delta = choice('read', {path:'/opt/sandbox/base-profile/profile/profile.json'});
+        } else if (results.length < 3) {
+          const command = `ssh -F /run/profile-services/config database.profile.internal "psql -U app -d app -Atc \"SELECT 'PROFILE_SQL_OK'\""`;
+          delta = choice(results.length === 1 ? 'bash' : 'bash_escalate', {command, justification:'Check direct SQL over profile SSH.'});
+        } else {
+          delta = {content: JSON.stringify(results[0]).includes('developer-postgres') &&
+                            !JSON.stringify(results[1]).includes('PROFILE_SQL_OK') &&
+                            JSON.stringify(results[2]).includes('PROFILE_SQL_OK')
+                   ? 'FACTORY PROFILE SERVICES VERIFIED' : 'FACTORY PROFILE SERVICES FAILED ' + JSON.stringify(results)};
+        }
+      }
     } else if (userText === 'Factory profile prompt fixture') {
       const { text } = JSON.parse(readFileSync('/opt/pi-security/config/profile-system-prompt.json', 'utf8'));
       const system = messages.filter(message => message.role === 'system')
@@ -180,18 +313,27 @@ http.createServer((request, response) => {
       const count = markers.map(marker => marker ? system.split(marker).length - 1 : 0);
       delta = { content: count.every(value => value === 1)
         ? 'FACTORY PROFILE PROMPT VERIFIED' : 'FACTORY PROFILE PROMPT COUNTS ' + count.join(',') };
+    } else if (userText === 'Factory sandbox reference fixture' ||
+               (last.role === 'tool' && last.tool_call_id?.startsWith('factory-context-reference-'))) {
+      const results = messages.filter(message => message.role === 'tool' &&
+        message.tool_call_id?.startsWith('factory-context-reference-'));
+      const requests = [
+        ['read', {path:'/opt/sandbox/context.md'}],
+        ['bash', {command:'cat /opt/sandbox/context.md'}],
+        ['read', {path:'/opt/pi-security/config/sandbox.json'}],
+      ];
+      if (results.length < requests.length) {
+        const [name, args] = requests[results.length];
+        delta = {tool_calls:[{index:0,id:'factory-context-reference-' + results.length,type:'function',
+          function:{name,arguments:JSON.stringify(args)}}]};
+      } else {
+        const output = results.map(result => JSON.stringify(result.content));
+        const valid = output.slice(0,2).every(text => text.includes('# Current sandbox configuration') &&
+          text.includes('Examples for this sandbox')) && /denied|not allowed|permission|blocked|protect/i.test(output[2]);
+        delta = {content:valid ? 'FACTORY SANDBOX REFERENCE VERIFIED' : 'FACTORY SANDBOX REFERENCE FAILED ' + JSON.stringify(output)};
+      }
     } else if (userText.startsWith('Factory sandbox system prompt fixture ')) {
-      const label = userText.split(' ').at(-1);
-      const system = messages[0].role === 'system' ? JSON.stringify(messages[0].content) : '';
-      const markers = [...system.matchAll(/FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/g)].map(match => match[1]);
-      const inHistory = /FACTORY_SANDBOX_PROMPT_(FIRST|SECOND)/.test(JSON.stringify(messages.slice(1)));
-      const expected = ['FIRST', 'SECOND'].includes(label) ? label : '';
-      const expectedAlias = {CONNECTOR_ONLY: 'first', FIRST: 'first', SECOND: 'second'}[label] || '';
-      const aliases = [...system.matchAll(/fixture-connector-(first|second)/g)].map(match => match[1]);
-      const connectorMatches = aliases.join() === expectedAlias && !system.includes('FIXTURE_PRIVATE_MARKER');
-      delta = { content: !inHistory && connectorMatches && markers.join() === expected && system.includes('You are')
-        ? 'FACTORY SANDBOX SYSTEM PROMPT ' + label + ' VERIFIED'
-        : 'FACTORY SANDBOX PROMPT FAILED ' + label + ' markers ' + markers.join(',') + ' aliases ' + aliases.join(',') };
+      delta = checkSandboxPrompt(messages, userText.split(' ').at(-1));
     } else if (tools.length && userText.includes('Find FACTORY_RESEARCH_WEB_EVIDENCE')) {
       delta = tools.includes('web_search')
         ? choice('web_search', { query: 'Factory research source', numResults: 1 })

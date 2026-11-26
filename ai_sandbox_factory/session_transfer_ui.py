@@ -78,7 +78,7 @@ class ContinueChat(ModalScreen):
                    and primary_workspace.agent(record['config']) in session_transfer.TARGETS]
         self.available_targets = {record['name'] for record in records}
         with Vertical(id='confirm-box'):
-            yield Label('Continue in another sandbox', markup=False)
+            yield Label('Continue in another sandbox', markup=False, classes='title')
             with VerticalScroll(id='copy-fields'):
                 yield Static('Stop both sandboxes first. The selected conversation will be copied into a new chat.',
                              id='copy-intro', markup=False)

@@ -8,7 +8,7 @@ Use ordinary bash for work inside the inner OS sandbox; ordinary commands run wi
 command-level model review. It allows workspace edits, protects
 private home files, and reviews outbound destinations. If required access is
 unavailable there, use bash_escalate with the exact command and justification.
-That tool reviews one command before executing inside the outer devcontainer;
+That tool reviews one command before executing inside the main agent sandbox;
 it cannot execute on the physical host or override the outer network policy.
 A reviewer rejection blocks the action in Auto (non-interactive). In Auto
 (interactive), Pi asks the user to decide on the exact action if the reviewer

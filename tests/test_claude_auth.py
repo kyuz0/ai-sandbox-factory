@@ -23,6 +23,22 @@ def login(account='fixture-account'):
 
 
 class ClaudeAuthTests(unittest.TestCase):
+    def test_sandbox_update_hooks_preserve_user_hooks_and_do_not_duplicate(self):
+        home = Path(self.temp.name) / 'native'
+        home.mkdir()
+        original = {'UserPromptSubmit': [{'hooks': [{'type': 'command', 'command': './project-hook'}]}]}
+        (home / 'settings.json').write_text(json.dumps({'hooks': original}))
+        settings = {'working_directory': '/workspace', 'browser': False}
+        claude_client.configure(home, settings)
+        first = (home / 'settings.json').read_bytes()
+        claude_client.configure(home, settings)
+        self.assertEqual((home / 'settings.json').read_bytes(), first)
+        hooks = json.loads(first)['hooks']
+        self.assertEqual(hooks['UserPromptSubmit'][0], original['UserPromptSubmit'][0])
+        for event, stage in [('UserPromptSubmit', 'before'), ('Stop', 'after')]:
+            commands = [row['command'] for group in hooks[event] for row in group['hooks']]
+            self.assertIn(f'exec /usr/bin/python3 -I /opt/sandbox/sandbox-update.py claude {stage}', commands)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

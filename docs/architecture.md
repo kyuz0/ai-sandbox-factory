@@ -4,7 +4,7 @@
 
 The Factory terminal app runs on your computer and manages rootless Podman
 containers. The browser editor runs Pi, FrostPi, and the editor server inside the
-development container.
+main agent sandbox.
 
 The folder you choose on your computer appears as `/workspace`. When Pi edits a
 file there, it changes the original file on your computer.
@@ -17,25 +17,30 @@ Each sandbox has a separate persistent home volume for Pi configuration and sess
 
 Factory imposes no process/thread caps or default container memory quotas. The
 editor, browser, development tools and companions share the host's available
-capacity. An explicit sandbox memory setting limits the development container.
+capacity. An explicit sandbox memory setting limits the main agent sandbox.
 Relay failures retry their fixed routes without stopping active editor work.
 The editor supervisor continuously collects exited helper processes.
 
 ## Restricted networking
 
-In **Restricted** mode, programs inside the development container have no
-direct network connection. They send HTTP and HTTPS requests through the proxy
+In **Restricted** mode, programs inside the main agent sandbox have no
+direct external network connection. They send HTTP and HTTPS requests through the proxy
 Factory puts in their environment. The proxy relays those requests to a separate
 gateway container, where Squid checks the destination hostname and port.
 
-The development container runs with `--network=none`. It reaches the gateway
-through a Unix socket in a shared volume that it mounts read-only.
+Without profile services, the main agent sandbox runs with `--network=none`.
+With profile services, it joins a private network shared with those profile
+containers; they can communicate directly. Factory helper containers stay off
+that network. Both layouts reach the external gateway through a Unix socket in
+a shared volume mounted read-only. Profile containers use a proxy on their
+private network that relays through a separate profile gateway applying the
+same approved destinations. That gateway has no Factory credential connections.
 
 For host-local models, the rootless Podman gateway uses pasta's host-loopback mapping. `local-model.internal:8000` reaches the host model server at port 8000. The discovery extension reads that server’s metadata and updates Pi’s model catalogue.
 
 Updating allowed destinations restarts only the gateway. Retry interrupted requests.
 Changing the network mode or host model ports recreates the sandbox and stops its
-processes. **Unrestricted** mode gives the development container ordinary bridge
+processes. **Unrestricted** mode gives the main agent sandbox ordinary bridge
 networking. [Network settings](web-access.md#network-access)
 
 ## Service connectors
@@ -60,7 +65,7 @@ signs Bedrock requests and streams responses without changing their protocol.
 It exposes no TCP listener or credential-management HTTP API. Credentials are bound
 to the configured upstream origin. Changing that origin requires credential entry.
 
-The development container has no mount for the credential volume or container
+The main agent sandbox has no mount for the credential volume or container
 engine socket. Compromised agent or editor code can still make allowed inference
 requests and spend quota. Provider-side budgets and permissions limit that use.
 The host manager, container runtime and configured upstream service remain trusted.
@@ -84,8 +89,8 @@ replacing `NAME` with the sandbox name. Use `docker logs` for a Docker sandbox.
 
 ## Native agent subscription authentication
 
-The official Codex, Claude Code and Antigravity clients run inside the development
-container. Their native tools operate on the workspace directly. Configuration and
+The official Codex, Claude Code and Antigravity clients run inside the main agent
+sandbox. Their native tools operate on the workspace directly. Configuration and
 chat history stay in its persistent home. The clients handle their own chat and
 tool protocols.
 
@@ -129,18 +134,18 @@ flowchart TD
     INNER -->|allowed| RESULT[Return command output]
     INNER -->|needs broader access| REQUEST[Request exact command with justification]
     REQUEST --> REVIEW[Configured automatic reviewer or human approval]
-    REVIEW -->|approved| EXEC[Run inside the outer development container]
+    REVIEW -->|approved| EXEC[Run inside the main agent sandbox]
     REVIEW -->|denied| STOP[Do not execute]
     EXEC --> RESULT
 ```
 
 By default, the current Pi model reviews commands that exceed the inner sandbox’s
 permissions. [Approval modes](approvals.md) also support human review or refusing
-elevation. An approved command keeps the development container’s user, mounts
+elevation. An approved command keeps the main agent sandbox’s user, mounts
 and network rules.
 
 The inner sandbox restricts shell commands. Pi and its extensions run outside it,
-inside the development container. Disabling it leaves the outer container and
+inside the main agent sandbox. Disabling it leaves the outer container and
 network restrictions in place.
 
 Skills supply task instructions. Extensions add capabilities such as model discovery, questions and scheduled prompts. The shared Pi goal extension is available in both clients. Browser support and subagents are optional. Scheduled prompts run only while their originating Pi session is open.
@@ -159,15 +164,15 @@ a registry entry does not change a running sandbox. Rebuilding applies updates
 only after the new image builds successfully.
 
 A profile adds tools and Pi resources. A provider adds a small adapter run inside
-the development container, plus optional Pi extensions and skills. Both Pi and
+the main agent sandbox, plus optional Pi extensions and skills. Both Pi and
 FrostPi use the private home catalogue. A shared lock serializes model updates;
 credentials enter through stdin and are never included in image layers.
 
 ## Browser access
 
 Betterwright is enabled by default for new sandboxes. Browser support uses one
-headful Chromium and private TigerVNC display per session inside the development
-container. noVNC shows the same native browser
+headful Chromium and private TigerVNC display per session inside the main agent
+sandbox. noVNC shows the same native browser
 window controlled by the agent, including tabs and popup windows. X11 TCP and
 RFB TCP listeners are disabled; display access uses a private authority cookie
 and the RFB and WebSocket bridge use owner-only Unix sockets.

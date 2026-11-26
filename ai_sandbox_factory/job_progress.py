@@ -27,6 +27,9 @@ class Progress:
         try:
             yield
         except Exception as error:
+            from .updating import UpdateCancelled
+            if isinstance(error, UpdateCancelled):
+                raise
             raise ValueError(f'Step {self.index} of {len(self.labels)} ({label}) failed: {error}') from error
 
 
