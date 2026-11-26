@@ -9,9 +9,24 @@ import subprocess
 import sys
 from threading import Thread
 import time
+from unittest.mock import patch
 from uuid import uuid4
 
 CHECKOUT = Path(__file__).resolve().parents[1]
+
+
+def verify_cached_candidate(registry, reference, environment):
+    from scripts.build_factory_images import inspect_image, verify_published
+    with patch.dict(os.environ, environment):
+        subprocess.run(['podman', 'pull', reference], check=True)
+        image_id, digests = inspect_image(reference)
+        assert reference in digests, 'The published digest must be cached before verification'
+        start = len(registry.requests)
+        authenticated = len(registry.authenticated_requests)
+        verify_published('gateway', image_id, reference)
+        path = '/v2/gateway/manifests/' + reference.split('@')[1]
+        assert ('GET', path) in registry.requests[start:], 'Verification must fetch the cached digest from the registry'
+        assert len(registry.authenticated_requests) == authenticated, 'Verification sent registry credentials'
 
 
 def prepare_worker(root, args):
@@ -306,6 +321,7 @@ def main():
         engine_settings = root / 'registries.conf'
         engine_settings.write_text(f'[[registry]]\nlocation = "localhost:{registry.server_port}"\ninsecure = true\n')
         environment = {**os.environ, 'CONTAINERS_REGISTRIES_CONF': str(engine_settings)}
+        verify_cached_candidate(registry, images[image_sources.recipe(config, 'gateway')]['linux/amd64'], environment)
         if args.recovery:
             for marker in ('cancel-pull', 'pull-cancelled', 'retry-pull'):
                 (root / marker).unlink(missing_ok=True)

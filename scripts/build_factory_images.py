@@ -98,6 +98,18 @@ def smoke(role, reference):
                      '--entrypoint', executable, reference, *arguments])
 
 
+def verify_published(role, image_id, reference):
+    with tempfile.TemporaryDirectory(prefix='factory-image-pull-') as temporary:
+        anonymous = Path(temporary) / 'anonymous.json'
+        anonymous.write_text('{"auths":{}}\n')
+        sandbox.run(['podman', 'pull', '--authfile', anonymous, reference])
+    pulled_id, repo_digests = inspect_image(reference)
+    if pulled_id != image_id or reference not in repo_digests:
+        raise ValueError(f'Pulled {reference} has image ID {pulled_id} and repo digests {repo_digests!r}. '
+                         f'Expected the locally tested image {image_id} at that digest. Check the push and retry.')
+    smoke(role, reference)
+
+
 def publish(role, image_id, authfile=None):
     repository = REPOSITORY + role
     tag = f'{repository}:candidate-{image_id}'
@@ -109,15 +121,8 @@ def publish(role, image_id, authfile=None):
         if not re.fullmatch(DIGEST, digest):
             raise ValueError(f'Podman pushed {tag} but returned an invalid manifest digest {digest!r}. '
                              'Inspect the registry result and rerun publication.')
-        reference = repository + '@' + digest
-        anonymous = Path(temporary) / 'anonymous.json'
-        anonymous.write_text('{"auths":{}}\n')
-        sandbox.run(['podman', 'pull', '--authfile', anonymous, '--policy=always', reference])
-    pulled_id, repo_digests = inspect_image(reference)
-    if pulled_id != image_id or reference not in repo_digests:
-        raise ValueError(f'Pulled {reference} has image ID {pulled_id} and repo digests {repo_digests!r}. '
-                         f'Expected the locally tested image {image_id} at that digest. Check the push and retry.')
-    smoke(role, reference)
+    reference = repository + '@' + digest
+    verify_published(role, image_id, reference)
     return reference
 
 

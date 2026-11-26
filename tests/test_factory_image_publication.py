@@ -62,12 +62,12 @@ class FakeEngine:
             Path(arguments[arguments.index('--digestfile') + 1]).write_text(
                 'not-a-digest' if self.fail == 'digest' else digest)
         elif operation == 'pull':
-            assert '--policy=always' in arguments
-            authfile = Path(arguments[arguments.index('--authfile') + 1])
+            option, auth_path, reference = arguments
+            assert option == '--authfile', command
+            authfile = Path(auth_path)
             assert json.loads(authfile.read_text()) == {'auths': {}}
             if self.fail == 'pull':
                 raise subprocess.CalledProcessError(4, command)
-            reference = arguments[-1]
             image = {**self.registry[reference], 'RepoDigests': [reference]}
             if self.bad_pull == 'id':
                 image['Id'] = 'd' * 64

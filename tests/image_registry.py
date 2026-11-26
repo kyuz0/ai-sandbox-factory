@@ -17,6 +17,7 @@ class Registry(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', 0), Handler)
         self.images = {}
         self.requests = []
+        self.authenticated_requests = []
         self.blocked = Event()
         self.release = Event()
         self.block_repository = None
@@ -49,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
     def respond(self, head=False):
         parts = unquote(self.path).split('?')[0].strip('/').split('/')
         self.server.requests.append((self.command, self.path))
+        if 'Authorization' in self.headers:
+            self.server.authenticated_requests.append((self.command, self.path))
         if parts == ['v2']:
             return self.send(b'{}', 'application/json', head=head)
         if len(parts) != 4 or parts[0] != 'v2' or parts[1] not in self.server.images:
