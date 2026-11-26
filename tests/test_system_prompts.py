@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
-from ai_sandbox_factory import prompt_library, sandbox
+from ai_sandbox_factory import prompt_library, sandbox, operations, operation_locks
 from ai_sandbox_factory.prompt_ui import EditPrompt, PromptChoice, SandboxPromptScreen
 from ai_sandbox_factory.sandbox_tui import Cockpit, DEFAULT_SETTINGS, PackagesScreen, SettingsForm, preset
 from ai_sandbox_factory.tui_widgets import Feedback
@@ -23,6 +23,7 @@ class SystemPromptTests(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, SANDBOX_REGISTRY_DIR=str(self.root / 'library')))
         self.enterContext(patch('ai_sandbox_factory.sandbox_tui.load_defaults', return_value=DEFAULT_SETTINGS))
         self.enterContext(patch('ai_sandbox_factory.updates.available_update', return_value=None))
+        self.enterContext(patch.object(operation_locks, 'private_runtime_dir', return_value=self.root))
 
     def test_editing_or_removing_library_entry_preserves_sandbox_copy(self):
         prompt_library.save('Research', 'Use primary sources.')
@@ -93,6 +94,9 @@ class SystemPromptTests(unittest.TestCase):
             self.assertEqual(app.screen.query_one(PromptChoice).selected(), prompt_library.entries()[key])
             await app.pop_screen()
 
+            state.mkdir(exist_ok=True)
+            (state / 'config.json').write_text(json.dumps({'name': 'sandbox', 'engine': 'podman'}))
+            app.service.assign_prompt = operations.Service(self.root).assign_prompt
             await app.push_screen(SandboxPromptScreen('sandbox', state, True))
             await pilot.pause()
             self.assertEqual(app.screen.query_one('#system-prompt-timing', Static).render().plain,

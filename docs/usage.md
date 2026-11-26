@@ -75,7 +75,9 @@ Select **Include Web Search API keys** to copy
 those keys from a running source. This option appears only when the source has
 saved Web Search keys. Model and advisor credentials are not copied;
 configure them on **Review sandbox**. The new sandbox has its own package copies. It starts with fresh chats,
-browser sessions and SSH credentials. Select any
+browser sessions and SSH credentials. Hosted model connections and connectors
+are not copied; set them up again under **Model Providers** and **Connectors**.
+The starting folder resets to the workspace root. Select any
 environment file or Pi configuration folder you want to use again.
 
 Application data, such as databases, is not copied. Each profile service
@@ -491,15 +493,14 @@ model, use `/local-models refresh` or **Settings → Model Providers → Local m
 
 ## CLI and storage
 
+The [command-line guide](cli.md) covers creation, configuration, models, profiles,
+chats and scripting without opening the TUI. For example, to use a local model
+server on port 8000:
+
 ```sh
 ai-sandbox-factory create example --workspace /absolute/path/to/project \
-  --engine podman --memory 8g --local-model-ports 8000 \
-  --allow-domain local-model.internal:8000 --start
+  --local-model-ports 8000 --allow-domain local-model.internal:8000 --start
 ai-sandbox-factory open example
-ai-sandbox-factory pi example
-ai-sandbox-factory down example
-ai-sandbox-factory up example
-ai-sandbox-factory delete example
 ```
 
 Saved state lives in `~/.local/state/ai-sandbox-factory`. Pass `--state-dir PATH`

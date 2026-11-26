@@ -78,7 +78,7 @@ class HostedModelsTests(unittest.TestCase):
         for value in invalid:
             with self.subTest(value=value),self.assertRaises(ValueError):h.validate(value)
 
-    def test_rpc_uses_stdin_and_masks_native_error(self):
+    def test_rpc_uses_stdin_and_retains_native_diagnostics(self):
         config={'name':'fixture','engine':'podman'}
         with patch.object(sandbox,'inspect',return_value={'State':{'Running':True}}),patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],0,'{"configured":true}','')) as run:
             h.request(config,'configure',provider='openrouter',key='private-fixture')
@@ -87,7 +87,8 @@ class HostedModelsTests(unittest.TestCase):
         self.assertIn('private-fixture',run.call_args.kwargs['input'])
         with patch.object(sandbox,'inspect',return_value={}),self.assertRaises(ValueError):h.request(config,'status')
         with patch.object(sandbox,'inspect',return_value={'State':{'Running':True}}),patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','secret failure')):
-            with self.assertRaisesRegex(ValueError,'Could not read Pi'):h.request(config,'status')
+            with self.assertRaisesRegex(ValueError, 'status.*pi-sandbox-factory-fixture.*invalid JSON.*exit 1.*secret failure'):
+                h.request(config,'status')
 
     def test_failed_credential_import_restores_previous_routes(self):
         with tempfile.TemporaryDirectory() as temp:

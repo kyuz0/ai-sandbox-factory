@@ -110,7 +110,7 @@ class WebAccessTests(unittest.TestCase):
             self.assertEqual(web_access.saved_keys(path, value), {'exa': 'replacement-exa'})
 
     def test_default_settings_failure_restores_saved_keys(self):
-        from ai_sandbox_factory import sandbox_tui
+        from ai_sandbox_factory import operations as sandbox_tui
         from ai_sandbox_factory.sandbox_options import write_json
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/'cockpit.json'

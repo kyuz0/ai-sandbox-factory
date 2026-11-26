@@ -11,10 +11,11 @@ import tempfile
 from unittest.mock import patch
 from uuid import uuid4
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if __name__ == '__main__':
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_sandbox_factory import creation, inference, operation_locks, registry, sandbox
 from ai_sandbox_factory.creation import Creation
-from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
+from ai_sandbox_factory.operations import DEFAULT_SETTINGS, Service, preset
 from ai_sandbox_factory.updating import Update
 
 

@@ -104,6 +104,8 @@ sandbox stays stopped after rebuilding. **Alerts** offers **Update to FrostPi…
 for older
 Pendant sandboxes. [Sandbox updates](docs/usage.md#update-factory-and-sandboxes) · [Archived Pendant branch](https://github.com/kyuz0/ai-sandbox-factory/tree/pendant)
 
+To manage sandboxes from scripts or another terminal, see the [command-line guide](docs/cli.md).
+
 ## Profiles and providers
 
 - A **Profile** can add tools, skills, and instructions for compatible coding

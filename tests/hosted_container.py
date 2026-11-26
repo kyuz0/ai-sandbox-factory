@@ -83,9 +83,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', required=True, help='A built Factory development image')
     parser.add_argument('--inference-image', required=True)
-    parser.add_argument('--code-server', required=True, type=Path, help='Extracted pinned code-server archive')
+    parser.add_argument('--code-server', type=Path, help='Extracted pinned code-server archive')
+    parser.add_argument('--cli-only', action='store_true', help='Check hosted providers in Pi without opening FrostPi')
     parser.add_argument('--output', required=True, type=Path, help='Directory for editor logs and screenshot')
     args = parser.parse_args()
+    if not args.cli_only and args.code_server is None:
+        parser.error('--code-server is required unless --cli-only is selected')
     args.output.mkdir(parents=True, exist_ok=True)
     name = 'factory-hosted-check-' + uuid.uuid4().hex[:10]
     volume = name + '-home'
@@ -104,7 +107,7 @@ def main():
     broker=name+'-inference';socket=broker+'-socket';keys=broker+'-keys'
     folder=Path(tempfile.mkdtemp(prefix='factory-native-inference-'))
     config={'hosted_connections':{'openrouter':{},'together':{},'azure':{'endpoint':'https://fixture.openai.azure.com/openai/v1'},'amazon-bedrock':{'region':'eu-west-1','method':'iam'}}}
-    code = args.code_server.resolve()
+    code = args.code_server.resolve() if args.code_server else None
     (folder/'editor').mkdir()
     (folder/'workspace').mkdir()
     try:
@@ -115,7 +118,8 @@ def main():
         (folder/'routes.json').write_text(json.dumps(routes))
         subprocess.run(['podman','run','-d','--name',name,'--network','none','--userns=keep-id:uid=1000,gid=1000',
                         '--user','1000:1000','--security-opt','label=disable',
-                        '-v', str(code)+':/opt/test-code-server:ro', '-v', str(folder/'editor')+':/home/node/.local/share/pi-browser-editor:rw',
+                        *(['-v', str(code)+':/opt/test-code-server:ro'] if code else []),
+                        '-v', str(folder/'editor')+':/home/node/.local/share/pi-browser-editor:rw',
                         '-v', str(folder/'workspace')+':/workspace:rw',
                         '--volume',volume+':/home/node','--volume',socket+':/run/inference:ro',
                         '--entrypoint','sleep',args.image,'infinity'],check=True,capture_output=True)
@@ -156,7 +160,8 @@ console.log(Buffer.concat(events.map(([type,body])=>Buffer.from(codec.encode({he
         call(action='select',provider='amazon-bedrock',model=base,profile_id='arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/fixture')
         subprocess.run(['podman', 'exec', '-i', '--user', 'node', name, 'node'],
                        input=(root/'tests/check_hosted_runtime.cjs').read_text(), text=True, check=True, timeout=150)
-        check_editor(name, root, folder, args.output, call)
+        if not args.cli_only:
+            check_editor(name, root, folder, args.output, call)
         for provider in ['openrouter','together','azure','amazon-bedrock']:call(action='remove',provider=provider)
         assert not any(p['configured'] for p in call(action='status')['providers'])
         print('PASS connection removal')

@@ -28,13 +28,18 @@ def default_for_agent(agent, engine='podman'):
 
 def validate(value=None):
     value = value or {}
-    if not isinstance(value, dict) or set(value) - DEFAULTS.keys():
-        raise ValueError('Unknown editor settings')
+    if not isinstance(value, dict):
+        raise ValueError('Editor settings must be a JSON object.')
+    if unknown := set(value) - DEFAULTS.keys():
+        raise ValueError('Unknown editor settings: ' + ', '.join(sorted(unknown)) +
+                         '. Choose from ' + ', '.join(DEFAULTS) + '.')
     result = {**DEFAULTS, **value}
+    if result['mode'] == 'cli':
+        result['mode'] = 'pi'
     if not isinstance(result['allow_uploads'], bool):
         raise ValueError('Allow file uploads must be true or false')
     if result['mode'] not in MODES:
-        raise ValueError('Choose a client from the Editor menu')
+        raise ValueError(f'Unknown editor mode {result["mode"]!r}. Choose browser or cli (pi is an alias for cli).')
     try:
         address = ipaddress.ip_address(result['address'] or '127.0.0.1')
     except ValueError:
@@ -102,9 +107,21 @@ def save(state, value, *, record_edit=True):
     value = validate(value)
     tls_context(value)
     previous = load(state)
-    write_json(Path(state) / 'editor.json', value)
-    if record_edit and previous != value and (Path(state) / 'config.json').exists():
-        activity.record(state, 'edited')
+    path = Path(state) / 'editor.json'
+    existed = path.exists()
+    write_json(path, value)
+    try:
+        if record_edit and previous != value and (Path(state) / 'config.json').exists():
+            activity.record(state, 'edited')
+    except Exception as error:
+        try:
+            if existed:
+                write_json(path, previous)
+            else:
+                path.unlink()
+        except OSError as rollback:
+            raise ValueError(f'Editor settings could not be recorded: {error}. Restoring the previous settings also failed: {rollback}. Check Editor settings before reopening.') from error
+        raise
     return value
 
 

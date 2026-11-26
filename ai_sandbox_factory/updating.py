@@ -109,22 +109,34 @@ class Update:
         stopped = False
         output_closed = False
         last_output = ''
-        while not output_closed or process.poll() is None:
-            self._progress_channel.poll()
-            if self._requested.is_set() and not stopped:
-                if not self.cooperative:
-                    stop()
-                stopped = True
-            try:
-                line = lines.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if line is None:
-                output_closed = True
-            else:
-                if line:
-                    last_output = line
-                log(line)
+        try:
+            while not output_closed or process.poll() is None:
+                self._progress_channel.poll()
+                if self._requested.is_set() and not stopped:
+                    if not self.cooperative:
+                        stop()
+                    stopped = True
+                try:
+                    line = lines.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    output_closed = True
+                else:
+                    if line:
+                        last_output = line
+                    log(line)
+        except StopFailed:
+            raise
+        except BaseException:
+            # A disconnected terminal or callback failure must not orphan a worker.
+            # Cancellation wins only before Apply; otherwise wait for its recovery/result.
+            self._progress_channel.callback = None
+            self.cancel()
+            if self._requested.is_set() and not self.cooperative:
+                stop()
+            process.wait()
+            raise
         with self._lock:
             if not self._requested.is_set():
                 self._finished = True

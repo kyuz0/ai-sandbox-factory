@@ -5,7 +5,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea
 
-from . import activity, operation_locks, prompt_library
+from . import operation_locks, prompt_library
 from .settings_catalog import NO_SYSTEM_PROMPT_ADD_ON, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL
 from .tui_widgets import Feedback
 
@@ -243,9 +243,7 @@ class SandboxPromptScreen(Screen):
         selected = self.query_one(PromptChoice).selected()
         try:
             with operation_locks.sandbox(self.sandbox_name, 'save the system prompt add-on for'):
-                changed = prompt_library.assign(self.state, selected)
-                if changed:
-                    activity.record(self.state, 'edited')
+                changed = self.app.service.assign_prompt(self.sandbox_name, selected)
         except (OSError, ValueError) as error:
             self.query_one('#sandbox-prompt-error', Feedback).update(str(error))
             return

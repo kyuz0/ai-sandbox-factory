@@ -30,6 +30,7 @@ class ServiceDataCLI(unittest.TestCase):
                 return {**config,'recovered':True}
             for operation in ('export','restore'):
                 args = ['factory','--state-dir',str(root),'service-data-'+operation,'example','--saved','saved-id']
+                args += ['--apply-gate', str(root/'gate')]
                 args += ['--volume','data','--output',str(root/'copy.tar')] if operation=='export' else ['--service','database']
                 def work(config, path, *arguments, **kwargs):
                     self.assertEqual(held,['example'])
@@ -50,7 +51,7 @@ class ServiceDataCLI(unittest.TestCase):
             (root/'example/config.json').write_text(json.dumps({'name':'example','engine':'podman'}))
             error = "Cannot export volume 'exact-volume' (exit 125): no space left. Choose a writable destination."
             with patch.object(sys,'argv',['factory','--state-dir',str(root),'service-data-export','example',
-                                          '--saved','id','--volume','data','--output','copy.tar']), \
+                                          '--saved','id','--volume','data','--output','copy.tar','--apply-gate',str(root/'gate')]), \
                     patch.object(sandbox.operation_locks,'private_runtime_dir',return_value=root), \
                     patch.object(service_data,'export',side_effect=ValueError(error)), redirect_stderr(io.StringIO()) as output:
                 with self.assertRaises(SystemExit) as raised:

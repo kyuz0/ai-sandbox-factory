@@ -1940,7 +1940,7 @@ class WebAccessUITests(unittest.TestCase):
         from ai_sandbox_factory.sandbox_tui import WebAccessForm, preset
         from textual.widgets import Select
         app = Cockpit(self.root, FakeService([]))
-        with patch('ai_sandbox_factory.sandbox_tui.defaults_path', return_value=self.root / 'cockpit.json'):
+        with patch('ai_sandbox_factory.operations.defaults_path', return_value=self.root / 'cockpit.json'):
             async with app.run_test(size=(80,24)) as pilot:
                 await self.ready(app, pilot)
                 draft = preset('base', DEFAULT_SETTINGS)

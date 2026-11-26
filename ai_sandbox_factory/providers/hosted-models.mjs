@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {pathToFileURL} from 'node:url';
+import {isDeepStrictEqual} from 'node:util';
 import {locked} from '/opt/sandbox/provider-lock.mjs';
 const root = process.env.FACTORY_PI_RUNTIME || '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent';
 const {AuthStorage, readStoredCredential} = await import(pathToFileURL(root + '/dist/core/auth-storage.js'));
@@ -15,8 +16,37 @@ const dir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi/agen
 const authPath = path.join(dir, 'auth.json');
 const modelsPath = path.join(dir, 'models.json');
 const ids = ['openrouter', 'together', 'azure', 'amazon-bedrock'];
-const auth = AuthStorage.create(authPath);
 const read = (file, fallback = {}) => fs.existsSync(file) ? JSON.parse(stripJsonComments(fs.readFileSync(file, 'utf8'))) : fallback;
+const secretFields = new Set(['key', 'secret', 'apiKey', 'access_key', 'secret_key', 'session_token',
+  'accessKeyId', 'secretAccessKey', 'sessionToken', 'accessToken', 'refreshToken']);
+function credentialVariants(request) {
+  const variants = new Set();
+  function visit(object) {
+    for (const [field, value] of Object.entries(object)) {
+      if (value && typeof value === 'object') visit(value);
+      if (value && typeof value === 'string' && secretFields.has(field)) {
+        variants.add(value);
+        variants.add(JSON.stringify(value).slice(1, -1));
+        variants.add(encodeURIComponent(value.toWellFormed()));
+      }
+    }
+  }
+  if (request && typeof request === 'object') visit(request);
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+function diagnostic(error, variants) {
+  const chain = [];
+  const seen = new Set();
+  for (let item = error; item != null && !seen.has(item); item = item.cause) {
+    seen.add(item);
+    // V8 may include a fragment of credentials or configuration in JSON parsing errors.
+    const reason = item instanceof SyntaxError ? 'Invalid JSON' : String(item.message ?? item);
+    chain.push([item.code, reason].filter(Boolean).join(': '));
+  }
+  let detail = chain.join(' — ') || 'No error details were returned.';
+  for (const value of variants) detail = detail.split(value).join('[redacted]');
+  return detail.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+}
 function write(file, value) {
   fs.mkdirSync(path.dirname(file), {recursive: true, mode: 0o700});
   const temp = file + '.' + process.pid + '.tmp';
@@ -32,7 +62,27 @@ function safeModel(model) {
   return {id: model.id, name: model.name, api: model.api, contextWindow: model.contextWindow,
     maxTokens: model.maxTokens, reasoning: model.reasoning, input: model.input};
 }
-async function main(r) {
+function localProviders(ports) {
+  const endpoints = new Set(ports.map(port => new URL('http://local-model.internal:' + port).origin));
+  const file = modelsPath + '.local-lab-state.json';
+  if (!fs.existsSync(file)) return [];
+  function catalogueFile(filename) {
+    try { return read(filename); }
+    catch (error) {
+      const reason = error instanceof SyntaxError ? 'invalid JSON' : (error.code || error.name);
+      throw Error('Cannot read the local model catalogue: ' + filename + ' (' + reason + '). Run local model discovery again.');
+    }
+  }
+  const manifest = catalogueFile(file);
+  const providers = catalogueFile(modelsPath)?.providers || {};
+  if (manifest?.version !== 1 || !manifest.entries || typeof manifest.entries !== 'object' || Array.isArray(manifest.entries)) {
+    throw Error('Cannot read the local model catalogue: ' + file + ' needs version 1 ownership entries. Run local model discovery again.');
+  }
+  return Object.entries(manifest.entries).filter(([id, entry]) =>
+    endpoints.has(entry?.endpoint) && Object.hasOwn(providers, id) &&
+    isDeepStrictEqual(providers[id], entry.generated)).map(([id]) => id);
+}
+async function main(r, variants) {
   if (r.action === 'status') return {providers: ids.map(status)};
   if (r.action === 'approval-catalogue') {
     const rt = await runtime();
@@ -41,7 +91,18 @@ async function main(r) {
   }
   const plugin = r.plugin === true && ['catalogue', 'select'].includes(r.action) &&
     typeof r.provider === 'string' && /^[a-z][a-z0-9-]{0,254}$/.test(r.provider);
-  if (!plugin && !ids.includes(r.provider)) throw Error('Unsupported provider.');
+  const local = Array.isArray(r.localPorts) && ['local-catalogue', 'select'].includes(r.action);
+  if (local) {
+    const providers = localProviders(r.localPorts);
+    if (r.action === 'local-catalogue') {
+      const rt = await runtime();
+      return {models: providers.flatMap(provider => rt.getModels(provider).map(model => ({provider, ...safeModel(model)})))};
+    }
+    if (!providers.includes(r.provider)) {
+      throw Error('Choose a local provider returned by models list --local. ' + JSON.stringify(r.provider) + ' is not in the current catalogue.');
+    }
+  }
+  if (!plugin && !local && !ids.includes(r.provider)) throw Error('Unsupported provider.');
   const id = r.provider;
   if (r.action === 'configure') {
     if (!r.endpoint?.startsWith('http://127.0.0.1:19431/r/'+id)) throw Error('Invalid inference endpoint.');
@@ -52,7 +113,7 @@ async function main(r) {
       if (old?.env?.AZURE_OPENAI_DEPLOYMENT_NAME_MAP) env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP = old.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP;
     }
     if (id === 'amazon-bedrock') Object.assign(env,{AWS_REGION:r.region,AWS_BEDROCK_SKIP_AUTH:'1',AWS_BEDROCK_FORCE_HTTP1:'1'});
-    await auth.modify(id,async () => ({type:'api_key',key:'factory-inference',env}));
+    await AuthStorage.create(authPath).modify(id,async () => ({type:'api_key',key:'factory-inference',env}));
     const config = read(modelsPath, {providers:{}});
     config.providers ||= {};
     const provider = config.providers[id] ||= {};
@@ -63,7 +124,7 @@ async function main(r) {
     return status(id);
   }
   if (r.action === 'remove') {
-    await auth.delete(id);
+    await AuthStorage.create(authPath).delete(id);
     const config=read(modelsPath,{providers:{}});
     if(config.providers?.[id]) delete config.providers[id].apiKey;
     write(modelsPath,config);
@@ -75,17 +136,25 @@ async function main(r) {
     if (r.refresh && !plugin) {
       try {
         const result = await rt.refresh({providers: [id], allowNetwork: true, force: true, signal: AbortSignal.timeout(20000)});
-        if (result.aborted || result.errors?.size) warning = 'Catalogue refresh failed; showing saved models.';
-      } catch { warning = 'Catalogue refresh failed; showing saved models.'; }
+        if (result.aborted || result.errors?.size) {
+          const causes = [...(result.errors || [])].map(([provider, error]) => provider + ': ' + diagnostic(error, variants));
+          if (result.aborted) causes.push('The refresh was interrupted.');
+          warning = 'Showing saved models after a catalogue refresh failure. ' + causes.join(' — ');
+        }
+      } catch (error) { warning = 'Showing saved models after a catalogue refresh failure. ' + diagnostic(error, variants); }
     }
     return {models: rt.getModels(id).map(safeModel), warning};
   }
   const model = rt.getModel(id, r.model);
+  if (!model && local) {
+    throw Error('Choose a model from models list --local. Provider ' + JSON.stringify(id) +
+      ' has no model ' + JSON.stringify(r.model) + '.');
+  }
   if (!model) throw Error('Choose a model from the catalogue.');
   if (r.action === 'select') {
-    if (!plugin && id === 'azure' && r.deployment) {
+    if (!plugin && !local && id === 'azure' && r.deployment) {
       if (/[,=\r\n]/.test(r.deployment)) throw Error('Invalid Azure deployment name.');
-      await auth.modify(id, async current => {
+      await AuthStorage.create(authPath).modify(id, async current => {
         if (!current) throw Error('Configure the provider first.');
         const env = {...current.env};
         const map = new Map((env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP || '').split(',').filter(Boolean).map(s => s.split('=')));
@@ -95,7 +164,7 @@ async function main(r) {
       });
     }
     let chosen = model.id;
-    if (!plugin && id === 'amazon-bedrock' && r.profile_id && r.profile_id !== model.id) {
+    if (!plugin && !local && id === 'amazon-bedrock' && r.profile_id && r.profile_id !== model.id) {
       chosen = r.profile_id;
       const config = read(modelsPath, {providers: {}});
       config.providers ||= {};
@@ -110,7 +179,11 @@ async function main(r) {
     const settings = SettingsManager.create('/workspace', dir);
     settings.setDefaultModelAndProvider(id, chosen);
     await settings.flush();
-    if (settings.drainErrors().length) throw Error("Could not save the default model.");
+    const errors = settings.drainErrors();
+    if (errors.length) {
+      throw Error('Could not save the default model. ' + errors.map(item =>
+        (item.path || item.scope) + ': ' + diagnostic(item.error, variants)).join(' — '));
+    }
     return {provider: id, model: chosen};
   }
   if (r.action === 'test') {
@@ -118,7 +191,7 @@ async function main(r) {
     const env = id === 'azure' && r.deployment ? {AZURE_OPENAI_DEPLOYMENT_NAME_MAP: `${model.id}=${r.deployment}`} : undefined;
     const reply = await rt.completeSimple(testModel, {messages: [{role:'user', content:'Reply with OK.', timestamp:Date.now()}]}, {env, maxTokens: 64, signal: AbortSignal.timeout(45000)});
     if (reply.stopReason === 'error' || reply.stopReason === 'aborted') {
-      const reason = String(reply.errorMessage || 'Check model access, endpoint and network settings.').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600);
+      const reason = reply.errorMessage || 'Check model access, endpoint and network settings.';
       throw Error('The model request failed: ' + reason);
     }
     return {ok: true};
@@ -126,15 +199,17 @@ async function main(r) {
   throw Error('Unknown operation.');
 }
 let input = '';
+let variants = [];
+let operation = 'Read model request';
 try {
   for await (const chunk of process.stdin) {
     input += chunk;
-    if(input.length>65536)throw Error('Request too large.');
   }
-  console.log(JSON.stringify(await locked(dir,()=>main(JSON.parse(input)))));
+  const request = JSON.parse(input);
+  variants = credentialVariants(request);
+  operation = 'Model operation ' + String(request.action);
+  console.log(JSON.stringify(await locked(dir,()=>main(request, variants))));
 } catch (error) {
-  // Test requests contain a fixed prompt and placeholder credentials. Other native errors stay private.
-  const allowed = ['Enter ', 'Choose ', 'Invalid Azure', 'The model request failed:', 'Configure the provider first.', 'A model refresh is already running.'];
-  const message = allowed.some(p => error.message.startsWith(p)) ? error.message : 'Provider operation failed. Check the connection settings and retry.';
-  console.log(JSON.stringify({error: message})); process.exitCode = 1;
+  const failure = new Error(operation, {cause: error});
+  console.log(JSON.stringify({error: diagnostic(failure, variants)})); process.exitCode = 1;
 }

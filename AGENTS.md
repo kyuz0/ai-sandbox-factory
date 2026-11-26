@@ -36,6 +36,8 @@ Implementation and shipped assets live in `ai_sandbox_factory/`:
 - `sandbox.py`: lifecycle, ownership, immutable snapshots and image identities.
 - `folders.py` and `folders_ui.py`: validated host mounts, starting directory and shared folder controls.
 - `sandbox_tui.py`: terminal forms; `sandbox_options.py`: shared validation.
+- `operations.py`: shared non-UI workflows. `cli_lifecycle.py` supervises foreground jobs;
+  `cli_management.py` and `cli_models.py` adapt commands to those operations.
 - `communications.py` and `communications_ui.py`: optional channel tools and private credential configuration.
 - `web_access.py`: search modes, provider settings and reusable private keys; `network_groups.py`: trusted category updates and gateway rules.
 - `updates.py`: GitHub tags, installed version and pipx upgrade detection.
@@ -157,6 +159,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   directory to their subprocesses. Real-engine tests use production lock paths
   and unique sandbox names. Arrange contention explicitly when testing it.
   Exercise affected tests alongside real jobs before calling the workflow finished.
+- When adding process supervision, check which process each interruption test
+  targets. Test worker death separately from cancellation of its supervisor.
 - Check the saved state and engine names before starting a creation job. Recheck
   under the lifecycle lock before allocating resources. Test stopped containers
   and volumes left after container deletion, including cancellation of either

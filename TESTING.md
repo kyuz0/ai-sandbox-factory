@@ -166,6 +166,43 @@ Ask Pi to read that receipt. Authorize the reviewed outer shell to read that spe
 
 ## Shared command-line tools
 
+### Factory CLI
+
+Run the CLI adapters and shared operation regressions:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python -m unittest \
+  test_cli_management test_cli_models test_cli_local_models test_cli_lifecycle \
+  test_cli_contracts test_cli_connector_preview test_cli_parity test_creation \
+  test_updating test_copy_settings test_provider_credentials test_hosted_models \
+  test_system_prompts test_editor_settings test_session_transfer
+```
+
+The adapter suites check arguments, stdin, JSON output, diagnostics and secrets.
+They exercise shared editor, prompt and defaults operations and verify that
+headless commands do not import Textual. Synthetic worker processes test signals,
+repeated cancellation and closed output streams around the Apply boundary.
+Dispatch checks distinguish public supervision from direct transaction workers.
+The profile recovery fixture kills the transaction worker, using its private
+Apply gate; the public CLI cancellation checks signal its supervisor.
+`test_cli_parity` checks conditional Actions menus and every Settings category
+against documented CLI paths.
+
+Run the provider-backed CLI workflow with disposable Podman resources:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python tests/cli_lifecycle_integration.py
+```
+
+It checks a diagnostic provider failure, same-name retry, creation cancellation
+with SIGINT, SIGTERM and SIGHUP, repeated signals, credential redaction and
+resource cleanup. The release workflow runs it from an installed wheel outside
+the checkout, reusing images from the shared creation check. Full lifecycle,
+browser, credential and chat-format coverage stays in the shared suites below;
+each command adapter does not repeat that entire matrix.
+
+### Tools inside sandboxes
+
 Pi and native-agent workspace builds run `containers/dev/cli-tools/check.py` as
 an unprivileged user. This checks every documented command, offline manual pages,
 patching and compiling C++, and a zstd archive round trip. Both image definitions
@@ -931,6 +968,10 @@ route enforcement and streamed replies for all four providers, including Azure
 deployments and Bedrock profiles. The editor check opens the saved default model,
 then uses the model picker to check the remaining routes. The lifecycle test covers
 key replacement without restart, recovery and credential-volume deletion.
+
+For changes limited to the CLI or model configuration helper, add `--cli-only`
+to `hosted_container.py` and omit `--code-server`. This checks the same provider
+configuration, catalogues and streamed Pi replies without repeating the browser run.
 
 For live verification, connect an account in **Settings → Model Providers**, choose a model
 and use **Test selected model**. Check each supported authentication method,

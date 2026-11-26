@@ -47,9 +47,7 @@ class ProviderCredentialsTests(unittest.TestCase):
                     ['open', 'demo', '--editor', 'pi'],
                     ['pi', 'demo', '--', '--continue'],
                     ['configure', 'demo'], ['configure', 'demo', '--preview'],
-                    ['configure', 'demo', '--status'],
-                    ['create', 'demo', '--workspace', '/workspace', '--start'],
-                    ['create', 'demo', '--workspace', '/workspace', '--start', '--open'])
+                    ['configure', 'demo', '--status'])
         for command in commands:
             for configured in (False, True):
                 with self.subTest(command=command, configured=configured), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:

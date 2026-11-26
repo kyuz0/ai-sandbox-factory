@@ -34,6 +34,7 @@ from .sandbox_options import (MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, SANDBOX_NAME,
 
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
+EDITABLE_SETTINGS = frozenset({'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'})
 PI_VERSION = '1.4.0'
 LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
@@ -1055,6 +1056,11 @@ def configure_local_gateway(config, value, rules):
             raise ValueError(f'Add local-model.internal:{port} to the allowlist')
 
 
+def config_revision(config):
+    """Identify the saved choices accepted by a copy operation."""
+    return hashlib.sha256(json.dumps(config, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 @runtime_context.publish_after
 def create(args, state):
     source = getattr(args, 'reuse_from', None)
@@ -1082,6 +1088,10 @@ def _create(args, state):
                              'Check its saved configuration or choose another completed sandbox.') from error
         before_recovery = reuse.get('profile', {}).get('path')
         reuse = recover_profile(reuse, source)
+        expected = getattr(args, 'reuse_config_revision', None)
+        if expected is not None and config_revision(reuse) != expected:
+            raise ValueError(f'The settings of source sandbox {args.reuse_from} changed while preparing the copy. '
+                             'Start the copy again to use its current settings.')
         if (getattr(args, 'profile', None) == before_recovery
                 and reuse.get('profile', {}).get('path') != before_recovery):
             raise ValueError(f'The applied profile for {args.reuse_from} changed during recovery. '
@@ -1506,6 +1516,9 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
 
 @runtime_context.publish_after_save
 def apply_settings(config, state, changes, *, apply_gate=None):
+    if changes == {}:
+        print('No settings were supplied; nothing changed.')
+        return
     config = primary_workspace.normalize(config)
     native = primary_workspace.agent(config) != 'pi'
     search_keys = {key: agent for agent, key in primary_workspace.WEB_SEARCH_OPTIONS.items()}
@@ -1539,7 +1552,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
             activity.save_config(state, {**config, 'options': selected})
             print('Approval mode saved. Restart the sandbox to use it.')
         return
-    if isinstance(changes, dict) and 'connector_ids' in changes:
+    if isinstance(changes, dict) and {'connector_ids', 'connector_operations'} & changes.keys():
         connector_settings.apply(config, state, changes, apply_gate)
         return
     if not native and isinstance(changes, dict) and set(changes) == {'options'}:
@@ -1583,7 +1596,7 @@ def apply_settings(config, state, changes, *, apply_gate=None):
             # A saved profile rollout only changes permissions on prepared sandboxes.
             aws_install_approval = 'ready'
         changes = {'aws_access': changes['aws_access']}
-    allowed = {'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'}
+    allowed = EDITABLE_SETTINGS
     if not isinstance(changes, dict) or set(changes) - allowed:
         raise ValueError('Unknown editable sandbox setting')
     if 'aws_access' in changes:
@@ -1821,11 +1834,17 @@ def main(*, startup_notice=''):
     new.add_argument('--primary-auth', choices=['copy', 'login'], default=primary_workspace.DEFAULT_AUTH,
                      help='Copy the host sign-in (default), or sign in inside the sandbox')
     new.add_argument('--profile', help='Installed profile name or custom folder. Defaults to base, or the source’s applied profile with --reuse-editable-profile.')
-    new.add_argument('--workspace', required=True)
+    new.add_argument('--workspace')
+    new.add_argument('--config', help='Non-secret creation JSON; explicit flags override its values')
+    new.add_argument('--secrets-stdin', action='store_true', help='Read creation credentials separately as JSON on stdin')
+    new.add_argument('--use-defaults', action='store_true', help='Start from workstation creation defaults')
+    new.add_argument('--replace-conflicts', action='store_true', help='Approve deletion of the exact conflicting resources, including private volumes')
+    new.add_argument('--json', action='store_true', help='Write the final result as JSON; progress goes to stderr')
     new.add_argument('--creation-token', help=argparse.SUPPRESS)
     new.add_argument('--working-directory', default='.', help='Starting folder relative to the workspace')
     new.add_argument('--folders-file', help='JSON list of additional host folders: source, name, read_only')
     new.add_argument('--reuse-from', help='Reuse saved provider and skill packages and advisor settings from NAME; other settings use the supplied flags')
+    new.add_argument('--reuse-config-revision', help=argparse.SUPPRESS)
     new.add_argument('--reuse-editable-profile', action='store_true', help='With --reuse-from, share its editable profile folder. Starts with its applied profile; Apply updates each sandbox separately.')
     new.add_argument('--omit-skill', action='append', default=[], help='Omit an added skill when using --reuse-from')
     new.add_argument('--model-provider', action='append', help='Installed provider name; repeat for multiple sources (default: local)')
@@ -1865,7 +1884,7 @@ def main(*, startup_notice=''):
     new.add_argument('--system-prompt-file', help='JSON file containing a system prompt name and text')
     new.add_argument('--start', action='store_true', help='Build images and start after creation')
     new.add_argument('--local-model-ports', help='Host-loopback model ports, e.g. 8000 or 8000-8003; rootless Podman only')
-    new.add_argument('--editor', choices=editor_settings.MODES, help='Client to open (default: browser on supported hosts)')
+    new.add_argument('--editor', choices=('browser', 'cli', 'pi'), help='Client to open: browser or cli (pi is an alias for cli)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
         'install-system-packages': 'Install Debian packages in a running sandbox',
@@ -1883,6 +1902,7 @@ def main(*, startup_notice=''):
         cmd.add_argument('name')
         if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
+            cmd.add_argument('--json', action='store_true', help='Write the final result as JSON; progress goes to stderr')
         if command in ('service-data-export', 'service-data-restore'):
             cmd.add_argument('--saved', required=True, help='Saved service data ID from service-data-list')
         if command == 'service-data-export':
@@ -1904,7 +1924,7 @@ def main(*, startup_notice=''):
             cmd.add_argument('--no-open', action='store_true', help='Print the address without opening a browser tab')
             cmd.add_argument('--stop', action='store_true', help='Stop only the browser editor')
         if command == 'open':
-            cmd.add_argument('--editor', choices=editor_settings.MODES, help='Open with a different client this time')
+            cmd.add_argument('--editor', choices=('browser', 'cli', 'pi'), help='Open with browser or the selected agent’s cli')
         if command == 'ssh-import-key':
             cmd.add_argument('--key-file', required=True)
         if command in ('ssh-import-key', 'ssh-unlock'):
@@ -1932,7 +1952,8 @@ def main(*, startup_notice=''):
             cmd.add_argument('--key-stdin', action='store_true', help='Read a credential from stdin')
             cmd.add_argument('--status', action='store_true', help='Read provider status')
         if command == 'update':
-            cmd.add_argument('--settings-file', required=True, help='JSON object with editable saved settings')
+            cmd.add_argument('--settings-file', required=True, help='JSON object with editable saved settings; use - for stdin')
+            cmd.add_argument('--preview', action='store_true', help='Inspect requested settings and runtime effects without applying them')
         if command in ('exec', 'pi'):
             cmd.add_argument('args', nargs=argparse.REMAINDER)
         if command == 'check':
@@ -1946,9 +1967,58 @@ def main(*, startup_notice=''):
                              help='Enable or disable Betterwright; omitted preserves the saved choice')
             cmd.add_argument('--subagents', action=argparse.BooleanOptionalAction, default=None,
                              help='Enable or disable optional subagent orchestration; omitted preserves the saved choice')
+    from . import cli_lifecycle, cli_management
+    cli_lifecycle.register(sub)
+    cli_management.register(sub)
+    from . import cli_models
+    cli_models.register(sub)
     args = parser.parse_args()
+    if getattr(args, 'editor', None) == 'cli':
+        args.editor = 'pi'
+    from .cli_support import supplied_options
+    args._supplied = supplied_options(parser, args, sys.argv[1:])
+    if hasattr(args, 'name') and not SANDBOX_NAME.fullmatch(args.name):
+        parser.error(SANDBOX_NAME_ERROR)
+
     if startup_notice and args.command != 'tui':
         print(startup_notice, file=sys.stderr)
+    if hasattr(args, 'cli_handler'):
+        return args.cli_handler(args)
+    if args.command == 'create':
+        if not SANDBOX_NAME.fullmatch(args.name):
+            parser.error(SANDBOX_NAME_ERROR)
+        if args.creation_token and args.start:
+            parser.error('--creation-token is an internal worker input and cannot be combined with --start')
+        if not args.workspace and not args.config and not args.use_defaults:
+            parser.error('--workspace is required, or supply workspace in --config')
+        if args.open and not args.start:
+            parser.error('--open requires --start')
+        if args.secrets_stdin and not args.start:
+            parser.error('--secrets-stdin requires --start so credentials can reach their companion')
+        if args.replace_conflicts and not args.start:
+            parser.error('--replace-conflicts requires --start')
+        if not args.creation_token and (args.start or args.config or args.use_defaults or args.json):
+            draft = cli_lifecycle.from_arguments(args)
+            if args.start:
+                return cli_lifecycle.start_creation(args, draft)
+            if args.secrets_stdin:
+                parser.error('--secrets-stdin requires --start so credentials can reach their companion')
+            manager = cli_lifecycle.operations.Service(Path(args.state_dir).expanduser().resolve())
+            with operation_locks.sandbox(args.name, 'create'):
+                if args.json:
+                    from contextlib import redirect_stdout
+                    with redirect_stdout(sys.stderr):
+                        manager.save_configuration(draft, lambda line: print(line, file=sys.stderr))
+                    print(json.dumps({'name': args.name, 'status': 'configured'}))
+                else:
+                    manager.save_configuration(draft, print)
+            return
+    if args.command == 'update' and args.preview:
+        from .cli_support import emit, read_json
+        manager = cli_lifecycle.operations.Service(Path(args.state_dir).expanduser().resolve())
+        return emit(args, manager.preview_settings(args.name, read_json(args.settings_file)))
+    if args.command in cli_lifecycle.GATED and args.apply_gate is None:
+        return cli_lifecycle.supervise(args)
     if args.command == 'connector-login':
         connector_settings.login(args.connector_id)
         return
@@ -2156,12 +2226,9 @@ def sandbox_command(args, state, parser):
         else:
             if (args.key or args.key_stdin) and not args.provider:parser.error('Choose --provider when supplying a credential')
             secret=None
-            if args.key:
-                import getpass
-                secret=getpass.getpass('Provider key: ')
-            elif args.key_stdin:
-                secret=sys.stdin.read(65537).strip()
-                if len(secret)>65536:parser.error('Credential input too large')
+            if args.key or args.key_stdin:
+                from .cli_support import read_secret
+                secret = read_secret(args.key_stdin, 'Provider key').strip()
             up(config,state)
             action = 'status' if args.status else 'preview' if args.preview else 'refresh'
             try:
@@ -2177,21 +2244,24 @@ def sandbox_command(args, state, parser):
         if args.status:
             payload = None
         elif args.keys_stdin:
-            payload = sys.stdin.read(32769)
-            if len(payload) > 32768:
-                raise ValueError('Communication credentials too large')
+            payload = sys.stdin.read()
         else:
-            import getpass
+            from .cli_support import read_secret
             changes = {}
             for field, label in [('botToken', 'Slack bot token'), ('userToken', 'Slack user token for search')]:
-                value = getpass.getpass(label + ' (empty keeps saved, - removes): ').strip()
+                value = read_secret(False, label + ' (empty keeps saved, - removes)').strip()
                 if value:
                     changes[field] = '' if value == '-' else value
             payload = json.dumps(changes)
         result = subprocess.run(command + (['--status'] if args.status else []),
                                 input=payload, text=True, capture_output=True)
         if result.returncode:
-            raise ValueError('Could not save Slack credentials; check the token format and private storage')
+            detail = model_providers.diagnostic(result.stderr or result.stdout)
+            if payload:
+                for key in json.loads(payload).values():
+                    detail = model_providers.diagnostic(detail, key)
+            raise ValueError(f'Slack credential command in {names(config)[0]} exited with status {result.returncode}: '
+                             + (detail or 'No diagnostic output was returned.'))
         if not args.status:
             activity.record(state, 'edited')
         print(result.stdout.strip() if args.status else 'Slack credentials saved.')
@@ -2206,25 +2276,32 @@ def sandbox_command(args, state, parser):
         if args.status or args.export_keys:
             result = subprocess.run(command + ['--export-keys' if args.export_keys else '--status'], text=True, capture_output=True)
         else:
-            import getpass
             if args.keys_stdin:
-                payload = sys.stdin.read(100001)
-                if len(payload) > 100000:
-                    raise ValueError('Search credentials too large')
+                payload = sys.stdin.read()
             else:
                 provider = args.provider or (search['mode'] if search['mode'] != 'auto' else
                     next(iter(search['providers'])) if len(search['providers']) == 1 else None)
                 if provider not in search['providers'] or provider == 'searxng':
                     raise ValueError('Choose a configured search provider with --provider')
-                key = sys.stdin.read(16385) if args.key_stdin else getpass.getpass('Search API key (empty removes saved key): ')
+                from .cli_support import read_secret
+                key = read_secret(args.key_stdin, 'Search API key (empty removes saved key)')
                 payload = json.dumps({provider: key.strip()})
             result = subprocess.run(command + ['--keys-stdin'], input=payload, text=True, capture_output=True)
         if result.returncode:
-            raise ValueError('Could not read or save search API keys; check the selected provider and key format')
+            detail = model_providers.diagnostic(result.stderr or ('' if args.export_keys else result.stdout))
+            if not (args.status or args.export_keys):
+                for key in json.loads(payload).values():
+                    detail = model_providers.diagnostic(detail, key)
+            raise ValueError(f'Web Search credential command in {names(config)[0]} exited with status {result.returncode}: '
+                             + (detail or 'No diagnostic output was returned.'))
         try:
             statuses = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            raise ValueError('Could not read the sandbox search key storage') from None
+        except json.JSONDecodeError as error:
+            # An exported document contains credentials, including when truncated.
+            detail = model_providers.diagnostic(result.stderr) if args.export_keys else model_providers.diagnostic(result.stderr or result.stdout)
+            raise ValueError(f'Web Search credential command in {names(config)[0]} returned invalid JSON '
+                             f'at line {error.lineno}, column {error.colno}: {error.msg}. '
+                             + detail + ' Check the private key store and retry.') from None
         if args.status or args.export_keys:
             print(json.dumps(statuses))
         else:
@@ -2237,7 +2314,9 @@ def sandbox_command(args, state, parser):
             prepare_options(updated, state)
             result = subprocess.run(command, text=True, capture_output=True)
             if result.returncode:
-                raise ValueError('Search key saved, but configuration refresh failed')
+                raise ValueError(f'Web Search key saved, but configuration refresh in {names(config)[0]} '
+                                 f'exited with status {result.returncode}: '
+                                 + model_providers.diagnostic(result.stderr or result.stdout))
             activity.record(state, 'edited')
             print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':

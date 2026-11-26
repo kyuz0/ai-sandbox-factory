@@ -232,7 +232,9 @@ def exercise(agent, root):
             # Simulate an abrupt worker death during readiness. The next review
             # must recover resources and still return a usable structured review.
             ready=threading.Event()
-            process=subprocess.Popen(service.command('profile-apply',name,'--revision',waiting['revision']),
+            # Target the transaction worker, not the public CLI supervisor.
+            process=subprocess.Popen(service.command('profile-apply',name,'--revision',waiting['revision'],
+                                     '--apply-gate',str(root / 'interrupted-addition-apply')),
                                      stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
             def reader():
                 for line in process.stdout:
@@ -340,7 +342,8 @@ def exercise(agent, root):
         # Force the same ordering with an abruptly killed worker; Start must recover.
         if agent == 'pi':
             ready = threading.Event()
-            process = subprocess.Popen(service.command('profile-apply',name,'--revision',waiting_change['revision']),
+            process = subprocess.Popen(service.command('profile-apply',name,'--revision',waiting_change['revision'],
+                                       '--apply-gate',str(root / 'interrupted-replacement-apply')),
                                        stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
             def changed_reader():
                 for line in process.stdout: changed_log(line.rstrip())

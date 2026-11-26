@@ -328,20 +328,16 @@ class LocalModelSetupTests(unittest.TestCase):
         self.assertNotIn('pi',run.call_args.args[0])
         self.assertIn('pi-sandbox-factory-example',run.call_args.args[0])
 
-    def test_create_and_start_initializes_without_opening_an_editor(self):
-        with tempfile.TemporaryDirectory() as temp:
-            state=Path(temp)/'example';state.mkdir()
-            (state/'config.json').write_text(json.dumps({'name':'example','local_model_ports':'8000'}))
-            calls=[]
-            argv=['sandbox.py','--state-dir',temp,'create','example','--workspace','/project','--start']
-            with patch('sys.argv',argv), patch.object(sandbox,'create',side_effect=lambda *a:calls.append('create')), \
-                 patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(temp)), \
-                 patch.object(sandbox,'build',side_effect=lambda *a:calls.append('build')), \
-                 patch.object(sandbox,'up',side_effect=lambda *a:calls.append('up')), \
-                 patch.object(sandbox,'initialize_models',side_effect=lambda *a:calls.append('models')), \
-                 patch.object(sandbox,'open_selected') as editor:
-                sandbox.main()
-            self.assertEqual(calls,['create','build','up','models']);editor.assert_not_called()
+    def test_create_and_start_uses_the_managed_foreground_pipeline(self):
+        from ai_sandbox_factory import cli_lifecycle
+        draft = {'name': 'example', 'workspace': '/project'}
+        argv = ['sandbox.py', 'create', 'example', '--workspace', '/project', '--start']
+        with patch('sys.argv', argv), patch.object(cli_lifecycle, 'from_arguments', return_value=draft), \
+                patch.object(cli_lifecycle, 'start_creation') as create, patch.object(sandbox, 'open_selected') as editor:
+            sandbox.main()
+        self.assertIs(create.call_args.args[1], draft)
+        self.assertFalse(create.call_args.args[0].open)
+        editor.assert_not_called()
 
     def test_corrupt_configuration_blocks_editor_side_effects(self):
         with tempfile.TemporaryDirectory() as temp:
