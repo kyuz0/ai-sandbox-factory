@@ -10,8 +10,6 @@ its settings. The choice affects future builds; saving it does not restart the s
 | **Use prebuilt images** | Factory reuses or downloads compatible images from the tested list shipped with your Factory release. Stages without a matching image build locally. |
 | **Build images locally** | Factory uses its local recipes and the container engine's normal build cache. It does not download Factory's published images. |
 
-The bundled image list is currently empty, so both choices build locally until tested images are promoted into a Factory release.
-
 Both choices can download upstream base images and packages. Local builds do not
 force a reinstall without cache or select newer versions than the recipes specify.
 An image already available locally can avoid downloading its layers again.

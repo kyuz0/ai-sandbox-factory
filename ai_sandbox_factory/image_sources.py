@@ -173,6 +173,22 @@ def _inspect(config, reference):
                          'Check the engine and retry.') from error
 
 
+def _matches_repo_digest(expected, reported):
+    if not isinstance(reported, list):
+        return False
+    if expected in reported:
+        return True
+    if not expected.startswith('docker.io/'):
+        return False
+    # Docker inspect can omit docker.io and the library/ namespace for official images.
+    # Keep other registry names (including localhost and hosts with ports) distinct.
+    familiar = expected.removeprefix('docker.io/')
+    namespace, slash, name = familiar.partition('/')
+    if not slash or namespace == 'localhost' or '.' in namespace or ':' in namespace:
+        return False
+    return familiar in reported or (namespace == 'library' and '/' not in name and name in reported)
+
+
 def ensure(config, role, local, build_local=None):
     """Return a fixed image reference; never turn a failed pull into a build."""
     from . import sandbox, operation_locks, model_providers
@@ -204,7 +220,7 @@ def ensure(config, role, local, build_local=None):
                                  f'{cause or "The engine returned no diagnostic output."} '
                                  'Retry, or select Build images locally.')
             data = _inspect(config, selected)
-        if (not data or not isinstance(data.get('RepoDigests'), list) or selected not in data['RepoDigests']
+        if (not data or not _matches_repo_digest(selected, data.get('RepoDigests'))
                 or str(data.get('Os', '')).lower() != 'linux'
                 or data.get('Architecture') != platform.split('/')[1]):
             raise ValueError(f'Cannot verify {role} image {selected} for {platform}: '

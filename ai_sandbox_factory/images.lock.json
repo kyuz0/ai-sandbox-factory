@@ -1,4 +1,41 @@
 {
-  "version": 1,
-  "images": {}
+  "images": {
+    "0688f6b71e40b2e95e3b912ba7d3c28f520d236eda88d2906e6b8e3e172168ac": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-controller-claude@sha256:09176395178701736362bb058a746b4bd687a4c6d4c7c466b24131783cbf1565"
+    },
+    "2c01815ebacaa4dda2d56641768959e9a69a9be690c0afee1029f28c7b3ddada": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-native-common@sha256:40c0eea21ea495ae6badc1070fb4d002c72c547f62afd5bd5f90f0fb46015f0d"
+    },
+    "46d6595e0a4aa15f26b7d77049b2ef20fb14ee489bc5e445ce42f845b816475b": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-connector@sha256:66c9029e5067ec69b497c4b6429350b221184cd64d6b9a83292d584a47802a67"
+    },
+    "49993ea79a68939288aa0e3c7123c1ce472fa731372e5babf9e1b305d917120c": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-controller-codex@sha256:100e1ea864e2acbf8fd2f80cc0350886d8c1e285e19dd8a04fbb6f461cb2cbd8"
+    },
+    "61baafb0a85cc2370e0453c6d81296cbc75b0d6a5397d99b26fae5cf2de05f2a": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-pi-common@sha256:03f1306259ece85e58447b15712d2022f3a77887d2b109aefb81ec78a5438775"
+    },
+    "656208131370358820daccbf4d332a3314692521d9951afc9429e23f78d795b2": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-gateway@sha256:d0c4e02bb7f2954d46cd7fcafffb76e8cba80cbcc13bcfb32f9b1901164bd296"
+    },
+    "6a9b5e912c9f8f4170643c666fc56162c9e010fc82986d246fa1e1686cb5bf08": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-advisor@sha256:45a69c803e5ec163c4a1b79cbee79b85ddb8df5b2658d499d607daf4092c2625"
+    },
+    "86577130ff988f5f06e48eab261daa7acfa5f91911b41c108d40e3960bbb7be0": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-aws@sha256:d0daf3e88dbfa3a53876412a1020aafa8d0b37fb134c323eddf20c849e920721"
+    },
+    "9b39089a140fbc1e5b30813028c843d8f247c4d1f8d19e22c5743dbb3837002f": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-ssh@sha256:68d9654aca35d39a5c308bf158eb480b5be01aade776ea8189419ff850d2986a"
+    },
+    "c6c5495c974d6f9ea54c24f72bdb426c057da62383fcfb3bb0fea9a9a6a8fa1e": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-controller-agy@sha256:9e34facf69003482b2265c7408cae149c0123c70f37cf329b237cf3572f813cb"
+    },
+    "daf70d365c9c65b6a75dd9295f9f82194b161afcbe5ae9811075da852d1b84a4": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-pi-stock@sha256:23613390bd83cb931d73a10c7e6c374325d6811b8cfc35636a4e199fb3df4304"
+    },
+    "ff3c5de37e2245f1376beef0d4cdb7323e6c984a71e503da9bc283fee84c68e1": {
+      "linux/amd64": "docker.io/kyuz0/ai-sandbox-factory-inference@sha256:e1ca0f6b1d528056b28f806249bf30145a251b54dfd9ee3de82e9a9062fca081"
+    }
+  },
+  "version": 1
 }

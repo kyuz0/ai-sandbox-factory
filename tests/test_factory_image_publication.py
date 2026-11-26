@@ -2,6 +2,7 @@
 from contextlib import nullcontext, redirect_stdout
 from hashlib import sha256
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,10 @@ from unittest.mock import patch
 import yaml
 
 from ai_sandbox_factory import sandbox_extensions
-from scripts import build_factory_images as publisher
+CHECKOUT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('factory_image_publisher', CHECKOUT / 'scripts/build_factory_images.py')
+publisher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(publisher)
 
 
 class FakeEngine:
@@ -199,7 +203,7 @@ class FactoryImagePublication(unittest.TestCase):
                 self.assertEqual(json.loads(self.output.read_text()), merged)
 
     def test_only_candidate_tags_and_explicit_main_dispatch_publish(self):
-        path = publisher.sandbox.ROOT.parent / '.github/workflows/images.yml'
+        path = CHECKOUT / '.github/workflows/images.yml'
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(workflow['on']), {'push', 'schedule', 'workflow_dispatch'})
         self.assertEqual(workflow['on']['push'], {'tags': ['image-candidate-*']})

@@ -82,6 +82,35 @@ class ImageSourcesTests(unittest.TestCase):
     def prepare(self, config=None, builder=None):
         return image_sources.ensure(config if config is not None else self.config, 'gateway', LOCAL, builder)
 
+    def test_docker_inspect_familiar_names_must_identify_the_catalogue_repository_and_digest(self):
+        digest = '@sha256:' + 'a' * 64
+        cases = (
+            ('docker.io/kyuz0/example', 'kyuz0/example', digest, True),
+            ('docker.io/library/ubuntu', 'ubuntu', digest, True),
+            ('docker.io/library/ubuntu', 'library/ubuntu', digest, True),
+            ('docker.io/kyuz0/example', 'other/example', digest, False),
+            ('docker.io/kyuz0/example', 'registry.example/kyuz0/example', digest, False),
+            ('docker.io/kyuz0/example', 'kyuz0/example', '@sha256:' + 'c' * 64, False),
+            ('registry.example/kyuz0/example', 'kyuz0/example', digest, False),
+            ('docker.io/localhost/example', 'localhost/example', digest, False),
+        )
+        for repository, spelling, reported_digest, matches in cases:
+            with self.subTest(repository=repository, spelling=spelling, digest=reported_digest):
+                selected = repository + digest
+                self.publish({self.recipe: {'linux/amd64': selected}})
+                self.engine.images[selected] = self.engine.verified(spelling + reported_digest)
+                config = {**self.config, 'engine': 'docker'}
+                with image_sources.recording() as used:
+                    if matches:
+                        self.assertEqual(self.prepare(config), selected)
+                        self.assertEqual(config['image_refs']['gateway'], selected)
+                        self.assertEqual(used['gateway']['reference'], selected)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'Cannot verify gateway image'):
+                            self.prepare(config)
+                        self.assertNotIn('image_refs', config)
+                        self.assertEqual(used, {})
+
     def test_cached_and_downloaded_digest_record_the_same_artifact(self):
         for cached in (False, True):
             with self.subTest(cached=cached):
