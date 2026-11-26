@@ -25,6 +25,15 @@ async def wait_for_build(pilot, job):
     assert job.result is None, (job.status, job.read(0)[0][-30:])
 
 
+async def wait_for_result(pilot, job, expected, *, timeout):
+    try:
+        await wait_for(pilot, lambda: job.result is not None, timeout=timeout)
+    except asyncio.TimeoutError as error:
+        raise AssertionError(f'{job.title} did not finish ({job.status}):\n'
+                             + '\n'.join(job.read(0)[0][-30:])) from error
+    assert job.result == expected, (job.title, job.status, job.error, job.read(0)[0][-30:])
+
+
 async def exercise(state, service, names):
     first_config = service.config(names[0])
     first_container = sandbox.inspect(first_config, sandbox.names(first_config)[0])['Id']
@@ -53,8 +62,10 @@ async def verify_rebuilds(pilot, app, service, names, first_config, first_contai
                                            capture_output=True, text=True)
         assert conflict.returncode and f'Cannot down {alpha}' in conflict.stderr, conflict
         app.perform('start', record=next(r for r in app.records if r['name'] == beta))
-        await wait_for(pilot, lambda: getattr(app.screen, 'finished', False))
-        assert app.screen.succeeded
+        start = app.jobs[-1]
+        assert (start.name, start.title) == (beta, 'Start sandbox · ' + beta)
+        await wait_for_result(pilot, start, 'Complete', timeout=300)
+        assert isinstance(app.screen, JobDetails) and app.screen.job is start
         await pilot.press('escape')
         second = await begin(pilot, app, beta)
         await wait_for_build(pilot, second)
@@ -67,7 +78,7 @@ async def verify_rebuilds(pilot, app, service, names, first_config, first_contai
         await wait_for(pilot, lambda: 'Waiting for another build' in output(app.screen))
         await pilot.click('#job-cancel')
         await pilot.click('#yes')
-        await wait_for(pilot, lambda: first.result == 'Cancelled')
+        await wait_for_result(pilot, first, 'Cancelled', timeout=90)
         assert sandbox.inspect(first_config, sandbox.names(first_config)[0])['Id'] == first_container
         await pilot.press('escape')
     # B now runs the real build and replacement. Wait for the workload,
@@ -159,7 +170,8 @@ def main():
                 subprocess.run(service.command('create', name, '--workspace', str(workspace),
                                                '--engine', 'podman', '--network', 'unrestricted', '--no-browser'), check=True)
                 created.append(name)
-            subprocess.run(service.command('build', names[0]), check=True)
+                # Starting B must be able to use its own saved image while A holds the build lock.
+                subprocess.run(service.command('build', name), check=True)
             subprocess.run(service.command('up', names[0]), check=True)
             asyncio.run(exercise(state, service, names))
             creation = f'jobs-{identifier}-creation'
