@@ -123,28 +123,59 @@ def discard_snapshots(identifiers, state):
         (Path(state) / 'connector-manifests' / (identifier + '.json')).unlink(missing_ok=True)
 
 
-def apply(config, state, changes, apply_gate):
-    from . import sandbox
+def proposed_settings(config, changes):
+    """Resolve grants against the saved choices before any engine or filesystem changes."""
     allowed = {'connector_ids', 'connector_operations', 'expected_connector_ids',
                'expected_connector_operations', 'expected_connector_routes', 'expected_connector_instructions'}
-    if set(changes) - allowed:
-        raise ValueError('Apply connector changes separately from other settings.')
+    if unrelated := set(changes) - allowed:
+        raise ValueError('Apply connector changes separately from other settings. Move '
+                         + ', '.join(sorted(unrelated)) + ' to another update.')
+    if 'connector_ids' not in changes:
+        raise ValueError('To change connector_operations, include connector_ids with the connectors to keep.')
     new = connectors.validate_ids(changes['connector_ids'])
     old = connectors.validate_ids(config.get('connector_ids', []))
     prior = config.get('connector_operations', {})
     grants = {i: prior[i] for i in new if i in prior}
     if 'connector_operations' in changes:
         supplied = changes['connector_operations']
-        if not isinstance(supplied, dict) or set(supplied) - set(new):
-            raise ValueError('Choose operations only for connectors assigned to this sandbox.')
-        if any(i not in supplied for i in new if i not in old):
-            raise ValueError('Select the allowed operations for each new connector.')
+        if not isinstance(supplied, dict):
+            raise ValueError('connector_operations must map connector identifiers to their allowed operations.')
+        if extra := set(supplied) - set(new):
+            raise ValueError('Choose operations only for connectors assigned to this sandbox. '
+                             'Remove these grants or include the connectors in connector_ids: '
+                             + ', '.join(sorted(extra)) + '.')
+        if missing := set(new) - set(old) - supplied.keys():
+            raise ValueError('Select the allowed operations for each new connector: ' + ', '.join(sorted(missing)) + '.')
         grants.update(supplied)
-    updated = {**config, 'connector_ids': new, 'connector_operations': grants}
     if old == new and prior == grants:
-        return
+        return None
     if changes.get('expected_connector_ids', old) != old or changes.get('expected_connector_operations', prior) != prior:
         raise ValueError('The connectors for this sandbox changed. Open Connectors again.')
+    return {**config, 'connector_ids': new, 'connector_operations': grants}
+
+
+def preview(config, state, changes):
+    """Check selected operations against saved or installed manifests without creating snapshots."""
+    updated = proposed_settings(config, changes)
+    if updated is None:
+        return False
+    old = config.get('connector_ids', [])
+    for identifier in updated['connector_ids']:
+        if identifier in old:
+            plugin, = connectors.saved({'connector_ids': [identifier]}, state)
+        else:
+            plugin, _ = connectors._read(connectors.directory() / identifier / 'connector.json', identifier)
+        connectors.permitted_routes(plugin, updated)
+    return True
+
+
+def apply(config, state, changes, apply_gate):
+    from . import sandbox
+    updated = proposed_settings(config, changes)
+    if updated is None:
+        return
+    old, new = config.get('connector_ids', []), updated['connector_ids']
+    prior = config.get('connector_operations', {})
     added = [i for i in new if i not in old]
     removed = [i for i in old if i not in new]
     workspace = sandbox.inspect(config, sandbox.names(config)[0])

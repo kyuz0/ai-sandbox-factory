@@ -184,7 +184,8 @@ class EditorScreen(Screen):
             from .primary_workspace import agent
             import json
             config = json.loads((state / 'config.json').read_text()) if (state / 'config.json').exists() else {}
-            yield EditorFields(editor_settings.load(state), agent=agent(config))
+            self.original_settings = editor_settings.load(state)
+            yield EditorFields(self.original_settings, agent=agent(config))
             from . import browser_editor
             self.editor_running = browser_editor.active(state)
             yield Static('• Saving changes closes the editor and interrupts any active reply.\n• Saved chats are kept.',
@@ -214,26 +215,22 @@ class EditorScreen(Screen):
         if event.button.id == 'editor-back':
             self.action_back()
         elif event.button.id == 'editor-save':
-            from . import browser_editor
             try:
-                state = self.app.state_root / self.sandbox_name
                 value = self.query_one(EditorFields).collect()
-                if value == editor_settings.load(state):
+                changes = {key: setting for key, setting in value.items()
+                           if setting != self.original_settings[key]}
+                if not changes:
                     self.action_back()
                     return
                 active = self.app.active_job(self.sandbox_name)
                 if active:
                     self.app.show_job(active)
                     return
-                was_running = browser_editor.active(state)
-                message = ('Choose Open, then select your saved chat from the history.'
-                           if was_running else 'Editor settings saved.')
                 def apply(log):
-                    browser_editor.stop(state)
-                    editor_settings.save(state, value)
+                    result = app.service.save_editor(self.sandbox_name, changes, log)
                     log('Editor settings saved.')
-                    if was_running:
-                        log(message)
+                    if result['editor_stopped']:
+                        log('Choose Open, then select your saved chat from the history.')
                 app = self.app
                 app.pop_screen()
                 app.start_task(self.sandbox_name, 'Save editor settings', apply,

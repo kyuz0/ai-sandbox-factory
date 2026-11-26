@@ -1,12 +1,13 @@
 """Editor selection, private connection settings and terminal layout."""
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from textual.widgets import Button, Collapsible, Footer, Input, OptionList, Select, Static
-from ai_sandbox_factory import editor_settings
+from ai_sandbox_factory import editor_settings, operations, operation_locks
 from ai_sandbox_factory.editor_ui import EditorFields, EditorScreen, OpenWith
 from ai_sandbox_factory.sandbox_tui import Cockpit
 from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
@@ -21,10 +22,17 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temp.name)
         self.state = self.root / 'demo'
         self.state.mkdir()
+        (self.state / 'config.json').write_text(json.dumps({'name': 'demo', 'engine': 'podman', 'workspace': str(self.root)}))
+        locks = self.root / 'locks'
+        locks.mkdir()
+        private_locks = patch.object(operation_locks, 'private_runtime_dir', return_value=locks)
+        private_locks.start()
+        self.addCleanup(private_locks.stop)
         for name in ('available_update',):
             mock = patch('ai_sandbox_factory.updates.' + name, return_value=None)
             mock.start(); self.addCleanup(mock.stop)
         self.app = Cockpit(self.root, FakeService([]))
+        self.app.service.save_editor = operations.Service(self.root).save_editor
 
     async def ready(self, pilot):
         await pilot.pause()
@@ -129,7 +137,7 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             screen = self.app.screen
             screen.query_one('#editor-auth', Checkbox).value = True
             screen.query_one('#editor-password', Input).value = 'synthetic-password-only'
-            with patch('ai_sandbox_factory.browser_editor.stop') as stop:
+            with patch('ai_sandbox_factory.browser_editor.active', return_value=True), patch('ai_sandbox_factory.browser_editor.stop') as stop:
                 await pilot.click('#editor-save')
                 await self.ready(pilot)
                 stop.assert_called_once_with(self.state)
@@ -147,6 +155,32 @@ class EditorUI(unittest.IsolatedAsyncioTestCase):
             with patch('ai_sandbox_factory.browser_editor.stop') as stop:
                 await pilot.click('#editor-save'); await pilot.pause()
                 stop.assert_not_called()
+
+    async def test_stale_form_preserves_a_password_changed_from_the_cli(self):
+        original = editor_settings.validate({'password_hash': editor_settings.password_hash('original-editor-password')})
+        editor_settings.save(self.state, original)
+        async with self.app.run_test(size=(80, 24)) as pilot:
+            await self.ready(pilot)
+            await self.app.push_screen(EditorScreen('demo'))
+            await pilot.pause()
+            rotated = editor_settings.password_hash('rotated-editor-password')
+            editor_settings.save(self.state, {**original, 'password_hash': rotated})
+            with patch('ai_sandbox_factory.browser_editor.stop') as stop:
+                await pilot.click('#editor-save')
+                await self.ready(pilot)
+                stop.assert_not_called()
+            self.assertEqual(editor_settings.load(self.state)['password_hash'], rotated)
+            await self.app.push_screen(EditorScreen('demo'))
+            await pilot.pause()
+            second = editor_settings.password_hash('second-rotated-password')
+            editor_settings.save(self.state, {**original, 'password_hash': second})
+            self.app.screen.query_one('#editor-uploads', Checkbox).value = True
+            with patch('ai_sandbox_factory.browser_editor.active', return_value=False):
+                await pilot.click('#editor-save')
+                await self.ready(pilot)
+            saved = editor_settings.load(self.state)
+            self.assertEqual(saved['password_hash'], second)
+            self.assertTrue(saved['allow_uploads'])
 
     async def test_defaults_show_only_the_client_and_summary_updates(self):
         from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, SettingsForm, preset

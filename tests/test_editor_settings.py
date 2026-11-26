@@ -25,7 +25,7 @@ class Preferences(unittest.TestCase):
                 sandbox.open_selected(config, state)
             self.assertEqual(run.call_args.args[0][-2:], ['pi-sandbox-factory-example', 'pi'])
             self.assertEqual(prefs.read_text(), saved)
-        with self.assertRaisesRegex(ValueError, 'Editor menu'):
+        with self.assertRaisesRegex(ValueError, 'Unknown editor mode'):
             settings.validate({'mode': 'desktop'})
 
     def test_password_hash_private_file_and_no_container_change(self):
@@ -71,7 +71,7 @@ class Preferences(unittest.TestCase):
             settings.save(state, current)
             self.assertEqual(json.loads((state / 'editor.json').read_text()), current)
             self.assertEqual(set(settings.modes()), {'browser', 'pi'})
-            with self.assertRaisesRegex(ValueError, 'Editor menu'):
+        with self.assertRaisesRegex(ValueError, 'Unknown editor mode'):
                 settings.validate({'mode': 'frostpi'})
 
     def test_address_port_and_remote_authentication(self):

@@ -15,6 +15,8 @@ def selections(config):
 
 def diagnostic(text, secret=None):
     text = text or ''
+    if isinstance(text, bytes):
+        text = text.decode('utf-8', errors='replace')
     if secret:
         key = secret.strip()
         variants = {secret, key, json.dumps(key)[1:-1], quote(key, safe='')}

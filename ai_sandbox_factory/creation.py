@@ -184,7 +184,7 @@ class Creation:
 
     def cancel(self):
         with self.lock:
-            if self.finished:
+            if self.finished or self.requested.is_set():
                 return False
             self.requested.set()
             return True
@@ -214,7 +214,7 @@ class Creation:
         except StopFailed:
             self.retry_blocked = True  # The worker may still be running.
             raise
-        except Exception as error:
+        except BaseException as error:
             failure = error
         finally:
             with self.lock:
@@ -333,7 +333,7 @@ class Creation:
 
 
 def main():
-    from .sandbox_tui import Service
+    from .operations import Service
     value = json.load(sys.stdin)
     service = Service(Path(value['state']))
     draft = value['draft']

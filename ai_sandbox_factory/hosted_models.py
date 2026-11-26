@@ -1,5 +1,5 @@
 """Configure native Pi models through the isolated inference companion."""
-from . import activity, runtime_context
+from . import activity, runtime_context, model_providers
 import copy
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ def validate(value):
     value = dict(value)
     provider = value.get('provider')
     if provider not in PROVIDERS:
-        raise ValueError('Choose a supported provider.')
+        raise ValueError(f'Unknown hosted provider {provider!r}. Choose ' + ', '.join(PROVIDERS) + '.')
     for field in ('key', 'access_key', 'secret_key', 'session_token'):
         text = value.get(field, '').strip()
         if any(c in text for c in '\r\n\0') or text.startswith(('!', '$')):
@@ -80,16 +80,21 @@ def request(config, action, **values):
                                  'node', '--input-type=module', '-e', script],
                                 input=json.dumps({'action': action, **values}), text=True,
                                 capture_output=True, timeout=65)
-    except subprocess.TimeoutExpired:
-        raise ValueError('Provider operation timed out. Check connectivity and retry.') from None
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(f'Model operation {action} in {dev} timed out after {error.timeout} seconds. '
+                         + model_providers.diagnostic(error.stderr or error.stdout or '')
+                         + ' Check the provider connection and retry.') from None
     try:
         reply = json.loads(result.stdout)
     except (ValueError, TypeError):
-        raise ValueError('Could not read Pi configuration. Check that the sandbox is running.') from None
+        raise ValueError(f'Model operation {action} in {dev} returned invalid JSON (exit {result.returncode}): '
+                         + model_providers.diagnostic(result.stderr or result.stdout)
+                         + ' Check the container logs and retry.') from None
     if reply.get('error'):
         raise ValueError(reply['error'])
     if result.returncode:
-        raise ValueError('Provider operation failed.')
+        raise ValueError(f'Model operation {action} in {dev} exited with status {result.returncode}: '
+                         + model_providers.diagnostic(result.stderr or result.stdout))
     return reply
 
 

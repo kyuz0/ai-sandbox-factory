@@ -186,6 +186,16 @@ with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.ar
         self.assertIn(repr('bad source'),str(raised.exception))
         self.assertIn(sandbox.SANDBOX_NAME_ERROR,str(raised.exception))
 
+    def test_copy_rechecks_the_source_choices_accepted_by_the_caller(self):
+        revision = sandbox.config_revision(self.config)
+        self.config['memory'] = '8g'
+        (self.source / 'config.json').write_text(json.dumps(self.config))
+        with self.assertRaisesRegex(ValueError, 'source.*changed.*Start the copy again'):
+            self.create(reuse_config_revision=revision)
+        self.assertFalse((self.root / 'target').exists())
+        _, copied = self.create(reuse_config_revision=sandbox.config_revision(self.config))
+        self.assertEqual(copied['memory'], '12g')  # Explicit target choices still win.
+
     def test_sharing_choice_only_applies_to_the_selected_saved_profile(self):
         self.editable()
         draft=copy_draft({'name':'source','config':self.config},self.root)

@@ -269,7 +269,7 @@ def up(config, state):
 
 
 def credentials(config, state, request):
-    from . import sandbox
+    from . import sandbox, model_providers
     worker = names(config)[0]
     info = sandbox.inspect(config, worker)
     if not info or not info.get('State', {}).get('Running'):
@@ -277,11 +277,28 @@ def credentials(config, state, request):
     # Kernel locks release on process exit, including interrupted imports.
     with (Path(state) / 'inference' / 'credentials.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        result = subprocess.run([config['engine'], 'exec', '-i', worker, 'node', '/app/credentials.mjs', '/private/credentials.json'],
-                                input=json.dumps(request), text=True, capture_output=True, timeout=30)
+        def diagnostic(text):
+            text = model_providers.diagnostic(text)
+            for value in request.get('credentials', {}).values():
+                text = model_providers.diagnostic(text, value)
+            return text
+        try:
+            result = subprocess.run([config['engine'], 'exec', '-i', worker, 'node', '/app/credentials.mjs', '/private/credentials.json'],
+                                    input=json.dumps(request), text=True, capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError(f'Credential operation in {worker} timed out after {error.timeout} seconds: '
+                             + diagnostic(error.stderr or error.stdout or '')
+                             + ' Check the inference service logs and retry.') from None
     if result.returncode:
-        raise ValueError('Could not update inference credentials.')
-    return json.loads(result.stdout)
+        raise ValueError(f'Credential operation in {worker} exited with status {result.returncode}: '
+                         + (diagnostic(result.stderr or result.stdout) or 'No diagnostic output was returned.')
+                         + ' Check the inference service logs and retry.')
+    try:
+        return json.loads(result.stdout)
+    except (ValueError, TypeError) as error:
+        raise ValueError(f'Credential operation in {worker} returned invalid JSON: {error}. '
+                         + diagnostic(result.stderr)
+                         + ' Check the inference service logs and retry.') from None
 
 
 def mounts(config):
