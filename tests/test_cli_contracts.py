@@ -16,6 +16,32 @@ from test_cli_management import CliCase
 
 
 class CliContracts(CliCase):
+    def test_public_lifecycle_commands_supervise_once_and_workers_execute_directly(self):
+        commands = {
+            'update': ['--settings-file', 'settings.json'],
+            'recreate': [],
+            'install-system-packages': ['curl'],
+            'profile-fork': ['--directory', str(self.root / 'profile')],
+            'profile-apply': ['--revision', 'reviewed-revision'],
+            'service-data-export': ['--saved', 'saved-data', '--volume', 'data',
+                                    '--output', str(self.root / 'data.tar')],
+            'service-data-restore': ['--saved', 'saved-data', '--service', 'database'],
+        }
+        self.assertEqual(set(commands), set(cli_lifecycle.GATED))
+        for command, arguments in commands.items():
+            with self.subTest(command=command), \
+                    patch.object(cli_lifecycle, 'supervise') as supervise, \
+                    patch.object(sandbox, 'sandbox_command') as execute:
+                self.ok(command, 'demo', *arguments)
+                supervise.assert_called_once()
+                execute.assert_not_called()
+                supervise.reset_mock()
+                gate = self.root / (command + '-apply')
+                self.ok(command, 'demo', *arguments, '--apply-gate', str(gate))
+                supervise.assert_not_called()
+                execute.assert_called_once()
+                self.assertEqual(execute.call_args.args[0].apply_gate, gate)
+
     def test_search_default_keys_stay_separate_and_match_the_endpoint(self):
         key = 'synthetic-default-search-key'
         settings = self.file('defaults.json', {'options': {'web_access': {'providers': {'openai': {}}}}})

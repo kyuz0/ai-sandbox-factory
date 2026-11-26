@@ -182,6 +182,9 @@ The adapter suites check arguments, stdin, JSON output, diagnostics and secrets.
 They exercise shared editor, prompt and defaults operations and verify that
 headless commands do not import Textual. Synthetic worker processes test signals,
 repeated cancellation and closed output streams around the Apply boundary.
+Dispatch checks distinguish public supervision from direct transaction workers.
+The profile recovery fixture kills the transaction worker, using its private
+Apply gate; the public CLI cancellation checks signal its supervisor.
 `test_cli_parity` checks conditional Actions menus and every Settings category
 against documented CLI paths.
 
