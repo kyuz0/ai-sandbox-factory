@@ -12,7 +12,7 @@ def open_client(mode):
 
 def reconnect(mode='browser', *, opened=False):
     action = {
-        'browser': open_client('browser'),
+        'browser': f'Refresh your browser tab, or choose {OPEN_LABELS["browser"]} if it was closed.',
         'pi': 'Restart Pi CLI.',
         None: 'Choose Open to start the coding agent again.',
     }[mode]

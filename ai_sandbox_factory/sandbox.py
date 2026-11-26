@@ -1373,6 +1373,7 @@ def aws_installation(config, state, access):
 
 def replace_for_aws(config, updated, state, effect, containers):
     """Keep the old writable layers until the new runtime is ready."""
+    from . import browser_editor
     engine = config['engine']
     policy = state / 'squid.conf'
     prior_policy = policy.read_text()
@@ -1381,7 +1382,10 @@ def replace_for_aws(config, updated, state, effect, containers):
     stopped = []
     if effect == 'restart':
         aws_access.up(updated, state)  # Check the host sign-in before interrupting work.
+    browser = browser_editor.replacement_connection(config, state)
     try:
+        if browser:
+            browser_editor.stop(state)
         for name, info in containers.items():
             container_id = info['Id']
             if info['State']['Running']:
@@ -1396,8 +1400,12 @@ def replace_for_aws(config, updated, state, effect, containers):
                  'command -v aws >/dev/null && test -S /run/aws-access/request.sock'])
         connector_settings.refresh_agent_context(updated, state)
         activity.save_config(state, updated)
-    except Exception:
+        if browser:
+            browser_editor.resume_connection(updated, state, browser)
+    except Exception as failure:
         try:
+            if browser and browser_editor.active(state):
+                browser_editor.stop(state)
             for name in names(config)[:2]:
                 current = inspect(updated, name)
                 old = containers.get(name, {})
@@ -1416,9 +1424,11 @@ def replace_for_aws(config, updated, state, effect, containers):
                 for _, container_id in reversed(stopped):
                     run([engine, 'start', container_id])
             write_json(state / 'config.json', config)
+            if browser:
+                browser_editor.resume_connection(config, state, browser)
         except Exception as error:
-            raise ValueError('AWS setup failed and Factory could not restore the previous runtime. '
-                             'Your project files and saved chats remain. See the output above.') from error
+            raise ValueError(f'AWS setup failed: {failure}. Restoring the previous runtime also failed: {error}. '
+                             'Your project files and saved chats remain; fix the reported error and retry AWS setup.') from error
         print('AWS setup failed. Factory restored the previous containers and settings.', flush=True)
         raise
     for container_id in moved.values():
@@ -1640,21 +1650,11 @@ def apply_settings(config, state, changes, *, apply_gate=None):
     build(updated, state)  # Leave the old running container intact if the build fails.
     if not updating.begin_apply(apply_gate):
         return
-    if profile_services.selected(config) or profile_services.selected(updated):
-        from . import profile_replacement
-        profile_replacement.apply(config, updated, state, text=text)
-        return
     # Verify the first AWS session while the previous workspace is still running.
     if updated.get('aws_access') and not config.get('aws_access'):
         aws_access.up(updated, state)
-    print('Applying settings: recreating containers; saved workspace and home are preserved.')
-    down(config, remove=True)
-    activity.save_config(state, updated)
-    (state / 'allowlist.txt').write_text(text)
-    (state / 'squid.conf').write_text(network_policy(updated, rules))
-    if text != old_text:
-        activity.record(state, 'edited')
-    up(updated, state)
+    from . import profile_replacement
+    profile_replacement.apply(config, updated, state, text=text)
 
 
 @runtime_context.publish_after
@@ -2109,10 +2109,7 @@ def sandbox_command(args, state, parser):
             raise ValueError('Pi subagent settings apply to Pi sandboxes.')
         building = (native or bool(config.get(profile_edit.EDIT)) or bool(config.get('profile', {}).get('customized_from'))
                     or args.profile or args.subagents is not None or args.browser is not None)
-        replacing_profile_workspace = bool(profile_services.selected(config))
-        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + (
-            ['Replace main agent sandbox'] if replacing_profile_workspace else
-            ['Save sandbox configuration', 'Stop sandbox containers', 'Start sandbox containers'])
+        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + ['Replace main agent sandbox']
         progress = Progress(labels)
         if args.subagents is not None:
             config['subagents'] = args.subagents
@@ -2136,18 +2133,10 @@ def sandbox_command(args, state, parser):
                     build(config, state)
             if not updating.begin_apply(args.apply_gate):
                 return
-            if profile_services.selected(original) or profile_services.selected(config):
-                from . import profile_replacement
-                with progress.stage('Replace main agent sandbox'):
-                    print('Keeping profile containers and data while replacing the main agent sandbox.', flush=True)
-                    profile_replacement.apply(original, config, state)
-                return
-            with progress.stage('Save sandbox configuration'):
-                activity.save_config(state, config)
-            with progress.stage('Stop sandbox containers'):
-                down(config, remove=True)
-            with progress.stage('Start sandbox containers'):
-                up(config, state)
+            from . import profile_replacement
+            with progress.stage('Replace main agent sandbox'):
+                print('Replacing the main agent sandbox; saved workspace and home are preserved.', flush=True)
+                profile_replacement.apply(original, config, state)
     elif args.command == 'browser-editor':
         from . import browser_editor
         if not args.stop and not args.background:
@@ -2263,18 +2252,10 @@ def sandbox_command(args, state, parser):
         rules = parse_rules(text)
         if args.network == 'allowlist' and config.get('pi_config'):
             validate_models(Path(config['pi_config']), rules, strict=False)
-        if profile_services.selected(config):
-            updated = dict(config, network=args.network)
-            profile_services.validate(updated)
-            from . import profile_replacement
-            profile_replacement.apply(config, updated, state, text=text)
-            return
-        down(config, remove=True)
-        config['network'] = args.network
-        activity.save_config(state, config)
-        (state / 'allowlist.txt').write_text(text)
-        (state / 'squid.conf').write_text(network_policy(config, rules))
-        up(config, state)
+        updated = dict(config, network=args.network)
+        profile_services.validate(updated)
+        from . import profile_replacement
+        profile_replacement.apply(config, updated, state, text=text)
     else:
         # Resolve an interrupted replacement before a new shell/check attaches;
         # the interactive command itself must not retain the lifecycle lock.

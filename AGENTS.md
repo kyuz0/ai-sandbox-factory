@@ -223,6 +223,8 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   Preserve its address and connection settings on success and rollback; verify
   an authenticated request at the original address. Also cover no open editor,
   a stopped sandbox and service-only operations that leave the workspace alone.
+  Exercise ordinary settings updates and rebuilds without profile services as
+  well as profile Apply. A profile-only test does not cover the ordinary path.
 - Exercise the shipped clients with the editor's inherited environment, including
   Node preload settings. Mocked tool calls alone do not establish usability.
 

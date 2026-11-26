@@ -443,9 +443,12 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         if browser:
             restore('previous browser editor',lambda: browser_editor.resume_connection(original,state,browser))
         if failures:
-            raise ValueError(f'Profile replacement failed: {error}. Some recovery steps need attention: '
+            raise ValueError(f'Sandbox replacement failed: {error}. Some recovery steps need attention: '
                              + '; '.join(failures) + '. Project files and private volumes were not deleted.') from error
-        print('The rebuild failed. The previous main agent sandbox, Factory helper containers and settings were restored; profile containers and their data were kept.', flush=True)
+        message = 'The update failed. The previous main agent sandbox, Factory helper containers and settings were restored.'
+        if profile_services.selected(original):
+            message += ' Profile containers and their data were kept.'
+        print(message, flush=True)
         raise
     if not retain_previous:
         for name, container_id in moved.items():

@@ -1379,6 +1379,21 @@ anonymous WebSocket rejection, foreign origins, HTTPS with a group-readable
 key, and occupied ports.
 It restores the saved editor settings and leaves the editor stopped.
 
+For settings updates and rebuilds without profile services, use cached Pi images
+and the pinned code-server archive:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python tests/browser_editor_updates.py \
+  --image CACHED_PI_IMAGE --archive /path/to/code-server-4.145.2-linux-amd64.tar.gz
+```
+
+This disposable fixture opens and authenticates the actual editor before updating
+or rebuilding. It verifies the original URL and login cookie after success,
+workspace-startup rollback and editor-startup rollback, alongside project and
+private-home preservation. It also checks updates with no open editor, stopped
+sandboxes and removal of all test containers and volumes. Cached image selection
+skips compilation; container operations and editor startup use the production code.
+
 In the TUI, check **Editor** during creation and **Settings → Editor** afterward.
 Generate a password, save, open the browser and sign in. Close the manager and
 confirm the editor remains usable. Reopen through **Open**; use **Actions… → Open with… → Pi

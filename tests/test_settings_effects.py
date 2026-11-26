@@ -38,6 +38,9 @@ class SettingsEffectsTests(unittest.TestCase):
             notes=settings_effects.configuration_notes(before,after,mode)
             text=settings_effects.bullets(notes)
             self.assertIn(expected,text)
+            if mode == 'browser':
+                self.assertIn('Refresh your browser tab',text)
+                self.assertNotIn('Choose Open in browser in Factory.',text)
             for unrelated in ('Slack','SSH','Identity','browser viewer','clean context','removed connection'):
                 self.assertNotIn(unrelated,text)
             self.assertTrue(all(line.startswith('• ') for line in text.splitlines()))

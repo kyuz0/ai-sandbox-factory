@@ -319,7 +319,7 @@ async def serve(container, cwd, preferences, state, ready=None, connection=None)
     except OSError as error:
         if connection:
             raise ValueError(f'Cannot reconnect the browser editor at {connection["url"]}: {error}. '
-                             'Check that this address and port are available, then retry the profile action.') from error
+                             'Check that this address and port are available, then retry the update.') from error
         if preferences['port'] or not port:
             raise
         server = await asyncio.start_server(relay.handle, host_platform.listen_address(address), 0, ssl=context, limit=16384)
@@ -468,7 +468,7 @@ def resume_connection(config, state, connection):
     if (not info or info['url'] != connection['url']
             or info.get('hub_url') != connection.get('hub_url')):
         raise ValueError(f'Browser editor did not reconnect at {connection["url"]}. '
-                         f'See {Path(state)/"browser-editor.log"}, then retry the profile action.')
+                         f'See {Path(state)/"browser-editor.log"}, then retry the update.')
 
 
 def open_browser_editor(config, state, archive=None, background=False, open_tab=True, *, connection=None, recover=True, preferences=None):

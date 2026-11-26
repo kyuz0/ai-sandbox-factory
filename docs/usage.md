@@ -242,18 +242,24 @@ current configuration, full guidance and examples. Factory updates it after
 changes are successfully applied. Agents can read it whenever they need to
 review the configuration; it contains no Factory-managed sign-in secrets.
 
+When an update or rebuild replaces the main agent sandbox, Factory restarts an
+open browser editor at the same address, with its saved connection settings.
+Refresh the existing browser tab to reconnect. If replacement fails, Factory
+restores the previous sandbox and browser editor. A stopped sandbox stays stopped;
+an editor that was closed stays closed.
+
 | Settings you change | When they apply | What to do afterwards |
 | --- | --- | --- |
 | Approvals for Codex, Claude Code or Antigravity | Save keeps current work running. The selected mode applies when you next start the sandbox. | Restart the sandbox when ready. |
-| Approvals & sandbox, Pi features, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Choose **Open** in Factory, reload VS Code or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
+| Approvals & sandbox, Pi features, Document search, Skills, Web Search, Communications, Local models & provider plugins, Resources & environment, or Network mode | Apply builds the image, then recreates the sandbox and stops active tasks, terminals and browser processes. Files and saved chats remain. | Refresh the browser editor or restart Pi CLI, then resume your saved chat. Reopen the browser viewer and sign in again if prompted. |
 | Codex, Claude Code or Antigravity: Enable web search in Network and Web Search | Apply saves the choice without recreating the sandbox. | Reopen the selected agent’s CLI or reload the VS Code window. |
 | Network rules: allowed hosts and website categories | Only the gateway restarts. Sandbox processes keep running. | Retry interrupted connections. |
-| Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Reopen the client and resume your saved chat. |
+| Folders: add/remove mounts or change write access | The sandbox is recreated. Removed host folders are not deleted. | Refresh the browser editor or restart the CLI and resume your saved chat. |
 | Folders: starting directory only | The next client launch uses it. Existing terminals keep their directory. | Reopen Pi or VS Code. |
-| Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Reopen the client; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
-| Connectors → AWS | Connecting AWS for the first time can require replacing the main agent sandbox. Review the listed effects before continuing. Later permission changes apply to the signer. | Reopen the client if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
+| Connectors → SSH & Git: destinations, repository setup or commit identity | Apply recreates the sandbox. Identity affects future commits; repository-local settings take precedence. | Refresh the browser editor or restart the CLI; unlock the SSH key again if needed. Import and unlock buttons themselves take effect without a client reload. |
+| Connectors → AWS | Connecting AWS for the first time can require replacing the main agent sandbox. Review the listed effects before continuing. Later permission changes apply to the signer. | Refresh the browser editor or restart the CLI if the workspace restarted. [AWS setup and saved chats](aws-access.md) |
 | Connectors → an installed HTTPS service | Connecting, changing allowed requests or disconnecting takes effect on a running sandbox. A stopped sandbox uses its saved selection at its next start. | Keep working in the same workspace. The agent receives the current grants on its next turn. |
-| Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Reopen the client after Apply; saved chats can be resumed. |
+| Advisors: selection, models, limits or copied sign-ins | Apply recreates the sandbox. Sign in and Check advisors operate without recreation. | Refresh the browser editor or restart the CLI after Apply; saved chats can be resumed. |
 | Editor: default client and browser-editor connection | Saving stops a running browser editor. | Choose **Open** to reopen with the saved settings. |
 | Model Providers: hosted connection or endpoint | Saved without recreating the main agent sandbox; active inference may be interrupted. Replacement keys apply to subsequent requests. | Reopen Pi or reload VS Code for new connections/endpoints, then select a model. Removed connections stop serving requests immediately. |
 | Model Providers: default model | Used by new conversations. | Change an existing chat's model in its model selector. |

@@ -65,7 +65,7 @@ import subprocess
 import sys
 import time
 from unittest.mock import patch
-from ai_sandbox_factory import sandbox
+from ai_sandbox_factory import sandbox, profile_replacement
 
 root = Path(sys.argv[1])
 cancel = sys.argv[2] == 'True'
@@ -76,13 +76,14 @@ def build(config, state=None):
         subprocess.run([sys.executable, '-c',
                         "import time; print('Ready', flush=True); time.sleep(60)"], check=True)
 
-def down(config, remove):
+def replace(original, updated, state, **kwargs):
     (root / 'stopped').touch()
     print('Ready', flush=True)
     while not (root / 'finish').exists():
         time.sleep(0.01)
+    sandbox.activity.save_config(state, updated)
 
-with patch.object(sandbox, 'build', build), patch.object(sandbox, 'down', down), \
+with patch.object(sandbox, 'build', build), patch.object(profile_replacement, 'apply', replace), \
      patch.object(sandbox, 'up'), patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=root):
     try:
         sandbox.main()
