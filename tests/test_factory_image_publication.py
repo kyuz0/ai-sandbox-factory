@@ -251,3 +251,18 @@ class FactoryImagePublication(unittest.TestCase):
         self.assertEqual(protected[0]['if'], "env.PUBLISH == 'true'")
         self.assertEqual(set(protected[0]['env']), {'DOCKERHUB_USERNAME', 'DOCKERHUB_TOKEN'})
         self.assertEqual(workflow['permissions'], {'contents': 'read'})
+
+    def test_prebuilt_lifecycle_has_a_separate_runner_and_is_required(self):
+        workflow = yaml.load((CHECKOUT / '.github/workflows/checks.yml').read_text(), Loader=yaml.BaseLoader)
+        jobs = workflow['jobs']
+        prebuilt = jobs['prebuilt-images']
+        commands = [step.get('run', '') for step in prebuilt['steps']]
+        lifecycle = [command for command in commands if 'tests/prebuilt_images_integration.py' in command]
+        self.assertEqual(len(lifecycle), 1)
+        for flag in ('--profiles', '--recovery', '--interfaces'):
+            self.assertIn(flag, lifecycle[0])
+        self.assertFalse(any('tests/prebuilt_images_integration.py' in step.get('run', '')
+                             for step in jobs['fresh-sandbox']['steps']))
+        self.assertIn('prebuilt-images', jobs['test']['needs'])
+        self.assertIn('needs.prebuilt-images.result', jobs['test']['steps'][0]['run'])
+        self.assertEqual(jobs['release']['needs'], ['test', 'package'])

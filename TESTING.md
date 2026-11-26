@@ -79,6 +79,9 @@ PYTHONPATH=tests:. .venv/bin/python tests/prebuilt_images_integration.py \
 Add `--interfaces` to check local CLI creation, a one-shot prebuilt override and
 the first Start after saving a configuration. Add `--sharing` to exercise shared
 editable profiles and copies between Pi and Codex.
+The required **Prebuilt images and profile lifecycle** CI job runs acquisition,
+pull recovery, profile changes and CLI interfaces on a separate runner so its
+stock images and registry exports do not share disk space with fresh-client tests.
 
 To test published candidates, download the workflow's `candidate-image-index`
 artifact and pass `--candidate-index /path/to/images.lock.json` with a new output
@@ -1885,8 +1888,8 @@ the review scrolls and Back and Apply stay visible.
 `render_service_data.py` also captures the full menu with an open
 browser editor, a profile guide and alerts.
 
-The fresh-sandbox CI job runs the Pi lifecycle and Codex commit-recovery fixtures
-below before release.
+The prebuilt-images CI job runs the Pi profile lifecycle below. The fresh-sandbox
+job runs Codex commit recovery and saved-service-data checks. Both must pass before release.
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_profile_edit test_profile_edit_ui test_profile_replacement test_profile_service_changes test_updating

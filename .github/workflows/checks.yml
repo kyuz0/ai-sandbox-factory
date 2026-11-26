@@ -114,9 +114,6 @@ jobs:
       - name: Exercise background creation, rebuild and cancellation in the TUI
         shell: bash
         run: python tests/sandbox_jobs_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/jobs.log
-      - name: Require prebuilt acquisition, pull cancellation, and profile recovery
-        shell: bash
-        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces 2>&1 | tee /tmp/factory-fresh-sandbox/prebuilt-images.log
       - name: Require immediate recovery from a failed profile commit
         shell: bash
         run: python tests/profile_commit_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/profile-commit.log
@@ -131,13 +128,52 @@ jobs:
         with:
           name: fresh-sandbox
           path: /tmp/factory-fresh-sandbox
+  prebuilt-images:
+    name: Prebuilt images and profile lifecycle
+    # Keep stock images and registry exports off the fresh-client runner's disk.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install image test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman socat
+          podman version
+          python -m pip install -e .
+      - name: Record initial runner storage
+        run: |
+          factory_graphroot=$(podman info --format '{{.Store.GraphRoot}}')
+          df -h "$factory_graphroot" /tmp
+          df -i "$factory_graphroot" /tmp
+      - name: Require prebuilt acquisition, pull cancellation, and profile recovery
+        shell: bash
+        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces 2>&1 | tee /tmp/factory-prebuilt-check.log
+      - name: Record runner storage
+        if: always()
+        run: |
+          factory_graphroot=$(podman info --format '{{.Store.GraphRoot}}')
+          df -h "$factory_graphroot" /tmp
+          df -i "$factory_graphroot" /tmp
+          podman system df
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prebuilt-images
+          path: |
+            /tmp/factory-prebuilt-check.log
+            /tmp/factory-prebuilt-check/results.json
+            /tmp/factory-prebuilt-check/registry-requests.json
+            /tmp/factory-prebuilt-check/pull-recovery-result.json
   test:
-    needs: [python, package, fresh-sandbox]
+    needs: [python, package, fresh-sandbox, prebuilt-images]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require all checks to pass
-        run: test "${{ needs.python.result }}" = success && test "${{ needs.package.result }}" = success && test "${{ needs.fresh-sandbox.result }}" = success
+        run: test "${{ needs.python.result }}" = success && test "${{ needs.package.result }}" = success && test "${{ needs.fresh-sandbox.result }}" = success && test "${{ needs.prebuilt-images.result }}" = success
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.package.outputs.package_changed == 'true'
     needs: [test, package]
