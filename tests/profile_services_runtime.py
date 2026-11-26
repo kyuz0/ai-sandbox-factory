@@ -47,6 +47,10 @@ def main():
             ssh('psql -U app -d app -c "CREATE TABLE preserved (id int); INSERT INTO preserved VALUES (42)"')
             original = sandbox.inspect(config, services.container(config,'database'))['Id']
             assert run('exec',workspace,'ping','-c','1','database.profile.internal').returncode == 0
+            for host in (workspace, services.container(config,'database')):
+                lookup = run('exec',host,'getent','ahostsv4','example.com',check=False)
+                assert lookup.returncode and not lookup.stdout.strip(), ('External DNS resolved',host,lookup.stdout)
+            print('PASS private profile network resolves profile peers but not external DNS names',flush=True)
             for address, family in (('1.1.1.1','AF_INET'),('2606:4700:4700::1111','AF_INET6')):
                 source = f'import socket; s=socket.socket(socket.{family}); s.settimeout(2); s.connect(({address!r},443))'
                 assert run('exec',workspace,'python3','-c',source,check=False).returncode

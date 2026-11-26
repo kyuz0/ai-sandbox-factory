@@ -68,6 +68,11 @@ sandbox to return to it. **Actions… → Stop browser editor** stops the editor
 active FrostPi runs and scheduled prompts. Pi CLI sessions remain independent.
 Stopping the sandbox stops both clients.
 
+When an update or rebuild replaces the main agent sandbox, Factory restarts an
+open editor at the same address with its existing connection settings. Refresh
+that browser tab to reconnect. If replacement fails, the previous sandbox and
+editor are restored. An editor that was closed stays closed.
+
 ## Upload files in VS Code
 
 Under **Editor**, select **Browser editor** and check **Allow file uploads**. For an existing sandbox, open **Settings → Editor**, save the change and reopen the editor. Uploads are off by default.

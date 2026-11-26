@@ -51,6 +51,17 @@ class SandboxUpdateHooksTests(unittest.TestCase):
                 self.call(agent, 'after')
                 self.assertEqual(self.call(agent, turn='next'), {})
 
+    def test_initial_and_resumed_client_sync_does_not_claim_settings_changed(self):
+        for agent in ('codex', 'claude', 'agy'):
+            with self.subTest(agent=agent):
+                for client in ('first-process', 'resumed-process'):
+                    text = self.text(self.call(agent, client=client))
+                    self.assertIn('This synchronizes the current settings for this conversation.', text)
+                    self.assertNotIn('These are the only configuration changes.', text)
+                    self.assertIn('Network: Restricted', text)
+                    self.call(agent, 'after', client=client)
+                    self.assertEqual(self.call(agent, turn='unchanged', client=client), {})
+
     def test_receipts_keep_only_the_delivered_public_summary(self):
         state = json.loads(self.snapshot.read_text())
         state['details'] = {'Additional allowed destinations': 'full-list-not-delivered'}

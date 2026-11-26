@@ -81,7 +81,7 @@ find them when explaining its applied profile. Applied files are read-only.
 copy outside the project, available to the agent at `/opt/sandbox/profile`.
 After editing the copy, choose **Editable profile… → Review changes… →
 Apply profile changes** to install an edited image
-or add services to that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
+or add, change or remove services in that sandbox. [Editing, validation and versioning](../ai_sandbox_factory/containers/dev/profile-authoring/README.md#edit-the-profile-of-an-existing-sandbox)
 
 Attaching or applying an editable profile replaces the main agent sandbox.
 An open browser editor restarts at the same address with its existing password

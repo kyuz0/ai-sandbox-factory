@@ -452,6 +452,12 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         raise
     if not retain_previous:
         for name, container_id in moved.items():
-            sandbox.run([engine, 'rm', container_id])
+            try:
+                sandbox.run([engine, 'rm', container_id], capture=True, stderr=subprocess.PIPE)
+            except (OSError, subprocess.SubprocessError) as error:
+                from . import model_providers
+                details = model_providers.diagnostic(getattr(error, 'stderr', '') or str(error))
+                print(f'Update applied, but the previous stopped container {container_id} could not be removed: '
+                      f'{details}. Retry cleanup with: {engine} rm {container_id}', flush=True)
     if text is not None and text != old_text:
         activity.record(state, 'edited')

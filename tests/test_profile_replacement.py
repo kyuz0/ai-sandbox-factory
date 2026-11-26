@@ -1,9 +1,12 @@
 """Workspace cutover preserves applications and restores all Factory helpers."""
 import copy
+from contextlib import redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +14,14 @@ from ai_sandbox_factory import browser_editor, profile_replacement as replacemen
 
 
 class ReplacementTests(unittest.TestCase):
+    def test_cleanup_failure_keeps_successful_update_and_restored_editor(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.exercise(True, False, browser=True, services=False, action='update', cleanup_failure=True)
+        self.assertIn('Update applied, but the previous stopped container', output.getvalue())
+        self.assertIn('fixture cleanup refused', output.getvalue())
+        self.assertIn('Retry cleanup with: podman rm old-', output.getvalue())
+
     def test_stopped_runtime_helpers_stay_stopped_and_db_is_never_removed(self):
         self.exercise(False, False)
 
@@ -47,7 +58,7 @@ class ReplacementTests(unittest.TestCase):
                 with self.subTest(action=action, running=running):
                     self.exercise(running, False, services=False, action=action)
 
-    def exercise(self, running, failure, browser=False, reconnect_failure=False, services=True, action=None):
+    def exercise(self, running, failure, browser=False, reconnect_failure=False, services=True, action=None, cleanup_failure=False):
         config = {'name':'fixture','engine':'podman','primary_agent':'codex',
                   'uid':os.getuid(),'gid':os.getgid(),
                   'profile':sandbox.load_profile('developer-postgres' if services else 'base')}
@@ -78,7 +89,10 @@ class ReplacementTests(unittest.TestCase):
             if operation == 'stop': containers[key]['State']['Running']=False
             elif operation == 'start': containers[key]['State']['Running']=True
             elif operation == 'rename': containers[argv[3]]=containers.pop(key)
-            elif operation == 'rm': containers.pop(key)
+            elif operation == 'rm':
+                if cleanup_failure and containers[key]['Id'].startswith('old-'):
+                    raise subprocess.CalledProcessError(125,argv,stderr='fixture cleanup refused')
+                containers.pop(key)
         starts=0
         def up(candidate,*args,**kwargs):
             nonlocal starts
@@ -138,7 +152,12 @@ class ReplacementTests(unittest.TestCase):
                         self.assertEqual(json.loads(snapshot_file.read_text())['values']['Memory limit'], '2g')
                     if services:
                         self.assertEqual(containers[db],original[db])
-                    self.assertTrue(all(info['State']['Running'] == running for info in containers.values()))
+                    active = [info for name,info in containers.items() if '-previous-' not in name]
+                    self.assertTrue(all(info['State']['Running'] == running for info in active))
+                    if cleanup_failure:
+                        retained = [info for name,info in containers.items() if '-previous-' in name]
+                        self.assertTrue(retained)
+                        self.assertTrue(all(not info['State']['Running'] for info in retained))
                 if browser:
                     stop_editor.assert_called_once_with(state)
                     self.assertEqual(resumed[-1],original[workspace]['Id'] if failure or reconnect_failure else 'new-'+workspace)

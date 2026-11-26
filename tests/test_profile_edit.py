@@ -17,6 +17,19 @@ from ai_sandbox_factory import folders, profile_edit as edit, profile_replacemen
 
 
 class EditTests(unittest.TestCase):
+    def test_completion_feedback_matches_running_editor_and_stopped_state(self):
+        from ai_sandbox_factory import browser_editor
+        for running, browser, expected in ((True,True,'Refresh the browser editor'),
+                                           (True,False,'Open the coding agent'),
+                                           (False,False,'The sandbox is stopped')):
+            with self.subTest(running=running,browser=browser), \
+                    patch.object(sandbox,'inspect',return_value={'State':{'Running':running}}), \
+                    patch.object(browser_editor,'runtime',return_value={'url':'http://127.0.0.1:12345'} if browser else None):
+                text=edit.completion_message({'name':'fixture'},Path('/unused-fixture'))
+                self.assertIn(expected,text)
+                if not running:self.assertNotIn('Open',text)
+                if browser:self.assertNotIn('Open',text)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

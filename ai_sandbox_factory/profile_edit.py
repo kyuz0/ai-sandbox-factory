@@ -27,6 +27,16 @@ def action_label(config):
     return EDITABLE_PROFILE if config.get(EDIT) else MAKE_EDITABLE
 
 
+def completion_message(config, state):
+    from . import browser_editor, sandbox
+    current = sandbox.inspect(config, sandbox.names(config)[0])
+    if not current or not current['State']['Running']:
+        return 'Profile changes applied. The sandbox is stopped.'
+    if browser_editor.runtime(state):
+        return 'Profile changes applied. Refresh the browser editor to use the new image and instructions.'
+    return 'Profile changes applied. Open the coding agent to use the new image and instructions.'
+
+
 def action_path(config):
     return 'Actions… → Profile and services… → ' + action_label(config)
 
@@ -337,7 +347,7 @@ def apply(config, state, revision, gate=None):
                 raise updating.UpdateCancelled()
             with progress.stage('Apply profile changes'):
                 profile_replacement.apply(config, updated, state, allow_service_changes=True, retain_previous=True)
-    print('Profile changes applied. Open the coding agent again to use the new image and instructions.', flush=True)
+    print(completion_message(updated, state), flush=True)
     retained = set(updated.get('profile_service_retained_volumes', [])) - set(config.get('profile_service_retained_volumes', []))
     if retained:
         from . import service_data
