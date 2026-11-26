@@ -124,7 +124,7 @@ def main():
                 destination = root / 'other-project'
                 destination.mkdir()
                 result = subprocess.run([sys.executable, '-m', 'ai_sandbox_factory', '--state-dir', str(state),
-                    'copy', name, copied, '--workspace', str(destination), '--secrets-stdin', '--json'],
+                    'copy', name, copied, '--workspace', str(destination), '--profile', 'base', '--secrets-stdin', '--json'],
                     input=json.dumps({'provider_keys': {'fixture': KEY}}), capture_output=True, text=True)
                 assert result.returncode == 0, result.stderr
                 assert KEY not in result.stdout + result.stderr

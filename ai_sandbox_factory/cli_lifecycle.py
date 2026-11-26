@@ -416,10 +416,15 @@ def copy_sandbox(args):
         draft = operations.copy_draft({'name': args.source, 'config': config}, manager.state)
         if args.primary_agent:
             draft = operations.copy_for_agent(draft, args.primary_agent)
+        if args.profile:
+            draft['profile'] = args.profile
         if isinstance(draft.get('model_providers'), list):
             draft['model_providers'] = {row['name']: row.get('settings', {}) for row in draft['model_providers']}
         if args.share_editable_profile and not draft.get('source_editable_profile'):
             raise ValueError(f'Sandbox {args.source} has no editable profile folder to share. Copy without --share-editable-profile or make its profile editable first.')
+        if args.share_editable_profile and not operations.shares_editable_profile({
+                **draft, 'share_editable_profile': True}):
+            raise ValueError('Sharing requires the source sandbox’s applied profile. Omit --profile or use its saved profile path.')
         draft.update(name=args.name, workspace=args.workspace or config['workspace'], open_editor=args.open,
                      share_editable_profile=args.share_editable_profile)
         draft['editor'] = editor_settings.copy_choice(draft['editor'])
@@ -482,6 +487,7 @@ def register(sub):
     p = sub.add_parser('copy', help='Create a sandbox from an existing sandbox’s settings')
     p.add_argument('source'); p.add_argument('name'); p.add_argument('--workspace')
     p.add_argument('--primary-agent', choices=primary_workspace.AGENTS)
+    p.add_argument('--profile', help='Choose another compatible profile; omitted uses the source’s applied profile')
     p.add_argument('--share-editable-profile', action='store_true'); p.add_argument('--include-web-search-keys', action='store_true')
     p.add_argument('--open', action='store_true'); p.add_argument('--secrets-stdin', action='store_true')
     p.add_argument('--replace-conflicts', action='store_true'); p.add_argument('--json', action='store_true')

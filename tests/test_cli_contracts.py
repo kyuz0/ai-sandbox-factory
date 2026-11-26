@@ -153,6 +153,15 @@ class CliContracts(CliCase):
         self.assertIn('no editable profile', self.fails('create', 'new', '--workspace', str(self.workspace),
             '--reuse-from', 'demo', '--reuse-editable-profile', '--start'))
 
+    def test_copy_can_choose_a_compatible_profile_when_switching_agents(self):
+        self.sandbox()
+        with patch.object(cli_lifecycle, 'start_creation') as start:
+            self.ok('copy', 'demo', 'new', '--primary-agent', 'codex', '--profile', 'base')
+        draft = start.call_args.args[1]
+        self.assertEqual((draft['primary_agent'], draft['profile']), ('codex', 'base'))
+        self.assertEqual(draft['model_providers'], {})
+        self.assertFalse(draft['share_editable_profile'])
+
     def test_creation_file_enables_local_discovery_unless_explicitly_disabled(self):
         from types import SimpleNamespace
         request = {'workspace': str(self.workspace), 'local_model_ports': '8000',

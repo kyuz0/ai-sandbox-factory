@@ -257,6 +257,7 @@ connections and connectors are set up again.
 | --- | --- |
 | `--workspace PATH` | Uses another project folder. The default is the source's workspace, so both sandboxes edit the same files. |
 | `--primary-agent AGENT` | Uses another coding agent. Agent-specific settings use that agent's defaults. |
+| `--profile PROFILE` | Chooses another compatible profile |
 | `--secrets-stdin` | Supplies credentials, as for `create` |
 | `--include-web-search-keys` | Copies the source's matching Web Search keys (Pi copies only) |
 | `--share-editable-profile` | Attaches the same editable profile folder to both sandboxes. Each sandbox applies edits separately. |
