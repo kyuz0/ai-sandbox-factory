@@ -17,6 +17,13 @@ from ai_sandbox_factory import folders, profile_edit as edit, profile_replacemen
 
 
 class EditTests(unittest.TestCase):
+    def test_completion_status_failure_preserves_success_and_diagnostic(self):
+        with patch.object(sandbox,'inspect',side_effect=ValueError('Podman socket unavailable')):
+            text=edit.completion_message({'name':'fixture'},Path('/unused-fixture'))
+        self.assertIn('Profile changes applied.',text)
+        self.assertIn('Podman socket unavailable',text)
+        self.assertIn('refresh the sandbox list',text)
+
     def test_completion_feedback_matches_running_editor_and_stopped_state(self):
         from ai_sandbox_factory import browser_editor
         for running, browser, expected in ((True,True,'Refresh the browser editor'),

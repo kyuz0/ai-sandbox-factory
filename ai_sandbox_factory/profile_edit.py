@@ -29,11 +29,16 @@ def action_label(config):
 
 def completion_message(config, state):
     from . import browser_editor, sandbox
-    current = sandbox.inspect(config, sandbox.names(config)[0])
-    if not current or not current['State']['Running']:
-        return 'Profile changes applied. The sandbox is stopped.'
-    if browser_editor.runtime(state):
-        return 'Profile changes applied. Refresh the browser editor to use the new image and instructions.'
+    import subprocess
+    try:
+        current = sandbox.inspect(config, sandbox.names(config)[0])
+        if not current or not current['State']['Running']:
+            return 'Profile changes applied. The sandbox is stopped.'
+        if browser_editor.runtime(state):
+            return 'Profile changes applied. Refresh the browser editor to use the new image and instructions.'
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return (f'Profile changes applied. Could not check the client connection: {error}. '
+                'Check the container engine and refresh the sandbox list.')
     return 'Profile changes applied. Open the coding agent to use the new image and instructions.'
 
 
