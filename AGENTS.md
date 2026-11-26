@@ -407,6 +407,12 @@ rendered control text as well as widget bounds after a label changes.
 
 ## Changes and docs
 
+Keep CLI and TUI parity for new or changed Factory operations. Share behavior
+and validation in non-UI code and document the CLI path; UI-only navigation needs
+no command. Test domain behavior through shared tests, then check each affected
+interface; retain the real lifecycle and recovery gates rather than duplicating
+the whole suite per interface.
+
 - HARD GATE — fresh sandboxes: release checks must exercise first launch with
   existing project settings in both Pi CLI and FrostPi, without manually seeding
   trust in the test. Project resources must load, ordinary workspace operations
