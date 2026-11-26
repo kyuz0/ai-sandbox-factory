@@ -12,6 +12,8 @@ from ai_sandbox_factory import aws_access, browser_editor, sandbox
 
 class AWSAccessTests(unittest.TestCase):
     def setUp(self):
+        library = self.enterContext(TemporaryDirectory())
+        self.enterContext(patch.dict(os.environ, SANDBOX_REGISTRY_DIR=library))
         self.grants = [{'Action': 'ec2:DescribeRegions', 'Resource': '*'},
                        {'Action': 'logs:GetLogEvents', 'Resource': 'arn:aws:logs:*:123456789012:log-group:demo:*'}]
         self.value = {'profile': 'research', 'role': 'arn:aws:iam::123456789012:role/Research',
@@ -95,7 +97,7 @@ class AWSAccessTests(unittest.TestCase):
         mounted = dict(Id='workspace', State={'Running': True}, Mounts=[
             {'Type': 'bind', 'Destination': '/run/aws-access', 'RW': False}])
         with TemporaryDirectory() as tmp, patch.object(sandbox, 'inspect', return_value=mounted), \
-                patch.object(sandbox, 'build') as build, patch.object(sandbox, 'run') as run, \
+                patch.object(sandbox, 'build') as build, patch.object(aws_access, 'build') as prepare, patch.object(sandbox, 'run') as run, \
                 patch.object(aws_access, 'up') as signer, patch.object(aws_access, 'down') as disconnect:
             state = Path(tmp)
             sandbox.apply_aws_settings(config, state, self.value, approval='ready')
@@ -103,6 +105,7 @@ class AWSAccessTests(unittest.TestCase):
             sandbox.apply_aws_settings(enabled, state, {}, approval='ready')
             signer.assert_called_once_with(enabled, state)
             disconnect.assert_called_once_with(enabled)
+            prepare.assert_called_once()
             build.assert_not_called()
             run.assert_not_called()
 
@@ -111,7 +114,7 @@ class AWSAccessTests(unittest.TestCase):
         mounted = dict(Id='prepared', State={'Running': True}, Mounts=[
             {'Type': 'bind', 'Destination': '/run/aws-access', 'RW': False}])
         with TemporaryDirectory() as tmp, patch.object(sandbox, 'inspect', return_value=mounted), \
-                patch.object(sandbox, 'restart_existing') as restart, \
+                patch.object(sandbox, 'restart_existing') as restart, patch.object(aws_access, 'build'), \
                 patch.object(aws_access, 'up', side_effect=ValueError('Sign in again')):
             state = Path(tmp)
             (state / 'allowlist.txt').write_text('')

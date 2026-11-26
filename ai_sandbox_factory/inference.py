@@ -185,7 +185,7 @@ def enabled(config):
     return bool(routes(config))
 
 
-def image():
+def local_image():
     from . import sandbox
     source = sandbox.ROOT / 'containers/inference'
     digest = hashlib.sha256(b''.join((source / f).read_bytes() for f in
@@ -193,16 +193,22 @@ def image():
     return 'localhost/pi-sandbox-factory-inference:' + digest
 
 
-def build(config):
-    if not enabled(config):
+def image(config=None):
+    from . import image_sources
+    return image_sources.reference(config or {}, 'inference', local_image())
+
+
+def build(config, *, required=False):
+    if not required and not enabled(config):
         return
-    from . import sandbox
-    tag = image()
-    if subprocess.run([config['engine'], 'image', 'inspect', tag], capture_output=True).returncode:
-        result = subprocess.run([config['engine'], 'build', '-t', tag,
-            str(sandbox.ROOT / 'containers/inference')], capture_output=True, text=True)
-        if result.returncode:
-            raise ValueError('Could not build the inference service. Check registry access and retry.')
+    from . import sandbox, image_sources
+    tag = local_image()
+    def build_local():
+        if not sandbox.run([config['engine'], 'image', 'inspect', tag], capture=True, check=False,
+                           stderr=subprocess.PIPE).returncode:
+            return
+        sandbox.run([config['engine'], 'build', '-t', tag, sandbox.ROOT / 'containers/inference'])
+    image_sources.ensure(config, 'inference', tag, build_local)
 
 
 def check_ownership(config):
@@ -226,10 +232,11 @@ def up(config, state):
     volume(socket)
     if not enabled(config):
         return
-    build(config)
+    from . import image_sources
+    runtime_image = image_sources.runtime(config, 'inference', local_image(), build)
     # Validate with the same parser used by the service before replacing a working route.
     validation = subprocess.run([config['engine'], 'run', '--rm', '-i', '--network=none',
-        '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', image(),
+        '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', runtime_image,
         'node', '--input-type=module', '-e',
         "import {compileRoutes} from '/app/broker.mjs';let text='';for await(const chunk of process.stdin)text+=chunk;try{compileRoutes(JSON.parse(text));}catch{process.exitCode=1;}"],
         input=json.dumps(routes(config)), text=True, capture_output=True)
@@ -241,7 +248,7 @@ def up(config, state):
     write_json(target / 'routes.json', routes(config))
     # Routes contain no keys and are readable by the mapped container user.
     (target / 'routes.json').chmod(0o644)
-    identity = hashlib.sha256((json.dumps(routes(config), sort_keys=True) + image()).encode()).hexdigest()
+    identity = hashlib.sha256((json.dumps(routes(config), sort_keys=True) + runtime_image).encode()).hexdigest()
     existing = sandbox.inspect(config, worker)
     if existing and existing.get('Config',{}).get('Labels',{}).get('io.pi-sandbox-factory.inference') != identity:
         subprocess.run([config['engine'], 'rm', '-f', worker], check=True, capture_output=True)
@@ -258,7 +265,7 @@ def up(config, state):
             args += ['--userns=keep-id:uid=1000,gid=1000']
         if config.get('local_model_ports'):
             args += ['-v', sandbox.names(config)[2] + ':/run/egress:ro,z']
-        subprocess.run(args + [image()], check=True, capture_output=True)
+        subprocess.run(args + [runtime_image], check=True, capture_output=True)
     for _ in range(80):
         result = subprocess.run([config['engine'], 'exec', worker, 'node', '-e',
             "const http=require('http');const r=http.get({socketPath:'/run/inference/proxy.sock',path:'/'},s=>{s.resume();s.on('end',()=>process.exit(s.statusCode===404?0:1));});r.on('error',()=>process.exit(1));r.setTimeout(1000,()=>process.exit(1));"], capture_output=True)

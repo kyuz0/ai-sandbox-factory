@@ -129,14 +129,20 @@ class ProviderCredentialsTests(unittest.TestCase):
                     if args[0] == 'create':
                         for flag in ('--providers-file', '--options-file', '--folders-file'):
                             self.assertNotIn('synthetic-secret', Path(args[args.index(flag) + 1]).read_text())
-                def provider(name, provider, action, key, log):
+                        state = Path(tmp) / 'demo'
+                        state.mkdir()
+                        (state / 'config.json').write_text(json.dumps(self.config()))
+                def provider(config, state, action, provider, key, *, log):
                     self.assertEqual(calls[-1], 'up')
-                    self.assertEqual((name, provider, action, key), ('demo', 'company', 'refresh', 'synthetic-secret'))
+                    self.assertEqual((config['name'], provider, action, key), ('demo', 'company', 'refresh', 'synthetic-secret'))
                     calls.append('credential')
                 output = []
-                with patch.object(service, 'run', side_effect=run), patch.object(service, 'provider', side_effect=provider):
+                with patch.object(sandbox.operation_locks, 'private_runtime_dir', return_value=Path(tmp)), \
+                        patch.object(sandbox, 'inspect', return_value={'State': {'Running': True}}), \
+                        patch.object(service, 'run', side_effect=run), \
+                        patch.object(model_providers, 'configure', side_effect=provider):
                     service.create(draft, None, output.append)
-                self.assertEqual(calls, ['create', 'build', 'up', 'credential'] + ([] if open_editor else ['configure']))
+                self.assertEqual(calls, ['create', 'build', 'up', 'credential'])
                 self.assertNotIn('synthetic-secret', str(output))
                 for file in Path(tmp).rglob('*.json'):
                     self.assertNotIn('synthetic-secret', file.read_text())

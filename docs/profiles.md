@@ -28,6 +28,9 @@ The profile’s Dockerfile starts with `ARG BASE_IMAGE` and `FROM ${BASE_IMAGE}`
 The launcher supplies that image, then adds the selected browser support,
 providers and extra skills after building the profile.
 
+[Prebuilt image setup](image-builds.md) can supply the common Factory base.
+Custom profiles and their selected additions retain this build order.
+
 ## Install and update
 
 ```sh

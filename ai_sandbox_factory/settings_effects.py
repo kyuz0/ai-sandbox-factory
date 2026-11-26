@@ -1,4 +1,5 @@
 """User-facing effects of the settings update paths, without secret values."""
+from . import image_sources
 from .sandbox_options import options
 from .settings_catalog import CATEGORIES, NETWORK_LABEL, OPEN_LABELS, PI_FEATURES_LABEL, WEB_SEARCH_LABEL
 
@@ -58,6 +59,8 @@ def configuration_changes(original, draft):
     native = original.get('primary_agent', 'pi') != 'pi'
     groups = {'Browser' if native and key == 'browser' else title
               for key, title in OPTION_GROUPS.items() if before[key] != after[key]}
+    if image_sources.mode(original) != image_sources.mode(draft):
+        groups.add(image_sources.LABEL)
     for key, title in {'network': NETWORK_LABEL, 'memory': 'Memory limit',
                        'subagents': PI_FEATURES_LABEL,
                        'local_model_ports': 'Local model access', 'env_file': 'Environment file'}.items():

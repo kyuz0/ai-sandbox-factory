@@ -1,0 +1,12 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS unpack-editor
+USER root
+ARG EDITOR_VERSION
+COPY code-server.tar.gz /tmp/code-server.tar.gz
+RUN mkdir -p /opt/pi-browser-editor-${EDITOR_VERSION} \
+    && tar -xzf /tmp/code-server.tar.gz -C /opt/pi-browser-editor-${EDITOR_VERSION} --strip-components=1
+
+FROM ${BASE_IMAGE}
+ARG EDITOR_VERSION
+COPY --from=unpack-editor /opt/pi-browser-editor-${EDITOR_VERSION} /opt/pi-browser-editor-${EDITOR_VERSION}
+USER node

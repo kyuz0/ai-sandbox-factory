@@ -343,6 +343,7 @@ with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.ar
 
     def test_service_passes_only_selected_resources_and_keys_separately(self):
         draft = copy_draft({'name': 'source', 'config': self.config}, self.root)
+        self.assertEqual(draft['image_source'], 'local')
         draft.update(name='target', workspace=str(self.workspace), remove_skills=['example'], open_editor=False)
         service = Service(self.root)
         commands = []
@@ -355,10 +356,17 @@ with patch.object(operation_locks,'private_runtime_dir',return_value=Path(sys.ar
             service.create(draft, {'exa': 'synthetic-key'}, lambda _: None)
         self.assertIn('--reuse-from', commands[0])
         self.assertIn('--omit-skill', commands[0])
+        self.assertEqual(commands[0][commands[0].index('--image-source') + 1], 'local')
         self.assertNotIn('--env-file', commands[0])
         self.assertNotIn('--pi-config', commands[0])
         self.assertNotIn('synthetic-key', str(commands))
         self.assertEqual(setup.call_args.args[2], {'exa': 'synthetic-key'})
+
+    def test_copy_inherits_explicit_image_setup(self):
+        config = {**self.config, 'image_source': 'prebuilt'}
+        draft = copy_draft({'name': 'source', 'config': config}, self.root)
+        self.assertEqual(draft['image_source'], 'prebuilt')
+        self.assertEqual(copy_for_agent(draft, 'codex')['image_source'], 'prebuilt')
 
     def test_create_copies_multiple_library_skills_with_saved_selection(self):
         from ai_sandbox_factory import skill_library

@@ -1,7 +1,9 @@
 """Apply per-sandbox connector grants without replacing the workspace."""
 import getpass
+import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import activity, connectors, updating
@@ -175,23 +177,34 @@ def apply(config, state, changes, apply_gate):
     if updated is None:
         return
     old, new = config.get('connector_ids', []), updated['connector_ids']
-    prior = config.get('connector_operations', {})
     added = [i for i in new if i not in old]
     removed = [i for i in old if i not in new]
     workspace = sandbox.inspect(config, sandbox.names(config)[0])
+    # Keep the exact reviewed manifests off the live sandbox until Apply wins the gate.
+    manifests = {}
     if added:
         check_mount(config, state, workspace)
+        with tempfile.TemporaryDirectory(prefix='factory-connector-review-') as temporary:
+            capture(added, temporary, changes.get('expected_connector_routes'), changes.get('expected_connector_instructions'))
+            for plugin in connectors.saved({'connector_ids': added}, temporary):
+                connectors.permitted_routes(plugin, updated)
+                path = Path(temporary) / 'connector-manifests' / (plugin.id + '.json')
+                manifests[plugin.id] = json.loads(path.read_text())
+            connectors.require_tokens({'connector_ids': added}, temporary)
+    elif 'expected_connector_routes' in changes or 'expected_connector_instructions' in changes:
+        capture([], state, changes.get('expected_connector_routes'), changes.get('expected_connector_instructions'))
+    # A damaged snapshot must never prevent the user from revoking a connector.
+    retained = [i for i in old if i in new]
+    changed = [plugin.id for plugin in connectors.saved({'connector_ids': retained}, state)
+               if connectors.permitted_routes(plugin, config) != connectors.permitted_routes(plugin, updated)]
+    if added and not old:
+        updated['image_refs'] = dict(config.get('image_refs', {}))
+        connectors.build(updated)
     if not updating.begin_apply(apply_gate):
         return
     try:
-        capture(added, state, changes.get('expected_connector_routes'), changes.get('expected_connector_instructions'))
-        next_routes = operations(updated, state)
-        connectors.require_tokens({'connector_ids': added}, state)
-        # A damaged snapshot must never prevent the user from revoking a connector.
-        retained = [i for i in old if i in new]
-        changed = [i for i, routes in operations({**config, 'connector_ids': retained,
-            'connector_operations': {i: prior[i] for i in retained if i in prior}}, state).items()
-            if routes != next_routes[i]]
+        for identifier, manifest in manifests.items():
+            sandbox.write_json(Path(state) / 'connector-manifests' / (identifier + '.json'), manifest)
     except Exception:
         discard_snapshots(added, state)
         raise

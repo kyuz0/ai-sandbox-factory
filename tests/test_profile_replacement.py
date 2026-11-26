@@ -134,7 +134,7 @@ class ReplacementTests(unittest.TestCase):
                         sandbox.apply_settings(config,state,{'memory':'2g'})
                     elif action == 'recreate':
                         sandbox.sandbox_command(SimpleNamespace(command='recreate',profile=None,
-                            subagents=None,browser=None,apply_gate=None),state,None)
+                    subagents=None,browser=None,apply_gate=None,image_source=None),state,None)
                     elif action == 'policy':
                         sandbox.sandbox_command(SimpleNamespace(command='policy',network='unrestricted',
                             allowlist=None),state,None)

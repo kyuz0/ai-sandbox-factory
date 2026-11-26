@@ -145,6 +145,17 @@ def prepare(config, state):
     return tokens
 
 
+def build(config):
+    from .. import sandbox, image_sources
+    source = ROOT / 'companion'
+    local = 'localhost/pi-sandbox-factory-connector:' + sandbox.tree_digest(source)
+    def build_local():
+        if sandbox.run([config['engine'], 'image', 'inspect', local], capture=True, check=False,
+                       stderr=subprocess.PIPE).returncode:
+            sandbox.run([config['engine'], 'build', '-t', local, source])
+    return image_sources.ensure(config, 'connector', local, build_local)
+
+
 def up(config, state, *, prepared=None):
     from .. import sandbox
     plugins = saved(config, state)
@@ -163,9 +174,9 @@ def up(config, state, *, prepared=None):
                 tokens[plugin.id] = credential[1]
             else:
                 tokens[plugin.id] = _token(plugin)
-    if tokens and sandbox.run([engine, 'image', 'inspect', tag], capture=True, check=False,
-                   stderr=subprocess.DEVNULL).returncode:
-        sandbox.run([engine, 'build', '-t', tag, source])
+    if tokens:
+        from .. import image_sources
+        tag = image_sources.runtime(config, 'connector', tag, build)
     started = []
     try:
         for plugin in plugins:

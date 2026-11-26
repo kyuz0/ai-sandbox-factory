@@ -53,7 +53,7 @@ from .primary_workspace import AGENTS as PRIMARY_AGENTS, DEFAULT_AUTH, WEB_SEARC
 from .skills_ui import SkillLibrary, SkillSelection, saved_skills_summary
 from .prompt_ui import PromptChoice, PromptLibrary, SandboxPromptScreen
 from .reviewer_ui import ReviewerFields
-from . import settings_effects
+from . import image_sources, settings_effects
 from . import curlie_catalog
 from . import host_platform, registry, model_providers, updates, web_access, network_groups, communications
 from . import operation_locks
@@ -2793,6 +2793,7 @@ class SettingsForm(Screen):
         self.provider_key_choices = dict(draft.get('_provider_credential_choices', {}))
         self.local_key_choices = dict(draft.get('_local_model_keys', {}))
         self.setting = setting
+        self.set_class(setting == 'resources' or defaults, 'bounded-form')
         self.primary = coding_agent(draft)
         self.native = self.primary != 'pi'
         self.categories = primary_categories(self.primary) if self.native else CATEGORIES
@@ -2884,7 +2885,7 @@ class SettingsForm(Screen):
                 apply_label = 'Save defaults' if self.defaults_mode else 'Create and start sandbox'
                 if self.editing:
                     apply_label = ('Save' if self.setting == 'primary-approvals' else
-                                   'Apply' if self.setting in ('approval-settings', 'network-settings') else 'Apply and recreate')
+                                   'Apply' if self.setting in ('approval-settings', 'network-settings', 'resources') else 'Apply and recreate')
                 yield Button(apply_label, id='apply', variant='primary')
         yield Footer()
 
@@ -3258,7 +3259,11 @@ class SettingsForm(Screen):
                              'Sign-ins stay in a separate container.', id='new-advisor-help')
 
     def compose_resources(self, category, value, selected):
-        with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
+        if self.setting == 'resources':
+            section = Vertical(id=category.section, classes='spaced-form-fields resource-fields')
+        else:
+            section = Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields')
+        with section:
             with Vertical(classes='setting'):
                 yield Label('Container engine')
                 yield Select([('Automatic — prefer rootless Podman', 'auto'), ('Podman', 'podman'), ('Docker', 'docker')],
@@ -3266,6 +3271,12 @@ class SettingsForm(Screen):
                 if self.editing:
                     yield Static('Create a separate sandbox to change the engine.' if self.native else
                                  'Create a separate sandbox to change its engine or seed directory.', classes='setting-help')
+            with Vertical(classes='setting'):
+                yield Label(image_sources.LABEL)
+                initial = image_sources.mode(value) if self.editing else value.get('image_source', image_sources.DEFAULT)
+                with Horizontal(classes='path-row'):
+                    yield Select(image_sources.CHOICES, value=initial, allow_blank=False, id='image-source')
+                    yield Button('More information…', id='image-source-information')
             with Vertical(classes='setting'):
                 yield Label('Memory limit · empty means no explicit limit')
                 yield Input(value.get('memory') or '', id='memory')
@@ -3293,15 +3304,18 @@ class SettingsForm(Screen):
             SYSTEM_PROMPT_LABEL + ' · ' + (value['name'] if value else NO_SYSTEM_PROMPT_ADD_ON))
 
     def on_mount(self):
+        if self.setting == 'resources':
+            self.resource_fields_changed()
         if self.native:
             self.update_curlie_download_notice()
             if self.setting == 'primary-approvals':
                 self.query_one('#open-editor').display = False
             if self.setting:
                 category = self.categories[self.setting]
-                section = self.query_one('#' + category.section, Collapsible)
-                section.collapsed = False
-                section.add_class('focused-setting')
+                section = self.query_one('#' + category.section)
+                if isinstance(section, Collapsible):
+                    section.collapsed = False
+                    section.add_class('focused-setting')
                 self.query_one('#' + category.focus).focus()
             elif can_copy_primary_sign_in(self.primary):
                 self.primary_auth_changed()
@@ -3437,6 +3451,23 @@ class SettingsForm(Screen):
         return (original['approval'] != self.query_one('#approval', Select).value
                 or original['inner_sandbox'] != self.query_one('#inner-sandbox', Checkbox).value
                 or original['protect_credentials'] != self.query_one('#protect-credentials', Checkbox).value)
+
+    def resource_replacement_needed(self):
+        memory = self.query_one('#memory', Input).value.strip()
+        env_file = self.query_one('#env-file', Input).value.strip()
+        return ((None if memory == 'none' else memory or None) != (self.draft.get('memory') or None)
+                or (env_file or None) != (self.draft.get('env_file') or None))
+
+    @on(Input.Changed, '#memory')
+    @on(Input.Changed, '#env-file')
+    def resource_fields_changed(self):
+        if self.setting == 'resources':
+            replace = self.resource_replacement_needed()
+            apply = self.query_one('#apply', Button)
+            apply.label = 'Apply and recreate' if replace else 'Apply'
+            apply.refresh(layout=True)
+            self.query_one('#open-editor').display = replace
+            self.query_one('.settings-actions').set_class(not replace, '-without-open-client')
 
     def approval_summary(self):
         mode = self.query_one('#approval', Select).value
@@ -3577,6 +3608,7 @@ class SettingsForm(Screen):
         if self.setting in (None, 'resources'):
             draft['memory'] = memory_limit(self.query_one('#memory', Input).value.strip())
             draft['engine'] = self.query_one('#engine', Select).value
+            draft['image_source'] = self.query_one('#image-source', Select).value
             draft['env_file'] = self.query_one('#env-file', Input).value.strip() or None
             sandbox.validate_env(draft['env_file'])
         if self.setting in (None, 'skills'):
@@ -3679,6 +3711,7 @@ class SettingsForm(Screen):
                 raise ValueError('Browser editor requires rootless Podman on Linux, WSL2 or macOS. Choose Pi CLI.')
         draft.update(network=self.query_one('#network', Select).value, memory=memory_limit(inp('memory')),
                      subagents=check('subagents'), options=options(selected), engine=self.query_one('#engine', Select).value,
+                     image_source=self.query_one('#image-source', Select).value,
                      env_file=inp('env-file') or None, pi_config=inp('pi-config') or None,
                      open_editor=check('open-editor'),
                      skill_repo='', skill_path='')
@@ -3711,7 +3744,7 @@ class SettingsForm(Screen):
 
     def configuration_unchanged(self, draft):
         original = self.draft
-        if draft.get('_curlie_list'):
+        if draft.get('_curlie_list') or image_sources.mode(draft) != image_sources.mode(original):
             return False
         for field in ('network', 'memory', 'subagents', 'local_model_ports', 'env_file'):
             if (draft.get(field) or None) != (original.get(field) or None):
@@ -3730,6 +3763,16 @@ class SettingsForm(Screen):
         event.stop()
         action = event.button.id
         try:
+            if action == 'image-source-information':
+                self.app.push_screen(FactoryUpdateDetails(image_sources.LABEL,
+                    'With prebuilt images selected, Factory downloads matching images when needed. '
+                    'If no matching image has been published, Factory builds that part locally. '
+                    'If a download or verification fails, you can retry or select Build images locally.\n\n'
+                    'When you build locally, your container engine can reuse cached layers. '
+                    'It may download base images and software packages.'
+                    + ('\n\nSaving this choice affects future builds. The sandbox keeps its current images.'
+                       if self.editing else '')))
+                return
             if action == 'profile-services-information':
                 self.app.push_screen(ProfileServicesHelp())
                 return
@@ -3756,6 +3799,17 @@ class SettingsForm(Screen):
                     return
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
+                if self.setting == 'resources' and not self.resource_replacement_needed():
+                    source = self.query_one('#image-source', Select).value
+                    if source == image_sources.mode(self.draft):
+                        self.notify('No changes to apply.')
+                        return
+                    app, name = self.app, self.draft['name']
+                    self.dismiss()
+                    app.start_task(name, 'Save image setup · ' + name, lambda log:
+                        app.service.update_settings(name, {'image_source': source}, log),
+                        success_message='Image setup saved for future builds.')
+                    return
                 if self.setting == 'primary-approvals':
                     mode = self.query_one('#native-approval', Select).value
                     if mode == options(self.draft.get('options'))['native_approval']:
@@ -3813,6 +3867,7 @@ class SettingsForm(Screen):
                 draft['_search_keys_changed'] = bool(key)
                 if self.defaults_mode:
                     saved = {k: draft[k] for k in DEFAULT_SETTINGS if k in draft}
+                    saved.update(env_file=draft['env_file'] or '', pi_config=draft['pi_config'] or '')
                     saved['editor'] = editor_settings.copy_choice(saved['editor'])
                     saved['profile'] = self.query_one('#default-profile', Select).value
                     saved['workspace_parent'] = self.query_one('#workspace-parent', Input).value.strip()
@@ -4086,7 +4141,7 @@ class Cockpit(App):
     .package-actions Button:last-child { margin: 0; }
     #package-error { color: #ef9a91; text-style: bold; height: auto; }
     Screen:nocolor #package-error { color: white; text-style: bold reverse; }
-    .setting, .default-profile-setting { height: auto; }
+    .setting, .default-profile-setting, .resource-fields { height: auto; }
     .setting { margin-bottom: 1; }
     .bounded-form > .form, .bounded-form > .wizard-actions,
     .native-primary-form > .form, .native-primary-form > .wizard-actions,
@@ -4171,6 +4226,7 @@ class Cockpit(App):
     .buttons { height: 1; min-height: 1; margin: 1 0; }
     .wizard-actions { dock: bottom; height: 3; padding: 1 3; margin-bottom: 1; width: 100%; }
     .settings-actions { height: 5; padding: 1 3; }
+    .settings-actions.-without-open-client { height: 3; }
     .settings-actions.-with-curlie-notice { height: auto; }
     #curlie-download-notice { margin: 0 0 1 0; }
     .action-buttons { height: 1; }
@@ -4193,7 +4249,9 @@ class Cockpit(App):
     NewSandbox > .form, NewSandbox > .wizard-actions { max-width: 80; }
     .compact-terminal NewSandbox > #new-title { padding: 0 3; }
     NewSandbox #primary-agent { max-width: 32; }
-    SettingsForm #primary-auth, SettingsForm #native-approval { max-width: 40; }
+    SettingsForm #primary-auth, SettingsForm #native-approval, SettingsForm #engine { max-width: 40; }
+    SettingsForm #image-source { width: 26; margin: 0; }
+    SettingsForm #memory { max-width: 12; }
     NewSandbox #profile, NewSandbox #name, NewSandbox #profile-setting .profile-guide-row { max-width: 52; }
     NewSandbox #profile { margin: 1 0 0 0; }
     NewSandbox #sandbox-name-setting { margin: 0; }
@@ -4341,7 +4399,8 @@ class Cockpit(App):
     }
     Select.toolbar-control:focus > SelectCurrent > #label,
     Select.toolbar-control:focus > SelectCurrent > .arrow { color: #17191b; }
-    ConnectorFields .connector-row Button:focus { color: #171a1d; background: #d4e0e7; text-style: bold underline; }
+    #image-source-information:focus, ConnectorFields .connector-row Button:focus { color: #171a1d; background: #d4e0e7; text-style: bold underline; }
+    Screen:nocolor #image-source-information:focus,
     Screen:nocolor ConnectorFields .connector-row Button:focus,
     CreateSSHDialog:nocolor .dialog-actions Button:focus { color: black; background: white; text-style: bold underline; }
     Screen:nocolor Button.toolbar-control:focus,
@@ -5155,7 +5214,8 @@ class Cockpit(App):
             raise ValueError('Repair the saved configuration before editing it.')
         profile = config.get('profile', {})
         value = {**DEFAULT_SETTINGS, **config, 'profile': profile['path'] if saved_profile_only(config) else profile.get('registry_name', profile.get('name', 'base')),
-                 'options': options(config.get('options')), 'local_model_ports': config.get('local_model_ports')}
+                 'options': options(config.get('options')), 'local_model_ports': config.get('local_model_ports'),
+                 'image_source': image_sources.mode(config)}
         if 'model_providers' not in config and value['local_model_ports']:
             value['model_providers'] = {'local': {}}
         if value['profile'] not in profile_titles():

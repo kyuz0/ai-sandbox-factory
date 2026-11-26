@@ -4,6 +4,7 @@ recursive-include ai_sandbox_factory/profiles *
 recursive-include ai_sandbox_factory/providers *
 recursive-include ai_sandbox_factory/checks *
 recursive-include ai_sandbox_factory/network-catalog *
+include ai_sandbox_factory/images.lock.json
 global-exclude __pycache__ *.py[cod]
 
 prune ai_sandbox_factory/containers/inference/node_modules

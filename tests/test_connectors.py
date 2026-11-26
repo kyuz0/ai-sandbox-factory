@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import socket
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -108,12 +109,15 @@ class DiscoveryTests(unittest.TestCase):
         self.config['connector_operations'] = {'status': ['summary']}
         connectors.snapshot(['status'], self.state)
         plugin = connectors.saved(self.config, self.state)[0]
+        def engine(args, **kwargs):
+            if args[1:3] == ['image', 'inspect']:
+                return subprocess.CompletedProcess(args, 0, '[{"Id":"fixture-image-id"}]', '')
+            return subprocess.CompletedProcess(args, 0, 'worker-id', '')
         with (patch('ai_sandbox_factory.provider_credentials.os_store') as store,
               patch('ai_sandbox_factory.sandbox.inspect', return_value=None),
-              patch('ai_sandbox_factory.sandbox.run') as run,
+              patch('ai_sandbox_factory.sandbox.run', side_effect=engine) as run,
               patch('subprocess.run') as deliver):
             store.return_value.get_password.return_value = 'private-token'
-            run.return_value.stdout = 'worker-id'
             deliver.return_value.returncode = 0
             connectors.up(self.config, self.state)
             args = run.call_args.args[0]

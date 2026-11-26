@@ -26,7 +26,9 @@ class ConnectorSettingsTests(unittest.TestCase):
         self.store = self.enterContext(patch('ai_sandbox_factory.provider_credentials.os_store')).return_value
         self.store.get_password.return_value = 'fixture-token'
         self.inspect = self.enterContext(patch.object(sandbox, 'inspect', return_value=None))
+        self.enterContext(patch('ai_sandbox_factory.creation.resource_conflicts'))
         self.probe = self.enterContext(patch.object(connector_settings, 'check_sockets'))
+        self.build = self.enterContext(patch.object(connectors, 'build'))
         self.start = self.enterContext(patch.object(connectors, 'up'))
         self.stop = self.enterContext(patch.object(connectors, 'down'))
         self.configure = self.enterContext(patch.object(connectors, 'configure_running'))

@@ -9,7 +9,7 @@ import sys
 import tempfile
 import threading
 
-from . import (aws_access, connector_settings, creation, editor_settings, folders, host_platform,
+from . import (aws_access, connector_settings, creation, editor_settings, folders, host_platform, image_sources,
                operations, operation_locks, primary_workspace, profile_spec,
                sandbox, sandbox_advisors, sandbox_ssh, updating, web_access)
 from .cli_support import emit, read_json, redact, remember_secret, silence_closed_stream
@@ -22,7 +22,7 @@ REQUEST_FIELDS = {'profile', 'workspace', 'primary_agent', 'primary_auth', 'netw
                   'local_model_ports', 'ssh', 'aws_access', 'advisors', 'library_skills',
                   'skill_repo', 'skill_path', 'system_prompt', 'connectors', 'allowlist',
                   'subagents', 'env_file', 'pi_config', 'hosted_connections', 'credential_refs', 'engine',
-                  'advisor_imports'}
+                  'advisor_imports', 'image_source'}
 SECRET_FIELDS = {'provider_keys', 'provider_credentials', 'local_model_keys', 'hosted',
                  'communication_keys', 'web_keys'}
 
@@ -230,6 +230,7 @@ def complete_draft(value, args):
 
 
 def validate_draft(draft, state_root=None):
+    image_sources.choice(draft['image_source'])
     if draft['network'] not in ('allowlist', 'unrestricted'):
         raise ValueError(f'Unknown network mode {draft["network"]!r}. Choose allowlist or unrestricted.')
     memory_limit(draft.get('memory'))
@@ -284,7 +285,8 @@ def from_arguments(args):
     for field, flag in (('workspace','--workspace'),('profile','--profile'),('primary_agent','--primary-agent'),
                         ('primary_auth','--primary-auth'),('network','--network'),('memory','--memory'),
                         ('working_directory','--working-directory'),('local_model_ports','--local-model-ports'),
-                        ('env_file','--env-file'),('pi_config','--pi-config'),('skill_path','--skill-path')):
+                        ('env_file','--env-file'),('pi_config','--pi-config'),('skill_path','--skill-path'),
+                        ('image_source','--image-source')):
         choose(field, flag)
     if args.engine != 'auto' or '--engine' in supplied:
         value['engine'] = args.engine
@@ -454,7 +456,7 @@ def supervise(args):
     command = [args.command, args.name]
     for field, flag in (('settings_file','--settings-file'),('profile','--profile'),('directory','--directory'),
                         ('revision','--revision'),('saved','--saved'),('volume','--volume'),
-                        ('output','--output'),('service','--service')):
+                        ('output','--output'),('service','--service'),('image_source','--image-source')):
         value = getattr(args, field, None)
         if value is not None:
             command += [flag, str(value)]

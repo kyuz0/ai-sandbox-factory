@@ -127,14 +127,8 @@ def build(config, target):
     for skill in config.get('extra_skills', []):
         if sandbox.tree_digest(Path(skill['path'])) != skill['digest']:
             raise ValueError('Additional skill snapshot was modified; add its remote source again')
-    if not sandbox.run([engine, 'image', 'inspect', target], capture=True, check=False,
-                       stderr=subprocess.DEVNULL).returncode:
-        return
-    worker = sandbox.stage_image(target, '-base')
-    sandbox.run([engine, 'build', '-t', worker, '--build-arg', f'USER_UID={config["uid"]}',
-                 '--build-arg', f'USER_GID={config["gid"]}',
-                 '--build-context', f'primary-files={sandbox.ROOT / "containers/primary"}',
-                 '--build-context', f'primary-dev={common}', root])
+    from . import image_builds
+    worker = image_builds.native_common(config, sandbox.stage_image(target, '-base'))
     if config.get('profile'):
         profile_image = sandbox.stage_image(target, '-profile')
         sandbox.run([engine, 'build', '-t', profile_image, '--build-arg', f'BASE_IMAGE={worker}',

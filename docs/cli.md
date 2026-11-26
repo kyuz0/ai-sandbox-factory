@@ -40,6 +40,11 @@ when the agent asks you to sign in. The agent's own sign-in may need a browser.
 | `delete dev` | Removes the containers, private home, saved chats and application data. The host workspace is kept. |
 
 `--open`, `--secrets-stdin` and `--replace-conflicts` require `--start`.
+
+Use `--image-source prebuilt` or `--image-source local` to choose image setup.
+`build` and `recreate` accept the same flag as a one-operation override.
+[Prebuilt images and local builds](image-builds.md)
+
 Before deleting, export chats with `chat export` and back up databases with their
 own tools. `service-data-export` exports data retained from earlier profile
 changes. [Saved service data](profiles.md#find-export-or-restore-previous-service-data)

@@ -57,6 +57,46 @@ rendered images, including checked and unchecked controls and the error dialog.
 
 ## Package installation
 
+### Image preparation
+
+Run the image-selection, publication, creation and interface regression suites:
+
+```sh
+PYTHONPATH=tests .venv/bin/python -m unittest test_image_sources test_factory_image_publication test_creation_ready_providers test_image_setup_ui test_cli_contracts
+```
+
+The real Podman fixture serves digest-addressed images from a loopback registry
+to a private package copy. It exercises the actual creation worker, provider
+failure/rollback/retry, SSH and inference companions, Browser selection and an
+authenticated editor opening. Add `--profiles` for the existing editable-profile
+service lifecycle, including replacement, removal and rollback:
+
+```sh
+PYTHONPATH=tests:. .venv/bin/python tests/prebuilt_images_integration.py \
+  --output /tmp/factory-prebuilt-check --profiles --recovery
+```
+
+Add `--interfaces` to check local CLI creation, a one-shot prebuilt override and
+the first Start after saving a configuration. Add `--sharing` to exercise shared
+editable profiles and copies between Pi and Codex.
+
+To test published candidates, download the workflow's `candidate-image-index`
+artifact and pass `--candidate-index /path/to/images.lock.json` with a new output
+folder. This uses the registry digests in a private package copy; the release
+image list stays unchanged. Pull cancellation uses the loopback fixture instead.
+
+The fixture deletes its sandboxes and private volumes. Its output folder keeps
+logs, exported test images and package fixtures for inspection. Remove that folder
+afterward. Image build caches remain in the engine; remove only disposable test
+images when reclaiming them. The test gives Podman a private registry configuration
+for its loopback HTTP fixture. No host registry settings are changed, and no Docker
+Hub publication or account credentials are needed.
+
+Render `image-setup-create`, `image-setup-defaults`, `image-setup-pi`,
+`image-setup-choices-pi`, `image-setup-help-pi`, `image-setup-dismissed-pi` and
+`image-setup-mixed-pi` with `tests/render_tui.py`; repeat the agent-specific cases
+for Codex. Inspect 80×24, 120×40 and 220×50, including monochrome.
+
 ### Live APT in a sandbox
 
 These checks use disposable rootless Podman sandboxes and download from Debian.
@@ -1569,7 +1609,7 @@ Do not modify production repository policies for testing.
 Run `./.venv/bin/python tests/render_tui.py /tmp/factory-ui` to capture offline
 fixtures at 80×24, 120×40 and 220×50. Open the SVGs in a browser; `coverage.json`
 lists each screen and state. The fixtures include expanded settings, populated
-fields and errors. Review every image with Claude Opus before committing UI changes,
+fields and errors. Visually review every changed screen before committing UI changes,
 using the layout rules in `AGENTS.md`. The renderer checks that each visible text
 input has one row of usable text, aligns with its label with one blank row between
 them, and lines up with any button beside it. Re-render corrected views; passing tests alone

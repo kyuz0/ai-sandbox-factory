@@ -138,6 +138,59 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('image-setup-') for name in args.only):
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='demo', workspace=str(workspace))
+                    for context in ('create', 'defaults'):
+                        page = SettingsForm(copy.deepcopy(draft), defaults=context == 'defaults')
+                        await app.push_screen(page)
+                        await shot('image-setup-' + context, section='#resources-section', focus='#image-source')
+                        if 'image-setup-' + context in args.only:
+                            form = page.query_one('.form')
+                            assert form.region.width == min(100, size[0])
+                            assert page.query_one('.wizard-actions').region.width == form.region.width
+                            assert page.query_one('#apply').region.right == form.content_region.right
+                        await app.pop_screen()
+                    for agent in ('pi', 'codex'):
+                        record['config']['primary_agent'] = agent
+                        app.receive_inventory([record])
+                        await pilot.pause()
+                        assert await pilot.click('#settings')
+                        menu = app.screen
+                        actions = menu.query_one('#settings-actions', OptionList)
+                        actions.focus()
+                        actions.highlighted = next(i for i, action in enumerate(menu.actions) if action[1] == 'resources')
+                        await pilot.press('enter')
+                        page = app.screen
+                        assert isinstance(page, SettingsForm) and page.setting == 'resources'
+                        await shot('image-setup-' + agent)
+                        field = page.query_one('#image-source', Select)
+                        field.expanded = True
+                        await shot('image-setup-choices-' + agent)
+                        field.expanded = False
+                        field.value = 'prebuilt'
+                        button = page.query_one('#image-source-information', Button)
+                        button.focus()
+                        await pilot.press('enter')
+                        await shot('image-setup-help-' + agent)
+                        await pilot.press('escape')
+                        await shot('image-setup-dismissed-' + agent)
+                        page.query_one('#memory', Input).value = '12g'
+                        await shot('image-setup-mixed-' + agent)
+                        page.query_one('.form').scroll_end(animate=False)
+                        await shot('image-setup-end-' + agent)
+                        if 'image-setup-error-' + agent in args.only:
+                            page.query_one('#env-file', Input).value = '/home/example/' + 'long-project/' * 9 + 'environment'
+                            page.query_one('#memory', Input).value = '8Gb'
+                            assert await pilot.click('#apply')
+                            await pilot.pause()
+                            feedback = page.query_one('#form-error')
+                            assert 'Memory must be a positive size' in str(feedback.render())
+                            form = page.query_one('.form')
+                            assert form.content_region.contains_region(feedback.region), (size, form.content_region, feedback.region)
+                            await shot('image-setup-error-' + agent)
+                        await app.pop_screen()
+                    return
                 if args.only and all(name.startswith('editor-clients-') for name in args.only):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='demo', workspace=str(workspace))

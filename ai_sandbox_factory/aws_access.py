@@ -129,9 +129,24 @@ def worker_name(config):
     return RESOURCE_PREFIX + config['name'] + '-aws'
 
 
-def image():
+def local_image():
     from . import sandbox
     return 'localhost/pi-sandbox-factory-aws:' + sandbox.tree_digest(sandbox.ROOT / 'containers/aws-access')
+
+
+def image(config=None):
+    from . import image_sources
+    return image_sources.reference(config or {}, 'aws', local_image())
+
+
+def build(config):
+    from . import sandbox, image_sources
+    local = local_image()
+    def build_local():
+        if sandbox.run([config['engine'], 'image', 'inspect', local], capture=True, check=False,
+                       stderr=subprocess.PIPE).returncode:
+            sandbox.run([config['engine'], 'build', '-t', local, sandbox.ROOT / 'containers/aws-access'])
+    return image_sources.ensure(config, 'aws', local, build_local)
 
 
 def down(config):
@@ -172,7 +187,7 @@ def up(config, state):
     value = {key: value[key] for key in ('profile', 'role', 'region', 'grants')}
     engine = config['engine']
     name = worker_name(config)
-    tag = image()
+    tag = image(config)
     identity = hashlib.sha256((tag + json.dumps(value, sort_keys=True)).encode()).hexdigest()
     directory = Path(state) / 'aws-access'
     filename = directory / (identity + '.json')
@@ -181,8 +196,8 @@ def up(config, state):
         ensure_renewal(engine, old['Id'], filename, config['name'], datetime.now(timezone.utc).isoformat())
         return
     creds = assume(config['name'], value)
-    if subprocess.run([engine, 'image', 'inspect', tag], capture_output=True).returncode:
-        sandbox.run([engine, 'build', '-t', tag, sandbox.ROOT / 'containers/aws-access'])
+    from . import image_sources
+    tag = image_sources.runtime(config, 'aws', local_image(), build)
     directory.mkdir(exist_ok=True, mode=0o700)
     socket_dir = directory / 'socket'
     socket_dir.mkdir(exist_ok=True, mode=0o755)

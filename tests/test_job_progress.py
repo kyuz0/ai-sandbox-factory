@@ -75,7 +75,7 @@ with Progress(['Build selected images']).stage('Build selected images'):
                     expected = ['Save sandbox configuration', 'Save connection and editor settings']
                     if reserved:
                         expected += ['Check sandbox resource ownership']
-                    expected += ['Build sandbox images', 'Start sandbox containers', 'Configure sandbox services',
+                    expected += ['Prepare sandbox images', 'Start sandbox containers', 'Configure sandbox services',
                                  'Import codex advisor sign-in', 'Import claude advisor sign-in']
                     self.assertEqual(events, [(i, len(expected), label) for i, label in enumerate(expected, 1)])
                 finally:
@@ -141,7 +141,7 @@ with Progress(['Build selected images']).stage('Build selected images'):
                 state = Path(tmp)
                 (state / 'config.json').write_text(json.dumps({'engine': 'podman', 'profile': {'path': tmp}}))
                 args = SimpleNamespace(command='recreate', profile=None, subagents=True if building else None,
-                                       browser=None, apply_gate=None)
+                                       browser=None, apply_gate=None, image_source=None)
                 events = []
                 channel = job_progress.Channel(lambda *event: events.append(event))
                 def executed(*args, **kwargs):
@@ -154,7 +154,7 @@ with Progress(['Build selected images']).stage('Build selected images'):
                          patch.object(sandbox.activity, 'save_config', side_effect=executed), \
                          patch.object(profile_replacement, 'apply', side_effect=executed):
                         sandbox.sandbox_command(args, state, None)
-                    expected = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + [
+                    expected = (['Prepare sandbox sources', 'Prepare sandbox images'] if building else []) + [
                         'Replace main agent sandbox']
                     self.assertEqual(events, [(i, len(expected), label) for i, label in enumerate(expected, 1)])
                 finally:

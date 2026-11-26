@@ -17,7 +17,19 @@ from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, preset
 from creation_provider import ADAPTER, KEY
 
 
-def exercise(agent, root):
+def assert_prebuilt_common(config, state):
+    applied = profile_runtime.applied(state)
+    assert applied, f'No applied profile record in {state}'
+    for record in (config, applied):
+        artifacts = {item['role']: item['reference'] for item in record['image_artifacts']}
+        refs = record['image_refs']
+        assert 'pi-common' in artifacts and '@sha256:' in artifacts['pi-common'], artifacts
+        assert refs.get('pi-common') == artifacts['pi-common'], refs
+        assert 'pi-stock' not in artifacts and 'pi-stock' not in refs, (artifacts, refs)
+    assert config['image_refs']['pi-common'] == applied['image_refs']['pi-common']
+
+
+def exercise(agent, root, *, require_prebuilt=False):
     service = Service(root / 'state')
     workspace = root / (agent + '-project')
     workspace.mkdir()
@@ -157,6 +169,8 @@ def exercise(agent, root):
             assert ids()==old_ids
             (destination/'Dockerfile').write_text(valid_dockerfile)
         apply(service.review_profile(name))
+        if require_prebuilt and agent == 'pi':
+            assert_prebuilt_common(config(), state)
         assert inside('sh','-c','command -v figlet').returncode == 0
         assert inside('cat','/home/node/profile-edit-marker').stdout == 'KEEP_PRIVATE_HOME'
         for resource, identifier in old_ids.items():
@@ -477,17 +491,19 @@ def exercise(agent, root):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--agent', choices=('pi','codex','claude','agy'), action='append')
+    parser.add_argument('--prebuilt-common', action='store_true',
+                        help='Require the edited Pi profile to use a prebuilt common base')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='factory-profile-edit-') as temporary:
         root=Path(temporary)
         provider=root/'provider'
         provider.mkdir()
-        (provider/'provider.json').write_bytes((sandbox.ROOT.parent/'examples/provider/provider.json').read_bytes())
+        (provider/'provider.json').write_bytes((Path(__file__).resolve().parents[1]/'examples/provider/provider.json').read_bytes())
         (provider/'adapter.mjs').write_text(ADAPTER)
         with patch.dict(os.environ,SANDBOX_REGISTRY_DIR=str(root/'library')):
             registry.add('provider','fixture',str(provider))
             for agent in args.agent or ('pi','codex','claude','agy'):
-                exercise(agent,root)
+                exercise(agent,root,require_prebuilt=args.prebuilt_common)
 
 
 if __name__ == '__main__':

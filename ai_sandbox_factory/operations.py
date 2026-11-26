@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import (activity, chat_history, editor_settings, host_platform, hosted_models,
+from . import (activity, chat_history, editor_settings, host_platform, hosted_models, image_sources,
                inference, model_providers, operation_locks, primary_workspace, profile_edit,
                provider_credentials, prompt_library, registry, runtime_context, sandbox, web_access)
 from .primary_workspace import DEFAULT_AUTH, agent as coding_agent
@@ -29,7 +29,7 @@ def installed_profile_title(name):
 
 
 DEFAULT_SETTINGS = {'profile': 'base', 'model_providers': {}, 'workspace_parent': '', 'network': 'allowlist',
-                    'engine': 'podman', 'memory': '8g', 'subagents': False, 'env_file': '',
+                    'engine': 'podman', 'image_source': image_sources.DEFAULT, 'memory': '8g', 'subagents': False, 'env_file': '',
                     'pi_config': '', 'skill_repo': '', 'skill_path': '', 'library_skills': [], 'open_editor': True,
                     'local_model_ports': None, 'options': DEFAULTS, 'editor': {**editor_settings.DEFAULTS, 'mode': editor_settings.default_mode()}}
 
@@ -81,6 +81,7 @@ def validate_defaults(value):
     result = copy.deepcopy(value)
     result['options'] = options(result['options'])
     result['editor'] = editor_settings.copy_choice(result['editor'])
+    result['image_source'] = image_sources.choice(result.get('image_source', DEFAULT_SETTINGS['image_source']))
     memory_limit(result['memory'])
     if result['network'] not in ('allowlist', 'unrestricted'):
         raise ValueError(f'Unknown network mode {result["network"]!r}. Choose allowlist or unrestricted.')
@@ -123,7 +124,7 @@ def copy_draft(record, state_root):
                   'model_providers', 'advisors', 'extra_skills', 'extra_folders'):
         if field in config:
             value[field] = copy.deepcopy(config[field])
-    value.update(primary_agent=coding_agent(config), primary_auth=DEFAULT_AUTH,
+    value.update(primary_agent=coding_agent(config), primary_auth=DEFAULT_AUTH, image_source=image_sources.mode(config),
                  profile=config['profile']['path'], options=options(config.get('options')),
                  name='', workspace=config['workspace'], workspace_parent=config['workspace'],
                  env_file='', pi_config='', working_directory='.',
@@ -215,13 +216,17 @@ class Service:
         with operation_locks.sandbox(name, 'start'):
             config = self.config(name)
             dev, proxy = sandbox.names(config)[:2]
-            required = [dev, proxy] if sandbox.network_mode(config) == 'allowlist' else [dev]
+            restricted = sandbox.network_mode(config) == 'allowlist'
+            required = [dev, proxy] if restricted else [dev]
             # Existing containers can resume even after their original image tags are removed.
             if any(sandbox.inspect(config, container) is None for container in required):
-                images = sandbox.image_names(config)
-                needed = images if sandbox.network_mode(config) == 'allowlist' else images[:1]
-                if any(subprocess.run([config['engine'], 'image', 'inspect', image],
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode for image in needed):
+                needs_build = 'image_refs' in config and 'workspace' not in config['image_refs']
+                if not needs_build:
+                    images = sandbox.image_names(config)
+                    needed = images if restricted else images[:1]
+                    needs_build = any(subprocess.run([config['engine'], 'image', 'inspect', image],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode for image in needed)
+                if needs_build:
                     self.run(['build', name], log)
             self.run(['up', name], log)
 
@@ -263,6 +268,8 @@ class Service:
         unknown = set(changes) - (sandbox.EDITABLE_SETTINGS | special)
         if unknown:
             raise ValueError('Unknown editable sandbox settings: ' + ', '.join(sorted(unknown)))
+        if 'image_source' in changes:
+            image_sources.choice(changes['image_source'])
         shortcuts = special - {'connector_ids', 'connector_operations'}
         requested = set(changes) & shortcuts
         if requested:
@@ -342,6 +349,11 @@ class Service:
             before, after = options(config.get('options')), candidate['options']
             if {key for key in after if after[key] != before[key]} == {'approval_model'}:
                 effect, notes = 'next-turn', ['Saves the approval model without replacing the main agent sandbox.']
+        if changes.keys() == {'image_source'}:
+            if changes['image_source'] == image_sources.mode(config):
+                effect, notes = 'none', ['Image setup is already set to this choice.']
+            else:
+                effect, notes = 'next-build', ['Saves image setup for future builds.']
         return {'name': name, 'changes': changes, 'runtime_effect': effect, 'notes': notes,
                 'validation': 'Settings format checked. Builds, credentials and live prerequisites are checked when applying.'}
 
@@ -440,7 +452,9 @@ class Service:
             selected = Path(temp) / 'options.json'
             write_json(selected, draft['options'])
             args = ['create', name, '--profile', draft['profile'], '--workspace', draft['workspace'],
-                    '--engine', draft['engine'], '--options-file', str(selected)]
+                    '--engine', draft['engine'], '--image-source',
+                    image_sources.choice(draft.get('image_source', DEFAULT_SETTINGS['image_source'])),
+                    '--options-file', str(selected)]
             if draft.get('_curlie_list'):
                 args += ['--curlie-list', draft['_curlie_list']]
             if coding_agent(draft) != 'pi':
@@ -523,7 +537,7 @@ class Service:
         labels = ['Save sandbox configuration', 'Save connection and editor settings']
         if creation_token:
             labels.append('Check sandbox resource ownership')
-        labels += ['Build sandbox images', 'Start sandbox containers', 'Configure sandbox services']
+        labels += ['Prepare sandbox images', 'Start sandbox containers', 'Configure sandbox services']
         labels += ['Save ' + hosted_models.PROVIDERS[value['provider']] + ' connection' for value in pending.values()]
         labels += ['Import ' + provider + ' advisor sign-in' for provider in imports]
         progress = Progress(labels)
@@ -533,12 +547,12 @@ class Service:
             from .creation import prepare_resources
             with progress.stage('Check sandbox resource ownership'):
                 prepare_resources(state, creation_token)
-        with progress.stage('Build sandbox images'):
+        with progress.stage('Prepare sandbox images'):
             self.run(['build', name], log)
         with progress.stage('Start sandbox containers'):
             self.run(['up', name], log)
         with progress.stage('Configure sandbox services'):
-            self.setup(name, draft, key, log)
+            self.setup(name, draft, key, log, runtime_ready=True)
         for value in pending.values():
             with progress.stage('Save ' + hosted_models.PROVIDERS[value['provider']] + ' connection'):
                 self.hosted_save(name, value)
@@ -644,18 +658,59 @@ class Service:
                                  + (detail or 'The credential command returned no diagnostic output.'))
             log('Slack credentials saved in the sandbox.')
 
-    def setup(self, name, draft, key, log):
+    def _assign_local_keys(self, config, choices, log):
+        for port, choice in choices.items():
+            provider_credentials.assign(config, self.state / config['name'], inference.local_route_id(port), **choice)
+        if choices:
+            log('Local server keys assigned.')
+
+    def _configure_created_providers(self, name, draft, log):
+        """Use the runtime whose startup just succeeded inside this creation job."""
+        keys = draft.get('_provider_keys', {})
+        choices = draft.get('_provider_credential_choices', {})
+        local_keys = draft.get('_local_model_keys', {})
+        discover = not draft['open_editor'] and (draft.get('local_model_ports') or draft.get('model_providers'))
+        if not (keys or choices or local_keys or discover):
+            return
+        with operation_locks.sandbox(name, 'configure providers for'):
+            config = self.pi_config(name)
+            state = self.state / name
+            workspace = sandbox.inspect(config, sandbox.names(config)[0])
+            if not workspace or not workspace['State']['Running']:
+                raise ValueError(f'Cannot configure providers for {name}: its newly started workspace is no longer running.')
+            self._assign_local_keys(config, local_keys, log)
+            # A saved-key choice takes precedence over an earlier supplied key.
+            refresh = {provider: key.strip() for provider, key in keys.items() if provider not in choices}
+            for provider, choice in choices.items():
+                _, plugin = self._assign_provider_key(name, config, provider, choice)
+                if plugin:
+                    refresh[plugin] = None
+                log('API key assigned. Subsequent requests use it.')
+            if discover:
+                selected = model_providers.selections(config)
+                if not selected:
+                    raise ValueError(f'No model provider is enabled for {name}. Select a provider before requesting discovery.')
+                for row in selected:
+                    refresh.setdefault(row['name'], None)
+            for provider, key in refresh.items():
+                try:
+                    model_providers.configure(config, state, 'refresh', provider, key, log=log)
+                except (ValueError, OSError, subprocess.SubprocessError) as error:
+                    cause = model_providers.diagnostic(str(error), key)
+                    raise ValueError(f'Could not refresh provider {provider} for {name}: {cause}') from None
+
+    def setup(self, name, draft, key, log, *, runtime_ready=False):
         if coding_agent(draft) != 'pi':
             return
-        if local_keys := draft.get('_local_model_keys'):
-            config = self.config(name)
-            for port, choice in local_keys.items():
-                provider_credentials.assign(config, self.state / name, inference.local_route_id(port), **choice)
-            log('Local server keys assigned.')
-        for provider, credential in draft.get('_provider_keys', {}).items():
-            self.provider(name, provider, 'refresh', credential, log)
-        for provider, choice in draft.get('_provider_credential_choices', {}).items():
-            self.assign_provider_key(name, provider, choice, log)
+        if runtime_ready:
+            self._configure_created_providers(name, draft, log)
+        else:
+            if local_keys := draft.get('_local_model_keys'):
+                self._assign_local_keys(self.config(name), local_keys, log)
+            for provider, credential in draft.get('_provider_keys', {}).items():
+                self.provider(name, provider, 'refresh', credential, log)
+            for provider, choice in draft.get('_provider_credential_choices', {}).items():
+                self.assign_provider_key(name, provider, choice, log)
         self.save_communication_keys(name, draft.get('_communication_keys'), log)
         if key:
             result = self.capture('web-key', name, '--keys-stdin', payload=json.dumps(key))
@@ -666,7 +721,7 @@ class Service:
                 raise ValueError(f'Cannot save Web Search credentials for {name} (exit {result.returncode}): '
                                  + (detail or 'The credential command returned no diagnostic output.'))
             log('Search API keys saved in the sandbox.')
-        if (draft.get('local_model_ports') or draft.get('model_providers')) and not draft['open_editor']:
+        if not runtime_ready and (draft.get('local_model_ports') or draft.get('model_providers')) and not draft['open_editor']:
             self.run(['configure', name], log)
     def provider(self, name, provider, action, key, log):
         args = ['configure', name, '--provider', provider]
@@ -705,15 +760,20 @@ class Service:
                 raise ValueError('Use Actions → Update sources and recreate… to enable local server keys.')
         return inference.credentials(config, self.state / name, {'status': True})
 
+    def _assign_provider_key(self, name, config, provider, choice):
+        local = bool(inference.routes(config).get(provider, {}).get('local'))
+        status = self.provider_key_status(name, local=local)
+        assignment = provider_credentials.assign(config, self.state / name, provider, **choice)
+        plugin = None
+        if provider not in status['configured'] and provider not in config.get('hosted_connections', {}):
+            plugin = 'local' if local else provider
+        return assignment, plugin
+
     def assign_provider_key(self, name, provider, choice, log):
-        with self.changing(name, 'assign a model key to', pi=True):
-            config = self.config(name)
-            state = self.state / name
-            local = bool(inference.routes(config).get(provider, {}).get('local'))
-            status = self.provider_key_status(name, local=local)
-            assignment = provider_credentials.assign(config, state, provider, **choice)
-            if provider not in status['configured'] and provider not in config.get('hosted_connections', {}):
-                self.provider(name, 'local' if local else provider, 'refresh', None, log)
+        with self.changing(name, 'assign a model key to', pi=True) as config:
+            assignment, plugin = self._assign_provider_key(name, config, provider, choice)
+            if plugin:
+                self.provider(name, plugin, 'refresh', None, log)
             log('API key assigned. Subsequent requests use it.')
             return assignment
 
@@ -727,6 +787,8 @@ class Service:
 
     def update(self, name, draft, key, log, update=None):
         changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
+        if 'image_source' in draft:
+            changes['image_source'] = image_sources.choice(draft['image_source'])
         changes['local_model_ports'] = draft.get('local_model_ports')
         changes['model_providers'] = draft.get('model_providers', {'local':{}})
         changes.update(skill_source=draft.get('skill_repo', ''), skill_path=draft.get('skill_path', ''),

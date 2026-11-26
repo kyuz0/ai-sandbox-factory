@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import (editor_settings, operations, primary_workspace, profile_services,
+from . import (editor_settings, image_sources, operations, primary_workspace, profile_services,
                prompt_library, registry, sandbox, session_transfer, skill_library, updates, web_access)
 from .cli_support import emit, read_json, read_secret, remember_secret
 from .sandbox_options import SANDBOX_NAME, SANDBOX_NAME_ERROR, options, write_json
@@ -175,6 +175,7 @@ def public_settings(config):
     fields = ('network', 'memory', 'subagents', 'env_file', 'working_directory', 'extra_folders',
               'ssh', 'advisors', 'local_model_ports', 'aws_access', 'connector_ids', 'connector_operations')
     value = {key: copy.deepcopy(config[key]) for key in fields if key in config}
+    value['image_source'] = image_sources.mode(config)
     value['options'] = options(config.get('options'))
     value['model_providers'] = {row['name']: row.get('settings', {}) for row in config.get('model_providers', [])}
     return value

@@ -36,7 +36,7 @@ CATEGORIES = {
     'skills': Category('Skills', 'skill-library-section', 'manage-skills'),
     'connectors': Category('Connectors', 'connectors-section'),
     'document-search': Category('Document search', 'document-search-section', 'configure-document-search'),
-    'resources': Category('Resources & environment', 'resources-section', 'memory'),
+    'resources': Category('Resources & environment', 'resources-section', 'image-source'),
 }
 
 EDIT_FORMS = {action: category for action, category in CATEGORIES.items() if category.focus}

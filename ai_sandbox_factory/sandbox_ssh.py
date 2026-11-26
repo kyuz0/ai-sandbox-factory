@@ -204,15 +204,18 @@ def names(config):
 
 
 def image(config):
-    from . import sandbox as core
-    return f'localhost/pi-sandbox-factory-ssh:{config["uid"]}-{config["gid"]}-{core.tree_digest(core.ROOT / "containers/ssh-access")}'
+    from . import sandbox as core, image_sources
+    local = f'localhost/pi-sandbox-factory-ssh:{config["uid"]}-{config["gid"]}-{core.tree_digest(core.ROOT / "containers/ssh-access")}'
+    return image_sources.reference(config, 'ssh', local)
 
 
-def build(config):
-    if not enabled(config): return
-    from . import sandbox as core
-    core.run([config['engine'],'build','-t',image(config),'--build-arg',f'USER_UID={config["uid"]}',
-              '--build-arg',f'USER_GID={config["gid"]}',core.ROOT/'containers/ssh-access'])
+def build(config, *, required=False):
+    if not required and not enabled(config): return
+    from . import sandbox as core, image_sources
+    local = f'localhost/pi-sandbox-factory-ssh:{config["uid"]}-{config["gid"]}-{core.tree_digest(core.ROOT / "containers/ssh-access")}'
+    image_sources.ensure(config, 'ssh', local, lambda: core.run([
+        config['engine'],'build','-t',local,'--build-arg',f'USER_UID={config["uid"]}',
+        '--build-arg',f'USER_GID={config["gid"]}',core.ROOT/'containers/ssh-access']))
 
 
 def check_ownership(config):

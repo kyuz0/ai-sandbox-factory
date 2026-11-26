@@ -14,7 +14,7 @@ from ai_sandbox_factory.creation import Creation
 from ai_sandbox_factory.sandbox_tui import DEFAULT_SETTINGS, Service, copy_draft, copy_for_agent, preset
 
 
-def main():
+def main(*, require_prebuilt=False):
     with tempfile.TemporaryDirectory(prefix='factory-sharing-') as temporary:
         root=Path(temporary)
         service=Service(root/'state')
@@ -50,6 +50,9 @@ def main():
                              model_providers={},local_model_ports=None,allowlist='',open_editor=False,primary_auth='login')
                 draft['options']['browser']=False
                 service.create(draft,None,log,cancellation=Creation())
+                if require_prebuilt:
+                    from profile_edit_integration import assert_prebuilt_common
+                    assert_prebuilt_common(service.config(source), service.state/source)
                 service.run(['profile-fork',source,'--directory',str(editable)],log)
                 configurations[source]=service.config(source)
                 applied=configurations[source]['profile']['digest']

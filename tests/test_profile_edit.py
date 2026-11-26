@@ -163,7 +163,7 @@ class EditTests(unittest.TestCase):
                     sandbox.write_json(state/'config.json',{**config,'recovered':'previous-runtime'})
                 with patch.object(profile_replacement,'recover_preparation',side_effect=recover) as recovery, \
                         patch.object(sandbox,action) as operation:
-                    sandbox.sandbox_command(SimpleNamespace(command=action),self.state,None)
+                    sandbox.sandbox_command(SimpleNamespace(command=action, image_source=None),self.state,None)
                 recovery.assert_called_once()
                 self.assertEqual(operation.call_args.args[0]['recovered'],'previous-runtime')
 

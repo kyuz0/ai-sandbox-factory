@@ -75,20 +75,28 @@ def source_path(config):
     return saved if (saved / 'extensions.lock.json').exists() else core.ROOT / 'containers/dev'
 
 
-def image(config):
+def local_image(config):
     from . import sandbox as core
     lock = sandbox_extensions.read_lock(source_path(config))['pi-advisor']
     digest = core.tree_digest(core.ROOT / 'containers/advisor') + hashlib.sha256(json.dumps(lock, sort_keys=True).encode()).hexdigest()[:12]
     return f'localhost/pi-sandbox-factory-advisor:{config["uid"]}-{config["gid"]}-{digest}'
 
 
-def build(config):
-    if not enabled(config):
+def image(config):
+    from . import image_sources
+    return image_sources.reference(config, 'advisor', local_image(config))
+
+
+def build(config, *, required=False):
+    if not required and not enabled(config):
         return
-    from . import sandbox as core
-    with sandbox_extensions.build_contexts(source_path(config), names=['pi-advisor']) as contexts:
-        core.run([config['engine'], 'build', '-t', image(config), *contexts, '-f', core.ROOT / 'containers/advisor/Dockerfile',
-                  '--build-arg', f'USER_UID={config["uid"]}', '--build-arg', f'USER_GID={config["gid"]}', core.ROOT / 'containers'])
+    from . import sandbox as core, image_sources
+    local = local_image(config)
+    def build_local():
+        with sandbox_extensions.build_contexts(source_path(config), names=['pi-advisor']) as contexts:
+            core.run([config['engine'], 'build', '-t', local, *contexts, '-f', core.ROOT / 'containers/advisor/Dockerfile',
+                      '--build-arg', f'USER_UID={config["uid"]}', '--build-arg', f'USER_GID={config["gid"]}', core.ROOT / 'containers'])
+    image_sources.ensure(config, 'advisor', local, build_local)
 
 
 def provider_config(settings):

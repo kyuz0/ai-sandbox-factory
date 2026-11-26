@@ -16,6 +16,41 @@ from test_cli_management import CliCase
 
 
 class CliContracts(CliCase):
+    def test_create_image_source_precedence(self):
+        self.ok('defaults', 'set', '--settings-file', self.file('defaults.json', {'image_source': 'local'}))
+        config = self.file('create.json', {'image_source': 'prebuilt'})
+        with patch.object(sandbox, 'choose_engine', return_value='podman'), \
+                patch.object(cli_lifecycle, 'start_creation') as start:
+            for arguments, expected in (
+                    ([], 'prebuilt'),
+                    (['--use-defaults'], 'local'),
+                    (['--use-defaults', '--config', config], 'prebuilt'),
+                    (['--config', config, '--image-source', 'local'], 'local'),
+                    (['--use-defaults', '--image-source', 'prebuilt'], 'prebuilt')):
+                with self.subTest(arguments=arguments):
+                    self.ok('create', 'demo', '--workspace', str(self.workspace), '--start', *arguments)
+                    self.assertEqual(start.call_args.args[1]['image_source'], expected)
+            start.reset_mock()
+            message = self.fails('create', 'demo', '--workspace', str(self.workspace), '--start',
+                                 '--config', self.file('bad.json', {'image_source': 'unknown-source'}))
+            for term in ('unknown-source', 'prebuilt', 'local'):
+                self.assertIn(term, message)
+            start.assert_not_called()
+
+    def test_recreate_passes_one_shot_image_source_and_show_reports_saved_preference(self):
+        state = self.sandbox()
+        with patch.object(operations.Service, 'run_update') as run:
+            self.ok('recreate', 'demo', '--image-source', 'prebuilt')
+            self.assertEqual(run.call_args.args[0], ['recreate', 'demo', '--image-source', 'prebuilt'])
+            self.ok('recreate', 'demo')
+            self.assertEqual(run.call_args.args[0], ['recreate', 'demo'])
+        for saved, expected in ((None, 'local'), ('prebuilt', 'prebuilt')):
+            if saved:
+                config = json.loads((state / 'config.json').read_text())
+                (state / 'config.json').write_text(json.dumps({**config, 'image_source': saved}))
+            settings, _ = self.json_ok('show', 'demo', '--section', 'settings')
+            self.assertEqual(settings['image_source'], expected)
+
     def test_public_lifecycle_commands_supervise_once_and_workers_execute_directly(self):
         commands = {
             'update': ['--settings-file', 'settings.json'],

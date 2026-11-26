@@ -43,7 +43,14 @@ class DocumentSearchTests(unittest.TestCase):
             stack.enter_context(patch.object(sandbox.sandbox_extensions, 'build_contexts', return_value=nullcontext([])))
             for module in (sandbox.sandbox_ssh, sandbox.inference, sandbox.sandbox_advisors, sandbox.sandbox_skills):
                 stack.enter_context(patch.object(module, 'build'))
-            run = stack.enter_context(patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0)))
+            missing_image = None
+            def engine(args, **kwargs):
+                if args[1:3] == ['image', 'inspect']:
+                    if args[3] == missing_image:
+                        return subprocess.CompletedProcess(args, 1, '', 'image not known')
+                    return subprocess.CompletedProcess(args, 0, '[{"Id":"fixture-image-id"}]', '')
+                return subprocess.CompletedProcess(args, 0, '', '')
+            run = stack.enter_context(patch.object(sandbox, 'run', side_effect=engine))
 
             sandbox.build(config)
             self.assertFalse(any(layer in call.args[0] for call in run.call_args_list))
@@ -57,10 +64,18 @@ class DocumentSearchTests(unittest.TestCase):
                              [['-f', recipe, layer]])
 
             config['options'] = {'knowledge_embedding': 'local'}
-            run.reset_mock()
-            sandbox.build(config)
-            self.assertTrue(any(call.args[0][1:3] == ['image', 'inspect'] for call in run.call_args_list))
-            self.assertFalse(any(layer in call.args[0] for call in run.call_args_list))
-            run.return_value = subprocess.CompletedProcess([], 1)
-            with self.assertRaisesRegex(ValueError, 'previously bundled embedding model is missing'):
-                sandbox.build(config)
+            original_image = sandbox.image_names({**config, 'image_refs': {}})[0]
+            stack.enter_context(patch.object(sandbox.image_sources, 'index', return_value={}))
+            stock = stack.enter_context(patch.object(sandbox.image_builds, 'stock_eligible'))
+            for source in ('local', 'prebuilt'):
+                with self.subTest(source=source):
+                    config['image_source'] = source
+                    run.reset_mock()
+                    missing_image = None
+                    sandbox.build(config)
+                    stock.assert_not_called()
+                    self.assertIn(['podman', 'image', 'inspect', original_image], [call.args[0] for call in run.call_args_list])
+                    self.assertFalse(any(layer in call.args[0] for call in run.call_args_list))
+                    missing_image = original_image
+                    with self.assertRaisesRegex(ValueError, 'previously bundled embedding model is missing'):
+                        sandbox.build(config)

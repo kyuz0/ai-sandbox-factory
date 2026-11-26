@@ -9,7 +9,7 @@ from . import sandbox_advisors
 from . import sandbox_ssh
 from . import inference, aws_access, primary_workspace, connectors, connector_settings
 from . import registry, model_providers, browser_viewer, folders, host_platform, updating, prompt_library
-from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit, service_data
+from . import editor_settings, operation_locks, system_packages, profile_runtime, profile_spec, profile_services, profile_edit, service_data, image_sources, image_builds
 from contextlib import contextmanager
 import errno
 import fcntl
@@ -34,7 +34,7 @@ from .sandbox_options import (MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, SANDBOX_NAME,
 
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
-EDITABLE_SETTINGS = frozenset({'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'})
+EDITABLE_SETTINGS = frozenset({'image_source', 'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'})
 PI_VERSION = '1.4.0'
 LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
@@ -345,8 +345,11 @@ def stage_image(image, suffix=''):
 
 
 def image_names(config):
+    proxy = image_sources.reference(config, 'gateway', 'localhost/pi-sandbox-factory-proxy:1')
+    if config.get('image_refs', {}).get('workspace'):
+        return config['image_refs']['workspace'], proxy
     if primary_workspace.agent(config) != 'pi':
-        return primary_workspace.image(config), 'localhost/pi-sandbox-factory-proxy:1'
+        return primary_workspace.image(config), proxy
     profile = selected_profile(config)
     suffix = ('-' + hashlib.sha256(json.dumps([s['digest'] for s in config['extra_skills']]).encode()).hexdigest()[:12]) if config.get('extra_skills') else ''
     if options(config.get('options'))['browser']:
@@ -363,7 +366,7 @@ def image_names(config):
     if 'model_providers' in config:
         suffix += '-models-' + model_providers.digest(config)
     return (stage_image(f'localhost/pi-sandbox-factory-dev:{profile["name"]}-{base_tag(config)}-{profile["digest"]}{suffix}'),
-            'localhost/pi-sandbox-factory-proxy:1')
+            proxy)
 
 
 def network_mode(config):
@@ -409,8 +412,16 @@ def image_graph(config):
 
 def build(config, state=None):
     with image_graph(config):
-        with profile_runtime.recording(config, state):
-            _build(config)
+        config['image_refs'] = {}
+        with image_sources.recording() as artifacts, profile_runtime.recording(config, state):
+            dev = _build(config)
+            if not isinstance(dev, str) or not dev:
+                raise ValueError('Image preparation returned no main agent image. Retry the build with the current Factory version.')
+            info = image_sources._inspect(config, dev)
+            if not info or not info.get('Id'):
+                raise ValueError(f'Cannot record the prepared main agent image {dev}: the engine returned no image ID. Retry the build.')
+            config['image_refs']['workspace'] = info['Id']
+            config['image_artifacts'] = list(artifacts.values())
 
 
 def _build(config):
@@ -419,12 +430,21 @@ def _build(config):
         if part in config and tree_digest(Path(config[part]['path'])) != config[part]['digest']:
             raise ValueError(f'The saved {part} sources were modified. Select the profile again before building.')
     profile_services.build(config)
+    if config.get('connector_ids'):
+        connectors.build(config)
     dev, proxy = image_names(config)
-    if primary_workspace.agent(config) != 'pi':
+    native = primary_workspace.agent(config) != 'pi'
+    knowledge_mode = options(config.get('options'))['knowledge_embedding']
+    # The old bundled embedding model can only be reused under its original image tag.
+    if image_sources.mode(config) == 'prebuilt' and (native or knowledge_mode != 'local'):
+        dev = stage_image(dev, '-prepared')
+    if native:
+        if config.get('aws_access'):
+            aws_access.build(config)
         with operation_locks.proxy_image(config['engine']):
-            run([config['engine'], 'build', '-t', proxy, ROOT / 'containers/proxy'])
+            image_builds.gateway(config)
         primary_workspace.build(config, dev)
-        return
+        return dev
     profile = selected_profile(config)
     if tree_digest(Path(profile['path'])) != profile['digest']:
         raise ValueError('Saved profile was modified; select its source again with recreate --profile')
@@ -434,9 +454,9 @@ def _build(config):
         if not entrypoint.is_file() or '/run/aws-access/request.sock' not in entrypoint.read_text():
             raise ValueError('Choose Actions → Update sources and recreate… before connecting AWS. '
                              'The saved sandbox runtime lacks the AWS CLI connection.')
+        aws_access.build(config)
     if tree_digest(Path(common['path'])) != common['digest']:
         raise ValueError('Saved common image inputs were modified; use recreate --profile to refresh them')
-    knowledge_mode = options(config.get('options'))['knowledge_embedding']
     knowledge = knowledge_mode != 'off'
     knowledge_dir = Path(common['path']) / 'local-knowledge'
     if knowledge_mode == 'endpoint' and not (knowledge_dir / 'Dockerfile.endpoint').is_file():
@@ -444,18 +464,14 @@ def _build(config):
     if knowledge_mode == 'local' and not (knowledge_dir / 'Dockerfile').is_file():
         raise ValueError('This version uses an embedding server for semantic search. Select keyword search '
                          'in Settings → Document search before updating sources, then configure your server.')
-    base = f'localhost/pi-sandbox-factory-base:{base_tag(config)}'
     engine = config['engine']
-    pi, *pendant = pendant_versions(config) or (PI_VERSION,)
-    build_args = ['--build-arg', f'USER_UID={config["uid"]}', '--build-arg', f'USER_GID={config["gid"]}',
-                  '--build-arg', f'PI_VERSION={pi}']
-    if pendant:
-        build_args += ['--build-arg', f'PENDANT_VERSION={pendant[0]}']
     with operation_locks.proxy_image(engine):
-        run([engine, 'build', '-t', proxy, ROOT / 'containers/proxy'])
-    with sandbox_extensions.build_contexts(common['path']) as contexts:
-        run([engine, 'build', '-t', base, *contexts, *build_args, common['path']])
-    if config.get('aws_access'):
+        image_builds.gateway(config)
+    stock = None
+    if knowledge_mode != 'local' and image_builds.stock_eligible(config):
+        stock = image_sources.ensure(config, 'pi-stock', None)
+    base = stock or image_builds.common(config)
+    if config.get('aws_access') and not stock:
         cli_base = stage_image(dev, '-aws-cli-base')
         run([engine, 'build', '-t', cli_base, '--build-arg', f'BASE_IMAGE={base}',
              ROOT / 'containers/aws-access/client'])
@@ -465,23 +481,26 @@ def _build(config):
     web = options(config.get('options'))['web_access']['enabled']
     channels = options(config.get('options'))['communications']['slack']
     tools = stage_image(dev, '-tools') if config.get('extra_skills') or browser or web or channels or knowledge or has_providers else dev
-    run([engine, 'build', '-t', tools, '--build-arg', f'BASE_IMAGE={base}', profile['path']])
-    if browser:
+    if stock:
+        tools = stock
+    else:
+        run([engine, 'build', '-t', tools, '--build-arg', f'BASE_IMAGE={base}', profile['path']])
+    if browser and not stock:
         target = stage_image(dev, '-browser') if config.get('extra_skills') or web or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'browser'])
         tools = target
-    if web:
+    if web and not stock:
         target = stage_image(dev, '-web') if config.get('extra_skills') or channels or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'web-access'])
         tools = target
-    if channels:
+    if channels and not stock:
         target = stage_image(dev, '-communications') if config.get('extra_skills') or knowledge or has_providers else dev
         run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
              Path(common['path']) / 'communications'])
         tools = target
-    if knowledge:
+    if knowledge and not stock:
         target = stage_image(dev, '-local-knowledge') if config.get('extra_skills') or has_providers else dev
         if knowledge_mode == 'endpoint':
             run([engine, 'build', '-t', target, '--build-arg', f'BASE_IMAGE={tools}',
@@ -491,14 +510,17 @@ def _build(config):
             raise ValueError('The previously bundled embedding model is missing. Choose keyword search '
                              'in Settings → Document search, then update sources to configure an embedding server.')
         tools = target
-    if has_providers:
+    if has_providers and (not stock or model_providers.selections(config)):
         target = stage_image(dev, '-models') if config.get('extra_skills') else dev
         model_providers.build(config, tools, target)
         tools = target
+    if stock and not config.get('extra_skills') and tools != dev:
+        run([engine, 'tag', tools, dev])
     sandbox_ssh.build(config)
     inference.build(config)
     sandbox_advisors.build(config)
     sandbox_skills.build(config, dev, SimpleNamespace(run=run, tree_digest=tree_digest), base_image=tools)
+    return dev
 
 
 def inspect(config, name):
@@ -1174,6 +1196,8 @@ def _create(args, state):
                   pi_config=str(shared) if shared else None, env_file=env_file, memory=memory_limit(args.memory),
                   network=mode, subagents=preset.get('subagents', False) if subagents is None else subagents,
                   primary_agent=selected, primary_auth=auth_method)
+    config['image_source'] = image_sources.choice(getattr(args, 'image_source', None) or image_sources.DEFAULT)
+    config['image_refs'] = {}
     if connection:
         config['podman_connection'] = connection
     config['working_directory'] = folders.working_directory(workspace, getattr(args, 'working_directory', '.'))
@@ -1467,6 +1491,9 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
         replace_for_aws(config, updated, state, effect, latest_containers)
         print('AWS access connected.' if effect == 'restart' else 'AWS access saved for the next start.')
         return
+    if value and not current:
+        updated['image_refs'] = dict(config.get('image_refs', {}))
+        aws_access.build(updated)
     if not updating.begin_apply(apply_gate):
         return
     running = containers.get(names(config)[0], {}).get('State', {}).get('Running')
@@ -1520,6 +1547,13 @@ def apply_settings(config, state, changes, *, apply_gate=None):
         print('No settings were supplied; nothing changed.')
         return
     config = primary_workspace.normalize(config)
+    if isinstance(changes, dict) and 'image_source' in changes:
+        changes = {**changes, 'image_source': image_sources.choice(changes['image_source'])}
+        if set(changes) == {'image_source'}:
+            if updating.begin_apply(apply_gate):
+                activity.save_config(state, {**config, **changes})
+                print('Image setup saved. It applies to future builds; running containers were unchanged.')
+            return
     native = primary_workspace.agent(config) != 'pi'
     search_keys = {key: agent for agent, key in primary_workspace.WEB_SEARCH_OPTIONS.items()}
     if isinstance(changes, dict) and len(changes) == 1 and next(iter(changes)) in search_keys:
@@ -1867,6 +1901,7 @@ def main(*, startup_notice=''):
                         help='Allow an exact hostname and port, whether it resolves publicly or privately; repeat as needed')
     new.add_argument('--env-file')
     new.add_argument('--engine', choices=['auto', 'podman', 'docker'], default='auto')
+    new.add_argument('--image-source', choices=['prebuilt', 'local'], help='Use tested prebuilt Factory images or build locally with the normal cache')
     new.add_argument('--memory', default=None, help='Optional memory limit, e.g. 8g; default: no explicit limit')
     new.add_argument('--skill', action='append', default=[], help='Skill library identifier; repeat to select several')
     new.add_argument('--skill-source', help='Additional skill Git repository URL')
@@ -1900,6 +1935,8 @@ def main(*, startup_notice=''):
     for command in ('service-data-list', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
+        if command in ('build', 'recreate'):
+            cmd.add_argument('--image-source', choices=['prebuilt', 'local'], help='Override image setup for this build only')
         if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
             cmd.add_argument('--json', action='store_true', help='Write the final result as JSON; progress goes to stderr')
@@ -2070,6 +2107,7 @@ def sandbox_command(args, state, parser):
         if args.start:
             config = json.loads((state / 'config.json').read_text())
             build(config, state)
+            activity.save_config(state, config)
             up(config, state)
             if not args.open and (config.get('local_model_ports') or config.get('model_providers')):
                 initialize_models(config, state)
@@ -2129,7 +2167,9 @@ def sandbox_command(args, state, parser):
         if not config.get('common'):
             config['common'] = snapshot_profile(common_profile(), state)
             activity.save_config(state, config)
-        build(config, state)
+        with image_sources.override(args.image_source):
+            build(config, state)
+        activity.save_config(state, config)
     elif args.command == 'ssh-import-key':
         sandbox_ssh.import_key(config, state, args.key_file, args.duration)
         activity.record(state, 'edited')
@@ -2177,15 +2217,17 @@ def sandbox_command(args, state, parser):
         original = json.loads(json.dumps(config))
         if native and args.subagents is not None:
             raise ValueError('Pi subagent settings apply to Pi sandboxes.')
-        building = (native or bool(config.get(profile_edit.EDIT)) or bool(config.get('profile', {}).get('customized_from'))
-                    or args.profile or args.subagents is not None or args.browser is not None)
-        labels = (['Prepare sandbox sources', 'Build sandbox images'] if building else []) + ['Replace main agent sandbox']
+        refresh_sources = (args.profile or args.subagents is not None or args.browser is not None
+                           or (args.image_source is None and
+                               (native or config.get(profile_edit.EDIT) or config.get('profile', {}).get('customized_from'))))
+        building = refresh_sources or args.image_source is not None
+        labels = (['Prepare sandbox sources'] if refresh_sources else []) + (['Prepare sandbox images'] if building else []) + ['Replace main agent sandbox']
         progress = Progress(labels)
         if args.subagents is not None:
             config['subagents'] = args.subagents
         if args.browser is not None:
             config['options'] = options({**config.get('options', {}), 'browser': args.browser})
-        if building:
+        if refresh_sources:
             with progress.stage('Prepare sandbox sources'):
                 profile = config.get('profile')
                 if args.profile or not profile:
@@ -2197,9 +2239,9 @@ def sandbox_command(args, state, parser):
                     updated['model_providers'] = model_providers.prepare({p['name']:p['settings'] for p in config['model_providers']}, state, saved=config['model_providers'], refresh=True)
                 config = updated
         profile_services.validate_update(original, config)
-        with image_graph(config):
+        with image_sources.override(args.image_source), image_graph(config):
             if building:
-                with progress.stage('Build sandbox images'):
+                with progress.stage('Prepare sandbox images'):
                     build(config, state)
             if not updating.begin_apply(args.apply_gate):
                 return

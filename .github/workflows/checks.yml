@@ -114,9 +114,9 @@ jobs:
       - name: Exercise background creation, rebuild and cancellation in the TUI
         shell: bash
         run: python tests/sandbox_jobs_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/jobs.log
-      - name: Require profile service replacement, removal and recovery
+      - name: Require prebuilt acquisition, pull cancellation, and profile recovery
         shell: bash
-        run: python tests/profile_edit_integration.py --agent pi 2>&1 | tee /tmp/factory-fresh-sandbox/profile-edit.log
+        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces 2>&1 | tee /tmp/factory-fresh-sandbox/prebuilt-images.log
       - name: Require immediate recovery from a failed profile commit
         shell: bash
         run: python tests/profile_commit_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/profile-commit.log

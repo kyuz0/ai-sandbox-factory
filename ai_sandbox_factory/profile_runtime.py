@@ -13,8 +13,12 @@ AUTHORING = PATH + '/authoring/README.md'
 
 
 def identity(config, image_id):
-    return hashlib.sha256(json.dumps([image_id, config['profile']['digest'],
-        config['common']['digest'], config.get('primary_agent', 'pi'), validator_digest()]).encode()).hexdigest()
+    values = [image_id, config['profile']['digest'], config['common']['digest'],
+              config.get('primary_agent', 'pi'), validator_digest()]
+    if config.get('image_refs') or config.get('image_artifacts'):
+        values.append({'refs': config.get('image_refs', {}),
+                       'artifacts': sorted(config.get('image_artifacts', []), key=lambda item: item['role'])})
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
 def validator_digest():
@@ -94,6 +98,14 @@ def recording(config, state):
             'profile_validator_digest': validation_revision,
             'base_recipe': 'base/Dockerfile' if agent == 'pi' else 'workspace/Dockerfile',
         }
+        metadata['image_artifacts'] = config.get('image_artifacts', [])
+        metadata['image_refs'] = config.get('image_refs', {})
+        if metadata['image_artifacts']:
+            from . import image_builds
+            preparation = target / 'image-preparation'
+            shutil.copytree(sandbox.ROOT / 'containers/prebuilt', preparation)
+            shutil.copyfile(Path(image_builds.__file__), preparation / 'image_builds.py')
+            metadata['image_preparation'] = 'image-preparation/'
         from . import profile_services
         saved = state / 'config.json'
         previous = json.loads(saved.read_text()) if saved.exists() else None

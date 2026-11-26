@@ -105,7 +105,7 @@ async def verify_creation(app, service, root, existing, name):
                 with sandbox.image_graph(service.config(existing)):
                     job = app.start_creation(CreationRequest(draft, {}, None, False))
                     await wait_for_build(pilot, job)
-                    assert 'Step ' in job.status and 'Build sandbox images' in job.status, job.status
+                    assert 'Step ' in job.status and 'Prepare sandbox images' in job.status, job.status
                     await pilot.press('escape')
                     assert app.screen is app.screen_stack[0]
                     table = app.query_one(SandboxTable)

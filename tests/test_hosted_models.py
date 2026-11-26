@@ -119,7 +119,7 @@ class HostedModelsTests(unittest.TestCase):
             config = {'name': 'fixture', 'engine': 'podman', 'network': 'unrestricted'}
             (state / 'config.json').write_text(json.dumps(config))
             service = Service(temp)
-            with patch.object(h, 'request', return_value={'configured': True}) as request, patch.object(inference,'up'), patch.object(inference,'down'), patch.object(inference,'credentials',return_value={}) as credentials:
+            with patch.object(h, 'request', return_value={'configured': True}) as request, patch.object(inference,'build'), patch.object(inference,'up'), patch.object(inference,'down'), patch.object(inference,'credentials',return_value={}) as credentials:
                 service.hosted_save('fixture', {'provider': 'openrouter', 'key': 'private-fixture'})
                 saved = service.config('fixture')
                 self.assertEqual(saved['hosted_connections'], {'openrouter': {}})

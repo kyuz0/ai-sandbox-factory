@@ -133,7 +133,7 @@ def build(config, base, target):
         )
 
 
-def configure(config, state, action="refresh", provider=None, secret=None):
+def configure(config, state, action="refresh", provider=None, secret=None, *, log=print):
     from . import sandbox
 
     rows = selections(config)
@@ -143,7 +143,7 @@ def configure(config, state, action="refresh", provider=None, secret=None):
         raise ValueError("No matching provider is enabled")
     for row in rows:
         if row["name"] == "local" and not config.get("local_model_ports"):
-            print(f"Select host model ports in {LOCAL_MODELS_PATH}.")
+            log(f"Select host model ports in {LOCAL_MODELS_PATH}.")
             continue
         request = {"id": row["name"], "action": action}
         route = row["manifest"].get("inference")
@@ -155,7 +155,7 @@ def configure(config, state, action="refresh", provider=None, secret=None):
                     'id':row['name'], 'origin':route['origin'], 'auth':route['auth']['type'],
                     'credentials':{'key':secret}})
             elif row['name'] not in inference.credentials(config, state, {'status': True})['configured']:
-                print(f"{row['name']}: needs-auth — Enter the provider credential in {MODEL_PROVIDERS_PATH}.")
+                log(f"{row['name']}: needs-auth — Enter the provider credential in {MODEL_PROVIDERS_PATH}.")
                 continue
         elif secret is not None:
             request["secret"] = secret
@@ -191,4 +191,4 @@ def configure(config, state, action="refresh", provider=None, secret=None):
         )
         if response.get("state") == "error":
             raise ValueError(message)
-        print(message)
+        log(diagnostic(message, secret))

@@ -123,6 +123,8 @@ def save(config, state, value):
     credentials = ({'accessKeyId':value['access_key'], 'secretAccessKey':value['secret_key'], 'sessionToken':value['session_token']}
                    if provider == 'amazon-bedrock' and value['method'] == 'iam' else {'key':value['key']})
     route = inference.routes(updated)[provider]
+    if not inference.enabled(config):
+        inference.build(updated)
     try:
         inference.up(updated, state)
         if choice:

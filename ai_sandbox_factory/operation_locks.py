@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from threading import local
+import time
 
 from .host_platform import private_runtime_dir
 
@@ -69,7 +70,7 @@ def in_use(name):
 
 
 @contextmanager
-def _lock(key, *, busy, wait=False):
+def _lock(key, *, busy, wait=False, cancelled=None):
     # Keep a stable inode outside state directories that Delete can remove.
     path = _path(key)
     with os.fdopen(os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), 'rb') as file:
@@ -79,7 +80,18 @@ def _lock(key, *, busy, wait=False):
             if not wait:
                 raise ValueError(busy) from None
             print(busy, flush=True)
-            fcntl.flock(file, fcntl.LOCK_EX)
+            if cancelled is None:
+                fcntl.flock(file, fcntl.LOCK_EX)
+            else:
+                from . import updating
+                while True:
+                    if cancelled():
+                        raise updating.UpdateCancelled()
+                    try:
+                        fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        time.sleep(0.1)
         yield file.fileno()
 
 
@@ -122,6 +134,13 @@ def image_graph(engine, key):
             yield
         finally:
             _held.image_key = None
+
+
+@contextmanager
+def image_artifact(engine, reference, cancelled=None):
+    with _lock(f'artifact:{engine}:{reference}', busy='Waiting for another image download to finish…',
+               wait=True, cancelled=cancelled):
+        yield
 
 
 def proxy_image(engine):

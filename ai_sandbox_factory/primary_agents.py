@@ -58,29 +58,39 @@ def describe(config):
     }
 
 
-def image(config):
+def local_image(config):
     from . import sandbox as core
     return f'localhost/pi-sandbox-factory-primary:{agent(config)}-{config["uid"]}-{config["gid"]}-{core.tree_digest(SOURCE)}'
+
+
+def image(config):
+    from . import image_sources
+    return image_sources.reference(config, 'controller-' + agent(config), local_image(config))
 
 
 def worker_context(config):
     args = ['--build-context', f'primary-files={SOURCE}']
     if agent(config) in ('codex', 'claude', 'agy'):
-        args += ['--build-context', f'primary-controller=docker-image://{image(config)}']
+        prepared = image(config)
+        source = prepared if '@sha256:' in prepared else local_image(config)
+        args += ['--build-context', f'primary-controller=docker-image://{source}']
     return args
 
 
 def build(config):
     if not enabled(config):
         return
-    from . import sandbox as core
-    tag = image(config)
+    from . import sandbox as core, image_sources
+    tag = f'localhost/pi-sandbox-factory-primary:{agent(config)}-{config["uid"]}-{config["gid"]}-{core.tree_digest(SOURCE)}'
     engine = config['engine']
-    if core.run([engine, 'image', 'inspect', tag], capture=True, check=False, stderr=subprocess.DEVNULL).returncode:
+    def build_local():
+        if not core.run([engine, 'image', 'inspect', tag], capture=True, check=False, stderr=subprocess.DEVNULL).returncode:
+            return
         core.run([engine, 'build', '-t', tag,
                   '--build-arg', f'AGENT={agent(config)}',
                   '--build-arg', f'USER_UID={config["uid"]}',
                   '--build-arg', f'USER_GID={config["gid"]}', SOURCE])
+    image_sources.ensure(config, 'controller-' + agent(config), tag, build_local)
 
 
 def volume(config, name):

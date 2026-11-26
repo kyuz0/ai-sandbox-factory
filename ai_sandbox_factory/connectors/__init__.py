@@ -189,4 +189,4 @@ def for_sandbox(config, state):
 
 SSH_GIT_LABEL = json.loads((BUILTIN_DIR / 'ssh/connector.json').read_text())['title']
 
-from .runtime import client_socket, configure_running, down, has_token, prepare, require_tokens, store_token, up, worker_name
+from .runtime import build, client_socket, configure_running, down, has_token, prepare, require_tokens, store_token, up, worker_name

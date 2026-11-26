@@ -44,6 +44,10 @@ continues to forward to the new application. [Migration details](docs/usage.md#u
 3. Open **Connectors** if your agent needs SSH, Git, AWS or an installed HTTPS service. Choose what this sandbox may use. You can make this choice later in **Settings → Connectors**. [Connector setup](docs/connectors.md)
 4. Choose **Create and start sandbox**. If you skipped model setup for Pi, choose **Open Model Providers** to configure it, or **Create without a model** to set it up later. Leave the option to open your agent checked if you want to begin working as soon as the sandbox is ready. If Pi asks you to choose a hosted model, select the model, choose **Use as default**, then **Continue**.
 
+**Resources & environment → Image setup** chooses between tested prebuilt
+Factory images and local builds. Custom profile additions are built locally.
+[Image setup](docs/image-builds.md)
+
 ![Built-in SSH and Git and AWS connectors in sandbox settings](docs/connectors.png)
 
 SSH & Git and AWS are built in. [Connectors](docs/connectors.md) explains how to configure them and install an HTTPS connector for another service.
