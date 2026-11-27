@@ -811,7 +811,7 @@ def create_gateway(config, state, rules):
         args += ['--add-host=host.docker.internal:host-gateway']
     if config.get('aws_access'):
         args += aws_access.client_mount(state)
-    run(base + args + [image_names(config)[1]])
+    run(base + image_sources.container_labels(config, 'gateway') + args + [image_names(config)[1]])
     ensure_gateway(config)
 
 
@@ -1550,8 +1550,7 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
         print('AWS access connected.' if effect == 'restart' else 'AWS access saved for the next start.')
         return
     if value and not current:
-        updated['image_refs'] = dict(config.get('image_refs', {}))
-        aws_access.build(updated)
+        image_sources.prepare_helper(updated, 'aws', aws_access.build)
     if not updating.begin_apply(apply_gate):
         return
     running = containers.get(names(config)[0], {}).get('State', {}).get('Running')
@@ -1596,6 +1595,9 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
         refresh_shell_network(config, state)
         connector_settings.refresh_agent_context(config, state)
         raise
+    if value and not current and running:
+        from . import container_updates
+        container_updates.record_applied(updated, state, roles_updated=('aws',))
     print('AWS permissions updated.' if value else 'AWS disconnected.')
 
 
@@ -2209,6 +2211,8 @@ def sandbox_command(args, state, parser):
     if args.command == 'update-containers':
         from . import container_updates, container_update_apply
         reviewed = container_updates.plan(config, state)
+        if reviewed['status'] != 'available':
+            raise ValueError(reviewed.get('reason') or f'No container update is available for {config["name"]!r}.')
         if reviewed.get('revision') != args.revision:
             raise ValueError('The container update plan changed. Run update-containers --preview again, then apply its new revision.')
         return container_update_apply.apply(config, state, reviewed, apply_gate=args.apply_gate)

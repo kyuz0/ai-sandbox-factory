@@ -19,6 +19,22 @@ class AWSAccessTests(unittest.TestCase):
         self.value = {'profile': 'research', 'role': 'arn:aws:iam::123456789012:role/Research',
                       'region': 'eu-west-1', 'grants': self.grants}
 
+    def test_replacement_signer_receives_prepared_session_without_assuming_the_role_again(self):
+        config = {'engine': 'podman', 'name': 'fixture', 'uid': 1000, 'gid': 1000, 'aws_access': self.value,
+                  'image_refs': {'aws': 'signer-image'}}
+        credentials = {'SecretAccessKey': 'synthetic-private', 'Expiration': '2030-01-01T00:00:00Z'}
+        with TemporaryDirectory() as directory, patch.object(sandbox, 'inspect', return_value=None), \
+             patch('ai_sandbox_factory.image_sources.runtime', return_value='signer-image'), \
+             patch.object(aws_access.subprocess, 'check_output', return_value='replacement-id'), \
+             patch.object(aws_access, '_deliver') as deliver, patch.object(aws_access, 'ensure_renewal') as renewal, \
+             patch.object(aws_access, 'assume') as assume:
+            aws_access.up(config, Path(directory), credentials=credentials)
+            assume.assert_not_called()
+            deliver.assert_called_once_with('podman', 'replacement-id', 'eu-west-1', credentials)
+            settings, = Path(directory).glob('aws-access/*.json')
+            self.assertNotIn('synthetic-private', settings.read_text())
+            renewal.assert_called_once_with('podman', 'replacement-id', settings, 'fixture', credentials['Expiration'])
+
     def test_policy_denies_outside_actions_and_resources(self):
         policy = aws_access.session_policy(self.grants + [
             {'Action': 'logs:GetLogEvents', 'Resource': 'arn:aws:logs:*:123456789012:log-group:another:*'}])

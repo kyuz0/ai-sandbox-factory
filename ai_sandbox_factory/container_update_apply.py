@@ -48,11 +48,14 @@ def _launch(config, state, helpers, old, credentials):
     gateway = sandbox.names(config)[1]
     if gateway in names:
         sandbox.create_gateway(config, state, sandbox.parse_rules((state / 'allowlist.txt').read_text()))
-    for module in (sandbox_advisors, primary_agents):
-        worker, proxy = module.names(config)[:2]
-        if names.intersection((worker, proxy)):
-            ready = bool((old.get(worker) or {}).get('State', {}).get('Running'))
-            module.up(config, state, only=names, check_ready=ready)
+    if names.intersection(sandbox_advisors.names(config)[:2]):
+        sandbox_advisors.up(config, state, only=names)
+    controller, proxy = primary_agents.names(config)[:2]
+    if names.intersection((controller, proxy)):
+        # Workspace cutover brings up the native egress gateway and runs the
+        # full controller probe before committing, including on a stopped sandbox.
+        ready = bool((old.get(controller) or {}).get('State', {}).get('Running'))
+        primary_agents.up(config, state, only=names, check_ready=ready)
     if profile_services.selected(config):
         base = profile_services.prefix(config)
         if names.intersection((base + '-gateway', base + '-proxy')):

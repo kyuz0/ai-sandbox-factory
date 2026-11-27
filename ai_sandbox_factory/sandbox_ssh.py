@@ -261,7 +261,8 @@ def up(config,state):
               '--user',f'{config["uid"]}:{config["gid"]}','-v',f'{socket}:/run/ssh-access','-v',f'{keys}:/private',
               '-v',f'{target}:/etc/ssh-access:ro']
         if engine=='podman':args+=['--userns=keep-id:uid=1000,gid=1000']
-        core.run(args+[image(config)])
+        from . import image_sources
+        core.run(args + image_sources.container_labels(config, 'ssh') + [image(config)])
     for _ in range(80):
         r=core.run([engine,'exec',worker,'test','-S','/run/ssh-access/'+hosts[-1]['alias']+'.sock'],capture=True,check=False,stderr=subprocess.DEVNULL)
         if r.returncode==0:return

@@ -10,6 +10,16 @@ import time
 from .sandbox_options import RESOURCE_PREFIX
 from .settings_catalog import ADVISORS_PATH
 
+# No bytes are sent: the advisor dispatches only a newline-terminated RPC request.
+SOCKET_PROBE = """import socket, sys
+for path in sys.argv[1:]:
+    with socket.socket(socket.AF_UNIX) as client:
+        client.setblocking(False)
+        try:
+            client.connect(path)
+        except OSError as error:
+            sys.exit(f'{path}: {error}')
+"""
 HOSTS = {
     'claude': ['api.anthropic.com:443', 'claude.ai:443', 'platform.claude.com:443', 'console.anthropic.com:443'],
     'codex': ['auth.openai.com:443', 'chatgpt.com:443', 'api.openai.com:443'],
@@ -137,10 +147,10 @@ def check_ownership(config):
             raise ValueError(f'Refusing to manage unrelated advisor volume: {volume}')
 
 
-def up(config, state, *, only=None, check_ready=True):
+def up(config, state, *, only=None):
     if not enabled(config):
         return
-    from . import sandbox as core
+    from . import image_sources, sandbox as core
     settings = validate(config['advisors'])
     check_ownership(config)
     worker, proxy, socket, home, egress = names(config)
@@ -163,6 +173,7 @@ def up(config, state, *, only=None, check_ready=True):
             continue
         args = [engine, 'run', '-d', '--name', name, '--label', f'{core.LABEL}={config["name"]}',
                 '--security-opt=no-new-privileges', '--cap-drop=ALL', '--pids-limit=-1']
+        args += image_sources.container_labels(config, 'gateway' if name == proxy else 'advisor')
         if name == proxy:
             args += core.host_platform.gateway_labels()
             args += ['--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID', '--cap-add=DAC_OVERRIDE',
@@ -180,15 +191,18 @@ def up(config, state, *, only=None, check_ready=True):
         core.run(args)
     if only is not None and proxy in only:
         core.wait_gateway(config, proxy)
-    if not check_ready or (only is not None and worker not in only):
+    if only is not None and worker not in only:
         return
     for _ in range(80):
-        result = core.run([engine, 'exec', worker, 'sh', '-c', 'test -S /run/advisor/advisor.sock && test -S /run/advisor-bus/bus'],
-                          capture=True, check=False, stderr=subprocess.DEVNULL)
+        result = core.run([engine, 'exec', worker, 'python3', '-c', SOCKET_PROBE,
+                           '/run/advisor/advisor.sock', '/run/advisor-bus/bus'],
+                          capture=True, check=False, stderr=subprocess.PIPE)
         if result.returncode == 0:
             return
         time.sleep(.25)
-    raise ValueError(f'Advisor did not become ready; inspect {engine} logs {worker}')
+    detail = (result.stderr or result.stdout or 'The engine returned no diagnostic output.').strip()
+    raise ValueError(f'Advisor did not become ready. The socket check for {worker} exited with status '
+                     f'{result.returncode}: {detail}. Inspect {engine} logs {worker} and retry.')
 
 
 def mounts(config):

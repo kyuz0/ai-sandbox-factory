@@ -1,4 +1,7 @@
 import json
+import socket
+import subprocess
+import sys
 import unittest
 import tempfile
 from pathlib import Path
@@ -9,6 +12,37 @@ from ai_sandbox_factory import sandbox
 from ai_sandbox_factory import sandbox_advisors as advisors
 
 class AdvisorTests(unittest.TestCase):
+    def test_readiness_requires_two_live_unix_endpoints_and_sends_no_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [str(Path(directory) / filename) for filename in ('advisor.sock', 'bus')]
+            def probe():
+                return subprocess.run([sys.executable, '-c', advisors.SOCKET_PROBE, *paths],
+                                      text=True, capture_output=True)
+            # A stopped process leaves an inode that still passes test -S.
+            for stale in (0, 1):
+                with self.subTest(stale=stale), socket.socket(socket.AF_UNIX) as listener:
+                    listener.bind(paths[1 - stale])
+                    listener.listen()
+                    with socket.socket(socket.AF_UNIX) as closed:
+                        closed.bind(paths[stale])
+                    self.assertTrue(Path(paths[stale]).is_socket())
+                    failed = probe()
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn(paths[stale], failed.stderr)
+                    self.assertIn('Connection refused', failed.stderr)
+                    for path in paths:
+                        Path(path).unlink()
+            with socket.socket(socket.AF_UNIX) as advisor, socket.socket(socket.AF_UNIX) as bus:
+                for listener, path in zip((advisor, bus), paths):
+                    listener.bind(path)
+                    listener.listen()
+                result = probe()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for listener in (advisor, bus):
+                    listener.setblocking(False)
+                    with listener.accept()[0] as peer:
+                        self.assertEqual(peer.recv(1), b'')
+
     def test_disabled_has_no_mount_or_provider_requirement(self):
         self.assertEqual(advisors.mounts({'name':'test'}), [])
         self.assertEqual(advisors.validate({}), {'providers':[]})

@@ -171,6 +171,17 @@ jobs:
           python tests/container_updates_lifecycle.py "${args[@]}" 2>&1 | tee /tmp/factory-fresh-sandbox/container-updates.log
         env:
           CANDIDATE_INDEX: ${{ inputs.candidate_index }}
+      - name: Check native container updates and database data recovery
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
+        shell: bash
+        run: |
+          args=()
+          if [[ -n "$CANDIDATE_INDEX" ]]; then
+            args+=(--candidate-index /tmp/factory-published-candidate/images.lock.json)
+          fi
+          python tests/container_updates_native.py "${args[@]}" 2>&1 | tee /tmp/factory-fresh-sandbox/native-container-updates.log
+        env:
+          CANDIDATE_INDEX: ${{ inputs.candidate_index }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

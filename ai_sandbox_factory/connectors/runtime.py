@@ -80,7 +80,8 @@ def _start(config, state, plugin, tag, old, token):
             '--user', f'{config["uid"]}:{config["gid"]}', '-v', f'{sockets}:/socket:{mount_mode}']
     if engine == 'podman':
         args += ['--userns=keep-id:uid=1000,gid=1000']
-    worker = sandbox.run(args + [tag], capture=True).stdout.strip()
+    from .. import image_sources
+    worker = sandbox.run(args + image_sources.container_labels(config, 'connector') + [tag], capture=True).stdout.strip()
     try:
         _deliver(engine, worker, {'routes': routes, 'token': token}, plugin)
     except BaseException:

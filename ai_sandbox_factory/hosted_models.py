@@ -123,8 +123,10 @@ def save(config, state, value):
     credentials = ({'accessKeyId':value['access_key'], 'secretAccessKey':value['secret_key'], 'sessionToken':value['session_token']}
                    if provider == 'amazon-bedrock' and value['method'] == 'iam' else {'key':value['key']})
     route = inference.routes(updated)[provider]
-    if not inference.enabled(config):
-        inference.build(updated)
+    first_inference = not inference.enabled(config)
+    if first_inference:
+        from . import image_sources
+        image_sources.prepare_helper(updated, 'inference', inference.build)
     try:
         inference.up(updated, state)
         if choice:
@@ -147,6 +149,9 @@ def save(config, state, value):
         sandbox.update_network(updated, state, (state / 'allowlist.txt').read_text())
     activity.record(state, 'edited')
     reply = request(updated, 'configure', provider=provider, endpoint=inference.client_url(provider,saved), region=saved.get('region',''))
+    if first_inference:
+        from . import container_updates
+        container_updates.record_applied(updated, state, roles_updated=('inference',))
     return {**reply, **saved, 'assignment': assignment}
 
 

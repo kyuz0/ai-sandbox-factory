@@ -138,6 +138,29 @@ class HostedModelsTests(unittest.TestCase):
                 self.assertEqual(json.loads(checks_file.read_text()), {})
                 self.assertEqual(request.call_args.args[1], 'remove')
 
+    def test_version_record_failure_does_not_interrupt_network_or_client_configuration(self):
+        from ai_sandbox_factory import container_updates
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / 'allowlist.txt').write_text('')
+            config = {'name': 'fixture', 'engine': 'podman', 'network': 'allowlist'}
+            events = []
+            def request(cfg, action, **kwargs):
+                events.append(action)
+                return {}
+            def record(*args, **kwargs):
+                events.append('record')
+                raise OSError('cannot write applied versions')
+            with patch.object(h, 'request', side_effect=request), patch.object(inference, 'build'), \
+                 patch.object(inference, 'up'), patch.object(inference, 'credentials', return_value={}), \
+                 patch.object(sandbox, 'update_network', side_effect=lambda *args: events.append('network')), \
+                 patch.object(container_updates, 'record_applied', side_effect=record):
+                with self.assertRaisesRegex(OSError, 'cannot write applied versions'):
+                    h.save(config, state, {'provider': 'openrouter', 'key': 'synthetic-key'})
+            self.assertEqual(events, ['status', 'network', 'configure', 'record'])
+            self.assertIn('openrouter', json.loads((state / 'config.json').read_text())['hosted_connections'])
+            self.assertTrue((state / 'runtime-config/provider-connection-checks.json').is_file())
+
     def test_stopped_sandbox_has_actionable_error(self):
         with patch.object(sandbox, 'inspect', return_value={'State': {'Running': False}}), patch.object(subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'Start the sandbox'):

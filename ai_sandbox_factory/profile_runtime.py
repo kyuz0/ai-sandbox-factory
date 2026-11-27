@@ -15,6 +15,8 @@ AUTHORING = PATH + '/authoring/README.md'
 def identity(config, image_id):
     values = [image_id, config['profile']['digest'], config['common']['digest'],
               config.get('primary_agent', 'pi'), validator_digest()]
+    if 'workspace_layers' in config:
+        values.append(config['workspace_layers'])
     if config.get('image_refs') or config.get('image_artifacts'):
         values.append({'refs': config.get('image_refs', {}),
                        'artifacts': sorted(config.get('image_artifacts', []), key=lambda item: item['role'])})
@@ -26,7 +28,7 @@ def validator_digest():
 
 
 @contextmanager
-def recording(config, state):
+def recording(config, state, *, cached=False):
     """Freeze inputs before building; publish them only for a successful image."""
     from . import container_updates, sandbox, primary_workspace
     if state is None:
@@ -69,6 +71,9 @@ def recording(config, state):
             client.mkdir()
             for name in ('worker.sh', 'worker-tools.mjs', agent + '_client.py'):
                 shutil.copyfile(sandbox.ROOT / 'containers/primary' / name, client / name)
+        # The build can select pi-stock or assemble the Pi layers locally.
+        # Capture possible inputs now and check only those actually used.
+        initial = {} if cached else container_updates.workspace_layers(config, stock=False)
         yield target
         for part in ('profile', 'common'):
             if sandbox.tree_digest(Path(config[part]['path'])) != config[part]['digest']:
@@ -80,6 +85,14 @@ def recording(config, state):
                     or any(file.read_bytes() != (sandbox.ROOT / 'containers/primary' / file.name).read_bytes()
                            for file in client.iterdir())):
                 raise ValueError('The main agent sandbox sources changed while building. Retry the build with unchanged sources.')
+        if cached:
+            # Reusing existing bytes cannot attest to the sources currently installed.
+            layers = config.get('workspace_layers')
+        else:
+            stock = any(artifact['role'] == 'pi-stock' for artifact in config.get('image_artifacts', []))
+            layers = container_updates.workspace_layers(config, stock=stock)
+            if any(initial.get(name) != digest for name, digest in layers.items()):
+                raise ValueError('Factory workspace layer sources changed while building. Retry the build with unchanged sources.')
         image = sandbox.image_names(config)[0]
         result = sandbox.run([config['engine'], 'image', 'inspect', image], capture=True)
         try:
@@ -91,7 +104,6 @@ def recording(config, state):
             'description': config['profile'].get('description', config['profile']['name']),
             'profile_digest': config['profile']['digest'],
             'common_inputs_digest': config['common']['digest'],
-            'workspace_inputs_digest': container_updates.workspace_inputs(config),
             'base_recipe_digest': (config['common']['digest'] if agent == 'pi'
                                    else native_recipe_digest),
             'agent': agent, 'image': image, 'image_id': image_id,
@@ -102,6 +114,8 @@ def recording(config, state):
             'factory_profile_digest': (config['profile'].get('factory_profile_digest', config['profile']['digest'])
                                        if container_updates.builtin(config) else None),
         }
+        if layers is not None:
+            metadata['workspace_layers'] = layers
         metadata['image_artifacts'] = config.get('image_artifacts', [])
         metadata['image_refs'] = config.get('image_refs', {})
         if metadata['image_artifacts']:
@@ -117,9 +131,12 @@ def recording(config, state):
         if agent != 'pi':
             metadata['workspace_recipe'] = 'workspace/Dockerfile'
         (target / 'build.json').write_text(json.dumps(metadata, indent=2) + '\n')
-        destination = base / identity(config, image_id)
+        prepared = {**config, 'workspace_layers': layers} if layers is not None else config
+        destination = base / identity(prepared, image_id)
         if not destination.exists():
             target.rename(destination)
+        if layers is not None:
+            config['workspace_layers'] = layers
 
 
 def select(config, state, current=None):
@@ -161,7 +178,7 @@ def ensure_cached(config, state):
         return
     from . import profile_services
     profile_services.build(config)
-    with recording(config, state):
+    with recording(config, state, cached=True):
         pass
     select(config, state)
 

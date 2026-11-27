@@ -86,6 +86,9 @@ recipes. Preparing an image must not clear an update notice. Keep one plan for
 status, review and execution; custom profiles remain owner-maintained. Check
 the actual containers and mounted build record before claiming a version is
 applied, and preserve unrelated containers during selective updates.
+Record recipes when containers are created: different recipes can produce the
+same image bytes. Compare every consumer of a shared image role; a newer peer
+must not hide an older container's update.
 
 Keep the inner command sandbox, outer container, gateway and credential companions
 separate. Approval never grants host access. Automatic approval returns failures
@@ -199,6 +202,9 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   validate the replacement before interrupting work. When replacing a running
   sandbox, keep the previous runtime available until the new one works. Test
   what happens when it fails. Preserve whether the sandbox was running or stopped.
+  Validate replacement readiness even when the previous container was stopped,
+  then restore the stopped state. A running process or stale socket file alone
+  does not establish that the replacement can accept connections.
 - When keeping data for recovery, provide a named UI entry with its source and
   date, and tested export and restore actions. Job output alone is not a usable
   recovery workflow. State who keeps the data, when and where it is stored, and

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
 import subprocess
@@ -14,7 +15,7 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from ai_sandbox_factory import (browser_editor, container_update_apply, container_updates,
-                                editor_settings, image_builds, image_sources, operation_locks, profile_runtime, sandbox)
+                                editor_settings, image_builds, image_sources, operation_locks, profile_replacement, profile_runtime, sandbox)
 from browser_editor_lifecycle import request
 from browser_editor_updates import workspace_config
 
@@ -112,9 +113,9 @@ def check(root, fresh_image=None):
             config.update(image_refs={**refs, 'workspace': refs[base_role]}, image_artifacts=artifacts)
             (state / 'allowlist.txt').write_text('')
             (state / 'squid.conf').write_text(sandbox.network_policy(config, []))
-            sandbox.write_json(state / 'config.json', config)
             with profile_runtime.recording(config, state):
                 pass
+            sandbox.write_json(state / 'config.json', config)
             sandbox.up(config, state)
             workspace, gateway = sandbox.names(config)[:2]
             sandbox.run(['podman', 'exec', workspace, 'sh', '-c', 'echo private > /home/node/update-marker'])
@@ -139,7 +140,20 @@ def check(root, fresh_image=None):
                 assert sandbox.run(['podman', 'exec', workspace, 'cat', '/home/node/update-marker'],
                                    capture=True).stdout.strip() == 'private'
 
-            workspace_id = sandbox.inspect(config, workspace)['Id']
+            def older_gateway():
+                # Simulate a prior Factory recipe on an actual new container;
+                # immutable creation labels cannot be changed by editing receipts.
+                cfg = saved()
+                artifact = next(item for item in cfg['image_artifacts'] if item['role'] == 'gateway')
+                artifact['recipe'] = old_recipes['gateway']
+                sandbox.run(['podman', 'rm', '-f', gateway])
+                sandbox.create_gateway(cfg, state, sandbox.parse_rules((state / 'allowlist.txt').read_text()))
+                sandbox.write_json(state / 'config.json', cfg)
+                container_updates.record_applied(cfg, state, roles_updated=['gateway'])
+
+            workspace_info = sandbox.inspect(config, workspace)
+            workspace_id = workspace_info['Id']
+            original_start = workspace_info['State']['StartedAt']
             gateway_id = sandbox.inspect(config, gateway)['Id']
             def gateway_release(cfg, role):
                 return old_recipes[role] if role == base_role else factory_recipe(cfg, role)
@@ -149,20 +163,56 @@ def check(root, fresh_image=None):
                                                     side_effect=ValueError('fixture fault after readiness')))
                 assert sandbox.inspect(config, gateway)['Id'] == gateway_id
                 assert sandbox.inspect(config, workspace)['Id'] == workspace_id
+                assert sandbox.inspect(config, workspace)['State']['StartedAt'] == original_start
                 verify_editor()
                 print('PASS gateway rollback retained both IDs and the authenticated editor', flush=True)
                 apply('gateway')
                 assert sandbox.inspect(saved(), gateway)['Id'] != gateway_id
                 assert sandbox.inspect(saved(), workspace)['Id'] == workspace_id
+                assert sandbox.inspect(saved(), workspace)['State']['StartedAt'] == original_start
                 verify_editor()
                 assert container_updates.plan(saved(), state)['status'] == 'current'
                 print('PASS gateway update preserved workspace ID, data and authenticated editor', flush=True)
+                receipt = state / 'container-updates/applied.json'
+                for malformed in (False, True):
+                    if malformed:
+                        sandbox.write_json(receipt, [])
+                    else:
+                        receipt.unlink()
+                    sandbox.up(saved(), state)
+                    assert container_updates.plan(saved(), state)['status'] == 'current'
+                    assert sandbox.inspect(saved(), workspace)['State']['StartedAt'] == original_start
+                    verify_editor()
+                print('PASS helper-only receipt repair preserves the running workspace and current helper version', flush=True)
+
             gateway_id = sandbox.inspect(saved(), gateway)['Id']
             resume = browser_editor.resume_connection
             def fail_once(cfg, directory, snapshot):
                 if sandbox.inspect(cfg, workspace)['Id'] != workspace_id:
                     raise ValueError('fixture fault after readiness')
                 return resume(cfg, directory, snapshot)
+
+            # A later workspace failure must also undo helpers already cut over.
+            receipt = state / 'container-updates/applied.json'
+            older_gateway()
+            gateway_id = sandbox.inspect(saved(), gateway)['Id']
+            mixed = container_updates.plan(saved(), state)
+            assert set(mixed['roles']) == {base_role, 'gateway'}, mixed
+            with patch.object(browser_editor, 'resume_connection', side_effect=fail_once):
+                try:
+                    container_update_apply.apply(saved(), state, mixed)
+                except ValueError as error:
+                    assert 'fixture fault after readiness' in str(error), error
+                else:
+                    raise AssertionError('Mixed update ignored the workspace fault')
+            assert sandbox.inspect(saved(), workspace)['Id'] == workspace_id
+            assert sandbox.inspect(saved(), gateway)['Id'] == gateway_id
+            verify_editor()
+            assert set(container_updates.plan(saved(), state)['roles']) == {base_role, 'gateway'}
+            print('PASS mixed rollback restored both original IDs, editor and pending update flags', flush=True)
+            with patch.object(image_sources, 'recipe', gateway_release):
+                apply('gateway')
+            gateway_id = sandbox.inspect(saved(), gateway)['Id']
             apply(base_role, fault=patch.object(browser_editor, 'resume_connection', side_effect=fail_once))
             assert sandbox.inspect(saved(), workspace)['Id'] == workspace_id
             assert sandbox.inspect(saved(), gateway)['Id'] == gateway_id
@@ -184,9 +234,8 @@ def check(root, fresh_image=None):
             verify_editor()
             print('PASS ordinary startup repaired the receipt with the workspace and editor connected', flush=True)
 
-            evidence = json.loads(receipt.read_text())
-            evidence['roles']['gateway']['recipe'] = old_recipes['gateway']
-            sandbox.write_json(receipt, evidence)
+            older_gateway()
+            gateway_id = sandbox.inspect(saved(), gateway)['Id']
             cli_dir = sandbox.ROOT.parent
             if image_sources.INDEX.read_bytes() != (sandbox.ROOT / 'images.lock.json').read_bytes():
                 cli_dir = root / 'candidate-cli'
@@ -223,6 +272,36 @@ def check(root, fresh_image=None):
             verify_editor()
             print('PASS CLI preview and supervised update replaced only the gateway and cleared the update', flush=True)
 
+
+            # Kill a real worker after helper cutover. A later recovery has only
+            # the on-disk journal, not the worker's in-memory context.
+            older_gateway()
+            before_crash = {name: sandbox.inspect(saved(), name) for name in (workspace, gateway)}
+            crash_program = """import json, os, signal, sys
+from pathlib import Path
+from ai_sandbox_factory import container_update_apply as apply, container_updates, operation_locks
+state = Path(sys.argv[1])
+config = json.loads((state / 'config.json').read_text())
+def crash(*args):
+    os.kill(os.getpid(), signal.SIGKILL)
+apply._verify = crash
+with operation_locks.sandbox(config['name'], 'test interrupted container update'):
+    apply.apply(config, state, container_updates.plan(config, state))
+"""
+            crashed = subprocess.run([sys.executable, '-c', crash_program, str(state)], cwd=cli_dir,
+                                     **handoff, capture_output=True, text=True)
+            assert crashed.returncode == -signal.SIGKILL, crashed.stdout + crashed.stderr
+            assert (state / 'profile-preparation/record.json').is_file()
+            profile_replacement.recover_preparation(saved(), state)
+            for name, info in before_crash.items():
+                assert sandbox.inspect(saved(), name)['Id'] == info['Id'], name
+            assert sandbox.inspect(saved(), workspace)['State']['StartedAt'] == before_crash[workspace]['State']['StartedAt']
+            verify_editor()
+            assert container_updates.plan(saved(), state)['roles'] == ['gateway']
+            recovered = cli('--preview')
+            assert cli('--revision', recovered['revision'])['status'] == 'complete'
+            print('PASS interrupted helper update recovers exact IDs and editor without restarting the workspace', flush=True)
+
             # Reopen the fixture's original versions, then exercise the same
             # mixed-role update while its editor and both containers are stopped.
             browser_editor.stop(state)
@@ -234,7 +313,21 @@ def check(root, fresh_image=None):
             assert all(not info['State']['Running'] for info in stopped.values())
             reviewed = container_updates.plan(config, state)
             assert reviewed['status'] == 'available' and set(reviewed['roles']) == {base_role, 'gateway'}, reviewed
-            container_update_apply.apply(config, state, reviewed)
+
+            with patch.object(container_update_apply, '_verify', side_effect=ValueError('fixture stopped readiness fault')):
+                try:
+                    container_update_apply.apply(config, state, reviewed)
+                except ValueError as error:
+                    assert 'fixture stopped readiness fault' in str(error), error
+                else:
+                    raise AssertionError('Stopped update ignored the readiness fault')
+            for name, previous in stopped.items():
+                after = sandbox.inspect(saved(), name)
+                assert after['Id'] == previous['Id'] and not after['State']['Running'], name
+            assert browser_editor.runtime(state) is None
+            assert set(container_updates.plan(saved(), state)['roles']) == {base_role, 'gateway'}
+            print('PASS stopped rollback preserves exact original IDs, stopped state and pending updates', flush=True)
+            container_update_apply.apply(saved(), state, container_updates.plan(saved(), state))
             for name, previous in stopped.items():
                 after = sandbox.inspect(saved(), name)
                 assert after['Id'] != previous['Id'] and not after['State']['Running'], name

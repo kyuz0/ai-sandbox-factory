@@ -1,5 +1,6 @@
 """A reviewed image update prepares only its targets and preserves unrelated work."""
 import copy
+import json
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,10 +30,80 @@ class ContainerUpdateApplyTests(unittest.TestCase):
                 apply._launch(config, state, {'gateway': names}, {}, {})
                 main.assert_called_once_with(config, state, [])
                 native.assert_called_once_with(config, state, only=names, check_ready=False)
-                advisors.assert_called_once_with(config, state, only=names, check_ready=False)
+                advisors.assert_called_once_with(config, state, only=names)
                 services.assert_called_once_with(config, state, only=names)
                 self.assertTrue({advisor, controller, profile_services.container(config, 'database')}.isdisjoint(names))
                 workspace.assert_not_called()
+
+    def test_stopped_advisor_is_probed_before_retiring_previous_container(self):
+        config = {'name': 'demo', 'engine': 'podman', 'uid': 1000, 'gid': 1000,
+                  'advisors': {'providers': ['codex']}, 'image_refs': {'advisor': 'previous-image'}}
+        target = {**config, 'image_refs': {'advisor': 'candidate-image'},
+                  'image_artifacts': [{'role': 'advisor', 'image_id': 'candidate-image'}]}
+        plan = dict(status='available', revision='reviewed', roles=['advisor'], workspace=False, profile_services=False)
+        advisor, proxy = sandbox_advisors.names(config)[:2]
+        workspace = sandbox.names(config)[0]
+        for healthy in (False, True):
+            with self.subTest(healthy=healthy), TemporaryDirectory() as directory:
+                state = Path(directory)
+                sandbox.write_json(state / 'config.json', config)
+                containers = {name: {'Name': name, 'Id': 'old-' + name, 'Image': 'previous-image',
+                                     'State': {'Running': name == workspace}}
+                              for name in (advisor, proxy, workspace)}
+                previous = copy.deepcopy(containers)
+                probes = []
+                def inspect(cfg, key):
+                    info = containers.get(key) or next((i for i in containers.values() if i['Id'] == key), None)
+                    return copy.deepcopy(info)
+
+                def run(args, **kwargs):
+                    op, *rest = args[1:]
+                    result = SimpleNamespace(stdout='', stderr='', returncode=0)
+                    if op == 'run':
+                        self.assertEqual(rest[rest.index('--name') + 1], advisor)
+                        containers[advisor] = {'Name': advisor, 'Id': 'candidate', 'Image': 'candidate-image',
+                                               'State': {'Running': True}}
+                    elif op == 'exec':
+                        self.assertEqual(rest[0], advisor)
+                        self.assertEqual(rest[-2:], ['/run/advisor/advisor.sock', '/run/advisor-bus/bus'])
+                        probes.append(containers[advisor]['Id'])
+                        result.returncode = 0 if healthy else 1
+                        result.stderr = '' if healthy else '/run/advisor/advisor.sock: [Errno 111] Connection refused'
+                    elif op in ('rm', 'rename', 'stop'):
+                        identifier = rest[1] if rest[0] == '-f' else rest[0]
+                        key = next(n for n, i in containers.items() if i['Id'] == identifier)
+                        if op == 'rename':
+                            info = containers.pop(key)
+                            info['Name'] = rest[1]
+                            containers[rest[1]] = info
+                        elif op == 'stop':
+                            containers[key]['State']['Running'] = False
+                        else:
+                            containers.pop(key)
+                    elif op == 'volume':
+                        result.stdout = json.dumps([{'Labels': {sandbox.LABEL: 'demo'}}])
+                    return result
+
+                with patch.object(container_updates, 'plan', return_value=plan), \
+                     patch.object(container_updates, 'target_config', return_value=copy.deepcopy(target)), \
+                     patch.object(sandbox, 'image_graph', return_value=nullcontext()), patch.object(apply, '_prepare'), \
+                     patch.object(sandbox, 'inspect', side_effect=inspect), patch.object(sandbox, 'run', side_effect=run), \
+                     patch.object(sandbox_advisors.time, 'sleep'), patch.object(container_updates, 'record_applied') as record:
+                    if healthy:
+                        apply.apply(config, state, plan)
+                        record.assert_called_once()
+                        self.assertEqual(containers[advisor]['Id'], 'candidate')
+                    else:
+                        with self.assertRaisesRegex(ValueError, r'Advisor did not become ready.*status 1:.*Connection refused.*podman logs'):
+                            apply.apply(config, state, plan)
+                        record.assert_not_called()
+                        self.assertEqual(containers, previous)
+                        self.assertEqual(json.loads((state / 'config.json').read_text()), config)
+                self.assertTrue(probes)
+                self.assertEqual(set(probes), {'candidate'})
+                self.assertFalse(containers[advisor]['State']['Running'])
+                self.assertEqual(containers[workspace], previous[workspace])
+                self.assertEqual(containers[proxy], previous[proxy])
 
     def test_helper_images_use_current_recipe_without_advancing_workspace_or_other_artifacts(self):
         cfg = {'engine': 'fixture', 'common': {'path': 'applied'},
@@ -171,6 +242,53 @@ class ContainerUpdateApplyTests(unittest.TestCase):
             run.assert_called_once_with(['podman', 'start', 'original-connector'])
             seed.assert_called_once_with(cfg, 'state', originals[connector], prepared=credentials['connector'])
             aws_seed.assert_not_called()
+
+    def test_rollback_replays_in_memory_credentials_after_a_partial_process_restart(self):
+        from ai_sandbox_factory.connectors import runtime
+        config = {'name': 'fixture', 'engine': 'podman', 'network': 'unrestricted', 'connector_ids': ['status'],
+                  'aws_access': {'region': 'us-east-1', 'profile': 'fixture', 'role': 'arn:aws:iam::123456789012:role/test',
+                                 'grants': [{'Action': 'ec2:DescribeRegions', 'Resource': '*'}]}}
+        signer, broker = apply.aws_access.worker_name(config), runtime.worker_name(config, 'status')
+        plugin = SimpleNamespace(id='status', account='example-scope')
+        session = {'SessionToken': 'synthetic-private-session', 'Expiration': '2030-01-01T00:00:00Z'}
+        token = 'synthetic-private-token'
+        def worker(name, identifier, labels):
+            return {'Name': name, 'Id': identifier, 'Config': {'Labels': labels},
+                    'State': {'Running': True, 'StartedAt': 'before'}}
+        live = {signer: worker(signer, 'original-signer', {'io.pi-sandbox-factory.aws': 'identity'}),
+                broker: worker(broker, 'original-broker', {runtime.ROLE: plugin.id, runtime.SCOPE: plugin.account})}
+        def inspect(cfg, key):
+            return copy.deepcopy(live.get(key) or next((i for i in live.values() if i['Id'] == key), None))
+        with TemporaryDirectory() as directory:
+            state = Path(directory)
+            with patch.object(sandbox, 'inspect', side_effect=inspect), \
+                 patch.object(sandbox, 'run', return_value=SimpleNamespace(stdout='', stderr='', returncode=0)) as engine, \
+                 patch.object(runtime, 'saved', return_value=[plugin]), patch.object(runtime, 'permitted_routes', return_value=[]), \
+                 patch.object(runtime, '_owned', return_value=live[broker]), patch.object(runtime, '_token', return_value=token) as keyring, \
+                 patch.object(runtime, '_deliver') as broker_seed, patch.object(apply.aws_access, '_deliver') as aws_seed, \
+                 patch.object(apply.aws_access, 'ensure_renewal') as renew, patch.object(apply.aws_access, 'assume') as assume:
+                self.assertEqual(runtime.prepare(config, state), {})
+                credentials = {'aws': session, 'connector': runtime.prepare(config, state, replacing=True)}
+                self.assertEqual(credentials['connector'], {'status': (plugin.account, token)})
+                with self.assertRaisesRegex(ValueError, 'candidate unavailable'):
+                    with apply.profile_replacement.prepared_services(
+                            config, copy.deepcopy(config), state, replacement_names={signer, broker}, credentials=credentials):
+                        journal = (state / 'profile-preparation/record.json').read_text()
+                        self.assertNotIn(session['SessionToken'], journal)
+                        self.assertNotIn(token, journal)
+                        for item in live.values():
+                            item['State']['StartedAt'] = 'partially-recovered'
+                        raise ValueError('candidate unavailable')
+                for identifier in ('original-signer', 'original-broker'):
+                    calls = [call.args[0][1] for call in engine.call_args_list if call.args[0][-1] == identifier]
+                    self.assertEqual(calls, ['stop', 'start'])
+                aws_seed.assert_called_once_with('podman', 'original-signer', 'us-east-1', session)
+                renew.assert_called_once_with('podman', 'original-signer', state / 'aws-access/identity.json',
+                                              'fixture', session['Expiration'])
+                broker_seed.assert_called_once_with('podman', 'original-broker', {'routes': {}, 'token': token}, plugin)
+                keyring.assert_called_once_with(plugin)
+                assume.assert_not_called()
+                self.assertFalse((state / 'profile-preparation').exists())
 
     def test_writing_receipt_requires_exact_prepared_image(self):
         cfg = {'image_artifacts': [{'role': 'gateway', 'image_id': 'expected'}]}

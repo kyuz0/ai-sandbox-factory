@@ -245,7 +245,7 @@ def no_proxy(config):
 
 
 def _start(config, name, args, environment=None):
-    from . import sandbox
+    from . import image_sources, sandbox
     existing = sandbox.inspect(config, name)
     if existing:
         sandbox.resume_existing(config, name, existing)
@@ -254,7 +254,9 @@ def _start(config, name, args, environment=None):
         # Argument form preserves multiline values; errors redact those values.
         environment = environment or {}
         env_args = [arg for key, value in environment.items() for arg in ('-e', f'{key}={value}')]
-        result = _run(config, 'run', '-d', '--name', name, *_labels(config, name),
+        evidence = (image_sources.container_labels(config, 'gateway')
+                    if name in (prefix(config) + '-gateway', prefix(config) + '-proxy') else [])
+        result = _run(config, 'run', '-d', '--name', name, *_labels(config, name), *evidence,
                       '--security-opt=no-new-privileges', '--cap-drop=NET_ADMIN', '--cap-drop=NET_RAW',
                       *env_args, *args, capture=True, check=False, stderr=subprocess.PIPE)
         if result.returncode:

@@ -48,7 +48,8 @@ class ContainerUpdateUITests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause()
                     self.assertIsInstance(app.screen, ContainerUpdates)
                     await pilot.press('escape')
-                    self.assertIsNot(app.screen, ContainerUpdates)
+                    await pilot.pause()
+                    self.assertNotIsInstance(app.screen, ContainerUpdates)
                     self.assertFalse(app.service.calls)
 
     async def test_current_has_no_empty_action_and_custom_has_no_apply(self):
@@ -82,3 +83,38 @@ class ContainerUpdateUITests(unittest.IsolatedAsyncioTestCase):
                 log, update = Mock(), Mock()
                 task(log, update)
                 app.service.run_update.assert_called_once_with(['update-containers', 'alpha', '--revision', 'review-1'], log, update)
+
+    async def test_completed_job_clears_update_and_failed_review_keeps_it(self):
+        from test_sandbox_jobs import wait_for
+        from ai_sandbox_factory.sandbox_jobs_ui import JobDetails
+        for fails in (False, True):
+            with self.subTest(fails=fails):
+                record = copy.deepcopy(self.records[0])
+                record['updates'] = dict(status='available', roles=['gateway'], workspace=False,
+                    changes=[{'role': 'gateway', 'label': 'Network gateways'}], revision='review-1',
+                    effects=['Only the listed Factory helper containers restart.'])
+                service = FakeService([record])
+                error = 'The container update plan changed. Run update-containers --preview again.'
+                def run_update(command, log, update):
+                    if fails:
+                        raise ValueError(error)
+                    service.records[0]['updates'] = {'status': 'current'}
+                    log('Containers updated.')
+                service.run_update = run_update
+                app = Cockpit(self.root, service)
+                async with app.run_test(size=(80, 24)) as pilot:
+                    await self.ready(app, pilot)
+                    app.perform('container-updates', record=record)
+                    await pilot.pause()
+                    await pilot.press('enter')
+                    await wait_for(pilot, lambda: bool(app.jobs) and app.jobs[0].result is not None)
+                    self.assertIsInstance(app.screen, JobDetails)
+                    job = app.jobs[0]
+                    if fails:
+                        self.assertEqual(job.result, 'Failed')
+                        self.assertIn(error, job.error)
+                        await wait_for(pilot, lambda: error in ' '.join(line.text.strip() for line in app.screen.query_one('#operation-log').lines))
+                        self.assertIn('Available', str(app.screen_stack[0].query_one(DataTable).get_cell('alpha', 'updates')))
+                    else:
+                        self.assertEqual(job.result, 'Complete')
+                        await wait_for(pilot, lambda: app.screen_stack[0].query_one(DataTable).get_cell('alpha', 'updates') == '')

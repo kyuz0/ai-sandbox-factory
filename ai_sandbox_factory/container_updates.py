@@ -23,19 +23,31 @@ def image_id(value):
     return value
 
 
-def workspace_inputs(config):
+def workspace_layers(config, *, stock):
     """Fingerprint only Factory layers consumed by this workspace variant."""
-    from . import image_sources, primary_workspace, sandbox
+    from . import image_sources, model_providers, primary_workspace, sandbox
     from .sandbox_options import options
+    layers = {}
+    files = {}
     if primary_workspace.agent(config) == 'pi':
-        return config['common']['digest']
-    common = Path(config['common']['path'])
-    paths = [common / 'cli-tools']
-    if options(config.get('options'))['browser']:
-        paths += [common / 'browser', common / 'security']
+        layers['common'] = config['common']['digest']
+        if stock:
+            # The stock artifact already fingerprints its provider and AWS layers.
+            return layers
+        if 'model_providers' in config:
+            files['providers'] = [sandbox.ROOT / 'providers/provider-runner.mjs',
+                                  sandbox.ROOT / 'providers/provider-lock.mjs', Path(model_providers.__file__)]
+    else:
+        common = Path(config['common']['path'])
+        files['cli-tools'] = [common / 'cli-tools']
+        if options(config.get('options'))['browser']:
+            files['browser'] = [common / 'browser', common / 'security']
     if config.get('aws_access'):
-        paths += [sandbox.ROOT / 'containers/aws-access/client']
-    return hashlib.sha256(json.dumps([image_sources._files(path, executable_bits_only=True) for path in paths]).encode()).hexdigest()
+        files['aws'] = [sandbox.ROOT / 'containers/aws-access/client']
+    for name, paths in files.items():
+        inputs = [image_sources._files(path, executable_bits_only=True) for path in paths]
+        layers[name] = hashlib.sha256(json.dumps(inputs).encode()).hexdigest()
+    return layers
 
 
 def builtin(config):
@@ -102,6 +114,37 @@ def _live(config, roles, current=None):
             for names in roles.values() for name in names}
 
 
+def role_artifacts(role, names, live, previous, baseline):
+    """Resolve each consumer from its creation labels or a receipt for its exact container."""
+    from . import image_sources
+    # Only a wholly unlabelled legacy role without a receipt can use the
+    # original workspace build as its baseline. A new peer can be a later build.
+    if previous:
+        baseline = None
+    result = {}
+    for name in names:
+        info = live.get(name) or {}
+        labels = info.get('Config', {}).get('Labels') or {}
+        if any(key.startswith(image_sources.CONTAINER_LABEL) for key in labels):
+            baseline = None
+        result[name] = image_sources.label_artifact(info, role)
+    previous = previous or {}
+    identities = previous.get('containers')
+    for name, artifact in result.items():
+        info = live.get(name)
+        if artifact or not info:
+            continue
+        old = identities.get(name) if isinstance(identities, dict) else None
+        if (isinstance(old, dict) and old.get('id') and old['id'] == info.get('Id')
+                and image_id(old.get('image')) == image_id(info.get('Image'))):
+            artifact = {key: value for key, value in previous.items() if key != 'containers'}
+        else:
+            artifact = baseline
+        if artifact and image_id(artifact.get('image_id')) == image_id(info.get('Image')):
+            result[name] = artifact
+    return result
+
+
 def record_applied(config, state, *, roles_updated=()):
     """Publish only identities verified against the actual containers after readiness."""
     from . import profile_runtime, sandbox
@@ -129,20 +172,20 @@ def record_applied(config, state, *, roles_updated=()):
                 continue
             saved[role] = {'containers': containers, 'image_id': applied['image_id'],
                            'common_digest': applied.get('common_inputs_digest'),
-                           'workspace_inputs_digest': applied.get('workspace_inputs_digest'),
+                           'workspace_layers': applied.get('workspace_layers'),
                            'profile_id': applied.get('factory_profile'),
                            'builtin_digest': applied.get('factory_profile_digest'),
                            'artifacts': applied.get('image_artifacts', [])}
         else:
-            artifact = artifacts.get(role)
-            previous = saved.get(role)
-            if role not in roles_updated:
-                if previous and previous.get('containers') == containers:
-                    continue
-                if not previous and artifact != mounted_artifacts.get(role):
-                    continue
-            if artifact and {image_id(item['image']) for item in containers.values()} == {image_id(artifact['image_id'])}:
-                saved[role] = {**artifact, 'containers': containers}
+            prepared = artifacts.get(role)
+            if role in roles_updated:
+                previous, baseline = None, prepared
+            else:
+                previous = saved.get(role)
+                baseline = prepared if prepared == mounted_artifacts.get(role) else None
+            versions = list(role_artifacts(role, names, live, previous, baseline).values())
+            if versions and versions[0] and all(version == versions[0] for version in versions):
+                saved[role] = {**versions[0], 'containers': containers}
     sandbox.write_json(Path(state) / 'container-updates/applied.json', {'version': 1, 'roles': saved})
     if repair:
         print(f'Repaired the applied container version record at {Path(state) / "container-updates/applied.json"}.', flush=True)
@@ -213,49 +256,63 @@ def plan(config, state, *, current=None, cache=None):
             missing.append('the main agent sandbox’s applied build record')
         else:
             old_profile = applied.get('factory_profile_digest')
-            from . import primary_workspace
-            old_inputs = (applied.get('common_inputs_digest') if primary_workspace.agent(config) == 'pi'
-                          else applied.get('workspace_inputs_digest'))
-            target_inputs = workspace_inputs(target)
-            if old_profile is None or old_inputs is None:
+            old_layers = applied.get('workspace_layers')
+            needed = workspace_layers(target, stock='pi-stock' in artifacts)
+            recorded = old_layers if isinstance(old_layers, dict) else {}
+            if old_profile is None or any(not isinstance(recorded.get(name), str) for name in needed):
                 missing.append('the main agent sandbox’s Factory source versions')
-            else:
-                if old_profile != target['profile']['factory_profile_digest'] or old_inputs != target_inputs:
-                    changed.add('workspace')
-                if old_profile != target['profile']['factory_profile_digest']:
-                    service_changes = profile_services.changes(config, target)
-                    result['profile_services'] = any(service_changes.values())
-                    result['service_changes'] = service_changes
-            targets['workspace'] = [target['profile']['factory_profile_digest'], target_inputs]
+            if any(isinstance(recorded.get(name), str) and recorded[name] != digest for name, digest in needed.items()):
+                changed.add('workspace')
+            if old_profile is not None and old_profile != target['profile']['factory_profile_digest']:
+                changed.add('workspace')
+                service_changes = profile_services.changes(config, target)
+                result['profile_services'] = any(service_changes.values())
+                result['service_changes'] = service_changes
+            targets['workspace'] = [target['profile']['factory_profile_digest'], needed]
         catalog = image_sources.index() if image_sources.mode(config) == 'prebuilt' else {}
+        prepared = _artifacts(config.get('image_artifacts', []), 'the prepared build')
         for role in sorted((set(roles) - {'workspace'}) | (set(artifacts) & {'pi-stock', 'pi-common', 'native-common'})):
-            old = saved.get(role) or artifacts.get(role)
-            if not old or not old.get('recipe'):
-                missing.append(LABELS[role] + ' applied version')
-                continue
+            baseline = artifacts.get(role)
             if role in roles:
-                instances = {name: live.get(name) for name in roles[role]}
-                if any(not info or image_id(info.get('Image')) != image_id(old.get('image_id')) for info in instances.values()):
-                    missing.append(LABELS[role] + ' container versions')
-                    continue
+                candidate = prepared.get(role)
+                if (baseline and candidate and image_id(candidate.get('image_id')) == image_id(baseline.get('image_id'))
+                        and candidate != baseline):
+                    # The same image bytes have two known recipes. Only a
+                    # container label or an identity-bound receipt resolves it.
+                    baseline = None
+                versions = role_artifacts(role, roles[role], live, saved.get(role), baseline).values()
+            else:
+                versions = [baseline]  # The workspace mount identifies the base it consumed.
+            known = [version for version in versions if version and version.get('recipe')]
+            if len(known) != len(versions):
+                missing.append(LABELS[role] + ' applied version')
+            if not known:
+                continue
             key = (role, config['uid'], config['gid'])
             recipes = cache.setdefault('recipes', {}) if cache is not None else {}
             if key not in recipes:
                 recipes[key] = image_sources.recipe(target, role)
             recipe = recipes[key]
-            if old.get('source', 'prebuilt') == 'prebuilt' and not old.get('platform'):
-                missing.append(LABELS[role] + ' build platform')
-                continue
             candidates = catalog.get(recipe, {})
             if not isinstance(candidates, dict):
                 raise ValueError(f'The tested {role} image list at {image_sources.INDEX} must map platforms to digest references. Reinstall Factory or select Build images locally')
-            target_ref = candidates.get(old.get('platform'))
-            if target_ref is not None and (not isinstance(target_ref, str) or not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', target_ref)):
-                raise ValueError(f'The tested {role} image for {old.get("platform")} has an invalid digest reference {target_ref!r}. Reinstall Factory or select Build images locally')
-            targets[role] = [recipe, target_ref]
-            if old['recipe'] != recipe or (old.get('source', 'prebuilt') == 'prebuilt'
-                                          and target_ref and target_ref != old.get('reference')):
-                changed.add(role)
+            platforms = {}
+            for old in known:
+                if old['recipe'] != recipe:
+                    changed.add(role)
+                platform = old.get('platform')
+                if not platform:
+                    message = LABELS[role] + ' build platform'
+                    if old.get('source', 'prebuilt') == 'prebuilt' and message not in missing:
+                        missing.append(message)
+                    continue
+                target_ref = candidates.get(platform)
+                if target_ref is not None and (not isinstance(target_ref, str) or not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', target_ref)):
+                    raise ValueError(f'The tested {role} image for {platform} has an invalid digest reference {target_ref!r}. Reinstall Factory or select Build images locally')
+                platforms[platform] = target_ref
+                if old.get('source', 'prebuilt') == 'prebuilt' and target_ref and target_ref != old.get('reference'):
+                    changed.add(role)
+            targets[role] = [recipe, platforms]
         result['roles'] = sorted(changed)
         result['workspace'] = bool(changed & {'workspace', 'pi-stock', 'pi-common', 'native-common',
                                             'controller-codex', 'controller-claude', 'controller-agy'})
@@ -272,7 +329,9 @@ def plan(config, state, *, current=None, cache=None):
         result['unknown'] = missing
         result['status'] = 'available' if changed else 'unknown' if missing else 'current'
         if missing:
-            result['reason'] = 'Cannot compare ' + ', '.join(missing) + '. Rebuild this sandbox to record its applied versions.'
+            next_step = (' Start this sandbox to record its applied versions.' if not main
+                         else ' Rebuild this sandbox to record its applied versions.')
+            result['reason'] = 'Cannot compare ' + ', '.join(missing) + '.' + next_step
         evidence = {'applied': applied, 'receipts': saved, 'live': {n: [v.get('Id'), v.get('Image')] if v else None for n, v in live.items()},
                     'targets': targets, 'roles': result['roles'], 'profile_id': identifier}
         result['revision'] = hashlib.sha256(json.dumps(evidence, sort_keys=True).encode()).hexdigest()

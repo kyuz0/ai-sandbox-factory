@@ -78,8 +78,21 @@ the public list, inspect and preview commands. Render `container-updates-dashboa
 `python tests/container_updates_lifecycle.py` uses disposable Podman containers
 and an authenticated browser editor. It checks helper-only and workspace updates,
 restoration after faults, stopped state, unchanged container identities outside
-the plan, original editor address and private/project data. It removes its owned
-containers, volumes and fixture images. The fresh-sandbox CI job requires it.
+the plan, workspace start time, original editor address and private/project data.
+It also repairs receipts immediately after helper-only updates, rolls back mixed
+and stopped updates, and recovers the journal after a worker is killed.
+It removes its owned containers, volumes and fixture images. The fresh-sandbox CI
+job requires it.
+
+`python tests/container_updates_native.py` exercises a real Codex controller,
+workspace and built-in PostgreSQL service update. It writes to the replacement
+database before an injected failure, checks exact-ID rollback to the original
+data, then retries and restores saved service data. It uses no account sign-in
+or model request. It also updates four gateways when one has an older recipe
+but identical image bytes, without restarting their workspace, controller or
+database. Controller-private files remain separate from the workspace.
+Both fixtures accept `--candidate-index FILE`; CI runs them
+against the same candidate list as fresh startup.
 
 ```sh
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_image_dependency_updates test_image_maintenance test_image_scan test_factory_notifications test_factory_image_publication test_image_sources

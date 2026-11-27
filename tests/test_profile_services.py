@@ -241,6 +241,42 @@ class AppliedRecipeTests(unittest.TestCase):
             self.assertIsNone(profile_runtime.applied(root / 'state'))
 
 
+    def test_same_image_from_changed_workspace_layer_gets_a_new_record_and_keeps_existing_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'factory/containers/aws-access/client'
+            source.mkdir(parents=True)
+            dockerfile = source / 'Dockerfile'
+            dockerfile.write_text('FROM base\n')
+            profile, common = root / 'profile', root / 'common'
+            profile.mkdir()
+            common.mkdir()
+            state = root / 'state'
+            config = {'engine': 'podman', 'aws_access': {'profile': 'test'},
+                      'profile': {'name': 'fixture', 'path': str(profile), 'digest': sandbox.tree_digest(profile)},
+                      'common': {'path': str(common), 'digest': sandbox.tree_digest(common)}}
+            with patch.object(sandbox, 'ROOT', root / 'factory'), patch.object(sandbox, 'image_names', return_value=('main', 'gateway')), \
+                 patch.object(sandbox, 'run', return_value=subprocess.CompletedProcess([], 0, '[{"Id":"identical"}]', '')):
+                with profile_runtime.recording(config, state):
+                    pass
+                profile_runtime.select(config, state)
+                first = profile_runtime.applied(state)
+                with self.assertRaisesRegex(ValueError, 'workspace layer sources changed'):
+                    with profile_runtime.recording(config, state):
+                        dockerfile.write_text('FROM base\n# new recipe\n')
+                self.assertEqual(config['workspace_layers'], first['workspace_layers'])
+                self.assertEqual(len(list((state / 'applied-profiles').iterdir())), 1)
+                with profile_runtime.recording(config, state):
+                    pass
+                dockerfile.write_text('FROM base\n# a change after preparation\n')
+                profile_runtime.select(config, state)
+                second = profile_runtime.applied(state)
+                self.assertNotEqual(second['path'], first['path'])
+                self.assertNotEqual(second['workspace_layers']['aws'], first['workspace_layers']['aws'])
+                current = {'Image': 'identical', 'Mounts': [{'Destination': profile_runtime.PATH, 'Source': first['path']}]}
+                profile_runtime.select(config, state, current)
+                self.assertEqual(profile_runtime.applied(state), first)
+
     def test_cached_workspace_images_get_a_record_in_each_fresh_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -256,6 +292,7 @@ class AppliedRecipeTests(unittest.TestCase):
                     profile_runtime.ensure_cached(config, root / name)
                     self.assertTrue(profile_runtime.applied(root / name))
                     self.assertTrue(profile_runtime.mounts(root / name))
+                    self.assertNotIn('workspace_layers', profile_runtime.applied(root / name))
             self.assertNotEqual(profile_runtime.applied(root/'first')['path'], profile_runtime.applied(root/'second')['path'])
 
     def test_native_record_includes_only_selected_workspace_inputs(self):
@@ -286,6 +323,7 @@ class AppliedRecipeTests(unittest.TestCase):
                 (client / name).write_text('original\n')
             profile = root / 'profile'; profile.mkdir()
             common = root / 'common'; common.mkdir()
+            (common / 'cli-tools').mkdir()
             config = {'engine':'podman','primary_agent':'codex','options':{'browser':False},
                       'profile':{'name':'fixture','path':str(profile),'digest':sandbox.tree_digest(profile)},
                       'common':{'path':str(common),'digest':sandbox.tree_digest(common)}}

@@ -209,7 +209,7 @@ def up(config, state, *, credentials=None):
             '--tmpfs', '/tmp:rw,noexec,nosuid,nodev', '-v', socket_mount(state, 'rw')]
     if engine == 'podman':
         args += ['--userns=keep-id:uid=1000,gid=1000']
-    worker_id = subprocess.check_output(args + [tag, value['region']], text=True).strip()
+    worker_id = subprocess.check_output(args + image_sources.container_labels(config, 'aws') + [tag, value['region']], text=True).strip()
     try:
         _deliver(engine, worker_id, value['region'], creds)
         ensure_renewal(engine, worker_id, filename, config['name'], creds['Expiration'])

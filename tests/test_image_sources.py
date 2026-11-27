@@ -1,6 +1,6 @@
 """Image acquisition uses the saved recipes and keeps runtime references stable."""
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 import hashlib
 import io
 import json
@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from ai_sandbox_factory import (
-    aws_access, connector_settings, connectors, hosted_models, image_builds, image_sources, inference,
+    aws_access, connector_settings, connectors, container_updates, hosted_models, image_builds, image_sources, inference,
     operation_locks, operations, primary_agents, profile_replacement,
     profile_runtime, sandbox, updating,
 )
@@ -75,6 +75,21 @@ class ImageSourcesTests(unittest.TestCase):
         image_sources._platform.cache_clear()
         self.addCleanup(image_sources._platform.cache_clear)
         self.log = self.enterContext(redirect_stdout(io.StringIO()))
+
+    def test_creation_labels_bind_recipe_to_actual_image_and_role(self):
+        artifact = dict(role='gateway', recipe='recipe-B', reference=IMAGE_ID,
+                        image_id=IMAGE_ID, source='local', platform='linux/amd64')
+        config = {**self.config, 'image_artifacts': [artifact]}
+        args = image_sources.container_labels(config, 'gateway')
+        self.assertTrue(all(flag == '--label' for flag in args[::2]))
+        labels = dict(value.split('=', 1) for value in args[1::2])
+        container = {'Image': IMAGE_ID.removeprefix('sha256:'), 'Config': {'Labels': labels}}
+        self.assertEqual(image_sources.label_artifact(container, 'gateway'), artifact)
+        config['image_artifacts'] = [{**artifact, 'recipe': 'prepared-C'}]
+        self.assertEqual(image_sources.label_artifact(container, 'gateway'), artifact)
+        self.assertIsNone(image_sources.label_artifact(container, 'advisor'))
+        self.assertIsNone(image_sources.label_artifact({**container, 'Image': 'different-image'}, 'gateway'))
+        self.assertIsNone(image_sources.label_artifact({'Image': IMAGE_ID, 'Config': {'Labels': None}}, 'gateway'))
 
     def publish(self, images):
         self.index.write_text(json.dumps({'version': 1, 'images': images}))
@@ -149,6 +164,34 @@ class ImageSourcesTests(unittest.TestCase):
                 self.publish({current: {'linux/amd64': PUBLISHED}})
                 self.assertEqual(self.prepare(), PUBLISHED)
                 self.assertEqual(used['gateway']['recipe'], current)
+
+    def test_local_build_records_the_checked_recipe_and_image_id(self):
+        def build():
+            self.engine.images[LOCAL] = self.engine.verified(LOCAL)
+        with image_sources.override('local'), image_sources.recording() as used:
+            self.assertEqual(self.prepare(builder=build), LOCAL)
+        self.assertEqual(used, {'gateway': {'role': 'gateway', 'recipe': self.recipe, 'reference': IMAGE_ID,
+                                            'image_id': IMAGE_ID, 'source': 'local', 'platform': 'linux/amd64'}})
+        self.assertEqual(self.config['image_refs'], {'gateway': IMAGE_ID})
+        self.assertFalse(any(call[1] == 'pull' for call in self.engine.calls))
+
+    def test_changed_local_inputs_do_not_record_a_new_recipe_for_an_older_image(self):
+        dockerfile = self.root / 'containers/proxy/Dockerfile'
+        dockerfile.parent.mkdir(parents=True)
+        dockerfile.write_text('FROM first\n')
+        def build():
+            self.engine.images[LOCAL] = self.engine.verified(LOCAL)
+            dockerfile.write_text('FROM second\n')
+        with patch.object(sandbox, 'ROOT', self.root), image_sources.override('local'), image_sources.recording() as used:
+            before = image_sources.recipe(self.config, 'gateway')
+            with self.assertRaisesRegex(ValueError, 'gateway image sources changed while building') as failure:
+                self.prepare(builder=build)
+            self.assertIn(LOCAL, str(failure.exception))
+            self.assertEqual(used, {})
+            self.assertNotIn('image_refs', self.config)
+            self.assertEqual(self.prepare(builder=build), LOCAL)
+            self.assertNotEqual(used['gateway']['recipe'], before)
+            self.assertEqual(used['gateway']['recipe'], image_sources.recipe(self.config, 'gateway'))
 
     def test_unpublished_recipe_or_platform_runs_the_existing_builder(self):
         for index in ({}, {'different-recipe': {'linux/amd64': PUBLISHED}},
@@ -399,6 +442,19 @@ class ImageSourcesTests(unittest.TestCase):
         config['image_refs']['controller-codex'] = PUBLISHED
         self.assertIn('primary-controller=docker-image://' + PUBLISHED, primary_agents.worker_context(config))
 
+    def test_reenabling_a_helper_reuses_its_proven_image_or_prepares_an_unrecorded_ref(self):
+        old = 'sha256:' + 'c' * 64
+        self.engine.images[old] = {'Id': old}
+        previous = {'role': 'gateway', 'reference': old, 'image_id': old, 'recipe': 'old-recipe'}
+        for recorded in (False, True):
+            with self.subTest(recorded=recorded):
+                config = {**self.config, 'image_refs': {'gateway': old, 'workspace': 'workspace-image'},
+                          'image_artifacts': [previous] if recorded else []}
+                image_sources.prepare_helper(config, 'gateway', self.prepare)
+                self.assertEqual(config['image_refs']['workspace'], 'workspace-image')
+                self.assertEqual(config['image_refs']['gateway'], old if recorded else PUBLISHED)
+                self.assertEqual(config['image_artifacts'][0]['recipe'], 'old-recipe' if recorded else self.recipe)
+
     def test_first_hosted_connection_prepares_exact_inference_image_before_assigning_credentials(self):
         state = self.root / self.config['name']
         state.mkdir()
@@ -470,6 +526,71 @@ class ImageSourcesTests(unittest.TestCase):
             sandbox.apply_aws_settings(self.config, state, value)
             start.assert_not_called()
         self.assertEqual(json.loads(saved.read_text())['image_refs']['aws'], PUBLISHED)
+
+    def test_enabling_live_helpers_records_their_applied_versions_without_replacing_the_workspace(self):
+        source = Path(__file__).resolve().parents[1] / 'examples/connectors/build-status/connector.json'
+        registry = self.root / 'connectors'
+        sandbox.write_json(registry / 'status/connector.json', {**json.loads(source.read_text()), 'id': 'status'})
+        aws = {'region': 'us-east-1', 'profile': 'fixture', 'role': 'arn:aws:iam::123456789012:role/fixture',
+               'grants': [{'Action': 'ec2:DescribeRegions', 'Resource': '*'}]}
+        for role in ('inference', 'connector', 'aws'):
+            with self.subTest(role=role), ExitStack() as stack:
+                state = self.root / role
+                config = {**self.config, 'profile': sandbox.load_profile('base'), 'common': sandbox.common_profile()}
+                base_role = 'pi-stock' if role == 'aws' else 'pi-common'
+                base = {'role': base_role, 'recipe': image_sources.recipe(config, base_role),
+                        'source': 'local', 'platform': 'linux/amd64', 'reference': 'base-image', 'image_id': 'base-image'}
+                config.update(image_refs={'workspace': 'main-image'}, image_artifacts=[base])
+                # AWS's in-place path reuses a workspace with the AWS client already installed.
+                layers = container_updates.workspace_layers(config, stock=base_role == 'pi-stock')
+                metadata = {'name': 'base', 'profile_digest': config['profile']['digest'],
+                            'image_id': 'main-image', 'common_inputs_digest': config['common']['digest'],
+                            'workspace_layers': layers, 'factory_profile': 'base',
+                            'factory_profile_digest': config['profile']['factory_profile_digest'], 'image_artifacts': [base]}
+                sandbox.write_json(state / 'mounted/build.json', metadata)
+                sandbox.write_json(state / 'profile-runtime/applied.json', {**metadata, 'path': str(state / 'mounted')})
+                sandbox.write_json(state / 'config.json', config)
+                main = sandbox.names(config)[0]
+                live = {main: {'Id': 'original-main', 'Image': 'main-image', 'State': {'Running': True}, 'Mounts': [
+                    {'Destination': profile_runtime.PATH, 'Source': str(state / 'mounted')},
+                    {'Destination': '/opt/pi-security/config', 'Source': str(state / 'runtime-config'),
+                     'Type': 'bind', 'RW': False}]}}
+                key = image_sources.recipe(config, role)
+                self.publish({key: {'linux/amd64': PUBLISHED}})
+                def start(updated, directory):
+                    self.assertEqual(updated['image_refs'][role], PUBLISHED)
+                    for name in container_updates.runtime_roles(updated)[role]:
+                        live[name] = {'Id': 'new-helper', 'Image': IMAGE_ID, 'State': {'Running': True}}
+                stack.enter_context(patch.object(sandbox, 'inspect', side_effect=lambda cfg, name: live.get(name)))
+                stack.enter_context(patch.object(sandbox, 'up', side_effect=AssertionError('workspace restarted')))
+                stack.enter_context(patch.object(connector_settings, 'refresh_agent_context'))
+                if role == 'inference':
+                    stack.enter_context(patch.object(hosted_models, 'request', return_value={}))
+                    stack.enter_context(patch.object(inference, 'up', side_effect=start))
+                    stack.enter_context(patch.object(inference, 'credentials'))
+                    hosted_models.save(config, state, {'provider': 'openrouter', 'key': 'synthetic-key'})
+                elif role == 'aws':
+                    stack.enter_context(patch.object(sandbox, 'aws_installation', return_value=('ready', live)))
+                    stack.enter_context(patch.object(sandbox, 'refresh_shell_network'))
+                    stack.enter_context(patch.object(aws_access, 'up', side_effect=start))
+                    sandbox.apply_aws_settings(config, state, aws)
+                else:
+                    stack.enter_context(patch.object(connectors, 'directory', return_value=registry))
+                    store = stack.enter_context(patch('ai_sandbox_factory.provider_credentials.os_store'))
+                    store.return_value.get_password.return_value = 'synthetic-token'
+                    stack.enter_context(patch.object(connectors, 'up', side_effect=start))
+                    stack.enter_context(patch.object(connector_settings, 'check_sockets'))
+                    connector_settings.apply(config, state, {'connector_ids': ['status'],
+                                             'connector_operations': {'status': ['latest']}}, None)
+                saved = json.loads((state / 'config.json').read_text())
+                self.assertEqual(saved['image_refs'], {'workspace': 'main-image', role: PUBLISHED})
+                self.assertIn(base, saved['image_artifacts'])
+                receipt = container_updates._receipt(state)[role]
+                self.assertEqual((receipt['recipe'], receipt['image_id']), (key, IMAGE_ID))
+                self.assertEqual(list(receipt['containers'].values()), [{'id': 'new-helper', 'image': IMAGE_ID}])
+                self.assertEqual(container_updates.plan(saved, state)['status'], 'current')
+                self.assertNotIn('synthetic-key', (state / 'config.json').read_text())
+                self.assertNotIn('synthetic-token', (state / 'container-updates/applied.json').read_text())
 
     def test_one_shot_build_replaces_old_refs_with_new_images_but_keeps_saved_preference(self):
         self.config.update(profile=sandbox.load_profile('base'), common=sandbox.common_profile(),

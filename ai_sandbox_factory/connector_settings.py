@@ -185,7 +185,7 @@ def preview(config, state, changes):
 
 
 def apply(config, state, changes, apply_gate):
-    from . import sandbox
+    from . import container_updates, image_sources, sandbox
     updated = proposed_settings(config, changes)
     if updated is None:
         return
@@ -211,8 +211,7 @@ def apply(config, state, changes, apply_gate):
     changed = [plugin.id for plugin in connectors.saved({'connector_ids': retained}, state)
                if connectors.permitted_routes(plugin, config) != connectors.permitted_routes(plugin, updated)]
     if added and not old:
-        updated['image_refs'] = dict(config.get('image_refs', {}))
-        connectors.build(updated)
+        image_sources.prepare_helper(updated, 'connector', connectors.build)
     if not updating.begin_apply(apply_gate):
         return
     try:
@@ -243,6 +242,8 @@ def apply(config, state, changes, apply_gate):
         discard_snapshots(added, state)
         raise
     discard_snapshots(removed, state)
+    if running and added:
+        container_updates.record_applied(updated, state, roles_updated=() if old else ('connector',))
     if running:
         print('Connector settings applied to the running sandbox.')
     else:

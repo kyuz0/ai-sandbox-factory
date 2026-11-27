@@ -13,6 +13,7 @@ LABEL = 'Image setup'
 DEFAULT = 'prebuilt'
 CHOICES = (('Use prebuilt images', 'prebuilt'), ('Build images locally', 'local'))
 INDEX = Path(__file__).with_name('images.lock.json')
+CONTAINER_LABEL = 'io.pi-sandbox-factory.image.'
 _used = ContextVar('factory_image_artifacts', default=None)
 _override = ContextVar('factory_image_source_override', default=None)
 
@@ -25,6 +26,28 @@ def choice(value):
 
 def mode(config):
     return choice(_override.get() or config.get('image_source', 'local'))
+
+
+def container_labels(config, role):
+    """Attach the prepared recipe to its new container, independently of later builds."""
+    artifact = next((item for item in config.get('image_artifacts', []) if item.get('role') == role), {})
+    fields = ('role', 'recipe', 'reference', 'image_id', 'source', 'platform')
+    if not all(isinstance(artifact.get(key), str) and artifact[key] for key in fields):
+        return []
+    return [argument for key in fields for argument in ('--label', CONTAINER_LABEL + key + '=' + artifact[key])]
+
+
+def label_artifact(container, role):
+    """Read creation-time evidence only when it matches the actual container image."""
+    labels = container.get('Config', {}).get('Labels') or {}
+    fields = ('role', 'recipe', 'reference', 'image_id', 'source', 'platform')
+    artifact = {key: labels.get(CONTAINER_LABEL + key) for key in fields}
+    actual = str(container.get('Image', '')).removeprefix('sha256:')
+    if (not all(isinstance(value, str) and value for value in artifact.values())
+            or artifact['role'] != role or artifact['source'] not in ('local', 'prebuilt')
+            or artifact['image_id'].removeprefix('sha256:') != actual):
+        return None
+    return artifact
 
 
 @contextmanager
@@ -210,14 +233,18 @@ def ensure(config, role, local, build_local=None):
             return local
         if mode(config) == 'prebuilt':
             print(f'No tested prebuilt {role} image matches these inputs; building it locally.', flush=True)
+        recipe_key = recipe(config, role)
         build_local()
         data = _inspect(config, local)
         if not data or not data.get('Id'):
             raise ValueError(f'Cannot record the built {role} image {local}: the engine returned no image ID. Retry the build.')
+        if recipe(config, role) != recipe_key:
+            raise ValueError(f'The {role} image sources changed while building {local}. '
+                             'Retry the build with unchanged sources.')
         config.setdefault('image_refs', {})[role] = data['Id']
         used = _used.get()
         if used is not None:
-            used[role] = {'role': role, 'recipe': recipe(config, role), 'reference': data['Id'],
+            used[role] = {'role': role, 'recipe': recipe_key, 'reference': data['Id'],
                           'image_id': data['Id'], 'source': 'local',
                           'platform': 'linux/' + data.get('Architecture', 'unknown')}
         return local
@@ -249,6 +276,20 @@ def ensure(config, role, local, build_local=None):
                           'image_id': data['Id'], 'source': 'prebuilt', 'platform': platform}
         config.setdefault('image_refs', {})[role] = selected
         return selected
+
+
+def prepare_helper(config, role, builder):
+    """Prepare one newly enabled companion without changing the saved workspace or other helpers."""
+    refs = config['image_refs'] = dict(config.get('image_refs', {}))
+    previous = config.get('image_artifacts', [])
+    if role in refs and not any(item['role'] == role and item.get('reference') == refs[role] for item in previous):
+        # A previous connection can leave an older ref without any recipe
+        # evidence. Prepare this newly enabled role from the selected source.
+        refs.pop(role)
+    with recording() as artifacts:
+        builder(config)
+    if artifacts:
+        config['image_artifacts'] = [item for item in previous if item['role'] not in artifacts] + list(artifacts.values())
 
 
 def runtime(config, role, local, build_local):

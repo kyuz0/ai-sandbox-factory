@@ -232,6 +232,7 @@ def up(config, state, *, only=None, check_ready=True):
         return
     from . import sandbox as core
     check_ownership(config)
+    from . import image_sources
     controller, proxy, socket, home, egress = names(config)
     engine = config['engine']
     selected = agent(config)
@@ -261,6 +262,7 @@ def up(config, state, *, only=None, check_ready=True):
             core.resume_existing(config, name, data)
             continue
         args = [engine, 'run', '-d', '--name', name, *label, '--cap-drop=ALL', '--security-opt=no-new-privileges']
+        args += image_sources.container_labels(config, 'gateway' if name == proxy else 'controller-' + selected)
         if name == proxy:
             args += ['--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID', '--cap-add=DAC_OVERRIDE',
                      *host_platform.gateway_labels(),

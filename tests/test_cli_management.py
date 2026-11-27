@@ -450,10 +450,6 @@ class LogsAndSelfUpdate(CliCase):
         upgrade.assert_not_called()
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class ContainerUpdateCommands(CliCase):
     def setUp(self):
         super().setUp()
@@ -467,7 +463,7 @@ class ContainerUpdateCommands(CliCase):
         (self.saved / 'config.json').write_text(json.dumps(config))
         applied = self.saved / 'applied'
         applied.mkdir()
-        self.build_record = dict(image_id='workspace-image', common_inputs_digest='older-common',
+        self.build_record = dict(image_id='workspace-image', common_inputs_digest='older-common', workspace_layers={'common': 'older-common', 'providers': 'older-providers'},
                                  factory_profile='base', factory_profile_digest=config['profile']['factory_profile_digest'],
                                  image_artifacts=[])
         (applied / 'build.json').write_text(json.dumps(self.build_record))
@@ -507,6 +503,18 @@ class ContainerUpdateCommands(CliCase):
         self.assertIn('Available', output)
         self.assertFalse((self.saved / 'container-updates').exists(), 'Reading status must not write applied state')
 
+    def test_custom_and_missing_build_report_the_actual_next_step(self):
+        from ai_sandbox_factory import container_update_apply
+        gate = str(self.root / 'gate')
+        for status, reason in [('custom', 'You maintain this custom profile’s software and services.'),
+                               ('unknown', 'Cannot compare the applied build. Start this sandbox to record its versions.')]:
+            with self.subTest(status=status), patch('ai_sandbox_factory.container_updates.plan',
+                    return_value={'status': status, 'reason': reason}), patch.object(container_update_apply, 'apply') as apply:
+                error = self.fails('update-containers', 'demo', '--revision', 'anything', '--apply-gate', gate)
+                self.assertIn(reason, error)
+                self.assertNotIn('plan changed', error)
+                apply.assert_not_called()
+
     def test_update_requires_review_and_rejects_stale_revision_before_execution(self):
         from ai_sandbox_factory import container_update_apply
         self.assertIn('requires --revision', self.fails('update-containers', 'demo', code=2))
@@ -515,3 +523,7 @@ class ContainerUpdateCommands(CliCase):
             error = self.fails('update-containers', 'demo', '--revision', 'stale', '--apply-gate', str(gate))
         self.assertIn('plan changed', error)
         apply.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

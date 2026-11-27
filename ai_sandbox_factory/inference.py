@@ -265,7 +265,7 @@ def up(config, state):
             args += ['--userns=keep-id:uid=1000,gid=1000']
         if config.get('local_model_ports'):
             args += ['-v', sandbox.names(config)[2] + ':/run/egress:ro,z']
-        subprocess.run(args + [runtime_image], check=True, capture_output=True)
+        subprocess.run(args + image_sources.container_labels(config, 'inference') + [runtime_image], check=True, capture_output=True)
     for _ in range(80):
         result = subprocess.run([config['engine'], 'exec', worker, 'node', '-e',
             "const http=require('http');const r=http.get({socketPath:'/run/inference/proxy.sock',path:'/'},s=>{s.resume();s.on('end',()=>process.exit(s.statusCode===404?0:1));});r.on('error',()=>process.exit(1));r.setTimeout(1000,()=>process.exit(1));"], capture_output=True)
