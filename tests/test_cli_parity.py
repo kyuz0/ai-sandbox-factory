@@ -24,6 +24,7 @@ ACTIONS = {
     'profile-information': ('show', 'copies-and-profiles'),
     'profile-guide': ('show', 'copies-and-profiles'),
     'containers': ('show', 'inspect-and-change-settings'),
+    'container-updates': ('update-containers', 'inspect-and-change-settings'),
     'logs': ('logs', 'inspect-and-change-settings'),
     'shell': ('shell', 'inspect-and-change-settings'),
     'connections': ('exec', 'inspect-and-change-settings'),

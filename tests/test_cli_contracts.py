@@ -54,6 +54,7 @@ class CliContracts(CliCase):
     def test_public_lifecycle_commands_supervise_once_and_workers_execute_directly(self):
         commands = {
             'update': ['--settings-file', 'settings.json'],
+            'update-containers': ['--revision', 'reviewed-revision'],
             'recreate': [],
             'install-system-packages': ['curl'],
             'profile-fork': ['--directory', str(self.root / 'profile')],

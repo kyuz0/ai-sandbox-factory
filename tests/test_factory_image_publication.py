@@ -303,11 +303,28 @@ class FactoryImagePublication(unittest.TestCase):
                 self.assertFalse(self.output.exists())
 
     def test_a_source_change_during_the_build_prevents_publication(self):
-        with patch.object(publisher.image_sources, 'recipe', side_effect=['1' * 64, '2' * 64]):
-            with self.assertRaisesRegex(ValueError, 'gateway recipe changed'):
-                self.execute('--roles', 'gateway', '--publish')
-        self.assertFalse(self.output.exists())
-        self.assertFalse(any(args[1] == 'push' for args in self.engine.commands))
+        source = self.root / 'gateway-source'
+        source.mkdir()
+        dockerfile = source / 'Dockerfile'
+        original_inputs = publisher.image_sources.recipe_inputs
+        def inputs(config, role):
+            return [source] if role == 'gateway' else original_inputs(config, role)
+        for phase, error in (('build', 'gateway image sources changed'),
+                             ('run', 'gateway recipe changed')):
+            with self.subTest(phase=phase):
+                dockerfile.write_text('FROM original\n')
+                self.engine.commands.clear()
+                def change_sources(argv, **kwargs):
+                    result = self.engine.run(argv, **kwargs)
+                    if argv[1] == phase:
+                        dockerfile.write_text('FROM changed\n')
+                    return result
+                with patch.object(publisher.image_sources, 'recipe_inputs', side_effect=inputs), \
+                        patch.object(publisher.sandbox, 'run', side_effect=change_sources):
+                    with self.assertRaisesRegex(ValueError, error):
+                        self.execute('--roles', 'gateway', '--publish')
+                self.assertFalse(self.output.exists())
+                self.assertFalse(any(args[1] == 'push' for args in self.engine.commands))
 
     def test_merge_requires_same_checkout_role_platform_and_registry_digest(self):
         folder = self.root / 'fragments'
