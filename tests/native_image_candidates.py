@@ -34,7 +34,8 @@ def check(index, agent):
             subprocess.run([*command, '--fresh'], check=True)
     config = publisher.public_config()
     config.update(primary_agent=agent, image_source='prebuilt', options={'browser': False})
-    target = 'localhost/factory-native-candidate-' + uuid.uuid4().hex
+    repository = 'localhost/factory-native-candidate-' + uuid.uuid4().hex
+    target = repository + ':test'
     try:
         primary_workspace.build(config, target)
         subprocess.run([sys.executable, str(ROOT / 'tests/connector_native_clients.py'),
@@ -42,7 +43,7 @@ def check(index, agent):
         print(f'PASS {agent}: candidate version, synthetic native auth and workspace connector permissions', flush=True)
     finally:
         result = subprocess.check_output(['podman', 'images', '--format', '{{.Repository}}:{{.Tag}}'], text=True)
-        owned = [name for name in result.splitlines() if name.split(':', 1)[0].startswith(target)]
+        owned = [name for name in result.splitlines() if name.rsplit(':', 1)[0] == repository]
         if owned:
             subprocess.run(['podman', 'rmi', *owned], check=True)
 

@@ -235,9 +235,18 @@ def meaningful_update(report, directory):
     return any(candidate[role] != old[role] for role in candidate)
 
 
+def verified_head(sha):
+    statuses=api('GET',f'repos/{REPOSITORY}/commits/{sha}/status')['statuses']
+    latest=next((row for row in statuses if row['context']=='maintenance/verified'),None)
+    return bool(latest and latest['state']=='success')
+
+
 def image_sets(root=ROOT):
     """Current release, previous release and newest owned maintenance candidate."""
-    paths = [('stable', json.loads((root / INDEX).read_text()))]
+    stable=json.loads((root/INDEX).read_text())
+    if stable.get('version')!=1 or not isinstance(stable.get('images'),dict) or not stable['images']:
+        raise ValueError('The current Factory image index is empty or invalid. Publish and verify a current image set before running its daily scan.')
+    paths = [('stable',stable)]
     tags = command('git', 'tag', '--list', 'v*', '--sort=-creatordate').splitlines()
     released = 0
     for tag in tags:
@@ -263,9 +272,10 @@ def image_sets(root=ROOT):
             reference = None
         if reference:
             sha = reference['object']['sha']
-            statuses = api('GET', f'repos/{REPOSITORY}/commits/{sha}/status')['statuses']
-            if any(row['context'] == 'maintenance/verified' and row['state'] == 'success' for row in statuses):
-                head = {'sha': sha, 'repo': {'full_name': REPOSITORY}}
+            head = {'sha': sha, 'repo': {'full_name': REPOSITORY}}
+    if head and not verified_head(head['sha']):
+        print('The pending maintenance head has not passed verification; it cannot satisfy current image coverage.')
+        head=None
     if head:
         if head['repo']['full_name'] != REPOSITORY:
             raise ValueError('The maintenance image index is not from the Factory repository')
@@ -290,8 +300,8 @@ def image_sets(root=ROOT):
 
 def scan_summary(directory):
     reports=[json.loads(path.read_text()) for path in directory.rglob('factory-image-review.json')]
-    if not reports:
-        raise ValueError('No completed image scan reviews were produced; inspect the scanner or feed failure.')
+    if not reports or not any(row.get('current') for row in reports):
+        raise ValueError('No completed current image scan reviews were produced; inspect the scanner, current index or feed failure.')
     def role(row):
         return row['image'].split('@')[0].split('ai-sandbox-factory-')[1]
     fixed_pending={role(row) for row in reports if row.get('current') and row.get('kind')=='pending' and not row['requires_review']}

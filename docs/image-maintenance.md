@@ -1,12 +1,16 @@
 # Maintaining Factory images
 
-Factory checks for updates and scans its published images daily. Each Monday it
+Factory checks available versions and scans its published images daily. Each Monday it
 prepares a weekly update: stable agent versions, their download checksums,
 package locks and base-image digests. A relevant finding in a current image can
 start the same update workflow earlier. Daily scans inspect the published set;
 the blocking security gate applies to the replacement candidates. An already
 verified pending update is not rebuilt merely because the old release still has
 the findings it fixes.
+
+Daily scans cover the current image index, the two latest releases with prebuilt
+images, and verified pending updates. Shared digests are scanned once. Older
+releases keep their original evidence.
 
 The workflow publishes **candidates**, tests their exact digests, then prepares one **Update tested Factory container images**
 PR when automatic PR creation is enabled. Otherwise it prints the verified
@@ -37,16 +41,19 @@ incomplete. Failed client or lifecycle checks prevent promotion.
 
 ## Run or review an update
 
-Open **Actions → Factory image maintenance → Run workflow**. Leave the weekly
+Open **Actions → Factory image maintenance → Run workflow** and select `main`. Leave the weekly
 update option enabled to prepare candidates now. Disable it for a version and
-scan check. The scheduled weekly run uses the same path.
+scan check; an unresolved protected-image finding can still trigger replacement
+candidates. The scheduled weekly run uses the same path.
 
 Automatic PR creation requires the repository's GitHub Actions PR-creation
 permission and the Actions variable `FACTORY_AUTOMATED_PRS=true`. GitHub bundles
 creation with its workflow-approval permission. Factory's workflow never approves
 or merges PRs. Leave the variable unset for manual PR creation.
 
-The PR links to its verification run. Check the version table, blocked components
+The automatic PR links to its verification run. For a manual PR, use
+`.github/image-maintenance.json` on the verified branch and the run's
+`weekly-image-versions` artifact. Check the version table, blocked components
 and image-scan reports before merging. A candidate's code, pins and image list
 must match what was tested. If they change during review, rebuild and retest.
 
@@ -63,8 +70,9 @@ before approving an agent update that needs that verification.
 Trivy records package inventories and rescans them with its current vulnerability
 database. The reports retain every finding. Agent/editor image findings are informational
 (`pi-common`, `pi-stock`, `native-common`). Credential-companion and gateway
-candidates require review of fixable High/Critical findings and CISA-listed
-known-exploited vulnerabilities. A finding identifies installed software; it does
+candidates are blocked by fixable High/Critical findings and CISA-listed
+known-exploited vulnerabilities unless a scoped exception has been reviewed.
+A finding identifies installed software; it does
 not establish that a Factory protection has failed.
 
 Authenticated editor startup, file grants, restricted networking and companion
@@ -72,8 +80,8 @@ credential isolation remain blocking tests for every release. A demonstrated
 failure of these protections blocks promotion regardless of the image role.
 
 Document a reviewed exception in `.github/image-security-exceptions.json` with
-its vulnerability ID, package, installed version, image role, exact scan target,
-reason. Record when it was reviewed with `reviewed_on`. Each entry applies only
+its vulnerability ID, package, installed version, image role, exact scan target
+and reason. Record when it was reviewed with `reviewed_on`. Each entry applies only
 to that combination; it does not hide the finding from the report. Add
 `review_before` only when the exception should expire. A newer package version or
 a different finding requires its own review. Fixed findings do not remain blocked
@@ -114,10 +122,11 @@ notifications from running.
 ## Older images
 
 Keep every digest referenced by any Factory release. Release image tags are
-never moved, and the GitHub Release retains the image index, component inventories
-and scan evidence beyond the lifetime of Actions artifacts. Publishing a candidate
+never moved, and each GitHub Release retains its image index, component inventories
+and scan evidence in `factory-image-evidence.tar.gz`, beyond the lifetime of Actions
+artifacts. Publishing a candidate
 never moves a released digest or updates a running sandbox. The release's image
-index records the earlier set for an image rollback.
+index records that release's set; select an earlier release for an image rollback.
 
 `python scripts/image_maintenance.py retention` reports the complete released
 keep-set. It does not delete images. Retained older images are reported in scans without

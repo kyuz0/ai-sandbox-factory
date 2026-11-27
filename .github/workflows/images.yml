@@ -86,7 +86,7 @@ jobs:
       - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
         with:
           version: v0.76.2
-      - name: Scan the exact candidate and require review of actionable findings
+      - name: Scan the exact candidate
         id: scan
         shell: bash
         run: |

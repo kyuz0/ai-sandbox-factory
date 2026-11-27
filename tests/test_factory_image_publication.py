@@ -8,9 +8,11 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import sys
+import types
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -22,6 +24,81 @@ spec.loader.exec_module(publisher)
 spec = importlib.util.spec_from_file_location('prebuilt_image_fixture', CHECKOUT / 'tests/prebuilt_images_integration.py')
 integration = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(integration)
+
+
+class PublishedStockToolWiring(unittest.TestCase):
+    def test_published_stock_mode_runs_knowledge_and_real_browser_checks(self):
+        for enabled in (False,True):
+            with self.subTest(enabled=enabled),tempfile.TemporaryDirectory() as temporary:
+                module=types.ModuleType('frostpi_editor');module.check=Mock()
+                with patch.dict(sys.modules,{'frostpi_editor':module}):
+                    spec=importlib.util.spec_from_file_location('fresh_stock_fixture',CHECKOUT/'tests/fresh_sandbox.py')
+                    fresh=importlib.util.module_from_spec(spec);spec.loader.exec_module(fresh)
+                args=['fresh_sandbox.py','--image','exact-stock-digest','--code-server',temporary,'--output',temporary]
+                if enabled:args.append('--stock-tools')
+                with patch.object(sys,'argv',args),redirect_stdout(io.StringIO()):fresh.main()
+                calls=module.check.call_args_list
+                self.assertEqual(len(calls),4 if enabled else 2)
+                self.assertTrue(all(call.args[0]=='exact-stock-digest' for call in calls))
+                if enabled:
+                    self.assertEqual(calls[2].kwargs['local_knowledge'],'endpoint')
+                    self.assertTrue(calls[3].args[7])
+
+    def test_candidate_index_matches_the_published_stock_recipe(self):
+        from ai_sandbox_factory import image_sources, sandbox
+
+        stock = publisher.public_config()
+        key = image_sources.recipe(stock, 'pi-stock')
+        reference = 'docker.io/kyuz0/ai-sandbox-factory-pi-stock@sha256:' + 'a' * 64
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index = root / 'candidate.json'
+            index.write_text(json.dumps({'version': 1, 'images': {key: {'linux/amd64': reference}}}))
+            editor = types.ModuleType('frostpi_editor')
+            editor.check = Mock()
+            with patch.dict(sys.modules, {'frostpi_editor': editor}):
+                spec = importlib.util.spec_from_file_location('fresh_stock_fixture', CHECKOUT / 'tests/fresh_sandbox.py')
+                fresh = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(fresh)
+            args = ['fresh_sandbox.py', '--candidate-index', str(index), '--code-server', temporary, '--output', temporary]
+            with patch.object(sys, 'argv', args), patch.object(image_sources, 'INDEX', root / 'unused-index.json'), \
+                    patch.object(image_sources, 'ensure', return_value=reference) as ensure, redirect_stdout(io.StringIO()):
+                fresh.main()
+            ensure.assert_called_once()
+            config, role, _ = ensure.call_args.args
+            self.assertEqual(role, 'pi-stock')
+            self.assertEqual(config['profile']['digest'], sandbox.tree_digest(Path(stock['profile']['path'])))
+            self.assertEqual([call.args[0] for call in editor.check.call_args_list], [reference, reference])
+
+
+class NativeCandidateFixture(unittest.TestCase):
+    def test_build_and_cleanup_use_tags_from_the_exact_fixture_repository(self):
+        spec = importlib.util.spec_from_file_location('native_fixture', CHECKOUT / 'tests/native_image_candidates.py')
+        fixture = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixture)
+        built = []
+
+        def build(config, target):
+            self.assertEqual(config['primary_agent'], 'codex')
+            built.extend([target, fixture.sandbox.stage_image(target, '-base')])
+
+        def list_images(command, *, text):
+            self.assertEqual(command, ['podman', 'images', '--format', '{{.Repository}}:{{.Tag}}'])
+            repository, tag = built[0].rsplit(':', 1)
+            self.assertTrue(tag)
+            return '\n'.join([built[0], repository + '-other:' + tag, built[1]])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / 'images.lock.json'
+            with patch.object(fixture.image_sources, 'INDEX', index), \
+                    patch.object(fixture.publisher, 'verify_index', return_value={'controller-codex': {'reference': 'fixture'}}), \
+                    patch.object(fixture.primary_workspace, 'build', side_effect=build), \
+                    patch.object(subprocess, 'check_output', side_effect=list_images), \
+                    patch.object(subprocess, 'run') as run, redirect_stdout(io.StringIO()):
+                fixture.check(index, 'codex')
+        self.assertEqual(len(run.call_args_list), 2)
+        self.assertEqual(run.call_args_list[0].args[0][-2:], ['--image', 'codex=' + built[0]])
+        self.assertEqual(run.call_args_list[1].args[0], ['podman', 'rmi', *built])
 
 
 class PrebuiltFixtureIdentity(unittest.TestCase):

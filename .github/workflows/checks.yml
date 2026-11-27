@@ -121,9 +121,9 @@ jobs:
         run: |
           args=()
           if [[ -n "$CANDIDATE_INDEX" ]]; then
-            args+=(--candidate-index /tmp/factory-published-candidate/images.lock.json --knowledge)
+            args+=(--candidate-index /tmp/factory-published-candidate/images.lock.json --stock-tools)
           elif python3 -c 'import json,sys; sys.exit(not bool(json.load(open("ai_sandbox_factory/images.lock.json"))["images"]))'; then
-            args+=(--candidate-index ai_sandbox_factory/images.lock.json --knowledge)
+            args+=(--candidate-index ai_sandbox_factory/images.lock.json --stock-tools)
           fi
           python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox "${args[@]}"
         env:

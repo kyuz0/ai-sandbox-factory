@@ -82,11 +82,13 @@ the shipped workspace hooks. A missing model request fails explicitly.
 For a real candidate set, run the existing prebuilt lifecycle fixture with
 `--candidate-index`, then `native_image_candidates.py --candidate-index FILE
 --agent codex` (repeat for Claude and Antigravity). Fresh startup accepts the
-same index through `fresh_sandbox.py --candidate-index FILE --output DIR`.
+same index through `fresh_sandbox.py --candidate-index FILE --stock-tools --output DIR`.
 The candidate pipeline also exercises Knowledge indexing, refresh and embedding
 batches in Pi and FrostPi, including read-only group-writable sources, all selected
 filenames and cancellation after a simulated slow scan. It creates and rescans
-an actual SBOM for each image.
+an actual SBOM for each image. Betterwright also captures an actual page; the
+check compares the image received by the model and FrostPi and restores it after
+a session restart.
 Confirm notification delivery with the failure-notification workflow and a known
 failed run; a posted issue comment alone does not prove email receipt.
 

@@ -12,10 +12,30 @@ INFORMATIONAL_ROLES = frozenset(('pi-common','pi-stock','native-common'))
 KEV = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
 
 
+def exploited_ids(feed):
+    if not isinstance(feed,dict):
+        raise ValueError('CISA did not return a catalog object. Retry the complete vulnerability feed.')
+    rows=feed.get('vulnerabilities')
+    if not isinstance(rows,list) or not rows:
+        raise ValueError('CISA returned no populated vulnerability inventory. Retry the feed; known-exploitation coverage is unavailable.')
+    if 'count' in feed and (type(feed['count']) is not int or feed['count']!=len(rows)):
+        raise ValueError(f'CISA catalog count {feed["count"]!r} differs from its {len(rows)} vulnerability entries. Retry the complete feed.')
+    if any(not isinstance(row,dict) or not isinstance(row.get('cveID'),str) or not row['cveID'].strip() for row in rows):
+        raise ValueError('CISA returned a vulnerability entry without a CVE identifier. Retry the complete feed.')
+    return {row['cveID'] for row in rows}
+
+
 def review(report, exploited, exceptions, today=None, role=None):
     today = today or date.today()
-    if not isinstance(report.get('Results'), list) or not report['Results']:
+    if not isinstance(report,dict) or not isinstance(report.get('Results'), list) or not report['Results']:
         raise ValueError('The image scan has no Results inventory. A missing scan is not a clean result.')
+    # All published Factory roles contain enumerated OS packages. A target
+    # label alone cannot establish that the image was actually inventoried.
+    results=report['Results']
+    if any(not isinstance(row,dict) or not isinstance(row.get('Target'),str) or not row['Target'].strip() for row in results):
+        raise ValueError('The image scan contains an unnamed inventory target. Repeat the complete SBOM scan.')
+    if not any(isinstance(row.get('Packages'),list) and any(isinstance(package,dict) and package.get('Name') and package.get('Version') for package in row['Packages']) for row in results):
+        raise ValueError('The image scan contains no enumerated package inventory. Repeat the complete SBOM scan; target names alone are not a clean result.')
     approved = {}
     for item in exceptions:
         for field in ('id', 'package', 'installed', 'role', 'target', 'reason'):
@@ -68,9 +88,7 @@ def main():
     else:
         with urllib.request.urlopen(KEV, timeout=60) as response:
             feed = json.load(response)
-    if not isinstance(feed.get('vulnerabilities'), list):
-        raise ValueError('CISA returned no vulnerability list. Retry; the scan cannot claim known-exploitation coverage.')
-    exploited = {row['cveID'] for row in feed['vulnerabilities']}
+    exploited = exploited_ids(feed)
     import re
     matched = re.fullmatch(r'docker.io/kyuz0/ai-sandbox-factory-([a-z-]+)@sha256:[a-f0-9]{64}', args.image or '')
     role = args.role or (matched[1] if matched else None)

@@ -8,7 +8,7 @@ import time
 import urllib.request
 
 from build_factory_images import validate_index
-from check_image_scan import KEV, review
+from check_image_scan import KEV, review, exploited_ids
 
 
 def scan(index, roles, output, *, executable='trivy'):
@@ -16,9 +16,7 @@ def scan(index, roles, output, *, executable='trivy'):
     output.mkdir(parents=True, exist_ok=True)
     with urllib.request.urlopen(KEV, timeout=60) as response:
         feed = json.load(response)
-    if not isinstance(feed.get('vulnerabilities'), list):
-        raise ValueError('CISA returned no vulnerability inventory; promotion cannot claim a completed review')
-    exploited = {row['cveID'] for row in feed['vulnerabilities']}
+    exploited = exploited_ids(feed)
     exceptions = json.loads(Path('.github/image-security-exceptions.json').read_text())
     with tempfile.TemporaryDirectory(prefix='factory-scan-socket-') as temporary:
         socket = Path(temporary) / 'podman.sock'

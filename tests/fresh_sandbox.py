@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--image', help='Use an already built checkout image.')
     parser.add_argument('--code-server', type=Path, help='Use the extracted pinned code-server.')
     parser.add_argument('--chromium')
-    parser.add_argument('--knowledge', action='store_true', help='Exercise the stock image Knowledge tools in Pi and FrostPi')
+    parser.add_argument('--stock-tools', action='store_true', help='Exercise Knowledge and Betterwright in the published stock image')
     parser.add_argument('--candidate-index', type=Path, help='Use the exact published Pi stock candidate instead of rebuilding it')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -26,7 +26,7 @@ def main():
     if args.candidate_index:
         image_sources.INDEX = args.candidate_index.resolve()
         config['image_source'] = 'prebuilt'
-        config['profile']['digest'] = sandbox.tree_digest(config['profile']['path'])
+        config['profile']['digest'] = sandbox.tree_digest(Path(config['profile']['path']))
         key = image_sources.recipe(config, 'pi-stock')
         if key not in image_sources.index():
             raise ValueError(f'No published Pi stock candidate matches the current sources ({key}). Rebuild the candidate.')
@@ -48,9 +48,11 @@ def main():
         print('PASS FrostPi maximizes to the available editor width and restores its panel.')
         check(image, code_server.resolve(), output / 'project-and-folders', args.chromium, None, False, False, False,
               folder_access=True)
-        if args.knowledge:
+        if args.stock_tools:
             check(image, code_server.resolve(), output / 'local-knowledge', args.chromium,
                   None, False, False, False, local_knowledge='endpoint')
+            check(image, code_server.resolve(), output / 'browser-tool', args.chromium,
+                  None, False, False, True)
 
 
 if __name__ == '__main__':

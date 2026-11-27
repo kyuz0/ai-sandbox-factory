@@ -14,7 +14,7 @@ def finding(id='CVE-fixture',package='fixture',severity='HIGH',fixed='2.0',insta
 
 
 def report(*items):
-    return {'Results':[{'Target':'fixture-image','Vulnerabilities':list(items)}]}
+    return {'Results':[{'Target':'fixture-image','Packages':[{'Name':'fixture','Version':'1.0'}],'Vulnerabilities':list(items)}]}
 
 
 class ImageScanReview(unittest.TestCase):
@@ -38,7 +38,7 @@ class ImageScanReview(unittest.TestCase):
         self.assertEqual([row['package'] for row in result['requires_review']],['other'])
         other=scan.review(report(finding()),set(),[exception],date(2026,11,27),role='controller-claude')
         self.assertEqual(len(other['requires_review']),1)
-        result=scan.review({'Results':[{'Target':'other-image','Vulnerabilities':[finding()]}]},set(),[exception],date(2026,11,27),role='gateway')
+        result=scan.review({'Results':[{'Target':'other-image','Packages':[{'Name':'fixture','Version':'1.0'}],'Vulnerabilities':[finding()]}]},set(),[exception],date(2026,11,27),role='gateway')
         self.assertEqual(len(result['requires_review']),1)
         result=scan.review(report(finding(installed='1.1')),set(),[exception],date(2026,11,27),role='gateway')
         self.assertEqual(len(result['requires_review']),1)
@@ -84,6 +84,17 @@ class ImageScanReview(unittest.TestCase):
                 result=scan.review(report(finding(),finding(id='CVE-kev',severity='LOW',fixed='')),{'CVE-kev'},[],role=role)
                 self.assertEqual(result['policy'],'blocking')
                 self.assertEqual(len(result['requires_review']),2)
+
+    def test_target_only_or_unnamed_scan_cannot_claim_inventory_coverage(self):
+        for value in ({'Results':[{}]},{'Results':[{'Target':'label'}]},{'Results':[{'Target':'label','Packages':[]}]},{'Results':[{'Target':'','Packages':[{'Name':'fixture','Version':'1'}]}]}):
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'inventory'):
+                scan.review(value,set(),[],role='gateway')
+
+    def test_empty_incomplete_and_malformed_kev_feeds_fail(self):
+        for feed in ({},{'vulnerabilities':[]},{'count':2,'vulnerabilities':[{'cveID':'CVE-fixture'}]},{'count':True,'vulnerabilities':[{'cveID':'CVE-fixture'}]},{'vulnerabilities':[{}]}):
+            with self.subTest(feed=feed),self.assertRaises(ValueError):
+                scan.exploited_ids(feed)
+        self.assertEqual(scan.exploited_ids({'count':1,'vulnerabilities':[{'cveID':'CVE-fixture'}]}),{'CVE-fixture'})
 
 
 if __name__=='__main__':unittest.main()

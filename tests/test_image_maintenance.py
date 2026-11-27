@@ -264,6 +264,40 @@ class CadenceAndRetention(unittest.TestCase):
             maintenance.retention()
 
 
+class ScanInventory(unittest.TestCase):
+    def setUp(self):
+        self.root=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        path=self.root/maintenance.INDEX;path.parent.mkdir()
+        self.stable='docker.io/kyuz0/ai-sandbox-factory-inference@sha256:'+'a'*64
+        self.pending='docker.io/kyuz0/ai-sandbox-factory-inference@sha256:'+'b'*64
+        path.write_text(json.dumps({'version':1,'images':{'stable':{'linux/amd64':self.stable}}}))
+        self.command=self.enterContext(patch.object(maintenance,'command',return_value=''))
+        self.output=self.enterContext(patch.object(maintenance,'output'))
+
+    def test_empty_current_index_cannot_be_replaced_by_retained_release_coverage(self):
+        (self.root/maintenance.INDEX).write_text('{"version":1,"images":{}}')
+        with patch.object(maintenance,'api') as api,self.assertRaisesRegex(ValueError,'current Factory image index is empty'):
+            maintenance.image_sets(self.root)
+        api.assert_not_called();self.command.assert_not_called();self.output.assert_not_called()
+
+    def test_pending_pr_needs_success_on_its_exact_current_head(self):
+        for statuses,accepted in [([],False),([{'context':'maintenance/verified','state':'failure'},{'context':'maintenance/verified','state':'success'}],False),([{'context':'maintenance/verified','state':'success'}],True)]:
+            with self.subTest(statuses=statuses):
+                def api(method,path,*args):
+                    if '/pulls?' in path:return [{'head':{'sha':SHA,'repo':{'full_name':maintenance.REPOSITORY}}}]
+                    if path.endswith('/status'):
+                        self.assertIn(SHA,path);return {'statuses':statuses}
+                    if '/contents/' in path:
+                        self.assertTrue(accepted)
+                        value={'version':1,'images':{'pending':{'linux/amd64':self.pending}}}
+                        return {'content':base64.b64encode(json.dumps(value).encode()).decode()}
+                    self.fail('Unexpected GitHub request '+path)
+                self.output.reset_mock()
+                with patch.object(maintenance,'api',side_effect=api):maintenance.image_sets(self.root)
+                rows=json.loads(self.output.call_args.kwargs['matrix'])['include']
+                self.assertEqual(any(row['image']==self.pending for row in rows),accepted)
+
+
 class ScanSummary(unittest.TestCase):
     def setUp(self):
         self.folder=Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -293,7 +327,13 @@ class ScanSummary(unittest.TestCase):
                 self.output.assert_called_once_with(urgent='true')
 
     def test_missing_scan_output_is_an_error_not_a_clean_report(self):
-        with self.assertRaisesRegex(ValueError,'No completed image scan'):
+        with self.assertRaisesRegex(ValueError,'No completed current image scan'):
+            maintenance.scan_summary(self.folder)
+        self.output.assert_not_called()
+
+    def test_previous_only_reports_do_not_count_as_current_coverage(self):
+        self.review('previous','inference','previous',False)
+        with self.assertRaisesRegex(ValueError,'current image scan'):
             maintenance.scan_summary(self.folder)
         self.output.assert_not_called()
 

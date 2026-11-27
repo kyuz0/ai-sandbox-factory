@@ -48,6 +48,10 @@ continues to forward to the new application. [Migration details](docs/usage.md#u
 Factory images and local builds. Custom profile additions are built locally.
 [Image setup](docs/image-builds.md)
 
+Factory checks prebuilt images for vulnerabilities daily and tests dependency
+updates each Monday before submitting them for review.
+[Image maintenance and scan policy](docs/image-maintenance.md)
+
 ![Built-in SSH and Git and AWS connectors in sandbox settings](docs/connectors.png)
 
 SSH & Git and AWS are built in. [Connectors](docs/connectors.md) explains how to configure them and install an HTTPS connector for another service.
