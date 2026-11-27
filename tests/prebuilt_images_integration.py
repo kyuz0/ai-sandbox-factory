@@ -250,7 +250,10 @@ def worker(root, profiles=False, sharing=False, interfaces=False, recipes=False)
                     config = service.config(name)
                     assert 'pi-stock' in {row['role'] for row in config['image_artifacts']}
                 else:
-                    assert not config['image_artifacts']
+                    assert {'pi-common', 'gateway'} <= {row['role'] for row in config['image_artifacts']}
+                    for artifact in config['image_artifacts']:
+                        assert artifact['source'] == 'local', artifact
+                        assert artifact['reference'] == artifact['image_id'] == config['image_refs'][artifact['role']], artifact
                     sources = {part: config[part]['digest'] for part in ('profile', 'common')}
                     sandbox.run(['podman', 'exec', sandbox.names(config)[0], 'sh', '-c',
                                  'printf PRIVATE_HOME_SURVIVES > /home/node/image-override-marker'])
