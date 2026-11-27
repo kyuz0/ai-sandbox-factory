@@ -402,7 +402,7 @@ need a person.
 `--config -` and `--settings-file -` read from stdin. Stdin can carry only one
 document, so put the settings in a file when you pipe credentials.
 
-These commands can be cancelled: `create --start`, `copy`, `update`, `recreate`,
+These commands can be cancelled: `create --start`, `copy`, `update`, `recreate`, `update-containers`,
 `install-system-packages`, `profile-fork`, `profile-apply`,
 `service-data-export` and `service-data-restore`.
 
@@ -421,6 +421,7 @@ These commands can be cancelled: `create --start`, `copy`, `update`, `recreate`,
 | **Settings → Editor** | `editor set` |
 | **Install system packages…** | `install-system-packages dev PACKAGE…` |
 | **Update sources and recreate…**, **Rebuild sandbox…** | `recreate dev` |
+| **Container updates…** | `inspect dev --section updates`, then `update-containers dev --revision REVIEW_ID` |
 | **Make profile editable…** | `profile-fork` |
 | **Review changes…** | `profile-review`, then `profile-apply` |
 | **Export chat history…** | `chat export` |

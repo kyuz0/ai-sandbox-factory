@@ -227,7 +227,7 @@ def refresh_workspace_settings(config, *, refresh_auth=False):
                                  'Check the reported file or authentication connection and retry.')
 
 
-def up(config, state):
+def up(config, state, *, only=None, check_ready=True):
     if not enabled(config):
         return
     from . import sandbox as core
@@ -254,6 +254,8 @@ def up(config, state):
     # This file stays on the same inode across startups because Squid bind-mounts it.
     proxy_conf.write_text(core.squid_config(network_rules(selected)))
     for name in (proxy, controller):
+        if only is not None and name not in only:
+            continue
         data = core.inspect(config, name)
         if data:
             core.resume_existing(config, name, data)
@@ -281,6 +283,10 @@ def up(config, state):
                 args += ['--env', f'{key}={value}']
             args.append(image(config))
         core.run(args)
+    if only is not None and proxy in only:
+        core.wait_gateway(config, proxy)
+    if not check_ready or (only is not None and controller not in only):
+        return
     editor_ready = ''
     if selected in ('codex', 'claude', 'agy'):
         # A saved CA and the socket relay can exist before the HTTPS proxy has

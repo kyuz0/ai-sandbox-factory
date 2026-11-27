@@ -452,3 +452,66 @@ class LogsAndSelfUpdate(CliCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ContainerUpdateCommands(CliCase):
+    def setUp(self):
+        super().setUp()
+        from ai_sandbox_factory import profile_runtime
+        engine_check = patch('ai_sandbox_factory.host_platform.check_engine')
+        engine_check.start(); self.addCleanup(engine_check.stop)
+        self.saved = self.sandbox()
+        config = json.loads((self.saved / 'config.json').read_text())
+        config.update(uid=1000, gid=1000, profile=sandbox.load_profile('base'),
+                      common=sandbox.common_profile(), network='unrestricted', image_source='local', model_providers=[])
+        (self.saved / 'config.json').write_text(json.dumps(config))
+        applied = self.saved / 'applied'
+        applied.mkdir()
+        self.build_record = dict(image_id='workspace-image', common_inputs_digest='older-common',
+                                 factory_profile='base', factory_profile_digest=config['profile']['factory_profile_digest'],
+                                 image_artifacts=[])
+        (applied / 'build.json').write_text(json.dumps(self.build_record))
+        name = sandbox.names(config)[0]
+        self.container = dict(Name=name, Id='main-container', Image='workspace-image',
+                              Config={'Labels': {sandbox.LABEL: 'demo'}},
+                              State={'Running': True}, Mounts=[dict(Source=str(applied), Destination=profile_runtime.PATH)])
+        def engine(command, **kwargs):
+            if command[1:3] == ['ps', '--all']:
+                return subprocess.CompletedProcess(command, 0, name + '\trunning\tdemo\n', '')
+            if command[1:3] == ['container', 'inspect']:
+                return subprocess.CompletedProcess(command, 0, json.dumps([self.container]), '')
+            if command[1] == 'inspect':
+                return subprocess.CompletedProcess(command, 0, json.dumps([self.container]), '')
+            raise AssertionError(f'Unexpected engine operation: {command}')
+        patcher = patch.object(sandbox, 'run', side_effect=engine)
+        patcher.start(); self.addCleanup(patcher.stop)
+        self.config = config
+
+    def inventory(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            sandbox.list_sandboxes(self.state, structured=True)
+        return json.loads(output.getvalue())
+
+    def test_list_inspect_and_preview_share_the_same_applied_plan(self):
+        with patch.object(operations.Service, 'inventory', side_effect=self.inventory):
+            rows, _ = self.json_ok('list', '--updates')
+            inspected, _ = self.json_ok('inspect', 'demo', '--section', 'updates')
+            preview, _ = self.json_ok('update-containers', 'demo', '--preview')
+        self.assertEqual(rows[0]['updates'], inspected)
+        self.assertEqual(inspected, preview)
+        self.assertEqual(inspected['status'], 'available')
+        self.assertEqual(inspected['roles'], ['workspace'])
+        output, _ = self.ok('list', '--updates')
+        self.assertIn('UPDATES', output)
+        self.assertIn('Available', output)
+        self.assertFalse((self.saved / 'container-updates').exists(), 'Reading status must not write applied state')
+
+    def test_update_requires_review_and_rejects_stale_revision_before_execution(self):
+        from ai_sandbox_factory import container_update_apply
+        self.assertIn('requires --revision', self.fails('update-containers', 'demo', code=2))
+        gate = self.root / 'apply-gate'
+        with patch.object(container_update_apply, 'apply') as apply:
+            error = self.fails('update-containers', 'demo', '--revision', 'stale', '--apply-gate', str(gate))
+        self.assertIn('plan changed', error)
+        apply.assert_not_called()

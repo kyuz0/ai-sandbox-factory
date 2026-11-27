@@ -524,6 +524,7 @@ with operation_locks.sandbox(state.name, 'create'):
             output = io.StringIO()
             with redirect_stdout(output), patch.object(sandbox, 'run', side_effect=[
                 subprocess.CompletedProcess([], 0, engine_output),
+                subprocess.CompletedProcess([], 0, '[]'),
                 subprocess.CompletedProcess([], 0, 'locked'),
             ]) as run:
                 sandbox.list_sandboxes(root, structured=True)
@@ -532,7 +533,7 @@ with operation_locks.sandbox(state.name, 'create'):
             self.assertEqual(records['other']['ssh_key_state'], 'unavailable')
             self.assertNotIn('ssh_key_state', records['plain'])
             self.assertNotIn('ssh_key_state', records['stopped'])
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 3)
             self.assertEqual(run.call_args.args[0][:3], ['podman', 'exec', 'pi-sandbox-factory-active-ssh'])
 
     def test_structured_inventory_lists_owned_containers_with_purpose(self):
@@ -552,6 +553,8 @@ with operation_locks.sandbox(state.name, 'create'):
             )
 
             def run(argv, **kwargs):
+                if argv[1:3] == ['container', 'inspect']:
+                    return subprocess.CompletedProcess(argv, 0, '[]')
                 return subprocess.CompletedProcess(argv, 0, sample) if argv[0] == 'podman' else subprocess.CompletedProcess(argv, 1, '')
 
             output = io.StringIO()
@@ -565,7 +568,8 @@ with operation_locks.sandbox(state.name, 'create'):
             self.assertTrue(all(row['purpose'] for row in demo['containers']))
             self.assertEqual(empty['containers'], [])
             self.assertIsNone(offline['containers'])
-            self.assertEqual(commands.call_count, 2)
+            self.assertEqual(commands.call_count, 3)
+            self.assertEqual(sum(call.args[0][1:3] == ['container', 'inspect'] for call in commands.call_args_list), 1)
 
     def test_pendant_notice_uses_saved_build_even_with_engine_offline(self):
         with tempfile.TemporaryDirectory() as tmp:

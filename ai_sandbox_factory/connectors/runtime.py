@@ -131,7 +131,7 @@ def configure_running(config, state):
         _update(config['engine'], worker, plugin, routes)
 
 
-def prepare(config, state):
+def prepare(config, state, *, replacing=False):
     """Validate grants early. Fresh workers need a token and healthy ones retain theirs."""
     tokens = {}
     for plugin in saved(config, state):
@@ -140,9 +140,19 @@ def prepare(config, state):
         if worker and worker['State']['Running']:
             if worker['Config']['Labels'].get(SCOPE) != plugin.account:
                 raise ValueError(f'The running {plugin.title} connector uses a different service credential.')
-        else:
+        if replacing or not worker or not worker['State']['Running']:
             tokens[plugin.id] = (plugin.account, _token(plugin))
     return tokens
+
+
+def restore_token(config, state, worker, *, prepared=None):
+    """Re-seed the retained broker whose private process state was restarted."""
+    plugin = next(plugin for plugin in saved(config, state)
+                  if plugin.id == worker['Config']['Labels'][ROLE])
+    credential = (prepared or {}).get(plugin.id)
+    token = credential[1] if credential and credential[0] == plugin.account else _token(plugin)
+    _deliver(config['engine'], worker['Id'],
+             {'routes': dict(permitted_routes(plugin, config)), 'token': token}, plugin)
 
 
 def build(config):

@@ -137,7 +137,7 @@ def check_ownership(config):
             raise ValueError(f'Refusing to manage unrelated advisor volume: {volume}')
 
 
-def up(config, state):
+def up(config, state, *, only=None, check_ready=True):
     if not enabled(config):
         return
     from . import sandbox as core
@@ -155,6 +155,8 @@ def up(config, state):
     (target / 'config.json').chmod(0o644)
     (target / 'squid.conf').write_text(core.squid_config(rules(settings)))
     for name in (proxy, worker):
+        if only is not None and name not in only:
+            continue
         existing = core.inspect(config, name)
         if existing:
             core.resume_existing(config, name, existing)
@@ -176,6 +178,10 @@ def up(config, state):
                 args += ['--env', f'{key}={value}']
             args += [image(config)]
         core.run(args)
+    if only is not None and proxy in only:
+        core.wait_gateway(config, proxy)
+    if not check_ready or (only is not None and worker not in only):
+        return
     for _ in range(80):
         result = core.run([engine, 'exec', worker, 'sh', '-c', 'test -S /run/advisor/advisor.sock && test -S /run/advisor-bus/bus'],
                           capture=True, check=False, stderr=subprocess.DEVNULL)

@@ -16,7 +16,7 @@ from .cli_support import emit, read_json, redact, remember_secret, silence_close
 from .sandbox_options import options, memory_limit, SANDBOX_NAME, SANDBOX_NAME_ERROR
 from . import credential_inputs
 
-GATED = ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply',
+GATED = ('update-containers', 'update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply',
          'service-data-export', 'service-data-restore')
 REQUEST_FIELDS = {'profile', 'workspace', 'primary_agent', 'primary_auth', 'network', 'memory',
                   'options', 'editor', 'working_directory', 'extra_folders', 'model_providers',
@@ -530,7 +530,7 @@ def supervise(args):
             command += ['--' + ('' if value else 'no-') + field]
     if args.command == 'install-system-packages':
         command += args.packages
-    controller = updating.Update(cooperative=args.command in ('profile-fork','profile-apply','service-data-export','service-data-restore'))
+    controller = updating.Update(cooperative=args.command in ('update-containers','profile-fork','profile-apply','service-data-export','service-data-restore'))
     foreground = Foreground(controller, structured=args.json)
     controller.progress = foreground.progress
     with tempfile.TemporaryDirectory(prefix='factory-cli-input-') as temporary:

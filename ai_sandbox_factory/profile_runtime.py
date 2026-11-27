@@ -28,7 +28,7 @@ def validator_digest():
 @contextmanager
 def recording(config, state):
     """Freeze inputs before building; publish them only for a successful image."""
-    from . import sandbox, primary_workspace
+    from . import container_updates, sandbox, primary_workspace
     if state is None:
         yield None
         return
@@ -91,12 +91,16 @@ def recording(config, state):
             'description': config['profile'].get('description', config['profile']['name']),
             'profile_digest': config['profile']['digest'],
             'common_inputs_digest': config['common']['digest'],
+            'workspace_inputs_digest': container_updates.workspace_inputs(config),
             'base_recipe_digest': (config['common']['digest'] if agent == 'pi'
                                    else native_recipe_digest),
             'agent': agent, 'image': image, 'image_id': image_id,
             'profile_layer_applied': True,
             'profile_validator_digest': validation_revision,
             'base_recipe': 'base/Dockerfile' if agent == 'pi' else 'workspace/Dockerfile',
+            'factory_profile': container_updates.builtin(config),
+            'factory_profile_digest': (config['profile'].get('factory_profile_digest', config['profile']['digest'])
+                                       if container_updates.builtin(config) else None),
         }
         metadata['image_artifacts'] = config.get('image_artifacts', [])
         metadata['image_refs'] = config.get('image_refs', {})

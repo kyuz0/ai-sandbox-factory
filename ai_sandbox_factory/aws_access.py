@@ -177,7 +177,7 @@ def ensure_renewal(engine, worker_id, filename, name, expiration):
                          stderr=subprocess.DEVNULL)
 
 
-def up(config, state):
+def up(config, state, *, credentials=None):
     from . import sandbox
     from .sandbox_options import write_json
     value = settings(config.get('aws_access'))
@@ -195,7 +195,7 @@ def up(config, state):
     if old and old['State']['Running'] and old['Config']['Labels'].get('io.pi-sandbox-factory.aws') == identity:
         ensure_renewal(engine, old['Id'], filename, config['name'], datetime.now(timezone.utc).isoformat())
         return
-    creds = assume(config['name'], value)
+    creds = credentials or assume(config['name'], value)
     from . import image_sources
     tag = image_sources.runtime(config, 'aws', local_image(), build)
     directory.mkdir(exist_ok=True, mode=0o700)
@@ -216,6 +216,17 @@ def up(config, state):
     except BaseException:
         subprocess.run([engine, 'rm', '-f', worker_id], capture_output=True)
         raise
+
+
+def restore_session(config, state, worker, *, credentials=None):
+    """Re-seed a retained signer after its process has restarted."""
+    value = settings(config['aws_access'])
+    if credentials is None:
+        credentials = assume(config['name'], value)
+    identity = worker['Config']['Labels']['io.pi-sandbox-factory.aws']
+    filename = Path(state) / 'aws-access' / (identity + '.json')
+    _deliver(config['engine'], worker['Id'], value['region'], credentials)
+    ensure_renewal(config['engine'], worker['Id'], filename, config['name'], credentials['Expiration'])
 
 
 def renew(engine, worker_id, filename, sandbox_name, expiration):

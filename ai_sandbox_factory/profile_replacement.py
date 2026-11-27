@@ -46,7 +46,7 @@ def failure_logs(config, state, names):
             print(f'Could not collect container diagnostics for {name}: {error}',flush=True)
 
 
-def recover_preparation(config, state):
+def recover_preparation(config, state, *, credentials=None):
     """Finish an interrupted profile transaction under the sandbox lifecycle lock."""
     import json
     from . import activity, browser_editor, sandbox
@@ -114,7 +114,7 @@ def recover_preparation(config, state):
                 shutil.copytree(backup,directory,dirs_exist_ok=True)
             elif directory.exists():
                 shutil.rmtree(directory)
-            for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json'):
+            for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json','container-updates/applied.json'):
                 prior = journal / 'files' / name
                 target = state / name
                 if prior.exists():
@@ -125,7 +125,10 @@ def recover_preparation(config, state):
             activity.save_config(state,original)
         restore('previous settings',restore_files)
         workspace = saved['runtime'].get(sandbox.names(original)[0])
-        if workspace and workspace['State']['Running']:
+        if saved.get('container_update'):
+            from . import container_update_apply
+            container_update_apply.restore_runtime(original, state, saved['runtime'], credentials or {}, restore)
+        elif workspace and workspace['State']['Running']:
             restore('previous sandbox startup',lambda: sandbox.up(original,state,prepare_sign_in=False))
         else:
             for name, previous in saved['runtime'].items():
@@ -143,6 +146,8 @@ def recover_preparation(config, state):
         if not failures:
             if restore_target:
                 print(f'Restored the previous container, data and running state of service {restore_target!r}.', flush=True)
+            elif saved.get('container_update'):
+                print('Container update rolled back. The previous containers, settings and running state were restored.', flush=True)
             else:
                 print('Profile preparation was rolled back; new service resources were removed and the previous runtime and settings were restored.', flush=True)
     else:
@@ -184,7 +189,8 @@ def recover_preparation(config, state):
 
 
 @contextmanager
-def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False, restore_target=None, restore_sources=None):
+def prepared_services(original, updated, state, *, cancelled=None, defer_preparation=False,
+                      restore_target=None, restore_sources=None, replacement_names=None, credentials=None):
     """Journal allocations before preparation; retain old containers until commit."""
     from . import browser_editor, sandbox, service_data
     state = Path(state)
@@ -249,17 +255,23 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
                 raise ValueError(f'Cannot check {kind} {name!r} (exit {found.returncode}): {(found.stderr or found.stdout).strip()}. Check the container engine and retry.')
     replaced = {profile_services.container(original, name) for name in affected}
     replaced.update(before['container'] - after['container'])
-    runtime_scope = replaced if restore_target else runtime_names(original) | runtime_names(updated) | replaced
-    service_scope = replaced if restore_target else before['container']
+    if replacement_names is not None:
+        runtime_scope = set(replacement_names) | replaced
+        service_scope = before['container'] if sandbox.names(original)[0] in runtime_scope else replaced
+    elif restore_target:
+        runtime_scope = service_scope = replaced
+    else:
+        runtime_scope = runtime_names(original) | runtime_names(updated) | replaced
+        service_scope = before['container']
     runtime = {name:sandbox.inspect(original,name) for name in runtime_scope}
     services = {name:sandbox.inspect(original,name) for name in service_scope}
-    browser = None if restore_target else browser_editor.replacement_connection(original,state)
+    browser = browser_editor.replacement_connection(original,state) if sandbox.names(original)[0] in runtime_scope else None
     journal = state/'profile-preparation'
     journal.mkdir(mode=0o700)
     if not restore_target:
         if (state/'profile-services').exists():
             shutil.copytree(state/'profile-services',journal/'services')
-        for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json'):
+        for name in ('allowlist.txt','squid.conf','profile-runtime/applied.json','container-updates/applied.json'):
             source = state/name
             if source.exists():
                 target=journal/'files'/name
@@ -268,7 +280,7 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
     helpers = [profile_services.prefix(updated) + '-copy-' + uuid4().hex for _ in copies]
     added['container'] += helpers
     saved={'original':original,'updated':updated,'runtime':runtime,'services':services,'added':added,
-           'restore_target':restore_target,'browser_editor':browser}
+           'restore_target':restore_target,'browser_editor':browser, 'container_update':replacement_names is not None}
     sandbox.write_json(journal/'record.json',saved)
     def prepare():
         if cancelled and cancelled():
@@ -315,14 +327,14 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
         stop={name for name,info in services.items() if info and not info['State']['Running']}
         workspace=runtime.get(sandbox.names(original)[0])
         if workspace and not workspace['State']['Running']:
-            stop.update(after['container'])
+            stop.update(after['container'] if replacement_names is None else after['container'] - before['container'])
         for name in sorted(stop):
             if sandbox.inspect(updated,name):
                 sandbox.run([updated['engine'],'stop',name])
     except BaseException as error:
-        failure_logs(updated,state,set(added['container']) | replaced)
+        failure_logs(updated,state,set(added['container']) | replaced | set(replacement_names or ()))
         try:
-            recover_preparation(original,state)
+            recover_preparation(original,state,credentials=credentials)
         except Exception as recovery:
             raise ValueError(f'{action} failed: {error}. {recovery}') from error
         if restore_target and isinstance(error, (ValueError, OSError, subprocess.CalledProcessError)):
@@ -333,13 +345,15 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
         saved['committed']=True
         operation = f'service data restore for {restore_target!r}' if restore_target else 'profile changes'
         retry = 'retry Restore data' if restore_target else 'retry the same profile review'
+        if replacement_names is not None:
+            operation, retry = 'container updates', 'review and retry the container update'
         try:
             sandbox.write_json(journal/'record.json',saved)
         except BaseException as error:
             # Until the commit marker is published, the saved journal still
             # owns rollback. Do not leave a failed Apply running its candidate.
             try:
-                recover_preparation(original,state)
+                recover_preparation(original,state,credentials=credentials)
             except Exception as recovery:
                 raise ValueError(f'Could not commit {operation}: {error}. {recovery}') from error
             if isinstance(error, Exception):
@@ -355,14 +369,14 @@ def prepared_services(original, updated, state, *, cancelled=None, defer_prepara
 
 
 @runtime_context.publish_after
-def apply(original, updated, state, *, text=None, allow_service_changes=False, retain_previous=False):
+def apply(original, updated, state, *, text=None, allow_service_changes=False, retain_previous=False, workspace_only=False):
     import json
     from . import activity, browser_editor, sandbox
     state = Path(state)
     profile_services.validate_update(original, updated, allow_service_changes=allow_service_changes)
     engine = original['engine']
-    names = runtime_names(original) | runtime_names(updated)
     workspace = sandbox.names(original)[0]
+    names = {workspace} if workspace_only else runtime_names(original) | runtime_names(updated)
     prior = {name: sandbox.inspect(original, name) for name in sorted(names)}
     services = {name: sandbox.inspect(original, name)
                 for name in profile_services.resources(original)['container']}
@@ -389,8 +403,16 @@ def apply(original, updated, state, *, text=None, allow_service_changes=False, r
         (state / 'squid.conf').write_text(sandbox.network_policy(
             updated, sandbox.parse_rules((state / 'allowlist.txt').read_text())))
         activity.save_config(state, updated)
-        profile_services.update_policy(updated, state, (state / 'allowlist.txt').read_text(), updated.get('website_groups', {}))
-        sandbox.up(updated, state, prepare_sign_in=False)
+        if not workspace_only:
+            profile_services.update_policy(updated, state, (state / 'allowlist.txt').read_text(), updated.get('website_groups', {}))
+            sandbox.up(updated, state, prepare_sign_in=False)
+        else:
+            sandbox.up(updated, state, prepare_sign_in=False, workspace_only=True)
+            candidate = sandbox.inspect(updated, workspace)
+            expected = updated['image_refs']['workspace']
+            if not candidate or candidate['Image'].removeprefix('sha256:') != expected.removeprefix('sha256:'):
+                raise ValueError(f'Cannot verify updated workspace {workspace!r} against the prepared image {expected}. '
+                                 'Inspect the engine image and retry the update.')
         # Validation may start a stopped sandbox, but never changes its saved state.
         if prior[workspace] and not prior[workspace]['State']['Running']:
             for name in names:

@@ -41,6 +41,8 @@ Implementation and shipped assets live in `ai_sandbox_factory/`:
 - `communications.py` and `communications_ui.py`: optional channel tools and private credential configuration.
 - `web_access.py`: search modes, provider settings and reusable private keys; `network_groups.py`: trusted category updates and gateway rules.
 - `updates.py`: GitHub tags, installed version and pipx upgrade detection.
+- `container_updates.py` and `container_update_apply.py`: applied image versions,
+  shared CLI/TUI update plans and selective container replacement.
 - `editor_settings.py` and `editor_ui.py`: client choice, private connection settings and shared controls.
 - `browser_editor.py` and `containers/editor/launch.py`: code-server, browser connections and process supervision.
 - `host_platform.py`: WSL/macOS adapters, Podman Machine checks and host browser launching.
@@ -78,6 +80,12 @@ environment variables or editor containers. Adapters with an `inference` declara
 receive a proxy endpoint and placeholder. Profiles and adapters are trusted executable
 packages; the registry is not a security sandbox. Saved sandboxes use snapshots, not mutable
 registry directories. Failed updates must preserve the running environment.
+
+Container update notices compare applied builds with the installed Factory
+recipes. Preparing an image must not clear an update notice. Keep one plan for
+status, review and execution; custom profiles remain owner-maintained. Check
+the actual containers and mounted build record before claiming a version is
+applied, and preserve unrelated containers during selective updates.
 
 Keep the inner command sandbox, outer container, gateway and credential companions
 separate. Approval never grants host access. Automatic approval returns failures

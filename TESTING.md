@@ -67,6 +67,20 @@ to inspect errors and their dismissal.
 
 ### Container maintenance
 
+Container update eligibility uses applied image receipts, including local builds.
+Run `test_container_updates`, `test_container_update_apply` and
+`test_container_updates_ui` for offline assessment, stale reviews, partial
+updates, cancellation, rollback and CLI/TUI parity. `test_cli_management` exercises
+the public list, inspect and preview commands. Render `container-updates-dashboard`,
+`container-updates-helpers`, `container-updates-workspace`, `container-updates-help`,
+`container-updates-custom` and `container-updates-unknown` at the standard sizes.
+
+`python tests/container_updates_lifecycle.py` uses disposable Podman containers
+and an authenticated browser editor. It checks helper-only and workspace updates,
+restoration after faults, stopped state, unchanged container identities outside
+the plan, original editor address and private/project data. It removes its owned
+containers, volumes and fixture images. The fresh-sandbox CI job requires it.
+
 ```sh
 PYTHONPATH=.:tests .venv/bin/python -m unittest test_image_dependency_updates test_image_maintenance test_image_scan test_factory_notifications test_factory_image_publication test_image_sources
 actionlint .github/workflows/*.yml

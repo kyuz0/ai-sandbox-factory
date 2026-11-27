@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 EDITABLE_SETTINGS = frozenset({'image_source', 'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'})
 PI_VERSION = '1.6.1'
-LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
+LIFECYCLE_COMMANDS = ('update-containers', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                       'configure', 'primary-login', 'primary-import')
 LOOPBACK_ENV = {'NO_PROXY': 'localhost,127.0.0.1,::1', 'no_proxy': 'localhost,127.0.0.1,::1'}
@@ -71,6 +71,9 @@ def load_profile(value):
             raise ValueError(f'Profile is missing {filename}: {path}')
     profile = {'name': metadata['name'], 'description': metadata.get('description', ''),
                'path': str(path), 'digest': tree_digest(path), 'registry_name': value}
+    if path.resolve().parent == (ROOT / 'profiles').resolve():
+        profile['factory_profile'] = path.name
+        profile['factory_profile_digest'] = profile['digest']
     services = profile_spec.services(metadata, path)
     if services:
         profile['services'] = services
@@ -410,9 +413,11 @@ def image_graph(config):
     return operation_locks.image_graph(config['engine'], key)
 
 
-def build(config, state=None):
+def build(config, state=None, *, keep_roles=()):
     with image_graph(config):
-        config['image_refs'] = {}
+        config['image_refs'] = {role: ref for role, ref in config.get('image_refs', {}).items()
+                                if role in keep_roles}
+        retained = [item for item in config.get('image_artifacts', []) if item['role'] in keep_roles]
         with image_sources.recording() as artifacts, profile_runtime.recording(config, state):
             dev = _build(config)
             if not isinstance(dev, str) or not dev:
@@ -421,7 +426,7 @@ def build(config, state=None):
             if not info or not info.get('Id'):
                 raise ValueError(f'Cannot record the prepared main agent image {dev}: the engine returned no image ID. Retry the build.')
             config['image_refs']['workspace'] = info['Id']
-            config['image_artifacts'] = list(artifacts.values())
+            config['image_artifacts'] = [item for item in retained if item['role'] not in artifacts] + list(artifacts.values())
 
 
 def _build(config):
@@ -575,7 +580,7 @@ def describe_containers(config, states, state=None):
     return result
 
 
-def list_sandboxes(state_root, structured=False):
+def list_sandboxes(state_root, structured=False, updates=False):
     from . import creation
     reservations = {path.parent.name: ('running' if operation_locks.in_use(path.parent.name) else 'interrupted')
                     for path in state_root.glob('*/' + creation.MARKER)
@@ -606,13 +611,15 @@ def list_sandboxes(state_root, structured=False):
     # are different states; listing must remain useful when the engine is offline.
     statuses = {}
     owned = {}
+    inspection_errors = {}
     for engine in sorted({c['engine'] for c, _ in configs if 'engine' in c}):
         try:
             result = run([engine, 'ps', '--all', '--format',
                           '{{.Names}}\t{{.State}}\t{{.Label "' + LABEL + '"}}'],
-                         capture=True, check=False, stderr=subprocess.DEVNULL)
+                         capture=True, check=False, stderr=subprocess.PIPE)
             if result.returncode:
-                raise ValueError('Engine unavailable')
+                raise ValueError(f'{engine} ps exited with status {result.returncode}: '
+                                 + model_providers.diagnostic(result.stderr or result.stdout or 'No diagnostic output'))
             containers = {}
             owners = {}
             for line in result.stdout.splitlines():
@@ -622,12 +629,31 @@ def list_sandboxes(state_root, structured=False):
                     owners.setdefault(owner, {})[name] = status
             statuses[engine] = containers
             owned[engine] = owners
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             statuses[engine] = None
+            inspection_errors[engine] = str(error)
             print(f'Warning: cannot query {engine}; container status is unknown', file=sys.stderr)
 
+    from . import container_updates
+    inspected = {}
+    if structured or updates:
+        for engine, containers in statuses.items():
+            wanted = sorted(name for name, (_, owner) in (containers or {}).items() if owner in configured)
+            inspected[engine] = {}
+            if not wanted:
+                continue
+            try:
+                result = run([engine, 'container', 'inspect', *wanted], capture=True, check=False,
+                             stderr=subprocess.PIPE)
+                if result.returncode:
+                    raise ValueError(result.stderr or 'Container inspection returned no diagnostic output')
+                inspected[engine] = {item['Name'].lstrip('/'): item for item in json.loads(result.stdout)}
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                # Keep inventory usable; the assessment reports missing evidence.
+                inspection_errors[engine] = model_providers.diagnostic(str(error))
+    update_cache = {}
     inventory = []
-    rows = [('NAME', 'PROFILE', 'ENGINE', 'DEV', 'PROXY', 'WORKSPACE')]
+    rows = [('NAME', 'PROFILE', 'ENGINE', 'DEV', 'PROXY', 'WORKSPACE') + (('UPDATES',) if updates else ())]
     for config, profile in configs:
         engine = config.get('engine')
         states = []
@@ -653,6 +679,12 @@ def list_sandboxes(state_root, structured=False):
                      proxy=states[1], workspace=config.get('workspace'), config=config,
                      activity=activity.load(state_root / sandbox_name),
                      primary_agent=config.get('primary_agent', 'pi'))
+        if (structured or updates) and engine:
+            entry['updates'] = container_updates.plan(config, state_root / sandbox_name,
+                                                       current=inspected.get(engine, {}), cache=update_cache)
+            if entry['updates']['status'] == 'unknown' and engine in inspection_errors:
+                entry['updates']['reason'] = (f'Cannot inspect {engine} containers for {sandbox_name}: '
+                                             f'{inspection_errors[engine]}. Check the engine and refresh.')
         if structured:
             if reservation:
                 entry['creation'] = reservation
@@ -665,7 +697,8 @@ def list_sandboxes(state_root, structured=False):
             if pendant_versions(config):
                 entry['chat_editor'] = 'pendant'
         inventory.append(entry)
-        rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-')))
+        rows.append((config['name'], profile, engine or '-', *states, config.get('workspace', '-'))
+                    + ((container_updates.STATUS[entry.get('updates', {}).get('status', 'unknown')],) if updates else ()))
     if structured:
         groups = {}
         for entry in inventory:
@@ -684,9 +717,9 @@ def list_sandboxes(state_root, structured=False):
         return
     # Keep paths and other saved values from introducing terminal control codes.
     rows = [tuple(''.join(c if c.isprintable() else '?' for c in cell) for cell in row) for row in rows]
-    widths = [max(len(row[i]) for row in rows) for i in range(5)]
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]) - 1)]
     for row in rows:
-        print('  '.join(cell.ljust(widths[i]) if i < 5 else cell for i, cell in enumerate(row)))
+        print('  '.join(cell.ljust(widths[i]) if i < len(widths) else cell for i, cell in enumerate(row)))
 
 
 def restart_existing(config, name):
@@ -756,12 +789,33 @@ def native_chat_lock(state):
 
 
 @runtime_context.publish_after
-def up(config, state, *, prepare_sign_in=True):
+def up(config, state, *, prepare_sign_in=True, workspace_only=False):
     with native_chat_lock(state):
-        return _up(config, state, prepare_sign_in=prepare_sign_in)
+        return _up(config, state, prepare_sign_in=prepare_sign_in, workspace_only=workspace_only)
 
 
-def _up(config, state, *, prepare_sign_in=True):
+def create_gateway(config, state, rules):
+    _, name, socket_volume, _ = names(config)
+    base = [config['engine'], 'run', '-d', '--name', name, '--label', f'{LABEL}={config["name"]}',
+            '--security-opt=no-new-privileges', '--pids-limit=-1']
+    args = [
+        '--cap-drop=ALL', '--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID',
+        '--cap-add=DAC_OVERRIDE',
+        '-v', f'{state / "squid.conf"}:/etc/squid/sandbox.conf:{host_platform.bind_mode()}',
+        '-v', f'{socket_volume}:/run/egress:z',
+    ]
+    args += host_platform.gateway_labels()
+    if config.get('local_model_gateway'):
+        args += host_platform.model_gateway_args()
+    if any(host == 'host.docker.internal' for host, _ in rules):
+        args += ['--add-host=host.docker.internal:host-gateway']
+    if config.get('aws_access'):
+        args += aws_access.client_mount(state)
+    run(base + args + [image_names(config)[1]])
+    ensure_gateway(config)
+
+
+def _up(config, state, *, prepare_sign_in=True, workspace_only=False):
     from . import primary_agents
 
     folders.validate_config(config, state.parent, saved=True)
@@ -810,17 +864,18 @@ def _up(config, state, *, prepare_sign_in=True):
             prepare_options(config, state)
         host_platform.check_mounts(config, state, image_names(config)[0])
     prepared_connectors = {}
-    if config.get('connector_ids'):
+    if config.get('connector_ids') and not workspace_only:
         connector_settings.check_mount(config, state, current[dev])
         prepared_connectors = connectors.prepare(config, state)
         prior_connector_start = {**connector_settings.helper_states(config), **{name: current[name] for name in active}}
     connector_settings.refresh_agent_context(config, state)
-    profile_services.up(config, state)
-    sandbox_advisors.up(config, state)
-    sandbox_ssh.up(config, state)
-    inference.up(config, state)
-    if config.get('aws_access'):
-        aws_access.up(config, state)
+    if not workspace_only:
+        profile_services.up(config, state)
+        sandbox_advisors.up(config, state)
+        sandbox_ssh.up(config, state)
+        inference.up(config, state)
+        if config.get('aws_access'):
+            aws_access.up(config, state)
     if native:
         primary_agents.up(config, state)
     started_dev = current[dev] is None
@@ -835,21 +890,7 @@ def _up(config, state, *, prepare_sign_in=True):
         base = [engine, 'run', '-d', '--name', name, '--label', f'{LABEL}={config["name"]}',
                 '--security-opt=no-new-privileges', '--pids-limit=-1']
         if name == proxy:
-            args = [
-                '--cap-drop=ALL', '--cap-add=CHOWN', '--cap-add=SETUID', '--cap-add=SETGID',
-                '--cap-add=DAC_OVERRIDE',
-                '-v', f'{state / "squid.conf"}:/etc/squid/sandbox.conf:{host_platform.bind_mode()}',
-                '-v', f'{socket_volume}:/run/egress:z',
-            ]
-            args += host_platform.gateway_labels()
-            if config.get('local_model_gateway'):
-                args += host_platform.model_gateway_args()
-            if any(host == 'host.docker.internal' for host, _ in rules):
-                args += ['--add-host=host.docker.internal:host-gateway']
-            if config.get('aws_access'):
-                args += aws_access.client_mount(state)
-            run(base + args + [proxy_image])
-            ensure_gateway(config)
+            create_gateway(config, state, rules)
         else:
             # Files moved into a running workspace retain their host SELinux
             # labels. Mount-time :z relabeling cannot make later imports usable.
@@ -943,7 +984,14 @@ def _up(config, state, *, prepare_sign_in=True):
                 browser_viewer.ensure_viewer(engine, inspect(config, dev)['Id'])
             if native and prepare_sign_in:
                 primary_workspace.initial_sign_in(config, state)
-            if config.get('connector_ids'):
+            if workspace_only and config.get('connector_ids'):
+                workspace = inspect(config, dev)
+                connector_settings.check_mount(config, state, workspace)
+                live_ids = [identifier for identifier in config['connector_ids']
+                            if (inspect(config, connectors.worker_name(config, identifier)) or {}).get('State', {}).get('Running')]
+                if live_ids:
+                    connector_settings.check_sockets(config, workspace['Id'], live_ids)
+            elif config.get('connector_ids'):
                 connector_workers = []
                 try:
                     workspace = inspect(config, dev)
@@ -953,17 +1001,26 @@ def _up(config, state, *, prepare_sign_in=True):
                 except (OSError, ValueError, subprocess.SubprocessError):
                     connector_settings.restore_start(config, prior_connector_start, connector_workers)
                     raise
-            profile_services.ready(config, state)
+            if workspace_only:
+                # An existing service can be stopped independently of the workspace.
+                for service in profile_services.selected(config):
+                    peer = inspect(config, profile_services.container(config, service))
+                    if peer and peer['State']['Running']:
+                        profile_services.ready(config, state, service=service)
+            else:
+                profile_services.ready(config, state)
             if started_dev:
                 activity.record(state, 'started')
+            from . import container_updates
+            container_updates.record_applied(config, state)
             print(f'Ready: {dev}; workspace /workspace; engine {engine}; network {network_mode(config)}')
             return
         time.sleep(0.25)
     raise ValueError(f'Sandbox did not become ready; inspect with {engine} logs {dev}')
 
 
-def wait_gateway(config):
-    _, proxy, _, _ = names(config)
+def wait_gateway(config, proxy=None):
+    proxy = proxy or names(config)[1]
     for _ in range(40):
         result = run([config['engine'], 'exec', proxy, 'bash', '-c',
                       'test -S /run/egress/proxy.sock && echo >/dev/tcp/127.0.0.1/3128'],
@@ -1862,6 +1919,7 @@ def main(*, startup_notice=''):
             item.add_argument('--agent', choices=profile_spec.AGENTS)
     listing = sub.add_parser('list', help='List saved sandboxes, container states, and workspace paths')
     listing.add_argument('--json', action='store_true', help='Structured saved inventory')
+    listing.add_argument('--updates', action='store_true', help='Show container update eligibility for the installed Factory version')
     new = sub.add_parser('create', help='Validate and save a new sandbox configuration')
     new.add_argument('name')
     new.add_argument('--primary-agent', choices=list(primary_workspace.AGENTS), default='pi',
@@ -1923,6 +1981,7 @@ def main(*, startup_notice=''):
     new.add_argument('--editor', choices=('browser', 'cli', 'pi'), help='Client to open: browser or cli (pi is an alias for cli)')
     new.add_argument('--open', action='store_true', help='Open the selected editor after startup; requires --start')
     descriptions = {
+        'update-containers': 'Review and apply container updates for a built-in profile',
         'install-system-packages': 'Install Debian packages in a running sandbox',
         'browser-editor': 'Open the browser editor (rootless Podman)',
         'update': 'Apply settings to a saved sandbox',
@@ -1933,12 +1992,12 @@ def main(*, startup_notice=''):
         'ssh-generate-key': 'Generate a repository key inside the SSH companion',
         'ssh-public-key': 'Show the unlocked SSH public key',
     }
-    for command in ('service-data-list', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
+    for command in ('update-containers', 'service-data-list', 'service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'update', 'install-system-packages', 'build', 'up', 'down', 'delete', 'recreate', 'open', 'configure', 'shell', 'pi', 'exec', 'check', 'policy', 'network', 'web-key', 'communication-key', 'advisor-login', 'advisor-import', 'advisor-check', 'primary-login', 'primary-import', 'ssh-import-key', 'ssh-unlock', 'ssh-generate-key', 'ssh-public-key', 'browser-editor'):
         cmd = sub.add_parser(command, **({'help': descriptions[command]} if command in descriptions else {}))
         cmd.add_argument('name')
         if command in ('build', 'recreate'):
             cmd.add_argument('--image-source', choices=['prebuilt', 'local'], help='Override image setup for this build only')
-        if command in ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
+        if command in ('update-containers', 'update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply', 'service-data-export', 'service-data-restore'):
             cmd.add_argument('--apply-gate', type=Path, help=argparse.SUPPRESS)
             cmd.add_argument('--json', action='store_true', help='Write the final result as JSON; progress goes to stderr')
         if command in ('service-data-export', 'service-data-restore'):
@@ -1952,6 +2011,9 @@ def main(*, startup_notice=''):
             cmd.add_argument('--directory', required=True, help='New or empty host folder outside the project')
         if command == 'profile-review':
             cmd.add_argument('--output', type=Path, help='Write the structured review to this JSON file')
+        if command == 'update-containers':
+            cmd.add_argument('--preview', action='store_true', help='Show available container updates without changing anything')
+            cmd.add_argument('--revision', help='Apply the exact plan returned by --preview or inspect --section updates')
         if command == 'profile-apply':
             cmd.add_argument('--revision', required=True, help='Frozen revision returned by profile-review')
         if command == 'install-system-packages':
@@ -2059,6 +2121,13 @@ def main(*, startup_notice=''):
         from .cli_support import emit, read_json
         manager = cli_lifecycle.operations.Service(host_platform.resolve_path(args.state_dir))
         return emit(args, manager.preview_settings(args.name, read_json(args.settings_file)))
+    if args.command == 'update-containers' and args.preview:
+        from . import container_updates
+        from .cli_support import emit
+        manager = cli_lifecycle.operations.Service(host_platform.resolve_path(args.state_dir))
+        return emit(args, container_updates.plan(manager.config(args.name), manager.state / args.name))
+    if args.command == 'update-containers' and not args.revision:
+        parser.error('update-containers requires --revision from --preview or inspect --section updates. Review the plan before applying it.')
     if args.command in cli_lifecycle.GATED and args.apply_gate is None:
         return cli_lifecycle.supervise(args)
     if args.command == 'connector-login':
@@ -2079,7 +2148,12 @@ def main(*, startup_notice=''):
         launch(state_root, startup_notice=startup_notice) if startup_notice else launch(state_root)
         return
     if args.command == 'list':
-        list_sandboxes(host_platform.resolve_path(args.state_dir), **({'structured': True} if args.json else {}))
+        listing_options = {}
+        if args.json:
+            listing_options['structured'] = True
+        if args.updates:
+            listing_options['updates'] = True
+        list_sandboxes(host_platform.resolve_path(args.state_dir), **listing_options)
         return
     if args.command == 'profiles':
         for name,description in registry.choices('profile').items(): print(f'{name}: {description}')
@@ -2132,6 +2206,12 @@ def sandbox_command(args, state, parser):
     config = json.loads((state / 'config.json').read_text())
     if args.command in LIFECYCLE_COMMANDS:
         config = recover_profile(config, state)
+    if args.command == 'update-containers':
+        from . import container_updates, container_update_apply
+        reviewed = container_updates.plan(config, state)
+        if reviewed.get('revision') != args.revision:
+            raise ValueError('The container update plan changed. Run update-containers --preview again, then apply its new revision.')
+        return container_update_apply.apply(config, state, reviewed, apply_gate=args.apply_gate)
     if args.command == 'service-data-list':
         print(json.dumps(service_data.entries(config), indent=2))
         return

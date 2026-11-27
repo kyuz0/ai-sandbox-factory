@@ -215,6 +215,11 @@ def ensure(config, role, local, build_local=None):
         if not data or not data.get('Id'):
             raise ValueError(f'Cannot record the built {role} image {local}: the engine returned no image ID. Retry the build.')
         config.setdefault('image_refs', {})[role] = data['Id']
+        used = _used.get()
+        if used is not None:
+            used[role] = {'role': role, 'recipe': recipe(config, role), 'reference': data['Id'],
+                          'image_id': data['Id'], 'source': 'local',
+                          'platform': 'linux/' + data.get('Architecture', 'unknown')}
         return local
     recipe_key, platform, selected = candidate
     with operation_locks.image_artifact(config['engine'], selected, cancelled=sandbox._build_cancelled.get()):
@@ -241,7 +246,7 @@ def ensure(config, role, local, build_local=None):
         used = _used.get()
         if used is not None:
             used[role] = {'role': role, 'recipe': recipe_key, 'reference': selected,
-                          'image_id': data['Id']}
+                          'image_id': data['Id'], 'source': 'prebuilt', 'platform': platform}
         config.setdefault('image_refs', {})[role] = selected
         return selected
 

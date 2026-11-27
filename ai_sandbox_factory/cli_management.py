@@ -193,10 +193,10 @@ def inspect_sandbox(args):
     if not args.guide and args.section != 'settings':
         record = next((row for row in manager.inventory() if row['name'] == args.name), {})
         alerts = [row._asdict() for row in operations.sandbox_alerts(record)] if record else []
-        if args.section in ('containers', 'alerts'):
+        if args.section in ('containers', 'alerts', 'updates'):
             if not record:
                 manager.config(args.name)  # Retain the missing-sandbox diagnostic.
-            emit(args, alerts if args.section == 'alerts' else record.get('containers'))
+            emit(args, alerts if args.section == 'alerts' else record.get(args.section))
             return
         if record.get('creation'):
             emit(args, {'name': args.name, 'creation': record['creation'],
@@ -216,6 +216,7 @@ def inspect_sandbox(args):
     profile = config.get('profile', {})
     value = {'name': args.name, 'agent': primary_workspace.agent(config), 'settings': settings,
              'containers': record.get('containers'),
+             'updates': record.get('updates'),
              'alerts': [row._asdict() for row in operations.sandbox_alerts(record)],
              'profile': {'name': profile.get('name'), 'description': profile.get('description'),
                          'revision': profile.get('digest'), 'editable': config.get('editable_profile'),
@@ -295,8 +296,8 @@ def register(sub):
         if action == 'copy':
             p.add_argument('--to', required=True); p.add_argument('--chat', required=True)
             choice = p.add_mutually_exclusive_group(); choice.add_argument('--preview', action='store_true'); choice.add_argument('--yes', action='store_true')
-    p = sub.add_parser('show', help='Inspect settings, profiles, containers and alerts without starting the sandbox')
-    p.add_argument('name'); p.add_argument('--section', choices=('all','settings','profile','containers','alerts','commands'), default='all')
+    p = sub.add_parser('show', aliases=['inspect'], help='Inspect settings, profiles, containers, alerts and container updates without starting the sandbox')
+    p.add_argument('name'); p.add_argument('--section', choices=('all','settings','profile','containers','alerts','commands','updates'), default='all')
     p.add_argument('--guide', action='store_true'); p.add_argument('--json', action='store_true'); p.set_defaults(cli_handler=inspect_sandbox)
     p = sub.add_parser('logs', help='Read a sandbox container’s logs')
     p.add_argument('name'); p.add_argument('--container'); p.add_argument('--tail', type=int); p.add_argument('--follow', action='store_true'); p.set_defaults(cli_handler=logs)

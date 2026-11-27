@@ -1,5 +1,7 @@
 """Terminal interface for AI Sandbox Factory."""
 from . import activity
+from . import container_updates
+from .container_updates_ui import ContainerUpdates
 from . import cli_recipes
 from .cli_recipes_ui import CLICommands
 import json
@@ -1028,6 +1030,7 @@ class MoreActions(ModalScreen[Optional[str]]):
                    (cli_recipes.LABEL, 'cli-commands')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                      ('Rebuild sandbox…' if use_saved_profile else 'Update sources and recreate…', 'rebuild')]
+        lifecycle.append(('Container updates…', 'container-updates'))
         if record.get('config', {}).get('engine'):
             lifecycle.append((INSTALL_SYSTEM_PACKAGES, 'install-system-packages'))
         if browser_running:
@@ -4645,7 +4648,7 @@ class Cockpit(App):
     def on_mount(self):
         self.screen.AUTO_FOCUS = '#new'
         self.query_one('#new', Button).focus()
-        for key, label in [('name', 'Name'), ('open', ''), ('dev', 'Status'), ('alerts', 'Alerts'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
+        for key, label in [('name', 'Name'), ('open', ''), ('dev', 'Status'), ('updates', 'Updates'), ('alerts', 'Alerts'), ('started', 'Last started'), ('edited', 'Last edited'), ('created', 'Created'), ('sources', 'Model sources'), ('network', 'Network')]:
             self.query_one('#sandboxes', DataTable).add_column(label, key=key)
         self.action_refresh_inventory()
         self.set_interval(15, self.poll_ssh_status)
@@ -4780,8 +4783,8 @@ class Cockpit(App):
             sources = (['Local ' + config['local_model_ports']] if config.get('local_model_ports') else [])
             sources += [name for name in source_names if name != 'local']
             name = safe_text(record['name'])
-            if self.size.width < 100 and len(name) > 32:
-                name = name[:31] + '…'
+            if self.size.width < 100 and len(name) > 16:
+                name = name[:15] + '…'
             active = self.active_job(record['name'])
             action = active.view_label if active else '' if record.get('creation') else (
                 CHOOSE_MODEL if self.pending_model_choice(record['name']) else 'Open')
@@ -4790,6 +4793,7 @@ class Cockpit(App):
                 name,
                 SandboxTable.action_cell(action, primary=True) if action else '',
                 safe_text(record['dev'].capitalize()),
+                SandboxTable.action_cell(update_label) if (update_label := container_updates.STATUS.get(record.get('updates', {}).get('status'), '')) else '',
                 SandboxTable.action_cell(f'Alerts ({alert_count})') if alert_count else '',
                 *(activity.display(record.get('activity', {}).get(key)) for key in ('started', 'edited', 'created')),
                 (safe_text(', '.join(sources)) or 'Not configured') if agent == 'pi' else PRIMARY_AGENTS[agent],
@@ -4868,7 +4872,7 @@ class Cockpit(App):
     @on(DataTable.CellSelected, '#sandboxes')
     def select_sandbox_cell(self, event):
         action = event.cell_key.column_key.value
-        if action in ('open', 'alerts') and event.value:
+        if action in ('open', 'alerts', 'updates') and event.value:
             name = event.cell_key.row_key.value
             if action == 'open' and (job := self.active_job(name)):
                 self.show_job(job)
@@ -5325,7 +5329,9 @@ class Cockpit(App):
                              lambda choice: self.perform(choice, record=record) if choice else None)
             return
         native = coding_agent(config) != 'pi'
-        if action == 'cli-commands':
+        if action in ('container-updates', 'updates'):
+            self.push_screen(ContainerUpdates(record))
+        elif action == 'cli-commands':
             names = [row['name'] for row in self.records]
             self.push_screen(CLICommands(loader=lambda: self.service.cli_recipe(name, existing_names=names)))
         elif action == 'primary-sign-in' and native:

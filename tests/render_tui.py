@@ -182,6 +182,34 @@ async def capture(size):
                     await shot('cli-commands-complete', JobDetails(finished))
                     finished.close()
                     return
+                if args.only and all(name.startswith('container-updates-') for name in args.only):
+                    from ai_sandbox_factory.container_updates_ui import ContainerUpdates
+                    fixture = copy.deepcopy(record)
+                    fixture['updates'] = dict(status='available', roles=['gateway'], workspace=False,
+                        changes=[{'role': 'gateway', 'label': 'Network gateways'}], revision='example-review',
+                        effects=['Only the listed Factory helper containers restart.'])
+                    custom = copy.deepcopy(fixture)
+                    custom.update(name='custom-profile')
+                    custom['updates'] = dict(status='custom', reason='You maintain this custom profile’s software and services. Use Rebuild sandbox to rebuild it.')
+                    app.receive_inventory([fixture, custom])
+                    await shot('container-updates-dashboard')
+                    await app.push_screen(ContainerUpdates(fixture))
+                    await shot('container-updates-helpers')
+                    app.screen.query_one('#container-updates-help', Button).press()
+                    await pilot.pause()
+                    await shot('container-updates-help')
+                    await app.pop_screen()
+                    await app.pop_screen()
+                    fixture['updates'].update(roles=['workspace'], workspace=True,
+                        changes=[{'role': 'workspace', 'label': 'Main agent sandbox'}],
+                        effects=['Running work in the main agent sandbox stops after preparation. Workspace files, saved chats and sign-ins are kept.',
+                                 'Packages installed directly in the container must be installed again.'])
+                    await shot('container-updates-workspace', ContainerUpdates(fixture))
+                    await shot('container-updates-custom', ContainerUpdates(custom))
+                    unknown = copy.deepcopy(fixture)
+                    unknown['updates'] = dict(status='unknown', reason='Cannot query Podman for example. Start the container engine and refresh.')
+                    await shot('container-updates-unknown', ContainerUpdates(unknown))
+                    return
                 if args.only and all(name.startswith('image-setup-') for name in args.only):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='demo', workspace=str(workspace))

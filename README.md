@@ -52,6 +52,11 @@ Factory checks prebuilt images for vulnerabilities daily and tests dependency
 updates each Monday before submitting them for review.
 [Image maintenance and scan policy](docs/image-maintenance.md)
 
+The dashboard’s **Updates** column flags built-in sandboxes that can use newer
+containers from your installed Factory version. Open **Container updates…** to
+review and apply them. Custom profiles are maintained by their owner.
+[Checking container updates](docs/image-builds.md#container-updates)
+
 ![Built-in SSH and Git and AWS connectors in sandbox settings](docs/connectors.png)
 
 SSH & Git and AWS are built in. [Connectors](docs/connectors.md) explains how to configure them and install an HTTPS connector for another service.

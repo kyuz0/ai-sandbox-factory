@@ -266,7 +266,7 @@ def _start(config, name, args, environment=None):
                              f'{detail}. Inspect its image and profile settings before retrying.')
 
 
-def up(config, state):
+def up(config, state, *, only=None):
     if not selected(config):
         return
     from . import sandbox
@@ -293,12 +293,20 @@ def up(config, state):
         gateway_args += host_platform.model_gateway_args()
     if any(host == 'host.docker.internal' for host, _ in sandbox.parse_rules((state / 'allowlist.txt').read_text())):
         gateway_args += ['--add-host=host.docker.internal:host-gateway']
-    _start(config, base + '-gateway', [*gateway_args, sandbox.image_names(config)[1]])
-    _start(config, base + '-proxy', [
-        '--network', base, '--network-alias', hostname('proxy'), '--cap-drop=ALL',
-        '-v', f'{socket}:/run/egress:ro,z',
-        '-v', f'{directory / "relay.py"}:/opt/profile-relay.py:{host_platform.bind_mode()}',
-        '--entrypoint', 'python3', sandbox.image_names(config)[1], '/opt/profile-relay.py'])
+    if only is None or base + '-gateway' in only:
+        _start(config, base + '-gateway', [*gateway_args, sandbox.image_names(config)[1]])
+        if only is not None:
+            sandbox.wait_gateway(config, base + '-gateway')
+    if only is None or base + '-proxy' in only:
+        _start(config, base + '-proxy', [
+            '--network', base, '--network-alias', hostname('proxy'), '--cap-drop=ALL',
+            '-v', f'{socket}:/run/egress:ro,z',
+            '-v', f'{directory / "relay.py"}:/opt/profile-relay.py:{host_platform.bind_mode()}',
+            '--entrypoint', 'python3', sandbox.image_names(config)[1], '/opt/profile-relay.py'])
+        if only is not None:
+            sandbox.wait_gateway(config, base + '-proxy')
+    if only is not None:
+        return
     for name in selected(config):
         start_service(config, state, name)
 

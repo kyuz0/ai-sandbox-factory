@@ -123,7 +123,8 @@ class ImageSourcesTests(unittest.TestCase):
                 with image_sources.recording() as used:
                     self.assertEqual(self.prepare(config, build), PUBLISHED)
                     self.assertEqual(used['gateway'], {'role': 'gateway', 'recipe': self.recipe,
-                                                      'reference': PUBLISHED, 'image_id': IMAGE_ID})
+                                                      'reference': PUBLISHED, 'image_id': IMAGE_ID,
+                                                      'source': 'prebuilt', 'platform': 'linux/amd64'})
                 self.assertEqual(config['image_refs'], {'gateway': PUBLISHED})
                 self.assertEqual(self.engine.calls.count(('podman', 'pull', PUBLISHED)), int(not cached))
                 build.assert_not_called()
