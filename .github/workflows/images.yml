@@ -3,8 +3,19 @@ name: Factory image candidates
 on:
   push:
     tags: ['image-candidate-*']
-  schedule:
-    - cron: '27 3 * * *'
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        default: false
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
   workflow_dispatch:
     inputs:
       publish:
@@ -12,13 +23,21 @@ on:
         type: boolean
         required: true
         default: false
+      notification_run_attempt:
+        description: Attempt number for the notification delivery check
+        type: string
+        default: '1'
+      notification_run_id:
+        description: Resend one failed Factory run notification instead of building images
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   candidate:
-    if: github.event.deleted != true
+    if: github.event.deleted != true && inputs.notification_run_id == ''
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -26,7 +45,7 @@ jobs:
         role: [gateway, pi-common, pi-stock, native-common, controller-codex, controller-claude, controller-agy, advisor, ssh, aws, connector, inference]
     env:
       ROLE: ${{ matrix.role }}
-      PUBLISH: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/image-candidate-')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish) }}
+      PUBLISH: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/image-candidate-')) || ((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/image-maintenance-test-')) && inputs.publish) }}
     steps:
       - name: Require main for publication
         if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref != 'refs/heads/main'
@@ -35,7 +54,7 @@ jobs:
           exit 1
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -52,28 +71,48 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           printf '%s' "$DOCKERHUB_TOKEN" | podman login --authfile "$RUNNER_TEMP/candidate-auth.json" --username "$DOCKERHUB_USERNAME" --password-stdin docker.io
+      - name: Record the candidate source
+        run: echo "FACTORY_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Build and test the candidate
         shell: bash
         run: |
           args=()
+          # A clean hosted runner deliberately refreshes upstream base tags and
+          # APT steps; existing user sandboxes and their image cache are untouched.
           if [[ "$PUBLISH" == true ]]; then
             args+=(--publish --push-authfile "$RUNNER_TEMP/candidate-auth.json")
           fi
           python scripts/build_factory_images.py --roles "$ROLE" --output "$RUNNER_TEMP/image-result/$ROLE.json" "${args[@]}"
+      - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.76.2
+      - name: Scan the exact candidate and require review of actionable findings
+        id: scan
+        shell: bash
+        run: |
+          image=$(python3 -c 'import json,os; d=json.load(open(os.environ["RUNNER_TEMP"]+"/image-result/"+os.environ["ROLE"]+".json")); print(next(iter(next(iter(d["images"].values())).values())) if "images" in d else d["local_images"][0]["image_id"])')
+          podman system service --time=0 "unix:$RUNNER_TEMP/trivy-podman.sock" &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          while [[ ! -S "$RUNNER_TEMP/trivy-podman.sock" ]]; do kill -0 "$service_pid"; sleep 0.1; done
+          trivy image --image-src podman --podman-host "$RUNNER_TEMP/trivy-podman.sock" --format cyclonedx --output "$RUNNER_TEMP/image-result/$ROLE.cdx.json" "$image"
+          trivy sbom --format json --output "$RUNNER_TEMP/image-result/$ROLE-scan.json" "$RUNNER_TEMP/image-result/$ROLE.cdx.json"
+          python3 scripts/check_image_scan.py --role "$ROLE" --report "$RUNNER_TEMP/image-result/$ROLE-scan.json" --output "$RUNNER_TEMP/image-result/$ROLE-review.json"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: image-${{ matrix.role }}
-          path: ${{ runner.temp }}/image-result/${{ matrix.role }}.json
+          path: ${{ runner.temp }}/image-result/
           if-no-files-found: error
 
   candidate-index:
     needs: candidate
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/image-candidate-')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish)
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/image-candidate-')) || ((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/image-maintenance-test-')) && inputs.publish)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -91,3 +130,23 @@ jobs:
           name: candidate-image-index
           path: ${{ runner.temp }}/images.lock.json
           if-no-files-found: error
+
+  notification-test:
+    if: github.repository == 'kyuz0/ai-sandbox-factory' && github.event_name == 'workflow_dispatch' && inputs.notification_run_id != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Send the requested failed-run notification
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_FAILURE_ISSUE: ${{ vars.FACTORY_FAILURE_ISSUE }}
+          RUN_ID: ${{ inputs.notification_run_id }}
+          RUN_ATTEMPT: ${{ inputs.notification_run_attempt }}
+        run: python3 scripts/notify_factory_failure.py

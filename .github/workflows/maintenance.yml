@@ -1,0 +1,280 @@
+name: Factory image maintenance
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      weekly:
+        description: Update pins and prepare a tested image PR now
+        type: boolean
+        default: true
+  push:
+    tags: ['image-maintenance-test-*']
+
+permissions:
+  contents: read
+
+# Preserve an in-flight candidate. A test run gets its own branch and never opens
+# a production PR. Scheduled runs use the one owned maintenance branch.
+concurrency:
+  group: factory-image-maintenance-${{ startsWith(github.ref, 'refs/tags/image-maintenance-test-') && github.run_id || 'scheduled' }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'kyuz0/ai-sandbox-factory'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      weekly: ${{ steps.plan.outputs.weekly }}
+      test: ${{ steps.plan.outputs.test }}
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select the daily check or weekly update
+        id: plan
+        env:
+          FORCE_WEEKLY: ${{ inputs.weekly }}
+          EVENT_NAME: ${{ github.event_name }}
+          TEST_RUN: ${{ startsWith(github.ref, 'refs/tags/image-maintenance-test-') }}
+        run: |
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          event = os.environ['EVENT_NAME']
+          if event == 'workflow_dispatch' and os.environ['GITHUB_REF'] != 'refs/heads/main':
+              raise SystemExit('Run maintenance from main. Development validation uses an image-maintenance-test-* tag and cannot update the production review branch.')
+          weekly = (event == 'workflow_dispatch' and os.environ['FORCE_WEEKLY'] == 'true') or os.environ['TEST_RUN'] == 'true' or (event == 'schedule' and datetime.now(timezone.utc).weekday() == 0)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('weekly=' + str(weekly).lower() + '\n')
+              output.write('test=' + os.environ['TEST_RUN'] + '\n')
+          PY
+      - name: Select stable, previous and pending image digests
+        id: inventory
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/image_maintenance.py scan-set
+
+  daily-check:
+    needs: plan
+    if: needs.plan.outputs.weekly != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install update inspection tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Check available versions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update_image_dependencies.py --output /tmp/factory-version-check.json
+      - name: Check the weekly maintenance cadence
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/image_maintenance.py overdue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-image-versions
+          path: /tmp/factory-version-check.json
+
+  scan:
+    needs: plan
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.76.2
+      - name: Name the content-addressed inventory
+        id: inventory
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: echo "digest=${IMAGE##*@sha256:}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          key: factory-image-sbom-${{ steps.inventory.outputs.digest }}
+          path: /tmp/factory-image.cdx.json
+      - name: Create the inventory once, then scan it with the current database
+        env:
+          IMAGE: ${{ matrix.image }}
+          CURRENT: ${{ matrix.current }}
+          KIND: ${{ matrix.kind }}
+        run: |
+          if [[ ! -s /tmp/factory-image.cdx.json ]]; then trivy image --format cyclonedx --output /tmp/factory-image.cdx.json "$IMAGE"; fi
+          trivy sbom --format json --output /tmp/factory-image-scan.json /tmp/factory-image.cdx.json
+          python3 scripts/check_image_scan.py --report /tmp/factory-image-scan.json --output /tmp/factory-image-review.json --image "$IMAGE" --current "$CURRENT" --enforce "$CURRENT" --kind "$KIND"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-scan-${{ steps.inventory.outputs.digest }}
+          path: |
+            /tmp/factory-image.cdx.json
+            /tmp/factory-image-scan.json
+            /tmp/factory-image-review.json
+
+  security-update:
+    needs: scan
+    if: always() && needs.scan.result != 'skipped'
+    runs-on: ubuntu-24.04
+    outputs:
+      urgent: ${{ steps.review.outputs.urgent }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-scan-*
+          path: /tmp/factory-scan-reviews
+      - name: Identify fixes needed in current images
+        id: review
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          reports = list(Path('/tmp/factory-scan-reviews').rglob('factory-image-review.json'))
+          urgent = any(report.get('current') and report.get('requires_review') for report in (json.loads(path.read_text()) for path in reports))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('urgent=' + str(bool(urgent)).lower() + '\n')
+          if not reports:
+              raise SystemExit('No completed image scan reviews were produced; inspect the scanner or feed failure.')
+          PY
+
+  prepare:
+    needs: [plan, security-update]
+    if: always() && needs.plan.result == 'success' && (needs.plan.outputs.weekly == 'true' || needs.security-update.outputs.urgent == 'true')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      ref: ${{ steps.branch.outputs.ref }}
+      branch: ${{ steps.branch.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install lockfile and image inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          python -m pip install pip-tools==7.5.2
+      - name: Resolve complete version, hash and lock updates
+        # A failed component remains unchanged and visible. Safe components can
+        # still be tested together; final reporting keeps the cycle incomplete.
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update_image_dependencies.py --apply --output /tmp/factory-version-updates.json
+      - name: Prepare the candidate commit
+        id: branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TEST_RUN: ${{ needs.plan.outputs.test }}
+        run: |
+          args=()
+          if [[ "$TEST_RUN" == true ]]; then args+=(--test); fi
+          python3 scripts/image_maintenance.py prepare --report /tmp/factory-version-updates.json "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weekly-image-versions
+          path: /tmp/factory-version-updates.json
+
+  candidates:
+    needs: prepare
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    uses: ./.github/workflows/images.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+      publish: true
+    secrets: inherit
+
+  index:
+    needs: [prepare, candidates]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      ref: ${{ steps.index.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-image-index
+          path: /tmp/factory-index
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -e .
+      - name: Commit the exact published candidate set for testing
+        id: index
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: python3 scripts/image_maintenance.py index --index /tmp/factory-index/images.lock.json --branch "$BRANCH"
+
+  verify:
+    needs: index
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/checks.yml
+    with:
+      ref: ${{ needs.index.outputs.ref }}
+      candidate_index: candidate-image-index
+
+  review:
+    name: Prepare verified weekly update
+    needs: [plan, prepare, index, verify]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      statuses: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.index.outputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: /tmp/factory-promotion-inventories
+      - name: Open or update the reviewed-image PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+          SHA: ${{ needs.index.outputs.ref }}
+          FACTORY_AUTOMATED_PRS: ${{ vars.FACTORY_AUTOMATED_PRS }}
+          FACTORY_PROMOTION_INVENTORIES: /tmp/factory-promotion-inventories
+        run: python3 scripts/image_maintenance.py pr --branch "$BRANCH" --sha "$SHA"

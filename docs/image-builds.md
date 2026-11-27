@@ -61,7 +61,12 @@ The command builds public Factory roles and runs their smoke checks. It reads
 bundled sources, never users' profile folders, credentials or saved sandboxes.
 Without `--publish`, it writes a local build report and makes no registry changes.
 
-The **Factory image candidates** Action builds and tests daily on Linux amd64.
+The **Factory image maintenance** Action checks versions and scans images daily,
+then prepares updated candidates each Monday on Linux amd64. Candidates need
+the exact published-image checks before their PR is ready for promotion.
+[Maintenance, failure emails and older images](image-maintenance.md)
+
+The **Factory image candidates** Action builds and tests those candidates.
 To publish candidates for the current commit on a development branch, push an
 `image-candidate-*` tag:
 
@@ -76,10 +81,12 @@ Maintainers can also select **publish** when running the Action manually on
 anonymously and repeat its smoke checks before writing candidate fragments.
 
 The Action combines successful fragments into a candidate `images.lock.json`.
-Review that artifact, run the lifecycle checks against its exact images, then
-replace `ai_sandbox_factory/images.lock.json` in a normal reviewed change. A
-release includes only those promoted digests. Daily builds do not change the
-installed list or update live sandboxes.
+Use that artifact for development checks with `--candidate-index`, as described
+in [TESTING.md](../TESTING.md#image-preparation). To promote an image set, run
+**Factory image maintenance**. It records the source and verification evidence
+with the exact image list before opening the reviewed update. Copying the image
+list alone is insufficient for a release. Candidate publication does not change
+the installed list or update live sandboxes.
 
 Each entry matches the role's source files, executable modes, build arguments and
 container platform. The workspace and its credential companions remain separate.

@@ -8,10 +8,18 @@ on:
       - 'MANIFEST.in'
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      candidate_index:
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: checks-${{ github.ref }}
+  group: checks-${{ inputs.ref || github.ref }}
   cancel-in-progress: false
 jobs:
   python:
@@ -23,6 +31,9 @@ jobs:
         group: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -35,6 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - name: Check for package changes
         id: package
@@ -86,6 +99,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: inputs.candidate_index != ''
+        with:
+          name: ${{ inputs.candidate_index }}
+          path: /tmp/factory-published-candidate
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -97,7 +118,16 @@ jobs:
           python -m pip install -e . playwright
           python -m playwright install --with-deps chromium
       - name: Check fresh project startup and mounted-folder permissions
-        run: python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox
+        run: |
+          args=()
+          if [[ -n "$CANDIDATE_INDEX" ]]; then
+            args+=(--candidate-index /tmp/factory-published-candidate/images.lock.json)
+          elif python3 -c 'import json,sys; sys.exit(not bool(json.load(open("ai_sandbox_factory/images.lock.json"))["images"]))'; then
+            args+=(--candidate-index ai_sandbox_factory/images.lock.json)
+          fi
+          python tests/fresh_sandbox.py --output /tmp/factory-fresh-sandbox "${args[@]}"
+        env:
+          CANDIDATE_INDEX: ${{ inputs.candidate_index }}
       - name: Require fresh creation with a model provider and verify lifecycle locks
         shell: bash
         run: |
@@ -134,6 +164,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: inputs.candidate_index != ''
+        with:
+          name: ${{ inputs.candidate_index }}
+          path: /tmp/factory-published-candidate
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -150,7 +188,12 @@ jobs:
           df -i "$factory_graphroot" /tmp
       - name: Require prebuilt acquisition, pull cancellation, and profile recovery
         shell: bash
-        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces --recipes 2>&1 | tee /tmp/factory-prebuilt-check.log
+        env:
+          CANDIDATE_INDEX: ${{ inputs.candidate_index }}
+        run: |
+          args=(--recovery)
+          if [[ -n "$CANDIDATE_INDEX" ]]; then args=(--candidate-index /tmp/factory-published-candidate/images.lock.json); fi
+          PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --interfaces --recipes "${args[@]}" 2>&1 | tee /tmp/factory-prebuilt-check.log
       - name: Record runner storage
         if: always()
         run: |
@@ -167,64 +210,146 @@ jobs:
             /tmp/factory-prebuilt-check/results.json
             /tmp/factory-prebuilt-check/registry-requests.json
             /tmp/factory-prebuilt-check/pull-recovery-result.json
+  published-plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.plan.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e .
+      - name: Require the promoted index to match current build sources
+        id: plan
+        run: |
+          python - <<'PYTHON'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from build_factory_images import validate_index
+          path = Path('ai_sandbox_factory/images.lock.json')
+          enabled = bool(json.loads(path.read_text())['images'])
+          if enabled:
+              validate_index(path)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('enabled=' + str(enabled).lower() + '\n')
+          PYTHON
+  published-native:
+    name: Published ${{ matrix.agent }} client and credential isolation
+    needs: published-plan
+    if: needs.published-plan.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [codex, claude, agy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native-client test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          python -m pip install -e .
+      - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.76.2
+      - name: Test the exact published native client
+        env:
+          AGENT: ${{ matrix.agent }}
+        run: python tests/native_image_candidates.py --candidate-index ai_sandbox_factory/images.lock.json --agent "$AGENT"
+      - name: Recheck current advisories before promotion
+        env:
+          AGENT: ${{ matrix.agent }}
+        run: python scripts/scan_factory_images.py --index ai_sandbox_factory/images.lock.json --roles "controller-$AGENT" native-common --output /tmp/factory-native-scan
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-${{ matrix.agent }}-scan
+          path: /tmp/factory-native-scan
+  published-helpers:
+    needs: published-plan
+    if: needs.published-plan.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install candidate verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          python -m pip install -e .
+      - uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.76.2
+      - name: Pull and test the exact published helper and Pi images
+        run: python scripts/build_factory_images.py --verify-index ai_sandbox_factory/images.lock.json --roles gateway inference ssh aws connector advisor pi-common pi-stock --output /tmp/factory-published-images.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-image-versions
+          path: /tmp/factory-published-images.json
+      - name: Recheck current advisories before promotion
+        run: python scripts/scan_factory_images.py --index ai_sandbox_factory/images.lock.json --roles gateway inference ssh aws connector advisor pi-common pi-stock --output /tmp/factory-helper-scan
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-helper-scan
+          path: /tmp/factory-helper-scan
   test:
-    needs: [python, package, fresh-sandbox, prebuilt-images]
+    needs: [python, package, fresh-sandbox, prebuilt-images, published-plan, published-native, published-helpers]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require all checks to pass
-        run: test "${{ needs.python.result }}" = success && test "${{ needs.package.result }}" = success && test "${{ needs.fresh-sandbox.result }}" = success && test "${{ needs.prebuilt-images.result }}" = success
+        run: |
+          test "${{ needs.python.result }}" = success
+          test "${{ needs.package.result }}" = success
+          test "${{ needs.fresh-sandbox.result }}" = success
+          test "${{ needs.prebuilt-images.result }}" = success
+          test "${{ needs.published-plan.result }}" = success
+          if [[ "${{ needs.published-plan.outputs.enabled }}" == true ]]; then
+            test "${{ needs.published-native.result }}" = success
+            test "${{ needs.published-helpers.result }}" = success
+          fi
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.package.outputs.package_changed == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.candidate_index == '' && needs.package.outputs.package_changed == 'true'
     needs: [test, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
       - name: Version and tag
+        id: release
+        run: python3 scripts/prepare_factory_release.py
+      - name: Retain released image tags and evidence
+        if: steps.release.outputs.version != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          python - <<'PYTHON'
-          from datetime import datetime, timezone
-          from pathlib import Path
-          import re, subprocess
-
-          def git(*args, check=True):
-              return subprocess.run(['git', *args], check=check)
-
-          def revision(ref):
-              return subprocess.check_output(['git', 'rev-parse', ref], text=True).strip()
-
-          tested = revision('HEAD')
-          git('config', 'user.name', 'github-actions[bot]')
-          git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
-          git('fetch', 'origin', 'main')
-          for attempt in range(3):
-              latest = revision('FETCH_HEAD')
-              git('merge-base', '--is-ancestor', tested, latest)
-              # Docs may have landed since the tests started. Release only the tested package.
-              diff = git('diff', '--quiet', tested, latest, '--',
-                         'ai_sandbox_factory/', 'pyproject.toml', 'MANIFEST.in', check=False)
-              if diff.returncode == 1:
-                  print('Main has newer package changes. The newer push will run its own release checks.')
-                  break
-              diff.check_returncode()
-
-              git('checkout', '--detach', latest)
-              now = datetime.now(timezone.utc)
-              version = f'{now.year}.{now.month}.{now.day}.{int(now.strftime("%H%M%S"))}'
-              path = Path('pyproject.toml')
-              path.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"',
-                                     path.read_text(), flags=re.M))
-              git('add', 'pyproject.toml')
-              git('commit', '-m', f'Release {version}')
-              push = git('push', '--atomic', 'origin', 'HEAD:main', f'HEAD:refs/tags/v{version}', check=False)
-              if push.returncode == 0:
-                  break
-              git('fetch', 'origin', 'main')
-              if attempt == 2 or latest == revision('FETCH_HEAD'):
-                  push.check_returncode()
-          PYTHON
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          printf '%s' "$DOCKERHUB_TOKEN" | skopeo login --authfile "$RUNNER_TEMP/release-image-auth.json" --username "$DOCKERHUB_USERNAME" --password-stdin docker.io
+          python3 scripts/release_factory_images.py --version "$VERSION" --authfile "$RUNNER_TEMP/release-image-auth.json"

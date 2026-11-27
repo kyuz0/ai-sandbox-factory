@@ -65,6 +65,28 @@ to inspect errors and their dismissal.
 
 ## Package installation
 
+### Container maintenance
+
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_image_dependency_updates test_image_maintenance test_image_scan test_factory_notifications test_factory_image_publication test_image_sources
+actionlint .github/workflows/*.yml
+```
+
+Resolver fixtures cover stable updates, complete checksums and locks, partial
+upstream failures, unchanged versions and duplicate pins. Promotion checks reject
+a stale recipe, wrong digest or a branch changed after verification. Notification
+fixtures cover failed attempts, pagination, idempotency and repository scope.
+The native candidate fixture runs real client binaries with synthetic auth and
+the shipped workspace hooks. A missing model request fails explicitly.
+
+For a real candidate set, run the existing prebuilt lifecycle fixture with
+`--candidate-index`, then `native_image_candidates.py --candidate-index FILE
+--agent codex` (repeat for Claude and Antigravity). Fresh startup accepts the
+same index through `fresh_sandbox.py --candidate-index FILE --output DIR`.
+The candidate pipeline also creates and rescans an actual SBOM for each image.
+Confirm notification delivery with the failure-notification workflow and a known
+failed run; a posted issue comment alone does not prove email receipt.
+
 ### CLI command recipes
 
 ```sh

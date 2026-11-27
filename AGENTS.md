@@ -231,6 +231,10 @@ Do not solve VM mount failures with recursive ownership changes or wider host mo
   well as profile Apply. A profile-only test does not cover the ordinary path.
 - Exercise the shipped clients with the editor's inherited environment, including
   Node preload settings. Mocked tool calls alone do not establish usability.
+- Native-client fixtures must include the managed hooks used by the configured
+  client. Assert that the expected request reached the synthetic service and
+  that its result was observed; exit status zero or a startup event alone is
+  not evidence that the operation ran.
 
 ## Terminal layout and navigation
 

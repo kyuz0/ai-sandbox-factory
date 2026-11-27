@@ -1,0 +1,59 @@
+name: Factory failure notifications
+
+on:
+  # Includes runs started by fork pull requests. Only run metadata is read.
+  workflow_run:
+    workflows: ['Checks and release', 'Factory image candidates', 'Factory image maintenance']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: ID of the failed run to report, from its URL
+        type: string
+        required: true
+      run_attempt:
+        description: Attempt number of the failed run, from its URL (1 for a first run)
+        type: string
+        required: true
+        default: '1'
+
+permissions: {}
+
+concurrency:
+  # One group per reported attempt: distinct failures notify in parallel, while
+  # redeliveries and manual retries of the same attempt wait and then find the
+  # marker written by the first notice.
+  group: factory-failure-notice-${{ github.event.workflow_run.id || inputs.run_id }}-${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'kyuz0/ai-sandbox-factory' && (
+        (github.event_name == 'workflow_dispatch' &&
+         github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+        (github.event_name == 'workflow_run' &&
+         contains(fromJSON('["failure", "timed_out", "startup_failure"]'), github.event.workflow_run.conclusion)))
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      # Only the notifier from the default branch runs; the reported run's
+      # commit, artifacts and logs are never checked out or read.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/notify_factory_failure.py
+          sparse-checkout-cone-mode: false
+      - name: Report the failed run
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_FAILURE_ISSUE: ${{ vars.FACTORY_FAILURE_ISSUE }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
+        run: |
+          echo "Notifier source: $(git rev-parse HEAD)"
+          python3 scripts/notify_factory_failure.py

@@ -78,7 +78,10 @@ def source_path(config):
 def local_image(config):
     from . import sandbox as core
     lock = sandbox_extensions.read_lock(source_path(config))['pi-advisor']
-    digest = core.tree_digest(core.ROOT / 'containers/advisor') + hashlib.sha256(json.dumps(lock, sort_keys=True).encode()).hexdigest()[:12]
+    installer = core.ROOT / 'containers/primary'
+    pins = b''.join((installer / name).read_bytes() for name in ('agent-versions.json', 'install-agent.py'))
+    digest = core.tree_digest(core.ROOT / 'containers/advisor') + hashlib.sha256(
+        json.dumps(lock, sort_keys=True).encode() + pins).hexdigest()[:12]
     return f'localhost/pi-sandbox-factory-advisor:{config["uid"]}-{config["gid"]}-{digest}'
 
 

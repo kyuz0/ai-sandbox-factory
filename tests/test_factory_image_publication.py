@@ -5,6 +5,7 @@ import io
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -109,7 +110,13 @@ class FakeEngine:
             self.images[reference] = image
         else:
             raise AssertionError(f'Unexpected Podman command {command}')
-        return subprocess.CompletedProcess(command, 0, '')
+        versions = ''
+        if operation == 'run' and '--version' in arguments:
+            executable = arguments[arguments.index('--entrypoint') + 1]
+            pins = json.loads((publisher.sandbox.ROOT / 'containers/primary/agent-versions.json').read_text())
+            versions = ' '.join([publisher.sandbox.PI_VERSION, publisher.browser_editor.VERSION,
+                                 *(pin['version'] for pin in pins.values()), re.search(r'aws-cli:([\d.]+)', (publisher.sandbox.ROOT / 'containers/aws-access/client/Dockerfile').read_text()).group(1)])
+        return subprocess.CompletedProcess(command, 0, versions)
 
 
 class FactoryImagePublication(unittest.TestCase):
@@ -232,20 +239,20 @@ class FactoryImagePublication(unittest.TestCase):
     def test_only_candidate_tags_and_explicit_main_dispatch_publish(self):
         path = CHECKOUT / '.github/workflows/images.yml'
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(set(workflow['on']), {'push', 'schedule', 'workflow_dispatch'})
+        self.assertEqual(set(workflow['on']), {'push', 'workflow_call', 'workflow_dispatch'})
         self.assertEqual(workflow['on']['push'], {'tags': ['image-candidate-*']})
         self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['publish']['default'], 'false')
         job = workflow['jobs']['candidate']
         index = workflow['jobs']['candidate-index']
-        self.assertEqual(job['if'], 'github.event.deleted != true')
+        self.assertEqual(job['if'], "github.event.deleted != true && inputs.notification_run_id == ''")
         self.assertEqual(set(job['strategy']['matrix']['role']), set(publisher.SMOKE))
         gate = ("(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/image-candidate-')) || "
-                "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish)")
+                "((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/image-maintenance-test-')) && inputs.publish)")
         self.assertEqual(job['env']['PUBLISH'], '${{ ' + gate + ' }}')
         self.assertEqual((index['if'], index['needs']), (gate, 'candidate'))
         for task in (job, index):
             checkout = next(step for step in task['steps'] if step.get('uses', '').startswith('actions/checkout@'))
-            self.assertEqual(checkout['with'], {'ref': '${{ github.sha }}', 'persist-credentials': 'false'})
+            self.assertEqual(checkout['with'], {'ref': '${{ inputs.ref || github.sha }}', 'persist-credentials': 'false'})
         protected = [step for step in job['steps'] if 'secrets.' in str(step)]
         self.assertEqual(len(protected), 1)
         self.assertEqual(protected[0]['if'], "env.PUBLISH == 'true'")

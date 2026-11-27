@@ -170,6 +170,11 @@ async def exercise(binary, root, timeout):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(native.communicate(), timeout)
         assert native.returncode == 0, f'Native default-off search turn failed: {stderr.decode(errors="replace")}'
+        (root / 'native-search-output.jsonl').write_bytes(stdout)
+        (root / 'native-search-errors.txt').write_bytes(stderr)
+        assert proxy.search_requested, ('The Claude CLI did not reach the synthetic model request. '
+            'Check that the workspace hook is mounted in the controller fixture. '
+            f'Client output: {stdout.decode(errors="replace")}\n{stderr.decode(errors="replace")}')
         assert proxy.search_requested and proxy.search_denied, f'Native permission engine did not deny the requested WebSearch tool: {proxy.search_results}'
         print('Official Claude native permission engine denied WebSearch with Factory default off.', flush=True)
         for path in workspace.rglob('*'):

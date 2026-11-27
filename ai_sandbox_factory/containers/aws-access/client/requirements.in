@@ -1,0 +1,2 @@
+# Direct AWS SDK dependency; requirements.txt records the complete resolved set.
+boto3
