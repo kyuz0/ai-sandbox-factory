@@ -140,6 +140,22 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('path-validation-') for name in args.only):
+                    form = NewSandbox()
+                    await app.push_screen(form)
+                    form.query_one('#workspace', Input).value = '~test'
+                    form.query_one('#name', Input).value = 'demo-new'
+                    with patch('pwd.getpwnam', side_effect=KeyError('test')):
+                        form.query_one('#continue', Button).press()
+                        await pilot.pause()
+                    await shot('path-validation-workspace')
+                    form.query_one('#workspace', Input).value = '/home/example/projects/demo'
+                    await shot('path-validation-corrected', focus='#workspace')
+                    await app.pop_screen()
+                    with patch('pwd.getpwnam', side_effect=KeyError('test')):
+                        picker = FolderPicker('~test', root=workspace)
+                    await shot('path-validation-picker', picker)
+                    return
                 if args.only and all(name.startswith('cli-commands-') for name in args.only):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='demo', workspace=str(workspace), primary_agent='codex')

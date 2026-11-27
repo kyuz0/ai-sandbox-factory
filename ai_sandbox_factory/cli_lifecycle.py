@@ -240,9 +240,11 @@ def complete_draft(value, args):
     if not draft.get('workspace'):
         raise ValueError('A workspace is required. Use --workspace PATH or set workspace in --config.')
     try:
-        draft['workspace'] = str(host_platform.local_path(draft['workspace']).resolve(strict=True))
+        draft['workspace'] = str(host_platform.resolve_path(draft['workspace'], strict=True))
     except FileNotFoundError as error:
         raise ValueError(f'Workspace {draft["workspace"]!r} does not exist. Choose an existing project folder.') from error
+    if draft.get('env_file'):
+        draft['env_file'] = str(host_platform.resolve_path(draft['env_file'], strict=True))
     if draft.get('model_providers') is None:
         draft['model_providers'] = {}
     validate_draft(draft)
@@ -362,7 +364,7 @@ def from_arguments(args):
     if args.editor:
         value['editor'] = args.editor
     if args.allowlist:
-        value['allowlist'] = Path(args.allowlist).expanduser().read_text()
+        value['allowlist'] = host_platform.local_path(args.allowlist).read_text()
     elif args.allow_domain:
         value['allowlist'] = '\n'.join(args.allow_domain)
     if args.skill:
@@ -381,7 +383,7 @@ def from_arguments(args):
     if args.reuse_from and (args.reuse_config_revision or args.reuse_editable_profile):
         if not SANDBOX_NAME.fullmatch(args.reuse_from):
             raise ValueError(f'Invalid source sandbox {args.reuse_from!r}. {SANDBOX_NAME_ERROR}')
-        manager = operations.Service(Path(args.state_dir).expanduser().resolve())
+        manager = operations.Service(host_platform.resolve_path(args.state_dir))
         with operation_locks.sandbox(args.reuse_from, 'copy settings from'):
             source = sandbox.recover_profile(manager.config(args.reuse_from), manager.state / args.reuse_from)
             if args.reuse_config_revision and args.reuse_config_revision != sandbox.config_revision(source):
@@ -429,7 +431,7 @@ def attach_secrets(draft, value):
 
 
 def start_creation(args, draft, secret_values=None):
-    manager = operations.Service(Path(args.state_dir).expanduser().resolve())
+    manager = operations.Service(host_platform.resolve_path(args.state_dir))
     if not SANDBOX_NAME.fullmatch(args.name):
         raise ValueError(SANDBOX_NAME_ERROR)
     values = secret_values if secret_values is not None else getattr(args, '_creation_secrets', None)
@@ -471,7 +473,7 @@ def start_creation(args, draft, secret_values=None):
 
 
 def copy_sandbox(args):
-    manager = operations.Service(Path(args.state_dir).expanduser().resolve())
+    manager = operations.Service(host_platform.resolve_path(args.state_dir))
     if not SANDBOX_NAME.fullmatch(args.source):
         raise ValueError(SANDBOX_NAME_ERROR)
     with operation_locks.sandbox(args.source, 'copy settings from'):
@@ -514,7 +516,7 @@ def copy_sandbox(args):
 def supervise(args):
     if not SANDBOX_NAME.fullmatch(args.name):
         raise ValueError(SANDBOX_NAME_ERROR)
-    manager = operations.Service(Path(args.state_dir).expanduser().resolve())
+    manager = operations.Service(host_platform.resolve_path(args.state_dir))
     command = [args.command, args.name]
     for field, flag in (('settings_file','--settings-file'),('profile','--profile'),('directory','--directory'),
                         ('revision','--revision'),('saved','--saved'),('volume','--volume'),

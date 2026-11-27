@@ -211,11 +211,13 @@ class FolderPicker(ModalScreen[str | None]):
         self.filename = filename
         self.root = Path(root).resolve() if root else None
         home = Path.home()
+        self.start_error = ''
         try:
             path = host_platform.local_path(start) if start else home
             self.start = path if path.is_dir() else path.parent if path.parent.is_dir() else self.root or home
-        except (OSError, RuntimeError, subprocess.CalledProcessError):
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
             self.start = self.root or home
+            self.start_error = str(error)
         if self.root:
             self.start = self.start.resolve()
             if not self.start.is_relative_to(self.root):
@@ -274,6 +276,8 @@ class FolderPicker(ModalScreen[str | None]):
             self.query_one('#folder-filename', Input).focus()
         else:
             navigation.focus()
+        if self.start_error:
+            self.query_one('#folder-browse-error', Feedback).update('Error · ' + self.start_error)
 
     def action_cancel(self):
         self.dismiss(None)
@@ -347,6 +351,8 @@ class FolderPicker(ModalScreen[str | None]):
         if self.root and not location.is_relative_to(self.root):
             self.query_one('#folder-browse-error', Feedback).update('Error · Choose a folder inside the workspace.')
             return
+        self.start_error = ''
+        self.query_one('#folder-browse-error', Feedback).update('')
         self.navigation.location = location
         self.navigation.focus()
 
@@ -361,7 +367,9 @@ class FolderPicker(ModalScreen[str | None]):
         event.navigation.filter_text = ''
         self.query_one('#folder-path', Input).value = str(event.navigation.location)
         self.query_one('#folder-up', Button).disabled = event.navigation.is_root
-        self.query_one('#folder-browse-error', Feedback).update('')
+        if event.navigation.location != self.start:
+            self.start_error = ''
+        self.query_one('#folder-browse-error', Feedback).update('Error · ' + self.start_error if self.start_error else '')
         self.update_file()
 
     @on(DirectoryNavigation.Highlighted)
@@ -386,13 +394,17 @@ class FolderPicker(ModalScreen[str | None]):
     @on(Input.Submitted, '#folder-path')
     def typed_path(self, event):
         try:
-            path = self.navigation.location / host_platform.local_path(event.value.strip())
+            value = event.value.strip()
+            path = self.navigation.location / (Path(value) if self.root else host_platform.local_path(value))
             if path.is_dir():
                 self.go_to(path)
                 return
             if self.allowed_file(path) and path.is_file():
                 self.choose(path)
                 return
+        except ValueError as error:
+            self.query_one('#folder-browse-error', Feedback).update('Error · ' + str(error))
+            return
         except (OSError, RuntimeError, subprocess.CalledProcessError):
             pass
         self.query_one('#folder-browse-error', Feedback).update('Error · Enter an existing folder.' if self.mode == 'folder'
@@ -460,10 +472,12 @@ class PathField(Horizontal):
         event.stop()
         field = self.query_one(Input)
         value = field.value.strip()
+        error_message = ''
         try:
-            path = host_platform.local_path(value) if value and '://' not in value else self.initial
+            path = (Path(value) if self.root else host_platform.local_path(value)) if value and '://' not in value else self.initial
             path = Path(self.root) / (path or '.') if self.root else path
-        except (OSError, RuntimeError, subprocess.CalledProcessError):
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+            error_message = str(error)
             path = self.initial or self.root
         path = Path(path) if path else None
         filename = path.name if self.mode == 'save' and path and not path.is_dir() else ''
@@ -474,5 +488,7 @@ class PathField(Horizontal):
                 field.value = str(chosen) if self.root is None else chosen.resolve().relative_to(Path(self.root).resolve()).as_posix()
                 field.focus()
 
-        self.app.push_screen(FolderPicker(path, title=self.title_text, mode=self.mode, file_extensions=self.file_extensions,
-                                          places=self.places, root=self.root, filename=filename), selected)
+        picker = FolderPicker(path, title=self.title_text, mode=self.mode, file_extensions=self.file_extensions,
+                              places=self.places, root=self.root, filename=filename)
+        picker.start_error = error_message or picker.start_error
+        self.app.push_screen(picker, selected)

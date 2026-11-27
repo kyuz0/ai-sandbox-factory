@@ -192,7 +192,7 @@ def run(argv, capture=False, check=True, **kwargs):
 
 
 def directory(value):
-    path = host_platform.local_path(value).resolve(strict=True)
+    path = host_platform.resolve_path(value, strict=True)
     if not path.is_dir():
         raise ValueError(f'Not a directory: {path}')
     if any(c in str(path) for c in ':,\n\r'):
@@ -1169,12 +1169,12 @@ def _create(args, state):
     for first, second in pairs:
         if folders.overlaps(first, second):
             raise ValueError('Workspace, shared Pi config, and sandbox state must be separate, non-nested directories')
-    policy_text = (Path(args.allowlist).expanduser().read_text() if args.allowlist
+    policy_text = (host_platform.local_path(args.allowlist).read_text() if args.allowlist
                    else '\n'.join(args.allow_domain) + '\n')
     rules = parse_rules(policy_text)
     if shared and mode == 'allowlist':
         validate_models(shared, rules, strict=False)
-    env_file = str(Path(args.env_file).expanduser().resolve(strict=True)) if args.env_file else None
+    env_file = str(host_platform.resolve_path(args.env_file, strict=True)) if args.env_file else None
     validate_env(env_file)
     creation_token = getattr(args, 'creation_token', None)
     if creation_token:
@@ -2045,7 +2045,7 @@ def main(*, startup_notice=''):
                 return cli_lifecycle.start_creation(args, draft)
             if args.secrets_stdin:
                 parser.error('--secrets-stdin requires --start so credentials can reach their companion')
-            manager = cli_lifecycle.operations.Service(Path(args.state_dir).expanduser().resolve())
+            manager = cli_lifecycle.operations.Service(host_platform.resolve_path(args.state_dir))
             with operation_locks.sandbox(args.name, 'create'):
                 if args.json:
                     from contextlib import redirect_stdout
@@ -2057,7 +2057,7 @@ def main(*, startup_notice=''):
             return
     if args.command == 'update' and args.preview:
         from .cli_support import emit, read_json
-        manager = cli_lifecycle.operations.Service(Path(args.state_dir).expanduser().resolve())
+        manager = cli_lifecycle.operations.Service(host_platform.resolve_path(args.state_dir))
         return emit(args, manager.preview_settings(args.name, read_json(args.settings_file)))
     if args.command in cli_lifecycle.GATED and args.apply_gate is None:
         return cli_lifecycle.supervise(args)
@@ -2075,18 +2075,18 @@ def main(*, startup_notice=''):
         return
     if args.command == 'tui':
         from .sandbox_tui import launch
-        state_root = Path(args.state_dir).expanduser().resolve()
+        state_root = host_platform.resolve_path(args.state_dir)
         launch(state_root, startup_notice=startup_notice) if startup_notice else launch(state_root)
         return
     if args.command == 'list':
-        list_sandboxes(Path(args.state_dir).expanduser().resolve(), **({'structured': True} if args.json else {}))
+        list_sandboxes(host_platform.resolve_path(args.state_dir), **({'structured': True} if args.json else {}))
         return
     if args.command == 'profiles':
         for name,description in registry.choices('profile').items(): print(f'{name}: {description}')
         return
     if not SANDBOX_NAME.fullmatch(args.name):
         parser.error(SANDBOX_NAME_ERROR)
-    state = Path(args.state_dir).expanduser().resolve() / args.name
+    state = host_platform.resolve_path(args.state_dir) / args.name
     if args.command in LIFECYCLE_COMMANDS:
         try:
             with operation_locks.sandbox(args.name, args.command):
@@ -2383,7 +2383,7 @@ def sandbox_command(args, state, parser):
             activity.record(state, 'edited')
             print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':
-        text = sys.stdin.read() if args.allowlist == '-' else Path(args.allowlist).expanduser().read_text()
+        text = sys.stdin.read() if args.allowlist == '-' else host_platform.local_path(args.allowlist).read_text()
         update_network(config, state, text, args.website_groups,
                        curlie_revision=args.curlie_list)
     elif args.command == 'policy':
@@ -2391,7 +2391,7 @@ def sandbox_command(args, state, parser):
             parser.error('--network unrestricted cannot be combined with --allowlist')
         if args.network == 'allowlist' and not args.allowlist:
             parser.error('--allowlist is required for allowlist networking')
-        text = Path(args.allowlist).expanduser().read_text() if args.allowlist else ''
+        text = host_platform.local_path(args.allowlist).read_text() if args.allowlist else ''
         rules = parse_rules(text)
         if args.network == 'allowlist' and config.get('pi_config'):
             validate_models(Path(config['pi_config']), rules, strict=False)

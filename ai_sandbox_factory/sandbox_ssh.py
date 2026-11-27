@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from .sandbox_options import RESOURCE_PREFIX
+from . import host_platform
 
 
 DEFAULT_UNLOCK_DURATION = '8h'
@@ -301,7 +302,7 @@ def unlock(config, state, duration=DEFAULT_UNLOCK_DURATION):
 
 
 def key_source(config, path):
-    source=Path(path).expanduser().resolve(strict=True)
+    source=host_platform.resolve_path(path, strict=True)
     if not source.is_file() or not 0 < source.stat().st_size <= MAX_KEY_BYTES:
         raise ValueError('Select a nonempty SSH private key file up to 128 MiB.')
     shared = [config.get(field) for field in ('workspace', 'pi_config')]

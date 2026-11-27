@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from . import (editor_settings, image_sources, operations, primary_workspace, profile_services,
+from . import (editor_settings, host_platform, image_sources, operations, primary_workspace, profile_services,
                prompt_library, registry, sandbox, session_transfer, skill_library, updates, web_access)
 from .cli_support import emit, read_json, read_secret, remember_secret, prompt_secret
 from .sandbox_options import SANDBOX_NAME, SANDBOX_NAME_ERROR, options, write_json
@@ -18,7 +18,7 @@ def service(args):
         value = getattr(args, field, None)
         if value is not None and not SANDBOX_NAME.fullmatch(value):
             raise ValueError(f'Invalid sandbox {field} {value!r}. {SANDBOX_NAME_ERROR}')
-    return operations.Service(Path(args.state_dir).expanduser().resolve())
+    return operations.Service(host_platform.resolve_path(args.state_dir))
 
 
 def editor(args):

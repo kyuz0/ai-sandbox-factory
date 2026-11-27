@@ -100,10 +100,35 @@ def open_url(url):
 
 
 def local_path(value):
-    value = str(value)
+    original = value = str(value)
     if is_wsl() and len(value) > 2 and value[1:3] in (':\\', ':/'):
-        value = subprocess.check_output(['wslpath', '-u', value], text=True).strip()
-    return Path(value).expanduser()
+        try:
+            value = subprocess.check_output(['wslpath', '-u', value], text=True, stderr=subprocess.STDOUT).strip()
+        except subprocess.CalledProcessError as error:
+            detail = (error.output or '').strip()
+            raise ValueError(f'Cannot convert Windows path {original!r}: wslpath exited with status '
+                             f'{error.returncode}: {detail or "no diagnostic output"}. '
+                             'Check the Windows path or enter a Linux path.') from error
+        except OSError as error:
+            raise ValueError(f'Cannot convert Windows path {original!r}: could not run wslpath: {error}. '
+                             'Enter a Linux path or check your WSL installation.') from error
+    try:
+        return Path(value).expanduser()
+    except RuntimeError as error:
+        user = value.split('/', 1)[0][1:]
+        hint = (f'~{user} refers to a user’s home directory. Use {"~/" + value[1:]!r} '
+                'for a folder inside your home directory, or enter an absolute path.'
+                if user else 'Enter an absolute path to the folder.')
+        raise ValueError(f'Cannot expand path {original!r}: {error} {hint}') from error
+
+
+def resolve_path(value, *, strict=False):
+    """Keep expected path parsing failures in the shared validation error contract."""
+    try:
+        return local_path(value).resolve(strict=strict)
+    except RuntimeError as error:
+        raise ValueError(f'Cannot resolve path {str(value)!r}: {error}. '
+                         'Check the path and any symbolic links.') from error
 
 
 def private_runtime_dir():

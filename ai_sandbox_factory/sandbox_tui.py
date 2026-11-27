@@ -727,7 +727,7 @@ class NetworkRulesFields(Vertical):
             value = self.query_one('#network-file', Input).value.strip()
             if not value:
                 raise ValueError('Enter an allowlist file path.')
-            path = Path(value).expanduser()
+            path = host_platform.local_path(value)
             if event.button.id == 'network-import':
                 text = path.read_text()
                 sandbox.parse_rules(text)
@@ -2230,7 +2230,7 @@ class InstallPackage(Screen):
         try:
             path = host_platform.local_path(value) if value and '://' not in value else None
             field.root = path if path and path.is_dir() else None
-        except (OSError, RuntimeError, subprocess.CalledProcessError):
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError):
             field.root = None
         field.query_one(Button).display = field.root is not None
 
@@ -2594,6 +2594,7 @@ class NewSandbox(Screen):
             with Vertical(classes='setting'):
                 yield Label('Workspace')
                 yield PathField('workspace', settings['workspace_parent'], title='Choose workspace folder', browse_id='browse')
+                yield Feedback('', id='workspace-error', classes='error', markup=False)
                 yield Checkbox('Create this workspace folder if it does not exist', id='mkdir')
             with Vertical(id='sandbox-name-setting', classes='setting'):
                 yield Label('Sandbox name')
@@ -2651,6 +2652,9 @@ class NewSandbox(Screen):
 
     @on(Input.Changed, '#workspace')
     def suggest_name(self):
+        workspace = self.query_one('#workspace', Input).value
+        if workspace != getattr(self, 'invalid_workspace', None):
+            self.query_one('#workspace-error', Feedback).update('')
         current = self.query_one('#name', Input)
         if not current.value or current.value == getattr(self, 'suggested', ''):
             workspace = self.query_one('#workspace', Input).value
@@ -2670,6 +2674,8 @@ class NewSandbox(Screen):
             profile = self.query_one('#profile', Select).value
             self.app.push_screen(ProfileGuide(profile_titles().get(profile, profile), self.guide))
         elif event.button.id == 'continue':
+            self.query_one('#new-error', Feedback).update('')
+            self.query_one('#workspace-error', Feedback).update('')
             focus = '#profile'
             try:
                 agent = self.query_one('#primary-agent', Select).value
@@ -2695,7 +2701,7 @@ class NewSandbox(Screen):
                 workspace_text = self.query_one('#workspace', Input).value.strip()
                 if not workspace_text:
                     raise ValueError('Choose a workspace folder.')
-                workspace = host_platform.local_path(workspace_text).resolve()
+                workspace = host_platform.resolve_path(workspace_text)
                 if host_platform.comparison_path(workspace) in (Path('/'), host_platform.comparison_path(Path.home())):
                     raise ValueError('Choose a project folder, not your home folder or filesystem root.')
                 if not workspace.exists():
@@ -2721,7 +2727,9 @@ class NewSandbox(Screen):
                                                   on_create=self.start_creation),
                                      self.remember_connectors)
             except (OSError, ValueError) as error:
-                feedback = self.query_one('#new-error', Feedback)
+                feedback = self.query_one('#workspace-error' if focus == '#workspace' else '#new-error', Feedback)
+                if focus == '#workspace':
+                    self.invalid_workspace = self.query_one('#workspace', Input).value
                 feedback.update(str(error))
                 self.query_one(focus).focus()
                 self.call_after_refresh(feedback.scroll_visible, animate=False)
@@ -4204,7 +4212,7 @@ class Cockpit(App):
     .provider-details > *:last-child { margin-bottom: 0; }
     .group-title.model-group-title { margin-bottom: 0; }
     .available-providers { height: auto; margin-bottom: 1; }
-    #model-ports-error, #network-error, #curlie-error, #new-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
+    #model-ports-error, #network-error, #curlie-error, #new-error, #workspace-error, .key-dialog Feedback { color: #ff9184; text-style: bold; }
     #allowlist { border: solid #454a51; }
     #allowlist:focus { border: solid $primary; }
     #allowlist.-invalid, #allowlist.-invalid:focus { border: solid $error; }

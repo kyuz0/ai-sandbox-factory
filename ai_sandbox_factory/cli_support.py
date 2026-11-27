@@ -53,8 +53,9 @@ def redact(text):
 
 
 def read_json(path):
+    from . import host_platform
     try:
-        text = sys.stdin.read() if str(path) == '-' else Path(path).expanduser().read_text()
+        text = sys.stdin.read() if str(path) == '-' else host_platform.local_path(path).read_text()
         return json.loads(text)
     except (OSError, ValueError) as error:
         raise ValueError(f'Cannot read JSON from {path}: {error}. Check the file or stdin input.') from error

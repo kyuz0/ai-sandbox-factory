@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 from .cli import COMMAND
+from . import host_platform
 
 # Installed provider IDs are directory names inside the Linux container.
 NAME = re.compile(r"[a-z][a-z0-9-]{0,254}")
@@ -32,8 +33,10 @@ def root():
 
 
 def source_url(value):
-    if isinstance(value, str) and Path(value).expanduser().is_dir():
-        return str(Path(value).expanduser().resolve())
+    if isinstance(value, str) and value:
+        path = host_platform.local_path(value)
+        if path.is_dir():
+            return str(path.resolve())
     if (
         not isinstance(value, str)
         or not value
@@ -407,7 +410,7 @@ def resolve(kind, name):
 
     builtin = ROOT / ("profiles" if kind == "profile" else "providers") / name
     row = installed(kind).get(name)
-    path = builtin if builtin.is_dir() else Path(row["path"]) if row else Path(name).expanduser()
+    path = builtin if builtin.is_dir() else Path(row["path"]) if row else host_platform.local_path(name)
     if not path.is_dir():
         raise ValueError("Unknown " + kind + ": " + name + ". Install it first or supply a folder.")
     if row and tree_digest(path) != row["digest"]:
