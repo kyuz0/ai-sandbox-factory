@@ -297,6 +297,50 @@ class ScanInventory(unittest.TestCase):
                 rows=json.loads(self.output.call_args.kwargs['matrix'])['include']
                 self.assertEqual(any(row['image']==self.pending for row in rows),accepted)
 
+    def test_manual_branch_counts_until_its_head_is_merged_into_stable(self):
+        def git(directory, *args):
+            result = subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', *args],
+                                    cwd=directory, text=True, capture_output=True, check=True)
+            return result.stdout.strip()
+
+        index = self.root / maintenance.INDEX
+        stable_index = index.read_bytes()
+        git(self.root, 'init', '-q', '-b', 'main')
+        git(self.root, 'add', maintenance.INDEX)
+        git(self.root, 'commit', '-qm', 'Initial stable index')
+        remote = Path(self.enterContext(tempfile.TemporaryDirectory())) / 'remote'
+        git(self.root, 'clone', '-q', '.', str(remote))
+        git(self.root, 'remote', 'add', 'origin', str(remote))
+        git(remote, 'checkout', '-qb', maintenance.BRANCH)
+        pending_index = json.dumps({'version': 1, 'images': {'proposal': {'linux/amd64': self.pending}}}).encode()
+        (remote / maintenance.INDEX).write_bytes(pending_index)
+        git(remote, 'commit', '-qam', 'Propose a replacement image')
+        sha = git(remote, 'rev-parse', 'HEAD')
+
+        def api(method, path):
+            if '/pulls?' in path:
+                return []
+            if path.endswith('/git/ref/heads/' + maintenance.BRANCH):
+                return {'object': {'sha': sha}}
+            if path.endswith('/commits/' + sha + '/status'):
+                return {'statuses': [{'context': 'maintenance/verified', 'state': 'success'}]}
+            if path.endswith('/contents/' + maintenance.INDEX + '?ref=' + sha):
+                return {'content': base64.b64encode(pending_index).decode()}
+            self.fail('Unexpected GitHub request ' + path)
+
+        self.command.side_effect = lambda executable, *args, cwd=self.root: git(cwd, *args)
+        with patch.object(maintenance, 'api', side_effect=api):
+            maintenance.image_sets(self.root)
+            rows = json.loads(self.output.call_args.kwargs['matrix'])['include']
+            self.assertEqual({row['image']: row['kind'] for row in rows}, {self.stable: 'stable', self.pending: 'pending'})
+
+            git(self.root, 'merge', '--no-ff', '-qm', 'Merge the verified branch', sha)
+            index.write_bytes(stable_index)
+            git(self.root, 'commit', '-qam', 'Change the stable image after the merge')
+            maintenance.image_sets(self.root)
+            rows = json.loads(self.output.call_args.kwargs['matrix'])['include']
+            self.assertEqual({row['image']: row['kind'] for row in rows}, {self.stable: 'stable'})
+
 
 class ScanSummary(unittest.TestCase):
     def setUp(self):

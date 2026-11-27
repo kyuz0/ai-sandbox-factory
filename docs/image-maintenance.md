@@ -36,7 +36,7 @@ profiles and provider packages are outside this workflow.
 
 The updater reports previous and available versions. A failed component keeps
 its existing pins; successful components can form a tested partial update. The
-PR names anything left unchanged because of failure, and the cycle reports
+version report names failed components, and the cycle reports
 incomplete. Failed client or lifecycle checks prevent promotion.
 
 ## Run or review an update
@@ -88,8 +88,8 @@ a different finding requires its own review. Fixed findings do not remain blocke
 by an obsolete entry.
 
 Use upstream releases and this reviewed ignore list for upstream-bundled findings.
-Factory does not maintain custom vendor security patches or dependency overrides
-solely to clear scans. Workspace reports need no per-CVE ignore entries.
+Factory does not maintain custom vendor security patches or dependency overrides.
+Workspace reports need no per-CVE ignore entries.
 Scanner or advisory-feed failures remain failures, never a clean result.
 
 Downloaded native executables may not expose enough package metadata for full
@@ -129,5 +129,4 @@ never moves a released digest or updates a running sandbox. The release's image
 index records that release's set; select an earlier release for an image rollback.
 
 `python scripts/image_maintenance.py retention` reports the complete released
-keep-set. It does not delete images. Retained older images are reported in scans without
-blocking a current-image refresh.
+keep-set. It does not delete images.

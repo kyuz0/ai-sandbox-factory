@@ -272,7 +272,14 @@ def image_sets(root=ROOT):
             reference = None
         if reference:
             sha = reference['object']['sha']
-            head = {'sha': sha, 'repo': {'full_name': REPOSITORY}}
+            # A merged maintenance branch can remain on the remote. Compare
+            # with the checkout supplying the stable index for this scan.
+            command('git', 'fetch', '--no-tags', 'origin', sha, cwd=root)
+            ancestry = subprocess.run(['git', 'merge-base', '--is-ancestor', sha, 'HEAD'], cwd=root)
+            if ancestry.returncode == 1:
+                head = {'sha': sha, 'repo': {'full_name': REPOSITORY}}
+            else:
+                ancestry.check_returncode()
     if head and not verified_head(head['sha']):
         print('The pending maintenance head has not passed verification; it cannot satisfy current image coverage.')
         head=None

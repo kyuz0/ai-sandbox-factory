@@ -477,8 +477,8 @@ the combined pinned source is published. Test the exact pinned source.
 During pre-release development, use the current configuration format and defaults.
 Do not add migrations or legacy fallbacks for disposable local test sandboxes.
 
-Do not maintain custom vendor security patches or dependency overrides solely
-to clear vulnerability scans. Use upstream releases and the documented scan policy.
+Do not maintain custom vendor security patches or dependency overrides.
+Use upstream releases and the documented scan policy.
 Agent/editor findings are informational; credential-companion and gateway findings
 retain blocking gates. Functional tests and Factory protection tests remain blocking
 for every image. Record reviewed false positives in the scoped ignore list.
