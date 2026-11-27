@@ -118,6 +118,7 @@ jobs:
           python -m pip install -e . playwright
           python -m playwright install --with-deps chromium
       - name: Check fresh project startup and mounted-folder permissions
+        id: fresh
         run: |
           args=()
           if [[ -n "$CANDIDATE_INDEX" ]]; then
@@ -129,11 +130,13 @@ jobs:
         env:
           CANDIDATE_INDEX: ${{ inputs.candidate_index }}
       - name: Require fresh creation with a model provider and verify lifecycle locks
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: |
-          mkdir -p /tmp/factory-fresh-sandbox
-          python tests/creation_provider.py 2>&1 | tee /tmp/factory-fresh-sandbox/provider-creation.log
+          image=$(cat /tmp/factory-fresh-sandbox/image-reference.txt)
+          python tests/creation_provider.py --image "$image" 2>&1 | tee /tmp/factory-fresh-sandbox/provider-creation.log
       - name: Exercise the installed CLI with pipes and cancellation
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: |
           python -m pip wheel --no-deps . -w /tmp/factory-cli-wheel
@@ -142,15 +145,19 @@ jobs:
           cd /tmp
           PYTHONPATH="$GITHUB_WORKSPACE/tests" /tmp/factory-cli-installed/bin/python "$GITHUB_WORKSPACE/tests/cli_lifecycle_integration.py" --installed 2>&1 | tee /tmp/factory-fresh-sandbox/cli-lifecycle.log
       - name: Exercise background creation, rebuild and cancellation in the TUI
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: python tests/sandbox_jobs_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/jobs.log
       - name: Require immediate recovery from a failed profile commit
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: python tests/profile_commit_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/profile-commit.log
       - name: Restore saved service data
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: python tests/service_data_integration.py 2>&1 | tee /tmp/factory-fresh-sandbox/service-data.log
       - name: Preserve the open browser editor across updates and rollback
+        if: ${{ !cancelled() && steps.fresh.outcome == 'success' }}
         shell: bash
         run: python tests/browser_editor_updates.py 2>&1 | tee /tmp/factory-fresh-sandbox/editor-updates.log
       - uses: actions/upload-artifact@v4

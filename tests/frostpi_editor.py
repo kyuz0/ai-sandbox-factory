@@ -29,7 +29,7 @@ APPROVAL_LABELS = {
 }
 sys.path.insert(0, str(REPO))
 from knowledge_documents import write_documents
-from ai_sandbox_factory import connector_settings, folders, inference, prompt_library, runtime_context, sandbox
+from ai_sandbox_factory import browser_editor, connector_settings, folders, inference, prompt_library, runtime_context, sandbox
 
 
 def check_external_link(page, frame, send):
@@ -1173,7 +1173,8 @@ p.write_text(json.dumps(v))
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 address = f'127.0.0.1:{port.getsockname()[1]}'
-            settings = {'binary': '/opt/test-code-server/bin/code-server', 'cwd': cwd,
+            editor_dir = '/opt/test-code-server' if code_server else browser_editor.INSTALL
+            settings = {'binary': editor_dir + '/bin/code-server', 'cwd': cwd,
                         'authority': address, 'password_hash': '', 'watch_fallback': (EDITOR / 'watch-fallback.cjs').read_text()}
             with (output / 'editor.log').open('w') as log, sync_playwright() as playwright:
                 supervisor = subprocess.Popen(['podman', 'exec', '-i', name, 'python3', '-u', '-c',

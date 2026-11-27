@@ -37,6 +37,7 @@ class PublishedStockToolWiring(unittest.TestCase):
                 args=['fresh_sandbox.py','--image','exact-stock-digest','--code-server',temporary,'--output',temporary]
                 if enabled:args.append('--stock-tools')
                 with patch.object(sys,'argv',args),redirect_stdout(io.StringIO()):fresh.main()
+                self.assertEqual((Path(temporary) / 'image-reference.txt').read_text(), 'exact-stock-digest\n')
                 calls=module.check.call_args_list
                 self.assertEqual(len(calls),4 if enabled else 2)
                 self.assertTrue(all(call.args[0]=='exact-stock-digest' for call in calls))
@@ -60,15 +61,32 @@ class PublishedStockToolWiring(unittest.TestCase):
                 spec = importlib.util.spec_from_file_location('fresh_stock_fixture', CHECKOUT / 'tests/fresh_sandbox.py')
                 fresh = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(fresh)
-            args = ['fresh_sandbox.py', '--candidate-index', str(index), '--code-server', temporary, '--output', temporary]
+            args = ['fresh_sandbox.py', '--candidate-index', str(index), '--output', temporary]
             with patch.object(sys, 'argv', args), patch.object(image_sources, 'INDEX', root / 'unused-index.json'), \
+                    patch.object(fresh.browser_editor, 'checked_archive') as archive, \
                     patch.object(image_sources, 'ensure', return_value=reference) as ensure, redirect_stdout(io.StringIO()):
                 fresh.main()
+            self.assertEqual((root / 'image-reference.txt').read_text(), reference + '\n')
+            archive.assert_not_called()
+            self.assertTrue(all(call.args[1] is None for call in editor.check.call_args_list))
             ensure.assert_called_once()
-            config, role, _ = ensure.call_args.args
-            self.assertEqual(role, 'pi-stock')
+            config, role, fallback = ensure.call_args.args
+            self.assertEqual((role, fallback), ('pi-stock', None))
             self.assertEqual(config['profile']['digest'], sandbox.tree_digest(Path(stock['profile']['path'])))
             self.assertEqual([call.args[0] for call in editor.check.call_args_list], [reference, reference])
+
+            alternate_output = root / 'missing-platform'
+            args[-1] = str(alternate_output)
+            index.write_text(json.dumps({'version': 1, 'images': {key: {'linux/arm64': reference}}}))
+            editor.check.reset_mock()
+            with patch.object(sys, 'argv', args), patch.object(image_sources, 'INDEX', index), \
+                    patch.object(image_sources, '_platform', return_value='linux/amd64'):
+                with self.assertRaisesRegex(ValueError, 'linux/amd64') as error:
+                    fresh.main()
+            self.assertIn(str(index), str(error.exception))
+            self.assertIn(key, str(error.exception))
+            editor.check.assert_not_called()
+            self.assertFalse((alternate_output / 'image-reference.txt').exists())
 
 
 class NativeCandidateFixture(unittest.TestCase):

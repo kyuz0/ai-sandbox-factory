@@ -485,6 +485,10 @@ for every image. Record reviewed false positives in the scoped ignore list.
 
 Run the relevant suites in `TESTING.md`. Extension implementation and unit tests
 belong in the extension repository; this project pins and integrates them.
+Image integration fixtures must work with both local tags and published digests.
+Pass the tested image explicitly between steps; do not assume a preceding check
+left a locally built tag in the engine. Candidate browser checks use the editor
+bundled in that image.
 Async, thread-pool, browser and proxy checks require local socket IPC. A restricted
 shell can allow creating a socket pair but block writes, leaving Python waiting
 at thread-pool shutdown. Use execution permissions that allow local sockets;
