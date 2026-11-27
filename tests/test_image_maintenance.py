@@ -139,6 +139,12 @@ class Promotion(unittest.TestCase):
         workflow=yaml.safe_load((ROOT/'.github/workflows/maintenance.yml').read_text())
         jobs=workflow['jobs']
         self.assertIn('verify',jobs['review']['needs'])
+        # Existing image scans deliberately fail on actionable findings. Every
+        # replacement stage must proceed from its own successful prerequisite,
+        # rather than inheriting a default success() from that failed ancestor.
+        for name in ('candidates','index','verify','review'):
+            self.assertIn('always()',jobs[name]['if'])
+            self.assertIn("== 'success'",jobs[name]['if'])
         self.assertEqual(jobs['review']['permissions']['contents'],'write')
         self.assertEqual(jobs['review']['permissions']['statuses'],'write')
         self.assertEqual(jobs['plan']['permissions']['statuses'],'read')

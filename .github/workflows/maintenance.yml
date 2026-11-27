@@ -181,7 +181,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
-          python -m pip install pip-tools==7.5.2
+          python -m pip install pip==25.2 pip-tools==7.5.2
       - name: Resolve complete version, hash and lock updates
         # A failed component remains unchanged and visible. Safe components can
         # still be tested together; final reporting keeps the cycle incomplete.
@@ -205,6 +205,7 @@ jobs:
           path: /tmp/factory-version-updates.json
 
   candidates:
+    if: always() && needs.prepare.result == 'success'
     needs: prepare
     permissions:
       contents: read
@@ -217,6 +218,7 @@ jobs:
     secrets: inherit
 
   index:
+    if: always() && needs.prepare.result == 'success' && needs.candidates.result == 'success'
     needs: [prepare, candidates]
     runs-on: ubuntu-24.04
     permissions:
@@ -244,6 +246,7 @@ jobs:
         run: python3 scripts/image_maintenance.py index --index /tmp/factory-index/images.lock.json --branch "$BRANCH"
 
   verify:
+    if: always() && needs.index.result == 'success'
     needs: index
     permissions:
       contents: write
@@ -255,6 +258,7 @@ jobs:
 
   review:
     name: Prepare verified weekly update
+    if: always() && needs.prepare.result == 'success' && needs.index.result == 'success' && needs.verify.result == 'success'
     needs: [plan, prepare, index, verify]
     runs-on: ubuntu-24.04
     permissions:
