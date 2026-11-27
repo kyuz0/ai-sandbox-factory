@@ -40,6 +40,8 @@ from ai_sandbox_factory import hosted_models, inference, provider_credentials
 from ai_sandbox_factory.communications_ui import SlackCredentials
 from ai_sandbox_factory.repository_ui import RepositorySetup, PublicKey, GitIdentityFields, CreateSSHDialog
 from ai_sandbox_factory import prompt_library
+from ai_sandbox_factory import cli_recipes
+from ai_sandbox_factory.cli_recipes_ui import CLICommands
 from ai_sandbox_factory.prompt_ui import EditPrompt, SandboxPromptScreen
 from ai_sandbox_factory.chat_history_ui import ChatTransfer, DeleteSandbox, backup_message
 from textual_fspicker.parts import DirectoryNavigation
@@ -80,7 +82,7 @@ async def capture(size):
         if aws_only:
             record['workspace'] = '/home/example/projects/demo'
         variables = {'SANDBOX_REGISTRY_DIR': str(root / 'library')} if research_only or prompts_only or aws_only or no_model_only or copy_agent_only else {}
-        with patch.dict(os.environ, variables), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
+        with patch.dict(os.environ, variables), patch.object(cli_recipes, 'command', return_value=('ai-sandbox-factory',)), patch('ai_sandbox_factory.sandbox_tui.load_defaults', side_effect=lambda: copy.deepcopy(DEFAULT_SETTINGS)), patch('ai_sandbox_factory.sandbox_tui.search_keys_path', return_value=root / 'keys.json'), patch('ai_sandbox_factory.updates.available_update', return_value=None), patch('ai_sandbox_factory.chat_history.backup_folder', return_value=Path('/home/sam/.local/share/ai-sandbox-factory/chat-backups')):
             app = Cockpit(root, ReviewService([record]), startup_notice=('Pi Sandbox Factory is now AI Sandbox Factory. Use ai-sandbox-factory next time; pi-sandbox-factory still works.' if args.only and 'home-renamed' in args.only else ''))
             async with app.run_test(size=size, notifications=app.startup_notice) as pilot:
                 await pilot.pause()
@@ -138,6 +140,32 @@ async def capture(size):
                     print(p.name, flush=True)
                     if screen:
                         await app.pop_screen()
+                if args.only and all(name.startswith('cli-commands-') for name in args.only):
+                    draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
+                    draft.update(name='demo', workspace=str(workspace), primary_agent='codex')
+                    await app.push_screen(SettingsForm(draft))
+                    await shot('cli-commands-create', focus='#settings-cli')
+                    await app.pop_screen()
+                    await shot('cli-commands-actions', MoreActions(record))
+                    await shot('cli-commands-editor', EditorScreen('demo'))
+                    draft.update(primary_agent='pi', allowlist='docs.python.org:443\n',
+                                 _provider_credential_choices={'example': {'key': 'synthetic-key', 'label': 'Work'}})
+                    recipe = cli_recipes.creation(draft, Path.home() / '.local/state/ai-sandbox-factory')
+                    await shot('cli-commands-preview', CLICommands(recipe))
+                    simple = cli_recipes.creation(dict(name='demo', workspace='/home/example/project', profile='base',
+                        engine='podman', primary_agent='codex', memory='8g', subagents=False, editor={'mode': 'browser'}),
+                        Path.home() / '.local/state/ai-sandbox-factory')
+                    await shot('cli-commands-simple', CLICommands(simple))
+                    await app.push_screen(CLICommands(recipe))
+                    app.screen.query_one('#cli-feedback').update('Could not save /home/example/scripts/sandbox.sh: Permission denied. Choose a writable file.')
+                    await shot('cli-commands-error')
+                    await app.pop_screen()
+                    finished = Job('demo', 'Update settings · demo', 'Updating')
+                    finished.cli_recipe = cli_recipes.update('demo', {'image_source': 'local'}, Path.home() / '.local/state/ai-sandbox-factory')
+                    finished.run(lambda log: log('Image setup saved for future builds.'))
+                    await shot('cli-commands-complete', JobDetails(finished))
+                    finished.close()
+                    return
                 if args.only and all(name.startswith('image-setup-') for name in args.only):
                     draft = preset('base', copy.deepcopy(DEFAULT_SETTINGS))
                     draft.update(name='demo', workspace=str(workspace))

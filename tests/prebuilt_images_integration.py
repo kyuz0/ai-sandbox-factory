@@ -55,7 +55,7 @@ def prepare_worker(root, args):
                  f'sys.path.insert(0,{str(CHECKOUT / "tests")!r});'
                  f'runpy.run_path({str(Path(__file__).resolve())!r},run_name="__main__")')
     command = [sys.executable, '-I', '-c', bootstrap, '--worker', '--output', str(root)]
-    for option in ('profiles', 'sharing', 'interfaces'):
+    for option in ('profiles', 'sharing', 'interfaces', 'recipes'):
         if getattr(args, option):
             command.append('--' + option)
     return package / 'ai_sandbox_factory/images.lock.json', bootstrap, command
@@ -104,7 +104,7 @@ def pull_recovery(root):
             service.run(['delete', name], print)
 
 
-def worker(root, profiles=False, sharing=False, interfaces=False):
+def worker(root, profiles=False, sharing=False, interfaces=False, recipes=False):
     from ai_sandbox_factory import creation, editor_settings, image_sources, registry, sandbox
     from ai_sandbox_factory.operations import DEFAULT_SETTINGS, Service, preset
     from creation_provider import ADAPTER, KEY
@@ -202,6 +202,9 @@ def worker(root, profiles=False, sharing=False, interfaces=False):
             assert request(info['url'], headers={'Cookie': cookie})[0] == 200
             results.append({'case': 'preinstalled-editor-authentication', 'seconds': time.monotonic() - started, 'passed': True})
             browser_editor.stop(state)
+            if recipes:
+                from cli_recipe_runtime import check
+                results.append(check(service, current, root, generated_names))
         # Reusing the stock image must not register disabled integrations.
         for browser in (False, True):
             name = 'prebuilt-options-' + uuid4().hex[:10]
@@ -294,6 +297,7 @@ def main():
     parser.add_argument('--profiles', action='store_true')
     parser.add_argument('--sharing', action='store_true', help='Exercise shared profiles and Pi/Codex copies')
     parser.add_argument('--interfaces', action='store_true', help='Exercise CLI creation, a one-shot override and first Start')
+    parser.add_argument('--recipes', action='store_true', help='Replay exported shell recipes with masked input and live editor updates')
     parser.add_argument('--recovery', action='store_true', help='Cancel a real blocked pull and retry with the same sandbox name')
     parser.add_argument('--pull-worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
@@ -302,14 +306,14 @@ def main():
     if args.pull_worker:
         return pull_recovery(root)
     if args.worker:
-        return worker(root, args.profiles, args.sharing, args.interfaces)
+        return worker(root, args.profiles, args.sharing, args.interfaces, args.recipes)
     if args.candidate_index and (args.recovery or args.stock_image or args.common_image):
         parser.error('--candidate-index cannot use local fixture images or gate a public registry pull with --recovery')
     root.mkdir(parents=True, exist_ok=True)
     if args.candidate_index:
         lock, _, command = prepare_worker(root, args)
         lock.write_bytes(args.candidate_index.read_bytes())
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, start_new_session=args.recipes)
         print('PASS published candidate acquisition, lifecycle and cleanup', flush=True)
         return
     sys.path.insert(0, str(CHECKOUT))

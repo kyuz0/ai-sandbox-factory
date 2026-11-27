@@ -9,7 +9,7 @@ import tempfile
 
 from . import (editor_settings, image_sources, operations, primary_workspace, profile_services,
                prompt_library, registry, sandbox, session_transfer, skill_library, updates, web_access)
-from .cli_support import emit, read_json, read_secret, remember_secret
+from .cli_support import emit, read_json, read_secret, remember_secret, prompt_secret
 from .sandbox_options import SANDBOX_NAME, SANDBOX_NAME_ERROR, options, write_json
 
 
@@ -36,8 +36,9 @@ def editor(args):
             raise ValueError('Editor settings must be a JSON object.')
         if 'password_hash' in value:
             raise ValueError('Use --password-stdin to set an editor password, or --clear-password to remove it.')
-        if args.password_stdin:
-            value['password_hash'] = editor_settings.password_hash(read_secret(True, 'Editor password'))
+        if args.password_stdin or args.prompt_password:
+            password = prompt_secret('Editor password') if args.prompt_password else read_secret(True, 'Editor password')
+            value['password_hash'] = editor_settings.password_hash(password)
             if not value['password_hash']:
                 raise ValueError('Editor password is empty. Use --clear-password to remove it.')
         elif args.clear_password:
@@ -183,6 +184,11 @@ def public_settings(config):
 
 def inspect_sandbox(args):
     manager = service(args)
+    if args.section == 'commands':
+        recipe = manager.cli_recipe(args.name,
+                    existing_names=[path.name for path in manager.state.iterdir() if path.is_dir()])
+        emit(args, recipe.render())
+        return
     record = {}
     if not args.guide and args.section != 'settings':
         record = next((row for row in manager.inventory() if row['name'] == args.name), {})
@@ -258,6 +264,7 @@ def register(sub):
             p.add_argument('--settings-file', help='Partial JSON editor settings; use - for stdin')
             passwords = p.add_mutually_exclusive_group()
             passwords.add_argument('--password-stdin', action='store_true')
+            passwords.add_argument('--prompt-password', action='store_true', help='Ask for the editor password at a masked terminal prompt')
             passwords.add_argument('--clear-password', action='store_true')
     group = sub.add_parser('prompt', help='Manage system prompt add-ons').add_subparsers(dest='action', required=True)
     for action in ('list', 'save', 'remove', 'show', 'assign'):
@@ -289,7 +296,7 @@ def register(sub):
             p.add_argument('--to', required=True); p.add_argument('--chat', required=True)
             choice = p.add_mutually_exclusive_group(); choice.add_argument('--preview', action='store_true'); choice.add_argument('--yes', action='store_true')
     p = sub.add_parser('show', help='Inspect settings, profiles, containers and alerts without starting the sandbox')
-    p.add_argument('name'); p.add_argument('--section', choices=('all','settings','profile','containers','alerts'), default='all')
+    p.add_argument('name'); p.add_argument('--section', choices=('all','settings','profile','containers','alerts','commands'), default='all')
     p.add_argument('--guide', action='store_true'); p.add_argument('--json', action='store_true'); p.set_defaults(cli_handler=inspect_sandbox)
     p = sub.add_parser('logs', help='Read a sandbox container’s logs')
     p.add_argument('name'); p.add_argument('--container'); p.add_argument('--tail', type=int); p.add_argument('--follow', action='store_true'); p.set_defaults(cli_handler=logs)

@@ -103,6 +103,7 @@ class JobDetails(Screen):
             yield RichLog(id='operation-log', markup=False, wrap=True, min_width=1)
         with Horizontal(classes='wizard-actions job-actions'):
             yield Button('Hide details', id='job-hide')
+            yield Button('CLI commands…', id='job-cli')
             yield Button('Edit configuration', id='job-edit')
             yield Button('Retry creation', id='job-retry', variant='primary')
             yield Button('Continue setup', id='job-continue', variant='primary')
@@ -139,6 +140,7 @@ class JobDetails(Screen):
             self.query_one('#job-hide', Button).label = 'Back' if self.finished else 'Hide details'
             self.refresh_bindings()
         self.query_one('#job-edit', Button).display = self.job.edit is not None
+        self.query_one('#job-cli', Button).display = self.job.result == 'Complete' and self.job.cli_recipe is not None
         self.query_one('#job-retry', Button).display = self.job.retry is not None
         followup = self.query_one('#job-continue', Button)
         followup.display = bool(self.job.followup)
@@ -153,6 +155,13 @@ class JobDetails(Screen):
     def hide(self, event):
         event.stop()
         self.action_hide_details()
+
+    @on(Button.Pressed, '#job-cli')
+    def cli_commands(self, event):
+        event.stop()
+        if self.job.result == 'Complete' and self.job.cli_recipe is not None:
+            from .cli_recipes_ui import CLICommands
+            self.app.push_screen(CLICommands(self.job.cli_recipe))
 
     def action_hide_details(self):
         self.app.pop_screen()

@@ -26,7 +26,7 @@ def default_for_agent(agent, engine='podman'):
         'browser' if agent in ('codex', 'claude', 'agy') and default_mode(engine) == 'browser' else 'pi')
 
 
-def validate(value=None):
+def validate(value=None, *, password_pending=False):
     value = value or {}
     if not isinstance(value, dict):
         raise ValueError('Editor settings must be a JSON object.')
@@ -54,7 +54,7 @@ def validate(value=None):
     digest = result['password_hash']
     if not isinstance(digest, str) or (digest and not re.fullmatch(r'\$argon2id\$v=19\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+', digest)):
         raise ValueError('Invalid saved editor password')
-    if result['mode'] == 'browser' and result['address'] and not digest:
+    if result['mode'] == 'browser' and result['address'] and not digest and not password_pending:
         raise ValueError('Set a password when choosing a custom listen address')
     for key in ('certificate', 'private_key'):
         if not isinstance(result[key], str):

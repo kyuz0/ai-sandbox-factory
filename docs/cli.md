@@ -4,6 +4,7 @@ Use the CLI to create, configure and manage sandboxes without opening the TUI.
 Run `ai-sandbox-factory COMMAND --help` for every option of a command.
 
 - [Create and open](#create-and-open)
+- [Get commands from the TUI](#get-commands-from-the-tui)
 - [Creation files and credentials](#creation-files-and-credentials)
 - [Inspect and change settings](#inspect-and-change-settings)
 - [Models and keys](#models-and-keys)
@@ -54,6 +55,36 @@ volumes and networks. An interactive terminal asks whether to delete them.
 `--replace-conflicts` approves that deletion in advance, including the data in
 the private volumes. To keep those resources, choose a different name.
 
+## Get commands from the TUI
+
+Choose **CLI commands…** beside **Create and start sandbox**, **Apply** or the
+editor's **Save** button. The preview reflects the form's current choices;
+opening or closing it does not apply them. Use **Copy commands** or
+**Save script…**. Run a saved script with `sh sandbox.sh`.
+
+![CLI command preview with Copy commands and Save script controls](cli-commands.png)
+
+Completed creation and settings jobs also offer **CLI commands…** for the
+request that ran. Change the name to create another sandbox. **Actions… → CLI commands…** prepares creation commands
+from a sandbox's saved setup, with a suggested new name and its workspace path.
+The CLI equivalent is:
+
+```sh
+ai-sandbox-factory show dev --section commands
+```
+
+Saved-setup recipes reuse the source sandbox's applied profile, provider, skill
+and connector snapshots on this computer. Regenerate the commands if the source's
+saved settings change. They use a fresh editor connection and omit sign-ins,
+credential files, chats and application data. Workspace and extra-folder paths
+remain explicit in the commands. An editable profile folder is shared only when
+that choice was selected in **Create from existing…**.
+
+Commands contain settings and saved-key references, never the managed keys or
+editor password hash. Required new keys are requested through masked prompts
+before creation. Live network edits use `network`; copying a command does not
+turn them into a rebuild. A multi-command script stops when a command fails.
+
 ## Creation files and credentials
 
 Put repeatable, non-secret choices in a JSON file:
@@ -82,10 +113,11 @@ Fields accepted in the creation file:
 | --- | --- |
 | Agent and profile | `primary_agent`, `primary_auth`, `profile`, `engine` |
 | Folders | `workspace`, `working_directory`, `extra_folders` |
-| Network and resources | `network`, `allowlist`, `memory`, `subagents` |
+| Network and resources | `network`, `allowlist`, `curlie_list`, `memory`, `subagents`, `image_source` |
 | Pi and models | `options`, `model_providers`, `local_model_ports`, `hosted_connections`, `credential_refs`, `pi_config`, `env_file` |
 | Client | `editor` |
-| Connectors and companions | `ssh`, `aws_access`, `connectors`, `advisors`, `advisor_imports` |
+| Connectors and companions | `ssh`, `aws_access`, `connectors`, `connector_review`, `advisors`, `advisor_imports` |
+| Masked credential input | `credential_prompts` |
 | Skills and instructions | `library_skills`, `skill_repo`, `skill_path`, `system_prompt` |
 
 Notes on these fields:
@@ -95,6 +127,31 @@ Notes on these fields:
 - `credential_refs` maps a provider to a saved key reference from `credentials list`.
 - `advisor_imports` lists enabled advisors whose host sign-ins you want to copy: `codex`, `claude` or `agy`.
 - `update` calls the additional skill repository `skill_source`, not `skill_repo`.
+
+Generated recipes can include `connector_review` to retain the routes,
+`agent_instructions` and `operations` already reviewed in the TUI. Use bare
+connector IDs with this object; permissions are specified in its `operations`.
+
+To request a key without putting it in the file, use a masked prompt declaration:
+
+```json
+{
+  "workspace": "/absolute/path/to/project",
+  "hosted_connections": {"openrouter": {}},
+  "credential_prompts": [
+    {"path": ["hosted", "openrouter", "key"], "label": "OpenRouter API key"}
+  ]
+}
+```
+
+Each path names a field in the credential table below. Prompts require `--start`
+and a terminal capable of masked input. Empty required answers fail before
+creation. `required: false` permits an empty answer without assigning a key,
+for example for a local server that might not require authentication.
+Prompts for `provider_credentials/ID/key`, `local_model_keys/PORT/key` and
+`hosted/ID/credential/key` can include `options: {"label": "Work"}` to remember
+the key, and `replace` to update a saved-key reference. With `--secrets-stdin`, supplied
+values fill the matching fields without prompting.
 
 The creation file rejects credentials. Instead, pipe them as a JSON document to
 `create --start --secrets-stdin`:
@@ -109,6 +166,7 @@ jq -n --arg k "$OPENROUTER_API_KEY" '{hosted: {openrouter: {key: $k}}}' |
 | --- | --- |
 | `hosted` | Hosted provider ID → `{"key": …}`, or for Bedrock IAM `{"access_key": …, "secret_key": …, "session_token": …}` |
 | `provider_keys` | Provider plugin name → API key |
+| `editor` | `{"password": …}` |
 | `provider_credentials` | Provider ID → `{"ref": "SAVED_REF"}` or `{"key": "…", "label": "Work"}` |
 | `local_model_keys` | Port → the same saved-key or entered-key choice, for example `{"8000": {"key": "…"}}` |
 | `communication_keys` | `{"botToken": "…", "userToken": "…"}`; omit a token to keep it |
@@ -335,9 +393,11 @@ diagnostics go to stderr.
 | 2 | Invalid arguments |
 | 130 | Cancelled |
 
-When stdin is not a terminal, commands do not prompt for missing credentials.
-Supply them with the command's stdin option or a saved key reference. Native
-agent sign-in may still need a person.
+For unattended scripts, supply credentials with the command's stdin option or
+a saved key reference. Explicit `credential_prompts` and `editor set
+--prompt-password` use the controlling terminal even when settings arrive on
+stdin. They fail if masked input is unavailable. Native agent sign-in may still
+need a person.
 
 `--config -` and `--settings-file -` read from stdin. Stdin can carry only one
 document, so put the settings in a file when you pipe credentials.
@@ -367,6 +427,7 @@ These commands can be cancelled: `create --start`, `copy`, `update`, `recreate`,
 | **Import chat history…** | `chat import` |
 | **Continue in another sandbox…** | `chat copy` |
 | **Create from existing…** | `copy` |
+| **Actions… → CLI commands…** | `show dev --section commands` |
 
 [Using the TUI](usage.md) · [Profiles](profiles.md) · [Model providers](providers.md)
 · [Hosted models](hosted-models.md) · [Browser editor](browser-editor.md)

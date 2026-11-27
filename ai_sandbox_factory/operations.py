@@ -167,6 +167,38 @@ def copy_for_agent(value, agent):
     return draft
 
 
+def update_changes(draft):
+    """The settings request shared by the TUI executor and its CLI recipe."""
+    changes = {key: draft[key] for key in ('network', 'memory', 'subagents', 'env_file', 'options')}
+    if 'image_source' in draft:
+        changes['image_source'] = image_sources.choice(draft['image_source'])
+    changes['local_model_ports'] = draft.get('local_model_ports')
+    changes['model_providers'] = draft.get('model_providers', {'local': {}})
+    changes.update(skill_source=draft.get('skill_repo', ''), skill_path=draft.get('skill_path', ''),
+                   remove_skills=draft.get('remove_skills', []), library_skills=draft.get('library_skills', []))
+    changes['allowlist'] = draft['allowlist'] if draft['network'] == 'allowlist' else ''
+    if draft.get('_curlie_list'):
+        changes['curlie_list'] = draft['_curlie_list']
+    return changes
+
+
+def setup_requests(draft, keys, *, runtime_ready=False):
+    """Keep post-update credential setup and discovery in one explicit order."""
+    if not runtime_ready:
+        if local := draft.get('_local_model_keys'):
+            yield 'local-keys', None, local
+        for provider, key in draft.get('_provider_keys', {}).items():
+            yield 'provider-key', provider, key
+        for provider, choice in draft.get('_provider_credential_choices', {}).items():
+            yield 'provider-choice', provider, choice
+    if changed := draft.get('_communication_keys'):
+        yield 'communication-keys', None, changed
+    if keys:
+        yield 'web-keys', None, keys
+    if not runtime_ready and (draft.get('local_model_ports') or draft.get('model_providers')) and not draft['open_editor']:
+        yield 'discover', None, None
+
+
 class Service:
     """Subprocess argument lists only; keys are sent to the container over stdin."""
     def __init__(self, state):
@@ -174,6 +206,21 @@ class Service:
 
     def command(self, *args):
         return host_platform.python_command('ai_sandbox_factory', '--state-dir', str(self.state), *args)
+
+    def cli_recipe(self, name, *, existing_names=()):
+        """Read saved-key references without exporting tokens or starting a stopped runtime."""
+        from . import cli_recipes
+        with operation_locks.sandbox(name, 'show CLI commands for'):
+            config = self.config(name)
+        status = None
+        if coding_agent(config) == 'pi' and inference.enabled(config):
+            companion = sandbox.inspect(config, inference.names(config)[0])
+            if companion and companion.get('State', {}).get('Running'):
+                status = inference.credentials(config, self.state / name, {'status': True})
+        with operation_locks.sandbox(name, 'show CLI commands for'):
+            if sandbox.config_revision(self.config(name)) != sandbox.config_revision(config):
+                raise ValueError(f'Sandbox {name} changed while reading its settings. Open CLI commands again.')
+            return cli_recipes.saved(config, self.state, existing_names=existing_names, credential_status=status)
 
     def inventory(self):
         result = subprocess.run(self.command('list', '--json'), capture_output=True, text=True, check=True)
@@ -704,25 +751,26 @@ class Service:
             return
         if runtime_ready:
             self._configure_created_providers(name, draft, log)
-        else:
-            if local_keys := draft.get('_local_model_keys'):
-                self._assign_local_keys(self.config(name), local_keys, log)
-            for provider, credential in draft.get('_provider_keys', {}).items():
-                self.provider(name, provider, 'refresh', credential, log)
-            for provider, choice in draft.get('_provider_credential_choices', {}).items():
-                self.assign_provider_key(name, provider, choice, log)
-        self.save_communication_keys(name, draft.get('_communication_keys'), log)
-        if key:
-            result = self.capture('web-key', name, '--keys-stdin', payload=json.dumps(key))
-            if result.returncode:
-                detail = model_providers.diagnostic(result.stderr or result.stdout)
-                for secret in key.values():
-                    detail = model_providers.diagnostic(detail, secret)
-                raise ValueError(f'Cannot save Web Search credentials for {name} (exit {result.returncode}): '
-                                 + (detail or 'The credential command returned no diagnostic output.'))
-            log('Search API keys saved in the sandbox.')
-        if not runtime_ready and (draft.get('local_model_ports') or draft.get('model_providers')) and not draft['open_editor']:
-            self.run(['configure', name], log)
+        for action, provider, value in setup_requests(draft, key, runtime_ready=runtime_ready):
+            if action == 'local-keys':
+                self._assign_local_keys(self.config(name), value, log)
+            elif action == 'provider-key':
+                self.provider(name, provider, 'refresh', value, log)
+            elif action == 'provider-choice':
+                self.assign_provider_key(name, provider, value, log)
+            elif action == 'communication-keys':
+                self.save_communication_keys(name, value, log)
+            elif action == 'web-keys':
+                result = self.capture('web-key', name, '--keys-stdin', payload=json.dumps(value))
+                if result.returncode:
+                    detail = model_providers.diagnostic(result.stderr or result.stdout)
+                    for secret in value.values():
+                        detail = model_providers.diagnostic(detail, secret)
+                    raise ValueError(f'Cannot save Web Search credentials for {name} (exit {result.returncode}): '
+                                     + (detail or 'The credential command returned no diagnostic output.'))
+                log('Search API keys saved in the sandbox.')
+            elif action == 'discover':
+                self.run(['configure', name], log)
     def provider(self, name, provider, action, key, log):
         args = ['configure', name, '--provider', provider]
         if action in ('status', 'preview'):
@@ -769,10 +817,14 @@ class Service:
             plugin = 'local' if local else provider
         return assignment, plugin
 
-    def assign_provider_key(self, name, provider, choice, log):
+    def assign_provider_key(self, name, provider, choice, log, *, refresh=True):
         with self.changing(name, 'assign a model key to', pi=True) as config:
-            assignment, plugin = self._assign_provider_key(name, config, provider, choice)
-            if plugin:
+            if refresh:
+                assignment, plugin = self._assign_provider_key(name, config, provider, choice)
+            else:
+                assignment = provider_credentials.assign(config, self.state / name, provider, **choice)
+                plugin = None
+            if plugin and refresh:
                 self.provider(name, plugin, 'refresh', None, log)
             log('API key assigned. Subsequent requests use it.')
             return assignment
@@ -786,16 +838,7 @@ class Service:
             return inference.credentials(config, self.state / name, {'id': provider, 'remove': True})
 
     def update(self, name, draft, key, log, update=None):
-        changes = {k: draft[k] for k in ('network', 'memory', 'subagents', 'env_file', 'options')}
-        if 'image_source' in draft:
-            changes['image_source'] = image_sources.choice(draft['image_source'])
-        changes['local_model_ports'] = draft.get('local_model_ports')
-        changes['model_providers'] = draft.get('model_providers', {'local':{}})
-        changes.update(skill_source=draft.get('skill_repo', ''), skill_path=draft.get('skill_path', ''),
-                       remove_skills=draft.get('remove_skills', []), library_skills=draft.get('library_skills', []))
-        changes['allowlist'] = draft['allowlist'] if draft['network'] == 'allowlist' else ''
-        if draft.get('_curlie_list'):
-            changes['curlie_list'] = draft['_curlie_list']
+        changes = update_changes(draft)
         with operation_locks.sandbox(name, 'apply settings to'), \
                 tempfile.TemporaryDirectory(prefix='pi-sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'

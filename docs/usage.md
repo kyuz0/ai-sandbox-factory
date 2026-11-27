@@ -93,6 +93,11 @@ opening, settings, and controls to start, stop, update, or delete the sandbox.
 Choose **Troubleshooting… → Containers…** to see what each container does
 and whether it’s running. **Esc** returns from a submenu to Actions.
 
+Choose **CLI commands…** beside Create or Apply to copy or save the equivalent
+commands without applying the form. The same view is available after a job
+completes. **Actions… → CLI commands…** prepares commands for a new sandbox
+using the selected sandbox's saved setup. [Command recipes](cli.md#get-commands-from-the-tui)
+
 **Main agent sandbox** identifies the container with your project files, shell
 and development tools. Additional profile services and credential containers are
 listed separately. The same name appears on **Profile and services…** and in the

@@ -14,6 +14,7 @@ from . import (aws_access, connector_settings, creation, editor_settings, folder
                sandbox, sandbox_advisors, sandbox_ssh, updating, web_access)
 from .cli_support import emit, read_json, redact, remember_secret, silence_closed_stream
 from .sandbox_options import options, memory_limit, SANDBOX_NAME, SANDBOX_NAME_ERROR
+from . import credential_inputs
 
 GATED = ('update', 'recreate', 'install-system-packages', 'profile-fork', 'profile-apply',
          'service-data-export', 'service-data-restore')
@@ -22,9 +23,8 @@ REQUEST_FIELDS = {'profile', 'workspace', 'primary_agent', 'primary_auth', 'netw
                   'local_model_ports', 'ssh', 'aws_access', 'advisors', 'library_skills',
                   'skill_repo', 'skill_path', 'system_prompt', 'connectors', 'allowlist',
                   'subagents', 'env_file', 'pi_config', 'hosted_connections', 'credential_refs', 'engine',
-                  'advisor_imports', 'image_source'}
-SECRET_FIELDS = {'provider_keys', 'provider_credentials', 'local_model_keys', 'hosted',
-                 'communication_keys', 'web_keys'}
+                  'advisor_imports', 'image_source', 'credential_prompts', 'connector_review', 'curlie_list'}
+SECRET_FIELDS = credential_inputs.SECRET_FIELDS
 
 
 class Foreground:
@@ -102,17 +102,20 @@ class Foreground:
                 signal.signal(number, handler)
 
 
-def secrets(args):
-    value = read_json('-') if getattr(args, 'secrets_stdin', False) else {}
+def secrets(args, value=None):
+    if value is None:
+        value = read_json('-') if getattr(args, 'secrets_stdin', False) else {}
     if not isinstance(value, dict) or set(value) - SECRET_FIELDS:
-        raise ValueError('Creation secrets must use provider_keys, provider_credentials, local_model_keys, hosted, communication_keys or web_keys.')
+        raise ValueError('Creation secrets must use provider_keys, provider_credentials, local_model_keys, hosted, communication_keys, web_keys or editor.')
     for field, rows in value.items():
         if not isinstance(rows, dict):
             raise ValueError(f'Creation secrets field {field} must be a JSON object keyed by provider.')
         for provider, choice in rows.items():
-            if field in ('provider_keys', 'communication_keys', 'web_keys'):
+            if field in ('provider_keys', 'communication_keys', 'web_keys', 'editor'):
                 if not isinstance(choice, str):
                     raise ValueError(f'Creation secrets field {field}.{provider} must be a string.')
+                if field == 'editor' and provider != 'password':
+                    raise ValueError('Editor credentials must contain only password.')
             elif not isinstance(choice, dict):
                 raise ValueError(f'Creation secrets field {field}.{provider} must be an object with credential choices.')
             elif field in ('provider_credentials', 'local_model_keys'):
@@ -132,7 +135,7 @@ def secrets(args):
                             raise ValueError(f'Hosted credential choices for {provider} must be strings.')
                     elif not isinstance(item, str):
                         raise ValueError(f'Hosted credential field {provider}.{name} must be a string.')
-    for key in ('provider_keys', 'communication_keys', 'web_keys'):
+    for key in ('provider_keys', 'communication_keys', 'web_keys', 'editor'):
         for secret in value.get(key, {}).values():
             remember_secret(secret)
     def register_fields(choice):
@@ -152,6 +155,14 @@ def complete_draft(value, args):
     if not isinstance(value, dict) or set(value) - REQUEST_FIELDS:
         invalid = sorted(set(value) - REQUEST_FIELDS) if isinstance(value, dict) else ['not an object']
         raise ValueError(f'Unknown creation fields: {", ".join(invalid)}. Use the documented CLI creation fields.')
+    value = copy.deepcopy(value)
+    prompts = credential_inputs.declarations(value.pop('credential_prompts', []))
+    if prompts and not getattr(args, 'start', False):
+        raise ValueError('Credential prompts require --start so credentials can reach the sandbox. '
+                         'Create without credential_prompts to save configuration only.')
+    supplied = secrets(args) if getattr(args, 'secrets_stdin', False) else {}
+    review = value.pop('connector_review', None)
+    curlie_list = value.pop('curlie_list', None)
     for field in ('model_providers', 'hosted_connections', 'credential_refs', 'ssh', 'advisors', 'aws_access'):
         if field in value and not isinstance(value[field], dict):
             raise ValueError(f'Creation field {field} must be a JSON object.')
@@ -178,9 +189,16 @@ def complete_draft(value, args):
     draft['options'] = options(draft.get('options'))
     if isinstance(draft.get('editor'), str):
         draft['editor'] = {**editor_settings.DEFAULTS, 'mode': draft['editor']}
-    draft['editor'] = editor_settings.validate(draft.get('editor'))
+    draft['editor'] = draft.get('editor') or {}
+    if not isinstance(draft['editor'], dict):
+        editor_settings.validate(draft['editor'])
     if draft['editor'].get('password_hash'):
-        raise ValueError('Creation settings cannot contain an editor password hash. Set it later with editor set --password-stdin.')
+        raise ValueError('Creation settings cannot contain an editor password hash. '
+                         'Use credential_prompts for masked input or editor set --password-stdin.')
+    # Check the connection before requesting any keys; the password is resolved below
+    # and strict validation runs again before the draft can reach a creation job.
+    draft['editor'] = editor_settings.validate(draft['editor'], password_pending=(
+        'password' in supplied.get('editor', {}) or any(row['path'] == ('editor', 'password') for row in prompts)))
     draft['open_editor'] = bool(getattr(args, 'open', False))
     draft.setdefault('allowlist', '')
     pending = draft.pop('hosted_connections', {})
@@ -193,7 +211,14 @@ def complete_draft(value, args):
             hosted_models.validate({**row, 'provider': provider})
         draft['_hosted_changes'] = {provider: {**row, 'provider': provider} for provider, row in pending.items()}
     if refs := draft.pop('credential_refs', {}):
-        draft['_provider_credential_choices'] = {provider: {'ref': ref} for provider, ref in refs.items()}
+        for provider, ref in refs.items():
+            if provider in draft.get('_hosted_changes', {}):
+                draft['_hosted_changes'][provider]['credential'] = {'ref': ref}
+            elif (provider.startswith('local-') and draft.get('local_model_ports')
+                  and provider.removeprefix('local-') in {str(port) for port in sandbox.local_model_ports(draft['local_model_ports'])}):
+                draft.setdefault('_local_model_keys', {})[provider.removeprefix('local-')] = {'ref': ref}
+            else:
+                draft.setdefault('_provider_credential_choices', {})[provider] = {'ref': ref}
     draft.setdefault('working_directory', '.')
     draft.setdefault('extra_folders', [])
     draft.setdefault('primary_agent', 'pi')
@@ -226,6 +251,25 @@ def complete_draft(value, args):
         ids, selected = connector_settings.parse_cli_grants(grants)
         draft['connector_ids'] = ids
         draft['connector_operations'] = selected
+    if review is not None:
+        if not isinstance(review, dict) or set(review) != {'routes', 'agent_instructions', 'operations'}:
+            raise ValueError('connector_review must contain routes, agent_instructions and operations from the selected connector grants.')
+        draft.update(_connector_routes=review['routes'], _connector_instructions=review['agent_instructions'],
+                     connector_operations=review['operations'])
+    if curlie_list is not None:
+        if not isinstance(curlie_list, str):
+            raise ValueError('curlie_list must identify a downloaded Curlie revision.')
+        draft['_curlie_list'] = curlie_list
+    if prompts:
+        supplied = secrets(args, credential_inputs.collect(prompts, supplied))
+    if prompts or getattr(args, 'secrets_stdin', False):
+        args._creation_secrets = supplied
+    if 'password' in supplied.get('editor', {}):
+        password = supplied['editor']['password']
+        if not password:
+            raise ValueError('Editor password is empty. Enter a password or remove its credential prompt.')
+        draft['editor']['password_hash'] = editor_settings.password_hash(password)
+    draft['editor'] = editor_settings.validate(draft.get('editor'))
     return draft
 
 
@@ -298,6 +342,10 @@ def from_arguments(args):
         path = getattr(args, attribute, None)
         if path:
             value[field] = read_json(path)
+    if args.connector_review_file:
+        value['connector_review'] = read_json(args.connector_review_file)
+    if args.curlie_list:
+        value['curlie_list'] = args.curlie_list
     if args.model_provider:
         value['model_providers'] = {name: {} for name in args.model_provider}
     elif not args.config and args.local_model_ports and not args.providers_file:
@@ -326,14 +374,20 @@ def from_arguments(args):
     if args.connector:
         value['connectors'] = args.connector
     source = None
-    if args.reuse_editable_profile:
-        if not args.reuse_from:
-            raise ValueError('--reuse-editable-profile requires --reuse-from NAME.')
+    if args.reuse_config_revision and not args.reuse_from:
+        raise ValueError('--reuse-config-revision requires --reuse-from NAME.')
+    if args.reuse_editable_profile and not args.reuse_from:
+        raise ValueError('--reuse-editable-profile requires --reuse-from NAME.')
+    if args.reuse_from and (args.reuse_config_revision or args.reuse_editable_profile):
         if not SANDBOX_NAME.fullmatch(args.reuse_from):
             raise ValueError(f'Invalid source sandbox {args.reuse_from!r}. {SANDBOX_NAME_ERROR}')
         manager = operations.Service(Path(args.state_dir).expanduser().resolve())
         with operation_locks.sandbox(args.reuse_from, 'copy settings from'):
             source = sandbox.recover_profile(manager.config(args.reuse_from), manager.state / args.reuse_from)
+            if args.reuse_config_revision and args.reuse_config_revision != sandbox.config_revision(source):
+                raise ValueError(f'Sandbox {args.reuse_from} changed after these commands were generated. '
+                                 'Open CLI commands again to use its current saved packages.')
+    if args.reuse_editable_profile:
         if not source.get('editable_profile'):
             raise ValueError(f'Sandbox {args.reuse_from} has no editable profile folder to share. Make its profile editable first.')
         selected_profile = value.get('profile') or source['profile']['path']
@@ -343,12 +397,15 @@ def from_arguments(args):
     draft = complete_draft(value, args)
     draft['engine'] = sandbox.choose_engine(engine or draft['engine'], quiet=True)
     if 'editor' not in value and not args.use_defaults:
-        draft['editor'] = {**editor_settings.DEFAULTS, 'mode': editor_settings.default_for_agent(primary_workspace.agent(draft), draft['engine'])}
+        draft['editor']['mode'] = editor_settings.default_for_agent(primary_workspace.agent(draft), draft['engine'])
     draft['reuse_from'] = args.reuse_from
     draft['remove_skills'] = args.omit_skill
+    if args.reuse_config_revision:
+        draft['_reuse_config_revision'] = args.reuse_config_revision
     if args.reuse_editable_profile:
         draft.update(source_editable_profile=source.get('editable_profile'), share_editable_profile=True,
-                     reused_profile=source.get('profile'), _reuse_config_revision=sandbox.config_revision(source))
+                     reused_profile=source.get('profile'),
+                     _reuse_config_revision=args.reuse_config_revision or sandbox.config_revision(source))
     return draft
 
 
@@ -365,6 +422,9 @@ def attach_secrets(draft, value):
             hosted_models.validate(merged)
             hosted[provider] = merged
         draft['_hosted_changes'] = {**draft.get('_hosted_changes', {}), **hosted}
+    if value.get('editor') and not draft.get('editor', {}).get('password_hash'):
+        draft['editor'] = editor_settings.validate({**draft.get('editor', {}),
+            'password_hash': editor_settings.password_hash(value['editor']['password'])})
     return value.get('web_keys')
 
 
@@ -372,8 +432,10 @@ def start_creation(args, draft, secret_values=None):
     manager = operations.Service(Path(args.state_dir).expanduser().resolve())
     if not SANDBOX_NAME.fullmatch(args.name):
         raise ValueError(SANDBOX_NAME_ERROR)
-    values = secrets(args) if secret_values is None else secret_values
-    if primary_workspace.agent(draft) != 'pi' and any(values.values()):
+    values = secret_values if secret_values is not None else getattr(args, '_creation_secrets', None)
+    if values is None:
+        values = secrets(args)
+    if primary_workspace.agent(draft) != 'pi' and any(value for field, value in values.items() if field != 'editor'):
         raise ValueError('Pi model, Web Search and Slack credentials apply only to Pi sandboxes. Use primary-login for this coding agent.')
     keys = attach_secrets(draft, values)
     validate_draft(draft, manager.state)

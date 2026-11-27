@@ -101,6 +101,7 @@ def register(subparsers):
     source.add_argument('--key-stdin', action='store_true', help='Read the API key from stdin')
     command.add_argument('--remember', metavar='LABEL', help='Also save the entered key on this computer under LABEL')
     command.add_argument('--replace', metavar='REF', help='Replace this saved key with the entered key (requires --remember)')
+    command.add_argument('--no-refresh', action='store_true', help='Assign the key without refreshing the provider catalogue')
 
     command = _leaf(actions, 'disconnect', 'Remove the API key of a sandbox provider', disconnect_credential)
     command.add_argument('name')
@@ -425,7 +426,8 @@ def assign_credential(args):
         key = _read_key(args.key_stdin, f'{args.provider} API key')
         choice = _remember_choice(args, key, True, args.provider)
     with _shared(args, [key]):
-        assignment = _service(args).assign_provider_key(args.name, args.provider, choice, _log)
+        assignment = _service(args).assign_provider_key(args.name, args.provider, choice, _log,
+                                                       **({'refresh': False} if args.no_refresh else {}))
     result = {'name': args.name, 'provider': args.provider, 'assignment': assignment}
     if args.json:
         return cli_support.emit(args, result)

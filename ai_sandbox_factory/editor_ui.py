@@ -173,7 +173,7 @@ class EditorScreen(Screen):
     BINDINGS = [('escape', 'back', 'Back')]
 
     def __init__(self, name):
-        super().__init__()
+        super().__init__(classes='bounded-form')
         self.sandbox_name = name
 
     def compose(self):
@@ -193,6 +193,7 @@ class EditorScreen(Screen):
             yield Feedback('', id='editor-error', classes='error', markup=False)
         with Horizontal(classes='wizard-actions'):
             yield Button('Back', id='editor-back')
+            yield Button('CLI commands…', id='editor-cli')
             yield Button('Save', id='editor-save', variant='primary')
         yield Footer()
 
@@ -214,11 +215,17 @@ class EditorScreen(Screen):
         event.stop()
         if event.button.id == 'editor-back':
             self.action_back()
-        elif event.button.id == 'editor-save':
+        elif event.button.id in ('editor-save', 'editor-cli'):
             try:
+                from . import cli_recipes
+                from .cli_recipes_ui import CLICommands
                 value = self.query_one(EditorFields).collect()
                 changes = {key: setting for key, setting in value.items()
                            if setting != self.original_settings[key]}
+                recipe = cli_recipes.editor(self.sandbox_name, changes, self.app.state_root)
+                if event.button.id == 'editor-cli':
+                    self.app.push_screen(CLICommands(recipe))
+                    return
                 if not changes:
                     self.action_back()
                     return
@@ -234,7 +241,7 @@ class EditorScreen(Screen):
                 app = self.app
                 app.pop_screen()
                 app.start_task(self.sandbox_name, 'Save editor settings', apply,
-                               working='Saving editor settings')
+                               working='Saving editor settings', cli_recipe=recipe)
             except (ValueError, OSError) as error:
                 feedback = self.query_one('#editor-error', Feedback)
                 feedback.update('' if isinstance(error, EditorFieldError) else str(error))

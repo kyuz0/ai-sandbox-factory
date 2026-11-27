@@ -57,6 +57,24 @@ rendered images, including checked and unchecked controls and the error dialog.
 
 ## Package installation
 
+### CLI command recipes
+
+```sh
+PYTHONPATH=tests .venv/bin/python -m unittest test_cli_recipes test_cli_recipes_ui test_cli_lifecycle test_cli_management test_cli_models test_connector_settings
+.venv/bin/python tests/render_tui.py /tmp/factory-cli-review --only cli-commands-create cli-commands-actions cli-commands-editor cli-commands-preview cli-commands-simple cli-commands-error cli-commands-complete
+```
+
+Recipe tests replay public CLI requests and shell heredocs, check masked input
+before creation, saved references and package snapshots, and compare live network
+updates with Apply. UI checks cover Copy, Save, closing the preview without
+changing the form, and completed-job requests. Review the rendered states at all
+three sizes, then repeat with `--monochrome`.
+
+Add `--recipes` to the real Podman fixture below to replay exported shell scripts
+with masked provider input, a changed provider registry, live network edits and
+an update with the browser editor open. The fixture checks the original browser
+address after replacement and removes its disposable containers and volumes.
+
 ### Image preparation
 
 Run the image-selection, publication, creation and interface regression suites:

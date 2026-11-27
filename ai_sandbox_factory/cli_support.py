@@ -6,6 +6,7 @@ from contextvars import ContextVar
 import json
 from pathlib import Path
 import sys
+import warnings
 
 
 _secret_values = ContextVar('factory_cli_secrets', default=())
@@ -65,6 +66,17 @@ def read_secret(from_stdin, prompt='API key'):
     if not sys.stdin.isatty():
         raise ValueError(f'{prompt} is required. Supply it with --key-stdin or run in an interactive terminal.')
     return remember_secret(getpass.getpass(prompt + ': '))
+
+
+def prompt_secret(prompt):
+    """Use the controlling terminal even when JSON is arriving through stdin."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', getpass.GetPassWarning)
+            return remember_secret(getpass.getpass(prompt + ': '))
+    except (EOFError, OSError, getpass.GetPassWarning) as error:
+        raise ValueError(f'{prompt} requires masked terminal input. Run this command in a terminal '
+                         'or save settings in a file and supply credentials using the command’s documented stdin option.') from error
 
 
 def emit(args, value):

@@ -267,10 +267,12 @@ class ConnectorSettings(ModalScreen):
                 changes['expected_connector_routes'] = {connector.id: dict(connector.routes)}
                 changes['expected_connector_instructions'] = {connector.id: connector.reviewed_instructions}
             service = self.app.service
+            from . import cli_recipes
             self.app.start_settings_job(
                 self.sandbox_name, 'Update ' + connector.title,
                 lambda log, update: service.update_settings(self.sandbox_name, changes, log, update),
-                success_message=connector.title + (' access saved.' if requests else ' disconnected.'))
+                success_message=connector.title + (' access saved.' if requests else ' disconnected.'),
+                cli_recipe=cli_recipes.update(self.sandbox_name, changes, self.app.state_root))
 
         self.app.push_screen(ExternalConnectorDialog(connector, enabled=enabled,
                                                     enabled_operations=operations.get(connector.id)), selected)

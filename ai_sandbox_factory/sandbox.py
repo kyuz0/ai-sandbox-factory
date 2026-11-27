@@ -1233,12 +1233,13 @@ def _create(args, state):
         reviewed_file = getattr(args, 'connector_review_file', None)
         if ids or reviewed_file:
             reviewed = json.loads(Path(reviewed_file).read_text()) if reviewed_file else None
+            source = (reuse, state.parent / args.reuse_from) if reuse else None
             if reviewed is None:
-                connector_settings.capture(ids, state)
+                connector_settings.capture(ids, state, source=source)
             else:
                 if grants:
                     raise ValueError('Specify connector permissions once, either with --connector or in the review file.')
-                connector_settings.capture(ids, state, reviewed['routes'], reviewed['agent_instructions'])
+                connector_settings.capture(ids, state, reviewed['routes'], reviewed['agent_instructions'], source=source)
                 grants = reviewed['operations']
             config['connector_ids'] = ids
             if grants:
@@ -1878,7 +1879,7 @@ def main(*, startup_notice=''):
     new.add_argument('--working-directory', default='.', help='Starting folder relative to the workspace')
     new.add_argument('--folders-file', help='JSON list of additional host folders: source, name, read_only')
     new.add_argument('--reuse-from', help='Reuse saved provider and skill packages and advisor settings from NAME; other settings use the supplied flags')
-    new.add_argument('--reuse-config-revision', help=argparse.SUPPRESS)
+    new.add_argument('--reuse-config-revision', help='Require the source sandbox configuration revision when reusing its saved packages')
     new.add_argument('--reuse-editable-profile', action='store_true', help='With --reuse-from, share its editable profile folder. Starts with its applied profile; Apply updates each sandbox separately.')
     new.add_argument('--omit-skill', action='append', default=[], help='Omit an added skill when using --reuse-from')
     new.add_argument('--model-provider', action='append', help='Installed provider name; repeat for multiple sources (default: local)')
@@ -1971,6 +1972,8 @@ def main(*, startup_notice=''):
             cmd.add_argument('provider', choices=['codex', 'claude', 'agy'])
         if command == 'communication-key':
             cmd.add_argument('--keys-stdin', action='store_true', help=argparse.SUPPRESS)
+            cmd.add_argument('--token', action='append', choices=['botToken', 'userToken'], help='Prompt only for this Slack token; repeat for both')
+            cmd.add_argument('--clear-token', action='append', choices=['botToken', 'userToken'], default=[], help='Remove this Slack token')
             cmd.add_argument('--status', action='store_true', help='Show Slack token status')
         if command == 'web-key':
             cmd.add_argument('--provider', choices=list(web_access.SERVICES))
@@ -1978,10 +1981,12 @@ def main(*, startup_notice=''):
             cmd.add_argument('--export-keys', action='store_true', help=argparse.SUPPRESS)
             cmd.add_argument('--status', action='store_true', help='Show saved-key status without revealing keys')
             cmd.add_argument('--key-stdin', action='store_true', help='Read a key from stdin instead of a masked prompt')
+            cmd.add_argument('--prompt-provider', action='append', choices=list(web_access.SERVICES), default=[], help='Prompt for this configured provider; repeat for several keys')
+            cmd.add_argument('--clear-provider', action='append', choices=list(web_access.SERVICES), default=[], help='Remove this provider key')
         if command == 'network':
-            cmd.add_argument('--allowlist', required=True)
+            cmd.add_argument('--allowlist', required=True, help='Allowlist file, or - to read rules from stdin')
             cmd.add_argument('--website-groups', nargs='*', choices=list(network_groups.catalog()), default=None)
-            cmd.add_argument('--curlie-list', help=argparse.SUPPRESS)
+            cmd.add_argument('--curlie-list', help='Use this downloaded Curlie list revision')
         if command == 'configure':
             cmd.add_argument('--preview', action='store_true', help='Read-only model discovery')
             cmd.add_argument('--provider', help='Configure one selected provider')
@@ -2289,8 +2294,13 @@ def sandbox_command(args, state, parser):
             payload = sys.stdin.read()
         else:
             from .cli_support import read_secret
-            changes = {}
+            cleared = args.clear_token
+            if set(cleared) & set(args.token or []):
+                raise ValueError('Choose either --token or --clear-token for each Slack token.')
+            changes = {field: '' for field in cleared}
             for field, label in [('botToken', 'Slack bot token'), ('userToken', 'Slack user token for search')]:
+                if (args.token is not None or cleared) and field not in (args.token or []):
+                    continue
                 value = read_secret(False, label + ' (empty keeps saved, - removes)').strip()
                 if value:
                     changes[field] = '' if value == '-' else value
@@ -2320,6 +2330,17 @@ def sandbox_command(args, state, parser):
         else:
             if args.keys_stdin:
                 payload = sys.stdin.read()
+            elif args.prompt_provider or args.clear_provider:
+                requested = set(args.prompt_provider) | set(args.clear_provider)
+                if requested - set(search['providers']) or 'searxng' in requested:
+                    raise ValueError('Select configured API-key search providers for --prompt-provider and --clear-provider.')
+                if args.provider or args.key_stdin or set(args.prompt_provider) & set(args.clear_provider):
+                    raise ValueError('Use the batch prompt/clear options separately from --provider and --key-stdin; choose one action for each provider.')
+                from .cli_support import prompt_secret
+                changed = {provider: '' for provider in args.clear_provider}
+                for provider in args.prompt_provider:
+                    changed[provider] = prompt_secret(provider + ' Web Search API key').strip()
+                payload = json.dumps(changed)
             else:
                 provider = args.provider or (search['mode'] if search['mode'] != 'auto' else
                     next(iter(search['providers'])) if len(search['providers']) == 1 else None)
@@ -2362,7 +2383,8 @@ def sandbox_command(args, state, parser):
             activity.record(state, 'edited')
             print('Search keys updated. Reload an open Pi or FrostPi session.')
     elif args.command == 'network':
-        update_network(config, state, Path(args.allowlist).expanduser().read_text(), args.website_groups,
+        text = sys.stdin.read() if args.allowlist == '-' else Path(args.allowlist).expanduser().read_text()
+        update_network(config, state, text, args.website_groups,
                        curlie_revision=args.curlie_list)
     elif args.command == 'policy':
         if args.network == 'unrestricted' and args.allowlist:

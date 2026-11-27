@@ -22,6 +22,7 @@ class Job:
         self.retry = None
         self.edit = None
         self.notice = ''
+        self.cli_recipe = None
         self.model_disconnected = False
         self.log_error = None
         self._cancelled = False

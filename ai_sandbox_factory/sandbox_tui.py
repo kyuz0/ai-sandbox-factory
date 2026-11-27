@@ -1,5 +1,7 @@
 """Terminal interface for AI Sandbox Factory."""
 from . import activity
+from . import cli_recipes
+from .cli_recipes_ui import CLICommands
 import json
 import copy
 import asyncio
@@ -1022,7 +1024,8 @@ class MoreActions(ModalScreen[Optional[str]]):
             return
         native = coding_agent(record.get('config', {})) != 'pi'
         use_saved_profile = saved_profile_only(record.get('config', {}))
-        opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings')]
+        opening = [('Open', 'open'), ('Open with…', 'launch-with'), ('Settings', 'settings'),
+                   (cli_recipes.LABEL, 'cli-commands')]
         lifecycle = [('Stop sandbox' if running else 'Start sandbox', 'stop' if running else 'start'),
                      ('Rebuild sandbox…' if use_saved_profile else 'Update sources and recreate…', 'rebuild')]
         if record.get('config', {}).get('engine'):
@@ -2882,6 +2885,8 @@ class SettingsForm(Screen):
                            id='open-editor')
             with Horizontal(classes='action-buttons'):
                 yield Button('Cancel' if self.editing else 'Back', id='back')
+                if not self.defaults_mode:
+                    yield Button(cli_recipes.LABEL, id='settings-cli')
                 apply_label = 'Save defaults' if self.defaults_mode else 'Create and start sandbox'
                 if self.editing:
                     apply_label = ('Save' if self.setting == 'primary-approvals' else
@@ -3574,7 +3579,9 @@ class SettingsForm(Screen):
         app = self.app
         app.start_task(name, 'Update network rules · ' + name, apply,
                        success_message=message, followup_label='Reopen editor',
-                       on_success=(lambda _: app.launch_client(name, mode)) if reopen else None)
+                       on_success=(lambda _: app.launch_client(name, mode)) if reopen else None,
+                       cli_recipe=cli_recipes.network(name, text, groups, app.state_root, revision=curlie_list,
+                                                      search_change=search_change, reopen=reopen))
 
     def native_web_search_change(self):
         if not (key := WEB_SEARCH_OPTIONS.get(self.primary)):
@@ -3758,11 +3765,104 @@ class SettingsForm(Screen):
                 and not draft.get('remove_skills') and not draft.get('library_skills') and
                 set(sandbox.parse_rules(draft['allowlist'])) == set(sandbox.parse_rules(original.get('allowlist', ''))))
 
+    def quick_request(self):
+        """Resolve live changes once for both Apply and the optional CLI preview."""
+        previous = options(self.draft.get('options'))
+        if self.setting == 'resources' and not self.resource_replacement_needed():
+            source = self.query_one('#image-source', Select).value
+            return ('settings', {'image_source': source}) if source != image_sources.mode(self.draft) else ('none', {})
+        if self.setting == 'primary-approvals':
+            mode = self.query_one('#native-approval', Select).value
+            return ('settings', {'native_approval': mode}) if mode != previous['native_approval'] else ('none', {})
+        if self.setting == 'approval-settings':
+            fields = self.query_one(ReviewerFields)
+            if (previous['approval'] in ('manual', 'off') and fields.display and fields.selected != 'current'
+                    and not any(m['provider'] + '/' + m['id'] == fields.selected for m in fields.models)):
+                raise ValueError('Choose an available model for approvals or use the current model.')
+            if not self.approval_policy_changed():
+                return ('reviewer', fields.selected) if fields.selected != previous['approval_model'] else ('none', {})
+        if self.setting == 'network-settings':
+            mode = self.query_one('#network', Select).value
+            if mode == self.draft['network'] and (self.native or not self.query_one(WebAccessForm).has_changes(previous['web_access'])):
+                if mode == 'allowlist' and (self.primary not in WEB_SEARCH_OPTIONS or self.network_rules_changed()):
+                    text = self.query_one('#allowlist', TextArea).text
+                    self.network_rules(text)
+                    websites = self.query_one(WebsiteGroups)
+                    return 'network', dict(text=text, groups=websites.selected(), revision=websites.curlie_revision(),
+                                           search_change=self.native_web_search_change(),
+                                           reopen=self.query_one('#open-editor', Checkbox).value)
+                change = self.native_web_search_change()
+                return ('web-search', change) if change else ('none', {})
+        return None
+
+    def quick_recipe(self, kind, value):
+        name, state = self.draft['name'], self.app.state_root
+        if kind == 'none':
+            return cli_recipes.Recipe('No changes to apply', (), str(state))
+        if kind == 'network':
+            return cli_recipes.network(name, value['text'], value['groups'], state,
+                                      **{key: value[key] for key in ('revision', 'search_change', 'reopen')})
+        if kind == 'reviewer':
+            return cli_recipes.Recipe('Save approval model',
+                (cli_recipes.Step(('select-approval-model', name, '--model', value)),), str(state))
+        return cli_recipes.update(name, value, state)
+
+    def command_recipe(self):
+        if self.editing and (quick := self.quick_request()) is not None:
+            return self.quick_recipe(*quick)
+        draft, keys = self.collect()
+        if not self.editing:
+            return cli_recipes.creation(draft, self.app.state_root, web_keys=keys)
+        if draft.get('_communication_keys') and not keys and self.configuration_unchanged(draft):
+            return cli_recipes.Recipe('Save Slack credentials',
+                (cli_recipes.key_changes(draft['name'], draft['_communication_keys'], communication=True),), str(self.app.state_root))
+        return cli_recipes.full_update(draft, keys, self.app.state_root)
+
+    def apply_quick_request(self, kind, value):
+        if kind == 'none':
+            self.notify('No changes to apply.')
+            return
+        if kind == 'network':
+            self.apply_network_rules()
+            return
+        app, name, agent = self.app, self.draft['name'], self.primary
+        recipe = self.quick_recipe(kind, value)
+        if kind == 'web-search':
+            async def failed(message):
+                form = self
+                if app.screen is not self:
+                    form = SettingsForm(self.draft, editing=True, setting='network-settings')
+                    await app.push_screen(form)
+                    form.query_one('#' + agent + '-web-search', Checkbox).value = value[WEB_SEARCH_OPTIONS[agent]]
+                form.query_one('#form-error', Feedback).update(message)
+            app.start_task(name, 'Save web search setting · ' + name, lambda log:
+                app.service.update_settings(name, value, log), success_message=(
+                f'Web search saved. Reopen {PRIMARY_AGENTS[agent]} CLI or reload the VS Code window to apply it.'),
+                on_failure=failed, failure_label='Edit web search settings', cli_recipe=recipe)
+            return
+        self.dismiss()
+        if kind == 'reviewer':
+            app.start_task(name, 'Save approval model · ' + name, lambda log:
+                app.service.save_approval_model(name, value, log),
+                success_message='Approval model saved. Reopen Pi to use it.', cli_recipe=recipe)
+        elif 'native_approval' in value:
+            app.start_task(name, 'Save approval mode · ' + name, lambda log:
+                app.service.update_settings(name, value, log),
+                success_message='Approval mode saved. Restart the sandbox to use it.', cli_recipe=recipe)
+        else:
+            app.start_task(name, 'Save image setup · ' + name, lambda log:
+                app.service.update_settings(name, value, log),
+                success_message='Image setup saved for future builds.', cli_recipe=recipe)
+
     @on(Button.Pressed)
     async def pressed(self, event):
         event.stop()
         action = event.button.id
         try:
+            if action == 'settings-cli':
+                if self.app.screen is self and not self.query_one('#apply', Button).disabled:
+                    self.app.push_screen(CLICommands(self.command_recipe()))
+                return
             if action == 'image-source-information':
                 self.app.push_screen(FactoryUpdateDetails(image_sources.LABEL,
                     'With prebuilt images selected, Factory downloads matching images when needed. '
@@ -3799,70 +3899,10 @@ class SettingsForm(Screen):
                     return
                 for feedback in self.query('#form-error, #network-error, #web-config-error'):
                     feedback.update('')
-                if self.setting == 'resources' and not self.resource_replacement_needed():
-                    source = self.query_one('#image-source', Select).value
-                    if source == image_sources.mode(self.draft):
-                        self.notify('No changes to apply.')
-                        return
-                    app, name = self.app, self.draft['name']
-                    self.dismiss()
-                    app.start_task(name, 'Save image setup · ' + name, lambda log:
-                        app.service.update_settings(name, {'image_source': source}, log),
-                        success_message='Image setup saved for future builds.')
+                quick = self.quick_request()
+                if quick is not None:
+                    self.apply_quick_request(*quick)
                     return
-                if self.setting == 'primary-approvals':
-                    mode = self.query_one('#native-approval', Select).value
-                    if mode == options(self.draft.get('options'))['native_approval']:
-                        self.notify('No changes to save.')
-                        return
-                    app, name = self.app, self.draft['name']
-                    self.dismiss()
-                    app.start_task(name, 'Save approval mode · ' + name, lambda log:
-                        app.service.update_settings(name, {'native_approval': mode}, log),
-                        success_message='Approval mode saved. Restart the sandbox to use it.')
-                    return
-                if self.setting == 'approval-settings':
-                    previous = options(self.draft.get('options'))
-                    fields = self.query_one(ReviewerFields)
-                    if (previous['approval'] in ('manual', 'off') and fields.display and fields.selected != 'current'
-                            and not any(m['provider'] + '/' + m['id'] == fields.selected for m in fields.models)):
-                        raise ValueError('Choose an available model for approvals or use the current model.')
-                    if not self.approval_policy_changed():
-                        model = self.query_one(ReviewerFields).selected
-                        if model == previous['approval_model']:
-                            self.notify('No changes to apply.')
-                            return
-                        app, name = self.app, self.draft['name']
-                        self.dismiss()
-                        app.start_task(name, 'Save approval model · ' + name, lambda log:
-                            app.service.save_approval_model(name, model, log),
-                            success_message='Approval model saved. Reopen Pi to use it.')
-                        return
-                if self.setting == 'network-settings':
-                    mode = self.query_one('#network', Select).value
-                    search = options(self.draft.get('options'))['web_access']
-                    if mode == self.draft['network'] and (self.native or not self.query_one(WebAccessForm).has_changes(search)):
-                        if mode == 'allowlist' and (self.primary not in WEB_SEARCH_OPTIONS or self.network_rules_changed()):
-                            self.apply_network_rules()
-                        elif change := self.native_web_search_change():
-                            app, name = self.app, self.draft['name']
-                            agent = self.primary
-
-                            async def failed(message):
-                                form = self
-                                if app.screen is not self:
-                                    form = SettingsForm(self.draft, editing=True, setting='network-settings')
-                                    await app.push_screen(form)
-                                    form.query_one('#' + agent + '-web-search', Checkbox).value = change[WEB_SEARCH_OPTIONS[agent]]
-                                form.query_one('#form-error', Feedback).update(message)
-
-                            app.start_task(name, 'Save web search setting · ' + name, lambda log:
-                                app.service.update_settings(name, change, log), success_message=(
-                                f'Web search saved. Reopen {PRIMARY_AGENTS[agent]} CLI or reload the VS Code window to apply it.'),
-                                on_failure=failed, failure_label='Edit web search settings')
-                        else:
-                            self.notify('No changes to apply.')
-                        return
                 draft, key = self.collect()
                 draft['_search_keys_changed'] = bool(key)
                 if self.defaults_mode:
@@ -3881,7 +3921,9 @@ class SettingsForm(Screen):
                     app.pop_screen()
                     app.start_task(draft['name'], 'Save Slack credentials', lambda log:
                         service.save_communication_keys(draft['name'], draft['_communication_keys'], log),
-                        success_message='Slack credentials are ready for the next tool call.')
+                        success_message='Slack credentials are ready for the next tool call.',
+                        cli_recipe=cli_recipes.Recipe('Save Slack credentials',
+                            (cli_recipes.key_changes(draft['name'], draft['_communication_keys'], communication=True),), str(app.state_root)))
                 elif self.editing:
                     mode = None if self.native else editor_settings.load(self.app.state_root / draft['name'])['mode']
                     self.app.push_screen(ApplySettingsReview(self.draft, draft, mode),
@@ -4193,6 +4235,7 @@ class Cockpit(App):
     Select:focus > SelectCurrent > #label, Select:focus > SelectCurrent > .arrow { color: #17191b; text-style: bold; }
     Screen:nocolor Select:focus > SelectCurrent { background: white; }
     TextArea { height: 9; margin-bottom: 1; }
+    CLICommands #cli-text { height: 1fr; margin: 0; }
     .group-title { text-style: bold underline; margin-bottom: 1; }
     .section-heading { text-style: bold underline; }
     .command-text { height: auto; padding: 0 1; background: #24292f; text-wrap: wrap; }
@@ -4206,6 +4249,10 @@ class Cockpit(App):
     Screen:nocolor Checkbox.-on:focus > .toggle--button { color: black; }
     Button.-primary { background: #f2b544; color: #171a1d; }
     Button:focus { text-style: bold; background: #f2b544; color: #171a1d; }
+    #settings-cli:focus, #editor-cli:focus, #editor-back:focus, SettingsForm #back:focus,
+    JobDetails Button:focus, CLICommands Button:focus {
+        background: #d4e0e7; color: #171a1d; text-style: bold underline;
+    }
     .profile-edit-flow Button:focus { background: #d4e0e7; color: #171a1d; text-style: bold; }
     #hosted-section Button:focus, ModelsScreen Button:focus,
     .key-dialog Button:focus, LocalKeysDialog Button:focus { text-style: bold underline; }
@@ -4230,6 +4277,7 @@ class Cockpit(App):
     .settings-actions.-with-curlie-notice { height: auto; }
     #curlie-download-notice { margin: 0 0 1 0; }
     .action-buttons { height: 1; }
+    #settings-cli { margin: 0 0 0 1; }
     .wizard-actions Button { min-width: 12; padding: 0 2; }
     .wizard-actions Button.-primary { dock: right; margin-right: 0; }
     .wizard-actions .data-actions { dock: right; width: auto; height: 1; }
@@ -4967,8 +5015,9 @@ class Cockpit(App):
 
     def start_task(self, name, title, task, *, working='Working', on_success=None,
                    followup_label='Continue', on_failure=None, failure_label='Try again', targets=None,
-                   success_message=''):
+                   success_message='', cli_recipe=None):
         job = Job(name, title, working)
+        job.cli_recipe = cli_recipe
         if targets is not None:
             job.targets = targets
 
@@ -4988,13 +5037,16 @@ class Cockpit(App):
         return self.start_job(job, task, completed)
 
     def start_rebuild(self, name, args):
-        return self.start_job(RebuildJob(name), lambda log, update: self.service.run_update(args, log, update))
+        job = RebuildJob(name)
+        job.cli_recipe = cli_recipes.Recipe('Rebuild sandbox', (cli_recipes.Step(tuple(args)),), str(self.state_root))
+        return self.start_job(job, lambda log, update: self.service.run_update(args, log, update))
 
-    def start_settings_job(self, name, title, task, *, success_message='', cooperative=False):
+    def start_settings_job(self, name, title, task, *, success_message='', cooperative=False, cli_recipe=None):
         def completed(job):
             if job.result == 'Complete':
                 job.notice = success_message
         job = RebuildJob(name, title)
+        job.cli_recipe = cli_recipe
         job.update.cooperative = cooperative
         return self.start_job(job, task, completed)
 
@@ -5008,6 +5060,7 @@ class Cockpit(App):
             'profile': str(draft.get('profile') or PRIMARY_AGENTS[agent]),
             'config': {'primary_agent': agent, 'network': draft.get('network', 'allowlist')},
         })
+        job.cli_recipe = cli_recipes.creation(draft, self.state_root, web_keys=request.keys)
 
         def create_sandbox(log):
             if draft.get('mkdir'):
@@ -5028,7 +5081,9 @@ class Cockpit(App):
 
     def update_configuration(self, draft, key, provider_label):
         name = draft['name']
-        return self.start_job(RebuildJob(name, 'Update settings · ' + name),
+        job = RebuildJob(name, 'Update settings · ' + name)
+        job.cli_recipe = cli_recipes.full_update(draft, key, self.state_root)
+        return self.start_job(job,
                               lambda log, update: self.service.update(name, draft, key, log, update),
                               lambda job: self.prepare_job_setup(job, draft, provider_label)
                               if job.result == 'Complete' else None)
@@ -5262,7 +5317,10 @@ class Cockpit(App):
                              lambda choice: self.perform(choice, record=record) if choice else None)
             return
         native = coding_agent(config) != 'pi'
-        if action == 'primary-sign-in' and native:
+        if action == 'cli-commands':
+            names = [row['name'] for row in self.records]
+            self.push_screen(CLICommands(loader=lambda: self.service.cli_recipe(name, existing_names=names)))
+        elif action == 'primary-sign-in' and native:
             self.push_screen(PrimarySignIn(record))
         elif action == 'launch-with':
             self.push_screen(OpenWith(agent=coding_agent(config)), lambda mode: self.launch_client(name, mode) if mode else None)

@@ -24,8 +24,21 @@ def parse_cli_grants(arguments):
     return connectors.validate_ids(identifiers), operations
 
 
-def capture(ids, state, reviewed=None, reviewed_instructions=None):
-    connectors.snapshot(ids, state, refresh=True)
+def capture(ids, state, reviewed=None, reviewed_instructions=None, *, source=None):
+    if source is not None:
+        config, previous = source
+        copied = set(ids) & set(config.get('connector_ids', []))
+        # Copy declarative manifests only; service tokens stay in their private volumes.
+        connectors.saved({'connector_ids': list(copied)}, previous)
+        from .sandbox_options import write_json
+        for identifier in copied:
+            manifest = json.loads((Path(previous) / 'connector-manifests' / (identifier + '.json')).read_text())
+            target = Path(state) / 'connector-manifests' / (identifier + '.json')
+            target.parent.mkdir(mode=0o700, exist_ok=True)
+            write_json(target, manifest)
+        connectors.snapshot([identifier for identifier in ids if identifier not in copied], state, refresh=True)
+    else:
+        connectors.snapshot(ids, state, refresh=True)
     if reviewed is None and reviewed_instructions is None:
         return
     plugins = connectors.saved({'connector_ids': ids}, state)

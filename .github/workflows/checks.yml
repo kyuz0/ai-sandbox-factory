@@ -150,7 +150,7 @@ jobs:
           df -i "$factory_graphroot" /tmp
       - name: Require prebuilt acquisition, pull cancellation, and profile recovery
         shell: bash
-        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces 2>&1 | tee /tmp/factory-prebuilt-check.log
+        run: PYTHONPATH=tests:. python tests/prebuilt_images_integration.py --output /tmp/factory-prebuilt-check --profiles --recovery --interfaces --recipes 2>&1 | tee /tmp/factory-prebuilt-check.log
       - name: Record runner storage
         if: always()
         run: |
