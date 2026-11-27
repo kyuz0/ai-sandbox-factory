@@ -1,31 +1,31 @@
 {
   "codex": {
-    "version": "0.171.0"
+    "version": "0.172.0"
   },
   "claude": {
-    "version": "2.1.330",
+    "version": "2.1.332",
     "platforms": {
       "amd64": {
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.330/linux-x64/claude",
-        "sha256": "f390eaa0814e6a1bff74cbb47acb74cb9c89d30ced809fe0af5af00c7bfe8ebb"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.332/linux-x64/claude",
+        "sha256": "a2df1f41bb00250992926420d0063f89b127cb81abdd284dbefb80c50ff1d026"
       },
       "arm64": {
-        "url": "https://downloads.claude.ai/claude-code-releases/2.1.330/linux-arm64/claude",
-        "sha256": "6016f90cac783e367fb1aa97c768a2efb94a0128a5b46b70fb3d8fcbbd9dd444"
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.332/linux-arm64/claude",
+        "sha256": "50c305fcb8912851ce774429131d94ed6f84edbe3d8d0ed7a59dade5d893acc0"
       }
     }
   },
   "agy": {
-    "version": "1.5.13",
     "platforms": {
       "amd64": {
-        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/linux-x64/cli_linux_x64.tar.gz",
-        "sha512": "014b37387703acab1f47cd532c8bb60167a6a3537b0f9891de03f1b1ffa9614307bc83c4b2f7551273b0877d722716b0cd9e26782f6b2a50705db4f05e18c68f"
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/linux-x64/cli_linux_x64.tar.gz",
+        "sha512": "ef379ec869719112f696e8c7cfddf776618712e58fc38e53df80801d6528abb4677782c7c8778f9c09c9123fa44c2c32675d228c06f2a8f7a8f4214e75f5bb26"
       },
       "arm64": {
-        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/linux-arm/cli_linux_arm64.tar.gz",
-        "sha512": "dccea2eb455099f5175f0c87cc47b38fcefe4cb0cb44dea3927469bb4bbf68ac3c0b30fc04affb24c17e90959386a93c3785e8e4b8b1a3338ca4e4d57b80057b"
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/linux-arm/cli_linux_arm64.tar.gz",
+        "sha512": "6c59cbce5a7632083dd4ef594296e52ce0abdc12f8b4ecb55523e093748cf178f8f8383d7e51e9ed7859ea6e46c83a43a7b46364b0e033dd13afb24d6bfbe4c8"
       }
-    }
+    },
+    "version": "1.5.18"
   }
 }

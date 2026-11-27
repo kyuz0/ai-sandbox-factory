@@ -20,9 +20,9 @@ from urllib.parse import urlsplit
 from . import editor_settings, host_platform, operation_locks
 from .sandbox_options import write_json
 
-VERSION = '4.145.2'
-SHA256 = '2f6db6c3e8b733dd6b3aeee83532e148b2bae2e392353ba85452d03572348962'
-ARM64_SHA256 = 'e867a34416e2da4a83496b09580001893e7a4e5bb58a0624c4fcd22819e7d53d'
+VERSION = '4.146.0'
+SHA256 = 'cf7e82ca5fe1df664d43a43d900c3c9710f8f3403a5e8d0e18f6a12d10d7401b'
+ARM64_SHA256 = '3df88f7f1feecce3583ab0109c5f6bf14f90ae3a44939b4257ccd9850ef37a6e'
 
 def release(arch):
     if arch not in ('x86_64', 'aarch64', 'arm64'):

@@ -1,6 +1,6 @@
-FROM docker.io/library/node:24-trixie-slim AS cli-tools
+FROM docker.io/library/node:24-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4 AS cli-tools
 # Refresh OS packages when applying a tested maintenance update, including local builds.
-ARG FACTORY_APT_REFRESH=2026-11-27
+ARG FACTORY_APT_REFRESH=46011051142-1
 ARG NPM_VERSION=11.21.3
 COPY cli-tools/ /opt/cli-tools/
 RUN sh /opt/cli-tools/install.sh \
@@ -9,7 +9,7 @@ USER node
 RUN python3 /opt/cli-tools/check.py
 USER root
 
-FROM docker.io/library/node:24-trixie-slim AS frostpi-build
+FROM docker.io/library/node:24-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4 AS frostpi-build
 WORKDIR /src
 COPY --from=frostpi / ./
 RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
@@ -17,7 +17,7 @@ RUN npm exec --yes --package=pnpm@10.13.1 -- pnpm install --frozen-lockfile \
     && /bin/sh -c 'set -- artifacts/FrostPi-*.vsix; test "$#" = 1 && cp "$1" /frostpi.vsix'
 
 FROM cli-tools
-ARG PI_VERSION=1.4.0
+ARG PI_VERSION=1.6.1
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \

@@ -1,6 +1,6 @@
-FROM docker.io/library/node:22-trixie-slim
+FROM docker.io/library/node:22-trixie-slim@sha256:f0960f8dc047f358e3fb428f36ccba21732194fa5f0cac849f401e63e62fb9e6
 # Refresh OS packages when applying a tested maintenance update, including local builds.
-ARG FACTORY_APT_REFRESH=2026-11-27
+ARG FACTORY_APT_REFRESH=46011051142-1
 ARG USER_UID=1000
 ARG USER_GID=1000
 ARG NPM_VERSION=11.21.3

@@ -1,5 +1,5 @@
 ARG BASE_IMAGE
-FROM public.ecr.aws/aws-cli/aws-cli:2.42.0 AS awscli
+FROM public.ecr.aws/aws-cli/aws-cli:2.42.4@sha256:4a1a668837d5f97ced202e03827da1bc0b48cda946be89909cd7a02023f62921 AS awscli
 FROM ${BASE_IMAGE}
 COPY --from=awscli /usr/local/aws-cli /usr/local/aws-cli
 USER root

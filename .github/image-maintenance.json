@@ -1,0 +1,80 @@
+{
+  "checked_at": "2026-11-27T13:56:09.439109+00:00",
+  "candidate_run": "46011051142",
+  "components": {
+    "pi": {
+      "current": "1.4.0",
+      "available": "1.6.1",
+      "changed": true,
+      "status": "updated"
+    },
+    "codex": {
+      "current": "0.171.0",
+      "available": "0.172.0",
+      "changed": true,
+      "status": "updated"
+    },
+    "claude": {
+      "current": "2.1.330",
+      "available": "2.1.332",
+      "changed": true,
+      "status": "updated"
+    },
+    "agy": {
+      "current": "1.5.13",
+      "available": "1.5.18",
+      "changed": true,
+      "status": "updated"
+    },
+    "editor": {
+      "current": "4.145.2",
+      "available": "4.146.0",
+      "changed": true,
+      "status": "updated"
+    },
+    "tools": {
+      "current": "explicit tool versions",
+      "available": [
+        "AWS CLI: 2.42.0 \u2192 2.42.4"
+      ],
+      "changed": true,
+      "status": "updated"
+    },
+    "npm": {
+      "current": "locked packages",
+      "available": [
+        "betterwright: 2.8.9 \u2192 2.9.1",
+        "bun: 1.4.0 \u2192 1.4.5",
+        "typebox: 1.3.6 \u2192 1.4.7",
+        "typebox: 1.3.27 \u2192 1.4.7",
+        "pi-web-access: 0.47.0 \u2192 0.48.0",
+        "ai_sandbox_factory/containers/inference/package.json: compatible dependency lock refreshed"
+      ],
+      "changed": true,
+      "status": "updated"
+    },
+    "python": {
+      "current": "resolved document and AWS SDK packages",
+      "available": [
+        "ai_sandbox_factory/containers/dev/document-requirements",
+        "ai_sandbox_factory/containers/aws-access/client/requirements"
+      ],
+      "changed": true,
+      "status": "updated"
+    },
+    "bases": {
+      "current": "declared base tags",
+      "available": [
+        "docker.io/library/python:3.13-slim-trixie: sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50",
+        "docker.io/library/node:22-trixie-slim: sha256:f0960f8dc047f358e3fb428f36ccba21732194fa5f0cac849f401e63e62fb9e6",
+        "docker.io/library/debian:trixie-slim: sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0",
+        "docker.io/library/node:24-trixie-slim: sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4",
+        "docker.io/library/postgres:17-alpine: sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73"
+      ],
+      "changed": true,
+      "status": "updated"
+    }
+  },
+  "base_commit": "529b746bec70fda3c09103ca04c9716d8a311aca",
+  "review_head": ""
+}

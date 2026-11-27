@@ -35,7 +35,7 @@ from .sandbox_options import (MAIN_AGENT_SANDBOX, RESOURCE_PREFIX, SANDBOX_NAME,
 ROOT = Path(__file__).resolve().parent
 LABEL = 'io.pi-sandbox-factory.name'
 EDITABLE_SETTINGS = frozenset({'image_source', 'aws_access', 'working_directory', 'extra_folders', 'ssh', 'advisors', 'network', 'allowlist', 'memory', 'subagents', 'env_file', 'options', 'skill_source', 'skill_path', 'remove_skills', 'library_skills', 'local_model_ports', 'model_providers', 'curlie_list'})
-PI_VERSION = '1.4.0'
+PI_VERSION = '1.6.1'
 LIFECYCLE_COMMANDS = ('service-data-export', 'service-data-restore', 'profile-fork', 'profile-review', 'profile-apply', 'create', 'build', 'up', 'down',
                       'delete', 'update', 'recreate', 'network', 'policy', 'install-system-packages',
                       'configure', 'primary-login', 'primary-import')
