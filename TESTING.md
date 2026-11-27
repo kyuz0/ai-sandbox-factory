@@ -60,7 +60,7 @@ rendered images, including checked and unchecked controls and the error dialog.
 ### CLI command recipes
 
 ```sh
-PYTHONPATH=tests .venv/bin/python -m unittest test_cli_recipes test_cli_recipes_ui test_cli_lifecycle test_cli_management test_cli_models test_connector_settings
+PYTHONPATH=tests .venv/bin/python -m unittest test_cli_recipes test_cli_recipes_ui test_cli_lifecycle test_cli_management test_cli_models test_cli_parity test_connector_settings
 .venv/bin/python tests/render_tui.py /tmp/factory-cli-review --only cli-commands-create cli-commands-actions cli-commands-editor cli-commands-preview cli-commands-simple cli-commands-error cli-commands-complete
 ```
 

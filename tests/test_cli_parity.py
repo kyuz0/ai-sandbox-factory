@@ -15,6 +15,7 @@ ACTIONS = {
     'open': ('open', 'create-and-open'),
     'launch-with': ('open', 'create-and-open'),
     'settings': ('show', 'inspect-and-change-settings'),
+    'cli-commands': ('show', 'get-commands-from-the-tui'),
     'start': ('up', 'create-and-open'),
     'stop': ('down', 'create-and-open'),
     'rebuild': ('recreate', 'copies-and-profiles'),
