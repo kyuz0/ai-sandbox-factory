@@ -128,12 +128,12 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
     async def test_creation_keeps_model_choice_pending_when_hidden(self):
         with tempfile.TemporaryDirectory() as tmp, patch('ai_sandbox_factory.updates.available_update', return_value=None):
             service = JobsService()
-            started, release = Event(), Event()
+            report_build_step, release = Event(), Event()
 
             def create(draft, key, log, cancellation):
+                report_build_step.wait()
                 cancellation.progress(3, 5, 'Building images')
                 log('Podman example STEP 99/99')
-                started.set()
                 release.wait()
                 service.records.append(dict(records()[0], name=draft['name']))
                 log('The fixture sandbox is ready.')
@@ -147,14 +147,16 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     await wait_for(pilot, lambda: len(app.records) == 2)
                     job = app.start_creation(CreationRequest(draft, {}, 'Chaucer model catalogue', False))
-                    await wait_for(pilot, started.is_set)
-                    self.assertEqual(job.status, 'Step 3 of 5 · Building images')
+                    await wait_for(pilot, lambda: isinstance(app.screen, JobDetails) and app.screen.is_mounted)
                     self.assertEqual(app.screen.active_bindings['escape'].binding.description, 'Hide details')
                     await pilot.press('escape')
                     self.assertIs(app.screen, app.screen_stack[0])
                     table = app.query_one(SandboxTable)
                     self.assertEqual(str(table.get_cell('new-sandbox', 'dev')), 'Creating')
-                    self.assertEqual(str(table.get_cell('new-sandbox', 'open')).strip(), 'View job (3/5)')
+                    self.assertEqual(str(table.get_cell('new-sandbox', 'open')).strip(), 'View job')
+                    report_build_step.set()
+                    await wait_for(pilot, lambda: str(table.get_cell('new-sandbox', 'open')).strip() == 'View job (3/5)')
+                    self.assertEqual(job.status, 'Step 3 of 5 · Building images')
                     self.assertEqual(str(app.query_one('#jobs', Button).label), 'Jobs… (1)')
                     table.move_cursor(row=table.get_row_index('new-sandbox'), column=1)
                     table.focus()
@@ -203,6 +205,7 @@ class SandboxJobsTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(str(table.get_cell(draft['name'], 'open')).strip(), 'Open')
                     self.assertFalse(service.calls)
                 finally:
+                    report_build_step.set()
                     release.set()
                     await app.workers.wait_for_complete()
 
