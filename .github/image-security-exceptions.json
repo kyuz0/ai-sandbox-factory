@@ -3,36 +3,9 @@
     "id": "CVE-2026-123158",
     "package": "openssh-client",
     "installed": "1:10.0p1-7+deb13u4",
-    "role": "native-common",
-    "target": "debian:13.8",
-    "reason": "Debian confirms its built OpenSSH binaries are not affected: this password-authentication issue requires musl libc without PAM. These images install the Debian glibc build. https://security-tracker.debian.org/tracker/CVE-2026-123158",
-    "review_before": "2026-12-04"
-  },
-  {
-    "id": "CVE-2026-123158",
-    "package": "openssh-client",
-    "installed": "1:10.0p1-7+deb13u4",
-    "role": "pi-common",
-    "target": "debian:13.8",
-    "reason": "Debian confirms its built OpenSSH binaries are not affected: this password-authentication issue requires musl libc without PAM. These images install the Debian glibc build. https://security-tracker.debian.org/tracker/CVE-2026-123158",
-    "review_before": "2026-12-04"
-  },
-  {
-    "id": "CVE-2026-123158",
-    "package": "openssh-client",
-    "installed": "1:10.0p1-7+deb13u4",
-    "role": "pi-stock",
-    "target": "debian:13.8",
-    "reason": "Debian confirms its built OpenSSH binaries are not affected: this password-authentication issue requires musl libc without PAM. These images install the Debian glibc build. https://security-tracker.debian.org/tracker/CVE-2026-123158",
-    "review_before": "2026-12-04"
-  },
-  {
-    "id": "CVE-2026-123158",
-    "package": "openssh-client",
-    "installed": "1:10.0p1-7+deb13u4",
     "role": "ssh",
     "target": "debian:13.8",
     "reason": "Debian confirms its built OpenSSH binaries are not affected: this password-authentication issue requires musl libc without PAM. These images install the Debian glibc build. https://security-tracker.debian.org/tracker/CVE-2026-123158",
-    "review_before": "2026-12-04"
+    "reviewed_on": "2026-11-27"
   }
 ]

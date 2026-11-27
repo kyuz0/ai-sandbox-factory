@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 import urllib.request
 
+# Agent/editor code already runs with workspace authority. Credential and
+# gateway processes enforce separate Factory boundaries and retain scan gates.
+INFORMATIONAL_ROLES = frozenset(('pi-common','pi-stock','native-common'))
+
 KEV = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
 
 
@@ -14,11 +18,14 @@ def review(report, exploited, exceptions, today=None, role=None):
         raise ValueError('The image scan has no Results inventory. A missing scan is not a clean result.')
     approved = {}
     for item in exceptions:
-        for field in ('id', 'package', 'installed', 'role', 'target', 'reason', 'review_before'):
+        for field in ('id', 'package', 'installed', 'role', 'target', 'reason'):
             if not isinstance(item.get(field), str) or not item[field].strip():
                 raise ValueError(f'Image scan exception is missing {field}: {item!r}')
-        date.fromisoformat(item['review_before'])
+        for field in ('review_before','reviewed_on'):
+            if field in item:
+                date.fromisoformat(item[field])
         approved[(item['id'], item['package'], item['installed'], item['role'], item['target'])] = item
+    policy = 'informational' if role in INFORMATIONAL_ROLES else 'blocking'
     findings, needed = [], []
     for result in report['Results']:
         target = result.get('Target', '')
@@ -31,15 +38,15 @@ def review(report, exploited, exceptions, today=None, role=None):
             row['known_exploited'] = row['id'] in exploited
             # This is a maintenance review policy, not a claim that scanner
             # presence proves reachability. No-fix findings remain in the report.
-            row['needs_review'] = row['known_exploited'] or (row['severity'] in ('HIGH', 'CRITICAL') and bool(row['fixed']))
+            row['needs_review'] = policy == 'blocking' and (row['known_exploited'] or (row['severity'] in ('HIGH', 'CRITICAL') and bool(row['fixed'])))
             exception = approved.get((row['id'], row['package'], row['installed'], role, target))
-            row['exception'] = exception if exception and date.fromisoformat(exception['review_before']) > today else None
+            row['exception'] = exception if exception and (not exception.get('review_before') or date.fromisoformat(exception['review_before']) > today) else None
             if exception and not row['exception']:
                 row['expired_exception'] = exception['review_before']
             findings.append(row)
             if row['needs_review'] and not row['exception']:
                 needed.append(row)
-    return {'findings': findings, 'requires_review': needed,
+    return {'policy': policy, 'findings': findings, 'requires_review': needed,
             'inventory_targets': [result.get('Target') for result in report['Results']]}
 
 
@@ -72,6 +79,8 @@ def main():
     result = review(json.loads(args.report.read_text()), exploited, json.loads(args.exceptions.read_text()), role=role)
     result.update(image=args.image, current=args.current == 'true', kind=args.kind)
     args.output.write_text(json.dumps(result, indent=2) + '\n')
+    print(f'{role}: {result["policy"]} scan; {len(result["findings"])} findings, '
+          f'{len(result["requires_review"])} blocking review findings. Full report: {args.output}')
     for row in result['requires_review']:
         print(f'{row["id"]}: {row["package"]} {row["installed"]} in {row["target"]}; fixed: {row["fixed"] or "not available"}; '
               f'known exploited: {row["known_exploited"]}. Review the image finding before promotion.')

@@ -39,6 +39,8 @@ def scan(index, roles, output, *, executable='trivy'):
                     result = review(json.loads(report.read_text()),exploited,exceptions,role=role)
                     result.update(image=reference,kind='pending',current=True)
                     (output / (role + '-review.json')).write_text(json.dumps(result,indent=2) + '\n')
+                    print(f'{role}: {result["policy"]} scan; {len(result["findings"])} findings, '
+                          f'{len(result["requires_review"])} blocking review findings. Full report: {report}')
                     for finding in result['requires_review']:
                         blocked.append(f'{role}: {finding["id"]} in {finding["package"]} {finding["installed"]}; fixed {finding["fixed"] or "not available"}')
                 if blocked:

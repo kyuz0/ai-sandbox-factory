@@ -57,5 +57,33 @@ class ImageScanReview(unittest.TestCase):
         self.assertEqual(result['findings'],[])
         self.assertEqual(result['inventory_targets'],['fixture-image'])
 
+    def test_reviewed_upstream_ignore_has_no_forced_expiry_and_keeps_the_finding_visible(self):
+        exception={'id':'CVE-fixture','package':'fixture','installed':'1.0','role':'inference','target':'fixture-image','reason':'Upstream-bundled dependency; use vendor updates, no custom patches','reviewed_on':'2026-11-27'}
+        result=scan.review(report(finding(),finding(id='CVE-other')),set(),[exception],date(2027,1,1),role='inference')
+        self.assertEqual(len(result['findings']),2)
+        self.assertEqual([row['id'] for row in result['requires_review']],['CVE-other'])
+        self.assertEqual(result['findings'][0]['exception'],exception)
+        changed=scan.review(report(finding(installed='1.1')),set(),[exception],date(2027,1,1),role='inference')
+        self.assertEqual(len(changed['requires_review']),1)
+
+    def test_workspace_findings_are_informational_and_all_remain_visible(self):
+        for role in ('pi-common','pi-stock','native-common'):
+            with self.subTest(role=role):
+                result=scan.review(report(finding(),finding(id='CVE-kev',severity='LOW',fixed='')),{'CVE-kev'},[],role=role)
+                self.assertEqual(result['policy'],'informational')
+                self.assertEqual(len(result['findings']),2)
+                self.assertTrue(result['findings'][1]['known_exploited'])
+                self.assertEqual(result['requires_review'],[])
+                with self.assertRaisesRegex(ValueError,'inventory'):
+                    scan.review({},set(),[],role=role)
+
+    def test_every_authority_role_and_an_unknown_new_role_retain_blocking_gates(self):
+        roles=('controller-codex','controller-claude','controller-agy','advisor','inference','ssh','aws','connector','gateway','new-companion')
+        for role in roles:
+            with self.subTest(role=role):
+                result=scan.review(report(finding(),finding(id='CVE-kev',severity='LOW',fixed='')),{'CVE-kev'},[],role=role)
+                self.assertEqual(result['policy'],'blocking')
+                self.assertEqual(len(result['requires_review']),2)
+
 
 if __name__=='__main__':unittest.main()

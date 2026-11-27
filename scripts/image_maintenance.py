@@ -50,6 +50,18 @@ def git_author():
     command('gh', 'auth', 'setup-git')
 
 
+def published_components(report, run_id):
+    """Keep concise causes in Git; full compiler output stays in run artifacts."""
+    components=json.loads(report.read_text())
+    for row in components.values():
+        error=row.get('error')
+        if isinstance(error,str) and len(error.splitlines())>1:
+            lines=[line.strip() for line in error.splitlines() if line.strip()]
+            row['error']=lines[0] + ('; ' + lines[-1] if len(lines)>1 else '')
+            row['diagnostic_url']=f'https://github.com/{REPOSITORY}/actions/runs/{run_id}'
+    return components
+
+
 def prepare(report, test=False):
     repo()
     git_author()
@@ -65,7 +77,7 @@ def prepare(report, test=False):
     # Only component pins/locks changed by the updater are staged. The report
     # records version outcomes, never model conversations, credentials or logs.
     value = {'checked_at': datetime.now(timezone.utc).isoformat(),
-             'candidate_run': os.environ.get('GITHUB_RUN_ID'), 'components': json.loads(report.read_text()),
+             'candidate_run': os.environ.get('GITHUB_RUN_ID'), 'components': published_components(report,os.environ['GITHUB_RUN_ID']),
              'base_commit': base, 'review_head': old[0] if old else ''}
     target = ROOT / REPORT
     target.write_text(json.dumps(value, indent=2) + '\n')
@@ -112,7 +124,7 @@ def pull_request(sha, branch, run_url):
             f'[Verification run]({run_url}).\n\n')
     if failed:
         body += 'This is a verified partial update. The following components remain unchanged and need attention: ' + ', '.join(failed) + '.\n\n'
-    body += 'Merging runs the normal release checks. Existing sandboxes update through Factory’s explicit rebuild workflow.'
+    body += '@kyuz0 Review this verified update before merging. Merging runs the normal release checks. Existing sandboxes update through Factory’s explicit rebuild workflow.'
     inventories = os.environ.get('FACTORY_PROMOTION_INVENTORIES')
     if inventories and not meaningful_update(report, Path(inventories)):
         if failed:
@@ -276,6 +288,20 @@ def image_sets(root=ROOT):
                                           'kind': references[reference]} for reference in sorted(references)]}))
 
 
+def scan_summary(directory):
+    reports=[json.loads(path.read_text()) for path in directory.rglob('factory-image-review.json')]
+    if not reports:
+        raise ValueError('No completed image scan reviews were produced; inspect the scanner or feed failure.')
+    def role(row):
+        return row['image'].split('@')[0].split('ai-sandbox-factory-')[1]
+    fixed_pending={role(row) for row in reports if row.get('current') and row.get('kind')=='pending' and not row['requires_review']}
+    unresolved=[row for row in reports if row.get('current') and row['requires_review'] and
+                (row.get('kind')=='pending' or role(row) not in fixed_pending)]
+    output(urgent=str(bool(unresolved)).lower())
+    if not unresolved and any(row.get('current') and row['requires_review'] for row in reports):
+        print('The pending verified update addresses the current image findings; waiting for review rather than rebuilding it.')
+
+
 def overdue():
     repo()
     pending = api('GET', f'repos/{REPOSITORY}/pulls?state=open&head=kyuz0:{BRANCH}&base=main')
@@ -322,8 +348,9 @@ def retention():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('prepare', 'index', 'pr', 'scan-set', 'overdue', 'retention'))
+    parser.add_argument('operation', choices=('prepare', 'index', 'pr', 'scan-set', 'scan-summary', 'overdue', 'retention'))
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--reports', type=Path)
     parser.add_argument('--index', type=Path)
     parser.add_argument('--branch')
     parser.add_argument('--sha')
@@ -337,6 +364,8 @@ def main():
         pull_request(args.sha, args.branch, os.environ['GITHUB_SERVER_URL'] + '/' + repo() + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
     elif args.operation == 'scan-set':
         image_sets()
+    elif args.operation == 'scan-summary':
+        scan_summary(args.reports)
     elif args.operation == 'overdue':
         overdue()
     else:

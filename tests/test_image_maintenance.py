@@ -193,6 +193,17 @@ class Promotion(unittest.TestCase):
         report={'review_head':OLD,'components':{'pi':{'changed':True}}}
         self.assertFalse(maintenance.meaningful_update(report,directory))
 
+    def test_committed_failure_report_keeps_cause_and_links_full_artifact_without_stack_frames(self):
+        report=self.root/'version-report.json'
+        original={'python':{'status':'failed','changed':False,'error':'pip-compile exited 1\nTraceback (most recent call last):\n  PRIVATE_STACK_FRAME\nImportError: missing compiler API'}}
+        report.write_text(json.dumps(original))
+        public=maintenance.published_components(report,'123')
+        self.assertNotIn('PRIVATE_STACK_FRAME',json.dumps(public))
+        self.assertIn('pip-compile exited 1',public['python']['error'])
+        self.assertIn('ImportError: missing compiler API',public['python']['error'])
+        self.assertEqual(public['python']['diagnostic_url'],RUN)
+        self.assertEqual(json.loads(report.read_text()),original)
+
 
 class CandidateIndex(unittest.TestCase):
     def test_source_drift_missing_role_and_wrong_platform_fail_before_pulling(self):
@@ -251,6 +262,40 @@ class CadenceAndRetention(unittest.TestCase):
     def test_corrupt_release_inventory_prevents_retention_decisions(self):
         with patch.object(maintenance,'command',return_value='v2026.1.1.1'),patch.object(maintenance.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'{"version":0,"images":{}}','')),self.assertRaisesRegex(ValueError,'must not delete'):
             maintenance.retention()
+
+
+class ScanSummary(unittest.TestCase):
+    def setUp(self):
+        self.folder=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.output=self.enterContext(patch.object(maintenance,'output'))
+
+    def review(self,name,role,kind,blocked):
+        folder=self.folder/name;folder.mkdir()
+        (folder/'factory-image-review.json').write_text(json.dumps({'image':'docker.io/kyuz0/ai-sandbox-factory-'+role+'@sha256:'+'a'*64,'kind':kind,'current':kind!='previous','requires_review':[{'id':'CVE-fixture'}] if blocked else []}))
+
+    def test_verified_pending_fix_prevents_rebuilding_the_same_proposal_each_day(self):
+        self.review('stable','inference','stable',True)
+        self.review('pending','inference','pending',False)
+        self.review('previous','ssh','previous',True)
+        maintenance.scan_summary(self.folder)
+        self.output.assert_called_once_with(urgent='false')
+
+    def test_new_finding_in_pending_or_another_current_role_starts_an_update(self):
+        for role,kind in [('inference','pending'),('ssh','stable')]:
+            with self.subTest(role=role,kind=kind):
+                for path in self.folder.glob('*/*'):path.unlink()
+                for path in self.folder.iterdir():path.rmdir()
+                self.review('stable','inference','stable',True)
+                self.review('pending','inference','pending',False)
+                self.review('new',role,kind,True)
+                self.output.reset_mock()
+                maintenance.scan_summary(self.folder)
+                self.output.assert_called_once_with(urgent='true')
+
+    def test_missing_scan_output_is_an_error_not_a_clean_report(self):
+        with self.assertRaisesRegex(ValueError,'No completed image scan'):
+            maintenance.scan_summary(self.folder)
+        self.output.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

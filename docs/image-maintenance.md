@@ -3,7 +3,10 @@
 Factory checks for updates and scans its published images daily. Each Monday it
 prepares a weekly update: stable agent versions, their download checksums,
 package locks and base-image digests. A relevant finding in a current image can
-start the same update workflow earlier.
+start the same update workflow earlier. Daily scans inspect the published set;
+the blocking security gate applies to the replacement candidates. An already
+verified pending update is not rebuilt merely because the old release still has
+the findings it fixes.
 
 The workflow publishes **candidates**, tests their exact digests, then prepares one **Update tested Factory container images**
 PR when automatic PR creation is enabled. Otherwise it prints the verified
@@ -55,19 +58,30 @@ They do not claim to test a live subscription or vendor model. Run the affected
 live-client check in [TESTING.md](../TESTING.md#native-agent-regression-checks)
 before approving an agent update that needs that verification.
 
-## Vulnerability reports
+## Vulnerability reports and ignores
 
 Trivy records package inventories and rescans them with its current vulnerability
-database. The reports retain every finding. Current candidates require review of
-fixable High/Critical findings and CISA-listed known-exploited vulnerabilities.
-A scanner finding identifies software to review; it does not prove that the
-vulnerable operation is reachable in a Factory sandbox.
+database. The reports retain every finding. Agent/editor image findings are informational
+(`pi-common`, `pi-stock`, `native-common`). Credential-companion and gateway
+candidates require review of fixable High/Critical findings and CISA-listed
+known-exploited vulnerabilities. A finding identifies installed software; it does
+not establish that a Factory protection has failed.
+
+Authenticated editor startup, file grants, restricted networking and companion
+credential isolation remain blocking tests for every release. A demonstrated
+failure of these protections blocks promotion regardless of the image role.
 
 Document a reviewed exception in `.github/image-security-exceptions.json` with
 its vulnerability ID, package, installed version, image role, exact scan target,
-reason and review date. An exception applies only to that combination. An expired
-exception no longer approves a finding that is still present. Fixed findings
-do not remain blocked by an obsolete exception.
+reason. Record when it was reviewed with `reviewed_on`. Each entry applies only
+to that combination; it does not hide the finding from the report. Add
+`review_before` only when the exception should expire. A newer package version or
+a different finding requires its own review. Fixed findings do not remain blocked
+by an obsolete entry.
+
+Use upstream releases and this reviewed ignore list for upstream-bundled findings.
+Factory does not maintain custom vendor security patches or dependency overrides
+solely to clear scans. Workspace reports need no per-CVE ignore entries.
 Scanner or advisory-feed failures remain failures, never a clean result.
 
 Downloaded native executables may not expose enough package metadata for full

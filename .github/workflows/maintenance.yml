@@ -125,7 +125,7 @@ jobs:
         run: |
           if [[ ! -s /tmp/factory-image.cdx.json ]]; then trivy image --format cyclonedx --output /tmp/factory-image.cdx.json "$IMAGE"; fi
           trivy sbom --format json --output /tmp/factory-image-scan.json /tmp/factory-image.cdx.json
-          python3 scripts/check_image_scan.py --report /tmp/factory-image-scan.json --output /tmp/factory-image-review.json --image "$IMAGE" --current "$CURRENT" --enforce "$CURRENT" --kind "$KIND"
+          python3 scripts/check_image_scan.py --report /tmp/factory-image-scan.json --output /tmp/factory-image-review.json --image "$IMAGE" --current "$CURRENT" --enforce false --kind "$KIND"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -142,23 +142,16 @@ jobs:
     outputs:
       urgent: ${{ steps.review.outputs.urgent }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: image-scan-*
           path: /tmp/factory-scan-reviews
       - name: Identify fixes needed in current images
         id: review
-        run: |
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          reports = list(Path('/tmp/factory-scan-reviews').rglob('factory-image-review.json'))
-          urgent = any(report.get('current') and report.get('requires_review') for report in (json.loads(path.read_text()) for path in reports))
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('urgent=' + str(bool(urgent)).lower() + '\n')
-          if not reports:
-              raise SystemExit('No completed image scan reviews were produced; inspect the scanner or feed failure.')
-          PY
+        run: python3 scripts/image_maintenance.py scan-summary --reports /tmp/factory-scan-reviews
 
   prepare:
     needs: [plan, security-update]
