@@ -26,7 +26,7 @@
     },
     "frostpi": {
       "repository": "https://github.com/kyuz0/pi-vscode-ui.git",
-      "commit": "07584b1529c7e57893dac3e9a35438a6c8c75afa"
+      "commit": "e13f7c0bca36cc35d2ca43069fd0a19ae89f7732"
     }
   }
 }

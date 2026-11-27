@@ -107,6 +107,10 @@ if settings.get('native_settings') or settings.get('agent') == 'claude':
     configured.update(settings.get('native_settings', {}))
     remote_settings.write_text(json.dumps(configured))
 existing.update(values)
+if settings.get('agent', 'pi') == 'pi':
+    # Factory's default is independent of FrostPi's upstream default. Keep a
+    # user's explicit choice when reopening or replacing the sandbox.
+    existing.setdefault('frostpi.composer.sendOnEnter', True)
 if settings.get('agent') in ('codex', 'claude', 'agy'):
     # Extension hosts retain their protected sign-in transport. Project terminals
     # use the workspace network, including shells other than Bash.

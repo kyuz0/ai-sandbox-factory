@@ -1422,6 +1422,11 @@ and credentials surviving disable/re-enable.
 
 ## Browser editor
 
+`PYTHONPATH=.:tests .venv/bin/python -m unittest test_frostpi_editor_defaults`
+checks that Factory explicitly enables FrostPi's Enter-to-send preference on
+fresh and existing editor homes, preserves a user's choice across reopening
+and settings refreshes, and leaves other coding agents' preferences alone.
+
 Follow [the browser editor guide](docs/browser-editor.md) for the real-model smoke
 check. Confirm dark mode, Explorer on the left, FrostPi in the right secondary
 sidebar with its composer loaded **without clicking the FrostPi tab**, a shell
@@ -1429,6 +1434,10 @@ tool writing a workspace file, and conversation persistence after
 restarting the editor. Use **Actions → Stop browser editor** and verify that its
 terminal processes also exit. Stopping the container must close the loopback listener. Neither action
 should stop unrelated sandboxes or Pi CLI sessions.
+
+The `frostpi_editor.py` fixture also verifies Factory's explicit Enter-to-send
+setting and sends a real prompt with Enter after checking Shift+Enter inserts
+a newline.
 
 On a fresh launch and after restarting, `/workspace` must open
 without a trust prompt or Restricted Mode. Check that Manage Workspace Trust says

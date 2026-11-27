@@ -11,6 +11,10 @@ The browser editor supports amd64 and arm64 containers. [Platform setup](platfor
 FrostPi previews images Pi receives from tools such as `read` and Betterwright.
 Click an image to enlarge it. You can see it again when you reopen the saved chat.
 
+In FrostPi, Enter sends your prompt and Shift+Enter inserts a newline. To use
+Enter for newlines instead, turn off **FrostPi: Composer: Send On Enter** in
+VS Code Settings. Factory preserves your choice when reopening the editor.
+
 ## Open a sandbox
 
 Leave **Open the browser editor when ready** checked to open the selected agent's editor when the sandbox
