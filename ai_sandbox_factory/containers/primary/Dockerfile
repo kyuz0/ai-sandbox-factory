@@ -1,16 +1,24 @@
 FROM docker.io/library/node:24-trixie-slim
+# Refresh OS packages when applying a tested maintenance update, including local builds.
+ARG FACTORY_APT_REFRESH=2026-11-27
 ARG AGENT
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG NPM_VERSION=11.21.3
+ARG PIP_VERSION=26.3
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     ca-certificates curl git tini socat python3 dbus-daemon gnome-keyring libsecret-tools \
     python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi
 COPY agent-versions.json install-agent.py /opt/primary/
-RUN python3 -m venv /opt/${AGENT}-proxy \
+RUN npm install --global --engine-strict "npm@${NPM_VERSION}" && npm cache clean --force \
+    && python3 -m venv /opt/${AGENT}-proxy \
+    && /opt/${AGENT}-proxy/bin/python -m pip install --no-cache-dir "pip==${PIP_VERSION}" \
     && /opt/${AGENT}-proxy/bin/pip install --no-cache-dir 'mitmproxy==12.3.1' \
+    && /opt/${AGENT}-proxy/bin/python -m pip uninstall --yes pip \
     && python3 /opt/primary/install-agent.py "$AGENT" /usr/local/bin/factory-agent
 COPY entrypoint.sh /opt/primary/
 COPY codex_auth.py codex_auth_proxy.py codex_connect.py codex_network.json /opt/primary/

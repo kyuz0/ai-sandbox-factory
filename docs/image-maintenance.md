@@ -17,7 +17,11 @@ not qualify an image for promotion.
   the same native-agent pins.
 - code-server, Betterwright and the other pinned npm tools, Python document
   packages, mitmproxy, AWS CLI and fd.
-- Base-image digests within the selected Node, Python and Debian families.
+- Base-image digests within the selected Node, Python and Debian families,
+  OS package updates, and bundled npm and pip versions. npm stays in its
+  supported major version so a maintenance update does not change how native
+  dependency installation works. The maintained Dockerfiles also invalidate
+  cached OS-update layers for local builds when an update is promoted.
 
 Factory's own patched FrostPi commit remains a reviewed source pin. Maintenance
 does not replace the fork or automatically import upstream commits. User
@@ -61,9 +65,9 @@ vulnerable operation is reachable in a Factory sandbox.
 
 Document a reviewed exception in `.github/image-security-exceptions.json` with
 its vulnerability ID, package, installed version, image role, exact scan target,
-reason and review date. An
-exception applies only to that combination. An expired exception no longer approves a finding that is still present. Fixed
-findings do not remain blocked by an obsolete exception.
+reason and review date. An exception applies only to that combination. An expired
+exception no longer approves a finding that is still present. Fixed findings
+do not remain blocked by an obsolete exception.
 Scanner or advisory-feed failures remain failures, never a clean result.
 
 Downloaded native executables may not expose enough package metadata for full
@@ -102,7 +106,5 @@ never moves a released digest or updates a running sandbox. The release's image
 index records the earlier set for an image rollback.
 
 `python scripts/image_maintenance.py retention` reports the complete released
-keep-set. It does not delete images. Candidate pruning remains disabled until its
-reviewed keep-set can protect all released images; the proposed retention period
-for unreferenced candidates is 30 days. Retained older images are reported in
-scans without blocking a current-image refresh.
+keep-set. It does not delete images. Retained older images are reported in scans without
+blocking a current-image refresh.

@@ -159,9 +159,22 @@ def pull_request(sha, branch, run_url):
         raise ValueError('The safe subset is verified and ready for review, but the weekly cycle is incomplete: ' + ', '.join(failed))
 
 
+def same_image_sources(previous):
+    from build_factory_images import public_config, SMOKE
+    from ai_sandbox_factory import image_sources, sandbox
+    config=public_config()
+    paths=sorted({str(path.relative_to(sandbox.ROOT.parent)) for role in SMOKE for path in image_sources.recipe_inputs(config,role)})
+    difference = subprocess.run(['git','diff','--quiet','--ignore-matching-lines=^ARG FACTORY_APT_REFRESH=',
+        previous,'HEAD','--',*paths],
+        text=True,capture_output=True,cwd=ROOT)
+    if difference.returncode not in (0,1):
+        difference.check_returncode()
+    return difference.returncode == 0
+
+
 def meaningful_update(report, directory):
     """A new digest alone is not a software update."""
-    old, pending, candidate = {}, {}, {}
+    old, pending, candidate, scanned = {}, {}, {}, {}
     packages = lambda value: sorted((row.get('name') or '', row.get('version') or '', row.get('purl') or '')
                                     for row in value.get('components', []))
     for metadata in directory.rglob('factory-image-review.json'):
@@ -173,22 +186,39 @@ def meaningful_update(report, directory):
             role = value['image'].split('@')[0].split('ai-sandbox-factory-')[1]
             target = pending if value.get('kind') == 'pending' else old
             target[role] = packages(json.loads(sbom.read_text()))
+            scanned[value['image']] = target[role]
     for sbom in directory.glob('image-*/*.cdx.json'):
         if sbom.parent.name.startswith('image-scan-'):
             continue
         role = sbom.name.removesuffix('.cdx.json')
         candidate[role] = packages(json.loads(sbom.read_text()))
+    if candidate and set(candidate)-set(pending) and report.get('review_head'):
+        # A digest shared by stable and pending is scanned once. Recover its
+        # membership from the exact pending index rather than dropping a role.
+        file=api('GET',f'repos/{REPOSITORY}/contents/{INDEX}?ref={report["review_head"]}')
+        index=json.loads(base64.b64decode(file['content']))
+        for platforms in index['images'].values():
+            for reference in platforms.values():
+                if reference in scanned:
+                    role=reference.split('@')[0].split('ai-sandbox-factory-')[1]
+                    pending[role]=scanned[reference]
     if candidate and set(candidate) <= set(pending) and report.get('review_head'):
-        file = api('GET', f'repos/{REPOSITORY}/contents/{INDEX}?ref={report["review_head"]}')
-        previous = json.loads(base64.b64decode(file['content']))
-        current = json.loads((ROOT / INDEX).read_text())
-        if set(previous['images']) == set(current['images']) and all(candidate[role] == pending[role] for role in candidate):
+        command('git','fetch','origin',report['review_head'])
+        if same_image_sources(report['review_head']) and all(candidate[role] == pending[role] for role in candidate):
             print('The same recipes and packages already have a verified update waiting for review; preserve that branch.')
             return False
+        return True
     if any(row.get('changed') for row in report['components'].values()):
         return True
     if not candidate or set(candidate) - set(old):
         print('The previous package inventory is incomplete; retain the candidate for review rather than claiming no changes.')
+        return True
+    base = report.get('base_commit')
+    if not isinstance(base,str) or not re.fullmatch('[a-f0-9]{40}',base):
+        print('The previous source revision is missing; retain the candidate for review.')
+        return True
+    previous = command('git','log','-1','--format=%H',base,'--',INDEX)
+    if not previous or not same_image_sources(previous):
         return True
     return any(candidate[role] != old[role] for role in candidate)
 

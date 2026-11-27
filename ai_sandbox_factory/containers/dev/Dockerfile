@@ -1,6 +1,10 @@
 FROM docker.io/library/node:24-trixie-slim AS cli-tools
+# Refresh OS packages when applying a tested maintenance update, including local builds.
+ARG FACTORY_APT_REFRESH=2026-11-27
+ARG NPM_VERSION=11.21.3
 COPY cli-tools/ /opt/cli-tools/
-RUN sh /opt/cli-tools/install.sh
+RUN sh /opt/cli-tools/install.sh \
+    && npm install --global --engine-strict "npm@${NPM_VERSION}" && npm cache clean --force
 USER node
 RUN python3 /opt/cli-tools/check.py
 USER root

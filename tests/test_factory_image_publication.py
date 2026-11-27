@@ -115,7 +115,7 @@ class FakeEngine:
             executable = arguments[arguments.index('--entrypoint') + 1]
             pins = json.loads((publisher.sandbox.ROOT / 'containers/primary/agent-versions.json').read_text())
             versions = ' '.join([publisher.sandbox.PI_VERSION, publisher.browser_editor.VERSION,
-                                 *(pin['version'] for pin in pins.values()), re.search(r'aws-cli:([\d.]+)', (publisher.sandbox.ROOT / 'containers/aws-access/client/Dockerfile').read_text()).group(1)])
+                                 *(pin['version'] for pin in pins.values()), re.search(r'^ARG NPM_VERSION=(\S+)$', (publisher.sandbox.ROOT / 'containers/dev/Dockerfile').read_text(), re.M).group(1), re.search(r'aws-cli:([\d.]+)', (publisher.sandbox.ROOT / 'containers/aws-access/client/Dockerfile').read_text()).group(1)])
         return subprocess.CompletedProcess(command, 0, versions)
 
 

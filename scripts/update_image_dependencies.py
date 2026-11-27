@@ -1,6 +1,6 @@
 """Check or update the declared inputs of Factory's public container images."""
 import argparse
-import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -43,8 +43,17 @@ def stable(value):
     return value
 
 
-def npm_version(package):
-    return stable(request('https://registry.npmjs.org/' + urllib.parse.quote(package, safe='') + '/latest')['version'])
+def npm_version(package, major=None):
+    url = 'https://registry.npmjs.org/' + urllib.parse.quote(package, safe='')
+    if major is None:
+        return stable(request(url + '/latest')['version'])
+    # npm 12 changes native install-script and Git-dependency behavior. Keep the
+    # supported installer family until those build contracts are adapted/tested.
+    releases = request(url)['versions']
+    versions = [value for value in releases if re.fullmatch(re.escape(str(major)) + r'\.\d+\.\d+', value)]
+    if not versions:
+        raise ValueError(f'{package}: no stable release in the supported major version {major}')
+    return max(versions,key=lambda value:tuple(map(int,value.split('.'))))
 
 
 def newer(candidate, current):
@@ -174,7 +183,7 @@ def base_images(edits):
     changes = []
     resolved = {}
     for path in sorted((edits.root / 'ai_sandbox_factory').rglob('Dockerfile*')):
-        if '/profile-authoring/example/' in str(path):
+        if 'node_modules' in path.parts or '/profile-authoring/example/' in str(path):
             continue
         name = str(path.relative_to(edits.root))
         text = edits.read(name)
@@ -195,7 +204,22 @@ def base_images(edits):
         revised = re.sub(r'^(FROM\s+)(\S+)', resolve, text, flags=re.M)
         if revised != text:
             edits.write(name, revised)
-    return {'current': 'declared base tags', 'available': changes or 'unchanged', 'changed': bool(changes)}
+    return {'current': 'declared base tags', 'available': list(dict.fromkeys(changes)) or 'unchanged', 'changed': bool(changes)}
+
+
+def refresh_os_cache(edits):
+    # An independent, attempt-specific marker also covers a second update on
+    # the same day or a partial update whose base registry is unavailable.
+    run = os.environ.get('GITHUB_RUN_ID')
+    marker = run + '-' + os.environ.get('GITHUB_RUN_ATTEMPT','1') if run else datetime.now(timezone.utc).isoformat()
+    for path in (edits.root/'ai_sandbox_factory').rglob('Dockerfile*'):
+        if 'node_modules' in path.parts:
+            continue
+        name=str(path.relative_to(edits.root))
+        before=edits.read(name)
+        after=re.sub(r'^ARG FACTORY_APT_REFRESH=.*$', 'ARG FACTORY_APT_REFRESH=' + marker,before,flags=re.M)
+        if before != after:
+            edits.write(name,after)
 
 
 def editor(edits):
@@ -217,6 +241,39 @@ def editor(edits):
         for field, checksum in checksums.items():
             edits.replace(name, rf"^{field} = '[^']+'$", f"{field} = '{checksum}'")
     return {'current': old, 'available': latest, 'changed': newer(latest, old)}
+
+
+def bundled_installers(edits):
+    changes = []
+    for argument, package in (('NPM_VERSION','npm'),('PIP_VERSION','pip')):
+        def version(value):
+            if package == 'pip':
+                if not isinstance(value,str) or not re.fullmatch(r'\d+\.\d+(?:\.\d+)?',value):
+                    raise ValueError(f'Expected a stable pip version, received {value!r}')
+                return value
+            return stable(value)
+        key = lambda value: tuple(map(int,value.split('.'))) + (0,) * (3-len(value.split('.')))
+        files = []
+        versions = set()
+        for path in sorted((edits.root / 'ai_sandbox_factory').rglob('Dockerfile*')):
+            if 'node_modules' in path.parts:
+                continue
+            name = str(path.relative_to(edits.root))
+            values = re.findall(r'^ARG ' + argument + r'=(\S+)$', edits.read(name), re.M)
+            if values:
+                versions.update(map(version, values))
+                files.append(name)
+        if not files:
+            continue
+        if len(versions) != 1:
+            raise ValueError(f'{argument} differs between managed images: {sorted(versions)}. Reconcile the shared installer version before updating.')
+        old = next(iter(versions))
+        latest = npm_version('npm',major=old.split('.')[0]) if package == 'npm' else version(request('https://pypi.org/pypi/pip/json')['info']['version'])
+        if key(latest) > key(old):
+            for name in files:
+                edits.write(name, re.sub(r'^ARG ' + argument + r'=\S+$', 'ARG ' + argument + '=' + latest, edits.read(name), flags=re.M))
+            changes.append(f'{package}: {old} → {latest}')
+    return changes
 
 
 def tools(edits):
@@ -260,6 +317,7 @@ def tools(edits):
             edits.replace(name, rf'({architecture}\) arch={binary}; sha=)[a-f0-9]+', r'\g<1>' + checksum.split(':')[1])
         edits.write(name, edits.read(name).replace(f'version={old}; asset="fd-', f'version={latest}; asset="fd-'))
         changes.append(f'fd: {old} → {latest}')
+    changes.extend(bundled_installers(edits))
     return {'current': 'explicit tool versions', 'available': changes or 'unchanged', 'changed': bool(changes)}
 
 
@@ -296,6 +354,8 @@ def update(root=ROOT, *, apply=False, components=None):
     resolvers = {'pi': pi, **{name: (lambda edits, name=name: agent(edits, name)) for name in ('codex', 'claude', 'agy')},
                  'editor': editor, 'tools': tools, 'npm': lambda edits: npm_packages(edits, apply=apply),
                  'python': lambda edits: python_packages(edits, apply=apply), 'bases': base_images}
+    if apply and (components is None or 'bases' in components):
+        refresh_os_cache(all_edits)
     for name in components or resolvers:
         edits = Edits(root)
         edits.files = all_edits.files.copy()

@@ -1,13 +1,18 @@
 FROM docker.io/library/node:22-trixie-slim
+# Refresh OS packages when applying a tested maintenance update, including local builds.
+ARG FACTORY_APT_REFRESH=2026-11-27
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG NPM_VERSION=11.21.3
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     ca-certificates curl bubblewrap socat tini dbus-daemon gnome-keyring libsecret-tools xdg-dbus-proxy python3 \
     && rm -rf /var/lib/apt/lists/* \
     && if [ "$USER_GID" != 1000 ]; then groupmod -g "$USER_GID" node; fi \
     && if [ "$USER_UID" != 1000 ]; then usermod -u "$USER_UID" node; fi
 COPY primary/agent-versions.json primary/install-agent.py /opt/agent-install/
-RUN python3 /opt/agent-install/install-agent.py codex /usr/local/bin/advisor-codex \
+RUN npm install --global --engine-strict "npm@${NPM_VERSION}" && npm cache clean --force \
+    && python3 /opt/agent-install/install-agent.py codex /usr/local/bin/advisor-codex \
     && python3 /opt/agent-install/install-agent.py claude /usr/local/bin/advisor-claude \
     && python3 /opt/agent-install/install-agent.py agy /usr/local/bin/agy
 COPY --from=pi-advisor / /opt/advisor/

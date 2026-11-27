@@ -58,6 +58,15 @@ SMOKE = {
 }
 
 
+NPM_DOCKERFILES = {
+    'pi-common':'dev', 'pi-stock':'dev', 'native-common':'primary-worker',
+    'advisor':'advisor', 'inference':'inference',
+    **{f'controller-{agent}':'primary' for agent in ('codex','claude','agy')},
+}
+for role in NPM_DOCKERFILES:
+    SMOKE[role].append(('npm','--version'))
+
+
 def public_config():
     profile = sandbox.ROOT / 'profiles/base'
     return {'engine': 'podman', 'uid': 1000, 'gid': 1000, 'image_source': 'local',
@@ -106,6 +115,9 @@ def smoke(role, reference):
     print(f'Testing {role} image {reference}…', flush=True)
     pins = json.loads((sandbox.ROOT / 'containers/primary/agent-versions.json').read_text())
     expected = {}
+    if role in NPM_DOCKERFILES:
+        docker = (sandbox.ROOT / 'containers' / NPM_DOCKERFILES[role] / 'Dockerfile').read_text()
+        expected['npm'] = re.search(r'^ARG NPM_VERSION=(\S+)$',docker,re.M).group(1)
     if role in ('pi-common', 'pi-stock'):
         expected['pi'] = sandbox.PI_VERSION
     if role.startswith('controller-'):

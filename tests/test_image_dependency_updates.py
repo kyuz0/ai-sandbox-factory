@@ -147,7 +147,7 @@ class DependencyUpdates(unittest.TestCase):
             if '/aws/aws-cli/' in url:
                 return [{'name': '2.99.0'}]
             return {'tag_name': 'v10.5.2'}
-        with patch.object(updates, 'request', side_effect=request), patch.object(
+        with patch.object(updates, 'bundled_installers',return_value=[]), patch.object(updates, 'request', side_effect=request), patch.object(
                 updates.subprocess, 'check_output', side_effect=[raw, subprocess.CalledProcessError(1, ['skopeo'], stderr=b'registry unavailable')]):
             result = updates.update(self.root, apply=True, components=['tools', 'bases'])
         self.assertEqual(result['tools']['status'], 'updated')
@@ -206,6 +206,68 @@ class DependencyUpdates(unittest.TestCase):
             text = (self.root / (name+'.txt')).read_text()
             self.assertIn('fixture==1.0.1',text)
             self.assertNotIn('private.invalid',text)
+    def test_bundled_npm_and_pip_versions_update_every_managed_stage_together(self):
+        first=self.root/'ai_sandbox_factory/containers/Dockerfile-one'
+        second=self.root/'ai_sandbox_factory/containers/Dockerfile-two'
+        first.write_text('FROM node:24\nARG NPM_VERSION=12.0.0\nARG PIP_VERSION=26.0\n')
+        second.write_text('FROM node:22\nARG NPM_VERSION=12.0.0\nFROM node:24\nARG NPM_VERSION=12.0.0\n')
+        # Isolate the two synthetic recipes from the normal shared installer pins.
+        with patch.object(updates,'npm_version',return_value='99.0.0'), patch.object(updates,'request',return_value={'info':{'version':'99.1'}}):
+            # Test a private recipe tree, so this assertion is independent of
+            # future additions to the actual public image set.
+            fixture=Path(self.enterContext(tempfile.TemporaryDirectory()))
+            (fixture/'ai_sandbox_factory').mkdir()
+            a=fixture/'ai_sandbox_factory/Dockerfile-a';b=fixture/'ai_sandbox_factory/Dockerfile-b'
+            a.write_bytes(first.read_bytes());b.write_bytes(second.read_bytes())
+            edits=updates.Edits(fixture)
+            changed=updates.bundled_installers(edits);edits.save()
+        self.assertEqual(len(changed),2)
+        self.assertEqual(b.read_text().count('ARG NPM_VERSION=99.0.0'),2)
+        self.assertIn('ARG PIP_VERSION=99.1',a.read_text())
+
+    def test_inconsistent_installer_pins_fail_without_writing_any_stage(self):
+        fixture=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (fixture/'ai_sandbox_factory').mkdir()
+        for suffix,version in [('a','12.0.0'),('b','12.1.0')]:
+            (fixture/f'ai_sandbox_factory/Dockerfile-{suffix}').write_text(f'FROM node:24\nARG NPM_VERSION={version}\n')
+        edits=updates.Edits(fixture)
+        with self.assertRaisesRegex(ValueError,'NPM_VERSION differs'):
+            updates.bundled_installers(edits)
+        self.assertEqual(edits.files,{})
+
+    def test_npm_security_updates_preserve_the_supported_install_script_behavior(self):
+        versions={'versions':{'11.21.2':{},'11.21.3':{},'12.2.3':{},'11.22.0-beta.1':{}}}
+        with patch.object(updates,'request',return_value=versions):
+            self.assertEqual(updates.npm_version('npm',major='11'),'11.21.3')
+
+    def test_apt_cache_refresh_alone_is_not_reported_as_a_software_update(self):
+        fixture=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (fixture/'ai_sandbox_factory').mkdir()
+        raw=b'{"schemaVersion":2}'
+        digest=hashlib.sha256(raw).hexdigest()
+        docker=fixture/'ai_sandbox_factory/Dockerfile'
+        docker.write_text(f'FROM debian:trixie@sha256:{digest}\nARG FACTORY_APT_REFRESH=2000-01-01\nRUN apt-get update && apt-get upgrade -y\n')
+        with patch.object(updates.subprocess,'check_output',return_value=raw):
+            result=updates.update(fixture,apply=True,components=['bases'])
+        self.assertFalse(result['bases']['changed'])
+        self.assertNotIn('FACTORY_APT_REFRESH=2000-01-01',docker.read_text())
+
+    def test_second_same_day_attempt_refreshes_local_cache_even_if_base_lookup_fails(self):
+        fixture=Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (fixture/'ai_sandbox_factory').mkdir()
+        raw=b'{"schemaVersion":2}'
+        digest=hashlib.sha256(raw).hexdigest()
+        docker=fixture/'ai_sandbox_factory/Dockerfile'
+        docker.write_text(f'FROM debian:trixie@sha256:{digest}\nARG FACTORY_APT_REFRESH=old\n')
+        with patch.dict(updates.os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'1'}),patch.object(updates.subprocess,'check_output',return_value=raw):
+            updates.update(fixture,apply=True,components=['bases'])
+        self.assertIn('FACTORY_APT_REFRESH=123-1',docker.read_text())
+        with patch.dict(updates.os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2'}),patch.object(updates.subprocess,'check_output',side_effect=subprocess.CalledProcessError(1,['skopeo'],stderr=b'registry unavailable')):
+            result=updates.update(fixture,apply=True,components=['bases'])
+        self.assertEqual(result['bases']['status'],'failed')
+        self.assertIn('FACTORY_APT_REFRESH=123-2',docker.read_text())
+        self.assertIn('FROM debian:trixie@sha256:'+digest,docker.read_text())
+
 
 class AgentInstaller(unittest.TestCase):
     def test_corrupt_download_is_removed_before_it_can_be_installed(self):

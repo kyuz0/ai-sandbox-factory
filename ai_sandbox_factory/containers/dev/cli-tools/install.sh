@@ -3,6 +3,7 @@ set -eu
 # Debian slim removes manuals; retain new pages and restore the base utilities' pages.
 echo 'path-include=/usr/share/man/*' > /etc/dpkg/dpkg.cfg.d/zz-cli-manuals
 apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends
 apt-get install -y --no-install-recommends --reinstall \
     bash coreutils diffutils findutils grep gzip mawk sed tar util-linux
 apt-get install -y --no-install-recommends \

@@ -1,7 +1,10 @@
 FROM docker.io/library/debian:trixie-slim
+# Refresh OS packages when applying a tested maintenance update, including local builds.
+ARG FACTORY_APT_REFRESH=2026-11-27
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client python3 tini \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends openssh-client python3 tini \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g "$USER_GID" sshaccess && useradd -m -u "$USER_UID" -g "$USER_GID" sshaccess \
     && mkdir -p /private /run/ssh-access \

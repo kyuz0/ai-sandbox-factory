@@ -57,14 +57,13 @@ def _files(path, *, executable_bits_only=False):
     return digest.hexdigest()
 
 
-def recipe(config, role):
-    """Finite public roles only. User profiles and provider payloads stay local."""
-    from . import sandbox, browser_editor, sandbox_advisors, sandbox_extensions
+def recipe_inputs(config, role):
+    """Versioned inputs used by each public image role."""
+    from . import sandbox
     root = sandbox.ROOT
     common = Path(config.get('common', {}).get('path', root / 'containers/dev'))
     assembly = Path(__file__).with_name('image_builds.py')
     extensions = Path(__file__).with_name('sandbox_extensions.py')
-    identity = {'format': 1, 'role': role}
     sources = {
         'gateway': [root / 'containers/proxy'],
         'inference': [root / 'containers/inference' / name for name in
@@ -84,9 +83,18 @@ def recipe(config, role):
     }
     if role.startswith('controller-') and role.removeprefix('controller-') in ('codex', 'claude', 'agy'):
         sources[role] = [root / 'containers/primary']
-        identity['agent'] = role.removeprefix('controller-')
     if role not in sources:
         raise ValueError(f'Unknown Factory image role {role!r}. Use a declared public image recipe.')
+    return sources[role]
+
+
+def recipe(config, role):
+    """Finite public roles only. User profiles and provider payloads stay local."""
+    from . import sandbox, browser_editor, sandbox_advisors, sandbox_extensions
+    identity = {'format': 1, 'role': role}
+    if role.startswith('controller-'):
+        identity['agent'] = role.removeprefix('controller-')
+    paths = recipe_inputs(config, role)
     if role in ('ssh', 'advisor', 'pi-common', 'pi-stock', 'native-common') or role.startswith('controller-'):
         identity.update(uid=config['uid'], gid=config['gid'])
     if role in ('pi-common', 'pi-stock'):
@@ -95,7 +103,7 @@ def recipe(config, role):
         identity['extension'] = sandbox_extensions.read_lock(sandbox_advisors.source_path(config))['pi-advisor']
     if role == 'pi-stock':
         identity['editor'] = [browser_editor.VERSION, browser_editor.SHA256, browser_editor.ARM64_SHA256]
-    identity['sources'] = [_files(path, executable_bits_only=True) for path in sources[role]]
+    identity['sources'] = [_files(path, executable_bits_only=True) for path in paths]
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 

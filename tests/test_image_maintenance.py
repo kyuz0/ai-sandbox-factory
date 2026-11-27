@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+REAL_RUN=subprocess.run
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import image_maintenance as maintenance
@@ -102,7 +103,7 @@ class Promotion(unittest.TestCase):
         (old/'factory-image-review.json').write_text(json.dumps({'current':True,'image':'docker.io/kyuz0/ai-sandbox-factory-gateway@sha256:'+'a'*64}))
         value={'components':[{'name':'curl','version':'1.0','purl':'pkg:deb/curl@1.0'}]}
         (old/'factory-image.cdx.json').write_text(json.dumps(value));(new/'gateway.cdx.json').write_text(json.dumps(value))
-        report={'components':{'pi':{'changed':False}}}
+        report={'base_commit':OTHER,'components':{'pi':{'changed':False}}}
         self.assertFalse(maintenance.meaningful_update(report,directory))
         value['components'][0]['version']='1.1'
         (new/'gateway.cdx.json').write_text(json.dumps(value))
@@ -153,6 +154,44 @@ class Promotion(unittest.TestCase):
         auth=calls.index(('gh','auth','setup-git'))
         push=next(i for i,call in enumerate(calls) if call[:2]==('git','push'))
         self.assertLess(auth,push)
+
+    def test_real_git_comparison_ignores_only_the_apt_cache_marker(self):
+        def git(*args):
+            return REAL_RUN(['git',*args],cwd=self.root,check=True,capture_output=True,text=True).stdout.strip()
+        git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+        recipe=self.root/'ai_sandbox_factory/containers/inference/Dockerfile';recipe.parent.mkdir(parents=True)
+        recipe.write_text('FROM debian:trixie\nARG FACTORY_APT_REFRESH=2026-11-20\nRUN true\n')
+        index=self.root/maintenance.INDEX;index.write_text('{"images":{}}')
+        git('add','.');git('commit','-qm','Initial fixture');prior=git('rev-parse','HEAD')
+        recipe.write_text(recipe.read_text().replace('2026-11-20','2026-11-27'))
+        index.write_text('{"images":{"different-digest":{}}}')
+        git('add','.');git('commit','-qm','Refresh cache')
+        directory=self.root/'inventories';old=directory/'image-scan-pending';new=directory/'image-gateway'
+        old.mkdir(parents=True);new.mkdir()
+        (old/'factory-image-review.json').write_text(json.dumps({'current':True,'kind':'pending','image':'docker.io/kyuz0/ai-sandbox-factory-gateway@sha256:'+'a'*64}))
+        inventory=json.dumps({'components':[{'name':'fixture','version':'1'}]})
+        (old/'factory-image.cdx.json').write_text(inventory);(new/'gateway.cdx.json').write_text(inventory)
+        self.diff.side_effect=REAL_RUN
+        report={'review_head':prior,'components':{'bases':{'changed':False}}}
+        self.assertFalse(maintenance.meaningful_update(report,directory))
+        host=self.root/'ai_sandbox_factory/updates.py';host.write_text('HOST_ONLY_CHANGE = True\n')
+        git('add',str(host));git('commit','-qm','Host-only change')
+        self.assertFalse(maintenance.meaningful_update(report,directory))
+        recipe.write_text(recipe.read_text().replace('RUN true','RUN false'))
+        git('add',str(recipe));git('commit','-qm','Change runtime')
+        self.assertTrue(maintenance.meaningful_update(report,directory))
+
+    def test_shared_stable_digest_is_also_in_the_pending_proposal(self):
+        directory=self.root/'inventories';old=directory/'image-scan-shared';new=directory/'image-gateway'
+        old.mkdir(parents=True);new.mkdir()
+        reference='docker.io/kyuz0/ai-sandbox-factory-gateway@sha256:'+'a'*64
+        (old/'factory-image-review.json').write_text(json.dumps({'current':True,'kind':'stable','image':reference}))
+        inventory=json.dumps({'components':[{'name':'fixture','version':'1'}]})
+        (old/'factory-image.cdx.json').write_text(inventory);(new/'gateway.cdx.json').write_text(inventory)
+        index={'images':{'recipe':{'linux/amd64':reference}}}
+        self.api.return_value={'content':base64.b64encode(json.dumps(index).encode()).decode()}
+        report={'review_head':OLD,'components':{'pi':{'changed':True}}}
+        self.assertFalse(maintenance.meaningful_update(report,directory))
 
 
 class CandidateIndex(unittest.TestCase):
