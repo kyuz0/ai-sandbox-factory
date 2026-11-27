@@ -1,5 +1,6 @@
 """Explicit connector and package actions belong to app-owned jobs."""
 import tempfile
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -80,6 +81,7 @@ class DedicatedJobTests(unittest.TestCase):
         from ai_sandbox_factory.connector_dialogs import ConnectorSettings
         app = self.app()
         app.start_settings_job = Mock()
+        app.state_root = Path('/synthetic/state')
         connector = SimpleNamespace(external=True, id='release', title='Release status',
                                     routes=[('status', 'https://example.test/status')],
                                     reviewed_instructions={'service': 'Read release status', 'operations': {}})
@@ -93,6 +95,7 @@ class DedicatedJobTests(unittest.TestCase):
         control = object()
         args[2](lambda line: None, control)
         changes = app.service.update_settings.call_args.args[1]
+        self.assertEqual(json.loads(options['cli_recipe'].steps[0].stdin), changes)
         self.assertEqual(changes['expected_connector_routes'], {'release': dict(connector.routes)})
         self.assertEqual(changes['expected_connector_instructions'], {'release': connector.reviewed_instructions})
         self.assertIs(app.service.update_settings.call_args.args[3], control)
