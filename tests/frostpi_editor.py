@@ -211,7 +211,7 @@ def check_session_naming(page, frame, send, inside, output):
 
     def new_session():
         frame.get_by_role('button', name='New or resume session').click()
-        frame.locator('button.launcher-create').click()
+        frame.get_by_role('button', name=re.compile(r'\bNew session Start a clean Pi conversation$')).click()
         expect_title('New session')
 
     def expect_pi_name(name):
@@ -537,7 +537,7 @@ try {
         options_file.write_text(json.dumps(selection))
         inside('python3', '/usr/local/lib/sandbox-bootstrap.py')
         frame.get_by_role('button', name='New or resume session').click()
-        frame.locator('button.launcher-create').click()
+        frame.get_by_role('button', name=re.compile(r'\bNew session Start a clean Pi conversation$')).click()
         frame.locator('button.session-heading .session-title').filter(
             has_text=re.compile('^New session$')).wait_for(timeout=20000)
 
