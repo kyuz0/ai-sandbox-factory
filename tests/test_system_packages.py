@@ -16,8 +16,9 @@ class SystemPackagesTests(unittest.TestCase):
     def test_accepts_names_and_rejects_apt_flags_and_other_expressions(self):
         self.assertEqual(system_packages.package_names(['jq', 'g++', 'jq', 'python3.13']), ['g++', 'jq', 'python3.13'])
         for value in ('--allow-unauthenticated', 'curl-', 'curl=2', 'curl:amd64', '/tmp/pkg.deb', 'https://example.invalid', 'jq;id'):
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'Debian package names'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'Debian package names') as raised:
                 system_packages.package_names([value])
+            self.assertIn(repr(value),str(raised.exception))
 
     def test_host_exec_passes_only_clean_environment_and_keeps_existing_egress(self):
         command = system_packages.command(self.config, self.container, ['jq'])

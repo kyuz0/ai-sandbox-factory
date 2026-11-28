@@ -32,7 +32,7 @@ from .chat_history_ui import ChatTransfer, DeleteSandbox, EXPORT, IMPORT
 from .advisors_ui import AdvisorChoices
 from .editor_ui import EditorFields, EditorScreen, OpenWith
 from .settings_catalog import (
-    ADVISORS_LABEL, ADVISORS_PATH, CATEGORIES, EDIT_FORMS, Category,
+    ADVISORS_LABEL, ADVISORS_PATH, CATEGORIES, CONTROL_LABELS, EDIT_FORMS, Category, network_mode_label,
     HOSTED_PROVIDERS_LABEL, INSTALL_SYSTEM_PACKAGES, LOCAL_MODELS_LABEL, LOCAL_MODELS_PATH,
     MODEL_PROVIDERS_PATH, NETWORK_LABEL, NETWORK_MODE_LABEL, NETWORK_PATH,
     NO_SYSTEM_PROMPT_ADD_ON, PROVIDER_PLUGINS_LABEL, SYSTEM_PROMPT_LABEL, SYSTEM_PROMPT_LIBRARY_LABEL, WEB_SEARCH_LABEL,
@@ -838,10 +838,7 @@ class InstallSystemPackages(EntryDialog):
                     yield Input(id='system-package-names')
                     yield Static('Separate names with spaces or commas, for example jq ripgrep.', classes='setting-help')
                     yield Feedback(id='system-packages-error', markup=False)
-                yield Static(settings_effects.bullets([
-                    'Package scripts can run as root inside this sandbox.',
-                    'Install only packages you trust. The sandbox stays running.',
-                ]), id='system-packages-warning')
+                yield Static(settings_effects.bullets(system_packages.INSTALL_NOTES[:2]), id='system-packages-warning')
             with Horizontal(classes='dialog-actions'):
                 yield Button('Cancel', id='system-packages-cancel')
                 yield Button('Install packages', id='system-packages-install', variant='primary')
@@ -1393,10 +1390,6 @@ def model_sources_summary(local, count):
 
 def on_off(enabled):
     return 'on' if enabled else 'off'
-
-
-def network_mode_label(mode):
-    return 'Restricted' if mode == 'allowlist' else 'Unrestricted'
 
 
 def network_search_summary(mode, search):
@@ -2936,9 +2929,9 @@ class SettingsForm(Screen):
         with Collapsible(title=category.label, collapsed=True, id=category.section,
                          classes='spaced-form-fields'):
             with Vertical(classes='setting'):
-                yield Label('Tool approvals')
-                label = {'codex': 'Approve for me', 'claude': 'Auto',
-                         'agy': 'Allow configured tools'}[self.primary]
+                yield Label(CONTROL_LABELS['native_approval'])
+                from .settings_controls import NATIVE_APPROVAL_LABELS
+                label = NATIVE_APPROVAL_LABELS[self.primary]
                 yield Select([(label, 'automatic'), ('Ask for approval', 'manual')],
                              value=selected['native_approval'], allow_blank=False, id='native-approval', classes='native-approval-choice')
                 yield Static({'codex': 'Codex reviews actions that need permission.',
@@ -2970,7 +2963,7 @@ class SettingsForm(Screen):
         with Collapsible(title=category.label, collapsed=True, id=category.section,
                          classes='spaced-form-fields'):
             with Vertical(classes='setting'):
-                yield Checkbox('Enable the browser', id='primary-browser', value=selected['browser'])
+                yield Checkbox(CONTROL_LABELS['native_browser'], id='primary-browser', value=selected['browser'])
                 yield Static('The agent can open websites through the workspace network. '
                              'Open the viewer link to see and interact with its pages.', classes='setting-help checkbox-help')
 
@@ -3040,17 +3033,17 @@ class SettingsForm(Screen):
     def compose_approval_settings(self, category, value, selected):
         with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
             with Vertical(classes='setting'):
-                yield Checkbox('Use inner command sandbox', value=selected['inner_sandbox'], id='inner-sandbox')
+                yield Checkbox(CONTROL_LABELS['inner_sandbox'], value=selected['inner_sandbox'], id='inner-sandbox')
                 yield Static('Runs Bash with file and network limits. Bash can still edit the workspace.',
                              id='inner-sandbox-help', classes='setting-help checkbox-help', markup=False)
             with Vertical(classes='setting'):
-                yield Checkbox('Protect common credential files', value=selected['protect_credentials'], id='protect-credentials')
+                yield Checkbox(CONTROL_LABELS['protect_credentials'], value=selected['protect_credentials'], id='protect-credentials')
                 yield Static('Blocks file tools and sandboxed Bash from reading or writing .env files, private keys '
                              'and similar files.',
                              id='protect-credentials-help', classes='setting-help checkbox-help', markup=False)
             with Vertical(classes='setting'):
                 with Horizontal(id='approval-heading'):
-                    yield Label('Approval mode')
+                    yield Label(CONTROL_LABELS['approval'])
                     yield Button('? Explain', id='explain-approval')
                 yield Select([(label, mode) for mode, (label, _, _) in APPROVAL_MODES.items()],
                              value=selected['approval'], allow_blank=False, id='approval')
@@ -3146,7 +3139,7 @@ class SettingsForm(Screen):
             with Collapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
                 if key := WEB_SEARCH_OPTIONS.get(self.primary):
                     with Vertical(classes='setting'):
-                        yield Checkbox('Enable web search', id=self.primary + '-web-search', value=selected[key])
+                        yield Checkbox(CONTROL_LABELS['native_web_search'], id=self.primary + '-web-search', value=selected[key])
                         help_text = ('Allows Codex to search OpenAI’s index.' if self.primary == 'codex' else
                                      f'Allows {PRIMARY_AGENTS[self.primary]} to search the web.')
                         if self.editing:
@@ -3160,10 +3153,10 @@ class SettingsForm(Screen):
             yield WebAccessForm(selected['web_access'], self.defaults_mode)
 
     def compose_network_fields(self, value, selected):
+        from . import settings_catalog
         with Vertical(classes='setting'):
             yield Label(NETWORK_MODE_LABEL)
-            yield Select([('Restricted — only allowed destinations', 'allowlist'),
-                          ('Unrestricted — ordinary container network', 'unrestricted')],
+            yield Select(settings_catalog.NETWORK_MODES,
                          value=value['network'], allow_blank=False, id='network')
             if self.editing:
                 yield Static('Changing the network mode recreates the sandbox.', classes='setting-help')
@@ -3232,31 +3225,31 @@ class SettingsForm(Screen):
                 self.query_one('#document-search-summary', Details).set_rows([('Search mode', mode)])
 
     def compose_agent_tools(self, category, value, selected):
+        from .settings_controls import RECALL_CHOICES
         with WrappingCollapsible(title=category.label, collapsed=True, id=category.section, classes='spaced-form-fields'):
-            yield Checkbox('Enable optional subagents', value=value['subagents'], id='subagents')
+            yield Checkbox(CONTROL_LABELS['subagents'], value=value['subagents'], id='subagents')
             with Vertical(classes='setting'):
-                yield Label('Conversation recall')
-                yield Select([('Lite — search history on demand', 'lite'),
-                              ('Full — automatic history hints', 'full'), ('Off', 'off')],
+                yield Label(CONTROL_LABELS['compaction_recall'])
+                yield Select(RECALL_CHOICES,
                              value=selected['compaction_recall'], allow_blank=False, id='compaction-recall')
                 yield Static('Finds earlier details after conversation compaction. Full adds automatic hints and may reduce prefix-cache reuse.', classes='setting-help')
             with Vertical(classes='setting'):
-                yield Checkbox('Agent browser · Betterwright', value=selected['browser'], id='browser')
+                yield Checkbox(CONTROL_LABELS['browser'], value=selected['browser'], id='browser')
                 yield Static('Adds a browser with a live viewer for you to see and interact with its pages.', classes='setting-help checkbox-help')
             with Vertical(classes='setting browser-vault-setting', id='browser-vault-setting'):
-                yield Checkbox('Protect saved browser vault files', value=selected['protect_browser_credentials'], id='protect-browser-credentials')
+                yield Checkbox(CONTROL_LABELS['protect_browser_credentials'], value=selected['protect_browser_credentials'], id='protect-browser-credentials')
                 yield Static('Blocks native file tools from the saved vault; browser account selection and login still work.', classes='setting-help checkbox-help')
                 yield Static('', id='browser-vault-shell-help', classes='setting-help checkbox-help')
                 yield Static('Not isolation from malicious editor or Pi extensions with the same user permissions. Active browser sessions remain accessible to browser automation.', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
-                yield Checkbox('Question forms', value=selected['question_forms'], id='question-forms')
+                yield Checkbox(CONTROL_LABELS['question_forms'], value=selected['question_forms'], id='question-forms')
                 yield Static('Let Pi and FrostPi ask questions with choices and free-text answers.', classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
-                yield Checkbox('Goals', value=selected['goals'], id='goals')
+                yield Checkbox(CONTROL_LABELS['goals'], value=selected['goals'], id='goals')
                 yield Static('Use /goal to save an objective and keep working toward it across turns.',
                              classes='setting-help checkbox-help')
             with Vertical(classes='setting'):
-                yield Checkbox('Scheduled prompts', value=selected['scheduling'], id='scheduling')
+                yield Checkbox(CONTROL_LABELS['scheduling'], value=selected['scheduling'], id='scheduling')
                 yield Static('Run scheduled prompts while this chat is open.', classes='setting-help checkbox-help')
 
     def compose_skills(self, category, value, selected):

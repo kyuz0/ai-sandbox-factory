@@ -151,7 +151,7 @@ def remember_connection(state, value, address, port):
     path = Path(state) / 'editor-address.json'
     saved = json.loads(path.read_text()) if path.exists() else {}
     automatic = saved.get('automatic_address', '') if value['address'] else address
-    write_json(path, {'automatic_address': automatic, 'address': address, 'port': port})
+    write_json(path, {**saved, 'automatic_address': automatic, 'address': address, 'port': port})
 
 
 def authority(address, port):

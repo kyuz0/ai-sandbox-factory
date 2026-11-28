@@ -80,7 +80,7 @@ def verify_archive(path, checksum=None):
         raise ValueError('Browser editor archive checksum does not match the pinned release')
 
 
-def validate_head(head, host, scheme="http", *, embedded_navigation=False):
+def validate_head(head, host, scheme="http", *, embedded_navigation=False, toolbar_navigation=False):
     """Validate browser origin and authority before creating the fixed connector."""
     if len(head) > 16384:
         raise ValueError('Headers too large')
@@ -107,6 +107,9 @@ def validate_head(head, host, scheme="http", *, embedded_navigation=False):
                        headers.get('sec-fetch-dest') in ('document', 'iframe') and
                        (target.split('?', 1)[0] == '/' or
                         re.fullmatch(r'/c/[0-9a-f-]{36}', target.split('?', 1)[0])))
+    safe_navigation = safe_navigation or (toolbar_navigation and method == 'GET' and
+        headers.get('sec-fetch-mode') == 'navigate' and headers.get('sec-fetch-dest') == 'iframe'
+        and target.split('?', 1)[0] in ('/', '/login'))
     if headers.get('sec-fetch-site') == 'cross-site' or (
             headers.get('sec-fetch-site') == 'same-site' and not safe_navigation):
         raise ValueError('Cross-site request')
@@ -115,6 +118,25 @@ def validate_head(head, host, scheme="http", *, embedded_navigation=False):
     if any(k == 'forwarded' or k.startswith('x-forwarded-') for k in headers):
         raise ValueError('Forwarded headers are not accepted')
     return headers
+
+
+def frame_ancestors(lines, origins):
+    """Preserve application CSP directives while setting the allowed ancestors."""
+    result, found = [], False
+    for line in lines:
+        if not line:
+            continue
+        if line.lower().startswith('x-frame-options:'):
+            continue
+        if line.lower().startswith('content-security-policy:'):
+            parts = [part.strip() for part in line.split(':', 1)[1].split(';')
+                     if part.strip() and not part.strip().lower().startswith('frame-ancestors ')]
+            line = 'Content-Security-Policy: ' + '; '.join(parts + ["frame-ancestors 'self' " + ' '.join(origins)])
+            found = True
+        result.append(line)
+    if not found:
+        result.append("Content-Security-Policy: frame-ancestors 'self' " + ' '.join(origins))
+    return result + [''] * (len(lines) - len([line for line in lines if line]))
 
 
 class Relay:
@@ -128,12 +150,18 @@ class Relay:
         self.scheme = 'http'
         self.tasks = set()
         self.redirector = None
+        self.state = None
 
     def validate(self, head):
-        return validate_head(head, self.host, self.scheme)
+        return validate_head(head, self.host, self.scheme, toolbar_navigation=bool(self.toolbar_origin()))
+
+    def toolbar_origin(self):
+        from . import browser_shell
+        return browser_shell.origin(self.state) if self.state else ''
 
     def response_headers(self, lines):
-        return lines
+        toolbar = self.toolbar_origin()
+        return frame_ancestors(lines, [toolbar]) if toolbar else lines
 
     def request_head(self, head):
         return head
@@ -308,6 +336,7 @@ async def serve(container, cwd, preferences, state, ready=None, connection=None)
     for signum in (signal.SIGTERM, signal.SIGINT):
         asyncio.get_running_loop().add_signal_handler(signum, task.cancel)
     relay = Relay(container)
+    relay.state = state
     address, port = editor_settings.connection(state, preferences)
     if connection:
         prior = urlsplit(connection['url'])
@@ -377,6 +406,7 @@ async def serve(container, cwd, preferences, state, ready=None, connection=None)
         if selected == 'agy':
             from .native_browser_hub import AntigravityRelay
             agent_hub = AntigravityRelay(container, preferences['password_hash'], relay.scheme + '://' + relay.host)
+            agent_hub.state = state
             agent_hub.scheme = relay.scheme
             hub_port = urlsplit((connection or {}).get('hub_url') or '').port or 0
             agent_server = await asyncio.start_server(agent_hub.handle, host_platform.listen_address(address),

@@ -182,6 +182,7 @@ ai-sandbox-factory list --json
 ai-sandbox-factory show dev --section settings --json
 ai-sandbox-factory show dev --section containers
 ai-sandbox-factory show dev --section alerts
+ai-sandbox-factory show dev --section controls --json
 ai-sandbox-factory logs dev --follow
 ai-sandbox-factory shell dev
 ai-sandbox-factory exec dev -- python3 --version
@@ -198,6 +199,18 @@ To change settings, save only the fields you want to change, for example
 ai-sandbox-factory update dev --settings-file changes.json --preview --json
 ai-sandbox-factory update dev --settings-file changes.json
 ```
+
+`show --section controls` lists the browser toolbar's available fields, choices
+and current values for this agent. These describe existing Factory operations;
+they do not include sign-in credentials.
+
+To apply exactly the settings you reviewed, pass the `revision` returned by
+`update --preview` as `update --revision REVISION`. Factory refuses the change
+if another operation has changed the saved settings since that review.
+
+`install-system-packages dev --preview jq ripgrep` also supports review and
+`--revision`. Without `--preview`, it installs the packages in the running
+sandbox using the same operation as the terminal and browser controls.
 
 `--preview` checks the format and reports the runtime effect without applying
 anything. Builds, credentials and live prerequisites are checked when you apply.

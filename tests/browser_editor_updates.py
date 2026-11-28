@@ -10,7 +10,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from ai_sandbox_factory import browser_editor, editor_settings, operation_locks, sandbox
+from ai_sandbox_factory import browser_editor, browser_shell, editor_settings, operation_locks, sandbox
 from browser_editor_lifecycle import request
 
 
@@ -69,6 +69,8 @@ def check(root, image, proxy_image, archive):
 
     connection = None
     cookie = None
+    toolbar = None
+    token = None
 
     def verify(stage):
         current = browser_editor.runtime(state)
@@ -79,6 +81,11 @@ def check(root, image, proxy_image, archive):
         assert request(connection['url'])[0] == 302, stage
         assert inside('cat', '/home/node/update-marker') == 'private home preserved\n', stage
         assert (project / 'project-marker').read_text() == 'project preserved\n', stage
+        assert browser_shell.origin(state) == toolbar
+        code, _, body = request(toolbar, '/state', method='POST', body='{}', headers={
+            'Origin':toolbar,'Content-Type':'application/json','Authorization':'Bearer '+token})
+        assert code == 200, (stage,code,body)
+        assert json.loads(body)['editor'] == connection['url'], stage
         print('PASS same browser URL and authenticated cookie, project and private home: ' + stage, flush=True)
 
     # Cached images replace only the build cost. All engine operations, bootstrap,
@@ -93,8 +100,13 @@ def check(root, image, proxy_image, archive):
             rebuild()
             assert browser_editor.runtime(state) is None
             print('PASS update and rebuild do not launch an editor that was not open', flush=True)
-            browser_editor.open_browser_editor(saved(), state, archive=str(archive),
-                                               background=True, open_tab=False)
+            browser_shell.open_editor(saved(), state, archive=str(archive), background=True, open_tab=False)
+            toolbar = browser_shell.origin(state)
+            pair = browser_shell.control(state,'pair').split('pair=')[1]
+            code, _, body = request(toolbar, '/pair', method='POST', body=json.dumps({'code':pair}),
+                headers={'Origin':toolbar,'Content-Type':'application/json'})
+            assert code == 200, body
+            token = json.loads(body)['token']
             connection = browser_editor.runtime(state)
             status, headers, _ = request(connection['url'], '/login', method='POST',
                 body=urlencode({'password': 'disposable-editor-password'}),
@@ -152,6 +164,7 @@ def check(root, image, proxy_image, archive):
             assert sandbox.inspect(saved(), workspace)['Id'] == previous
             verify('editor startup rollback')
 
+            browser_shell.stop(state)
             browser_editor.stop(state)
             sandbox.down(saved())
             for action in (update, rebuild):
@@ -170,6 +183,7 @@ def check(root, image, proxy_image, archive):
                     print(f'Cannot collect logs for {container}: {error}', flush=True)
             raise
         finally:
+            browser_shell.stop(state)
             browser_editor.stop(state)
             sandbox.delete(saved(), state)
             for resource in (['ps', '-aq'], ['volume', 'ls', '-q'], ['network', 'ls', '-q']):

@@ -39,6 +39,42 @@ container. [Sign-in options](usage.md#choose-a-coding-agent)
 Codex opens directly to chat without its welcome walkthrough. Its native model,
 reasoning and approval controls remain available.
 
+## Sandbox toolbar
+
+Select the small tab at the top centre of the page to open **Settings** or
+**Full screen**. The toolbar hides while you work in the editor. Escape closes
+the settings panel without applying its draft.
+
+Settings shows the choices relevant to this sandbox:
+
+| Setting | Available changes |
+| --- | --- |
+| Network mode | Restricted or Unrestricted |
+| Allowed destinations | Hosts, ports and website categories in Restricted mode |
+| Approvals / Approvals & sandbox | The selected agent's approval mode; Pi's file and command protections |
+| Pi features | Optional subagents, conversation recall, Betterwright, question forms, goals and scheduled prompts |
+| Web Search / Browser | Built-in web search and the agent browser for Codex, Claude Code and Antigravity |
+| Resources | Memory limit and prebuilt or locally built images |
+| Starting directory | The folder used by the next client or terminal launch |
+| Install system packages | Debian packages installed in the running container |
+
+Choose a setting, make your changes, then select **Review change**. The review
+explains whether applying will interrupt work or take effect on a later launch.
+The editor reconnects at its original address after a successful replacement.
+Package installation and live destination changes leave it running.
+Failures keep their diagnostic output in the panel so you can correct the input
+and retry. Closing the panel or reloading the page does not cancel an accepted job.
+
+Model connections, sign-ins, connectors, host folders and profile editing keep
+their existing Factory forms. Open **More information** in a section for details
+about its settings.
+
+Factory runs the toolbar on the host, at a separate address from the editor.
+The one-use link that **Open** opens, or the CLI prints with `--no-open`, connects
+this browser tab to this sandbox's controls. Treat that link as private. Reloading the connected tab works; to
+connect a new tab or recover after Factory's toolbar process restarts, choose
+**Open** again. Editor extensions and agents do not receive control credentials.
+
 ## Chat attachments
 
 Paste an image into Codex, or use the attachment button in Claude Code or
@@ -74,7 +110,8 @@ Stopping the sandbox stops both clients.
 
 When an update or rebuild replaces the main agent sandbox, Factory restarts an
 open editor at the same address with its existing connection settings. Refresh
-that browser tab to reconnect. If replacement fails, the previous sandbox and
+that browser tab to reconnect; changes applied from the toolbar reconnect it
+automatically. If replacement fails, the previous sandbox and
 editor are restored. An editor that was closed stays closed.
 
 ## Upload files in VS Code
@@ -125,8 +162,9 @@ ai-sandbox-factory browser-editor NAME --stop
 ```
 
 `open` uses the saved client. The `browser-editor` command without `--background`
-runs in the foreground; Ctrl+C stops it. `--no-open` prints the address without
-opening a tab.
+runs a newly opened editor in the foreground; Ctrl+C stops it. Opening an editor
+that is already running leaves its existing supervisor in charge. `--no-open`
+prints the editor address and one-use toolbar link without opening a tab.
 
 ## Access boundaries
 

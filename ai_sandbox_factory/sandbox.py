@@ -1077,6 +1077,8 @@ def _delete(config, state):
     # A checked listing also prevents discarding state when the engine is unavailable.
     volumes = set(run([config['engine'], 'volume', 'ls', '--format', '{{.Name}}'],
                       capture=True).stdout.splitlines())
+    from . import browser_shell
+    browser_shell.stop(state)
     down(config, remove=True)
     for volume in names(config)[2:]:
         if volume in volumes:
@@ -1602,9 +1604,18 @@ def apply_aws_settings(config, state, value, *, approval=None, apply_gate=None):
 
 
 @runtime_context.publish_after_save
-def apply_settings(config, state, changes, *, apply_gate=None):
+def apply_settings(config, state, changes, *, apply_gate=None, revision=None):
+    from . import settings_plan
+    settings_plan.check(state, revision)
+    changes = settings_plan.normalize(config, state, changes)
     if changes == {}:
         print('No settings were supplied; nothing changed.')
+        return
+    if settings_plan.network_rules_only(config, changes):
+        if updating.begin_apply(apply_gate):
+            selected = options(changes.get('options', config.get('options')))
+            update_network(config, state, changes.get('allowlist', (state / 'allowlist.txt').read_text()),
+                           selected['website_groups'], curlie_revision=changes.get('curlie_list'))
         return
     config = primary_workspace.normalize(config)
     if isinstance(changes, dict) and 'image_source' in changes:
@@ -1859,7 +1870,8 @@ def open_selected(config, state, mode=None):
         if selected != 'pi' or mode == 'pi':
             up(config, state)
         if mode == 'browser':
-            return browser_editor.open_browser_editor(config, state, background=True)
+            from . import browser_shell
+            return browser_shell.open_editor(config, state, background=True)
         if selected == 'pi' and (config.get('local_model_ports') or config.get('model_providers')):
             initialize_models(config, state)
     # The interactive terminal must not hold the lock for the whole session.
@@ -2020,6 +2032,8 @@ def main(*, startup_notice=''):
             cmd.add_argument('--revision', required=True, help='Frozen revision returned by profile-review')
         if command == 'install-system-packages':
             cmd.add_argument('packages', nargs='+', help='Debian package names')
+            cmd.add_argument('--preview', action='store_true', help='Review package names and installation effects without installing')
+            cmd.add_argument('--revision', help='Install only if settings match the reviewed revision')
         if command == 'browser-editor':
             cmd.add_argument('--archive', help='Use a downloaded copy of the pinned code-server archive')
             cmd.add_argument('--background', action='store_true', help='Keep the editor running after this command exits')
@@ -2060,6 +2074,7 @@ def main(*, startup_notice=''):
         if command == 'update':
             cmd.add_argument('--settings-file', required=True, help='JSON object with editable saved settings; use - for stdin')
             cmd.add_argument('--preview', action='store_true', help='Inspect requested settings and runtime effects without applying them')
+            cmd.add_argument('--revision', help='Apply only if settings still match the revision returned by --preview')
         if command in ('exec', 'pi'):
             cmd.add_argument('args', nargs=argparse.REMAINDER)
         if command == 'check':
@@ -2119,6 +2134,14 @@ def main(*, startup_notice=''):
                 else:
                     manager.save_configuration(draft, print)
             return
+    if args.command == 'install-system-packages' and args.preview:
+        from . import settings_plan
+        state = host_platform.resolve_path(args.state_dir) / args.name
+        with operation_locks.sandbox(args.name, 'review package installation for'):
+            from .cli_support import emit
+            cli_lifecycle.operations.Service(state.parent).config(args.name)
+            emit(args, {**system_packages.preview(args.packages), 'revision': settings_plan.revision(state)})
+        return
     if args.command == 'update' and args.preview:
         from .cli_support import emit, read_json
         manager = cli_lifecycle.operations.Service(host_platform.resolve_path(args.state_dir))
@@ -2291,13 +2314,17 @@ def sandbox_command(args, state, parser):
     elif args.command == 'up':
         up(config, state)
     elif args.command == 'down':
+        from . import browser_shell
+        browser_shell.stop(state)
         down(config)
     elif args.command == 'delete':
         delete(config, state)
     elif args.command == 'update':
-        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate)
+        apply_settings(config, state, json.loads(Path(args.settings_file).read_text()), apply_gate=args.apply_gate, revision=args.revision)
     elif args.command == 'install-system-packages':
         try:
+            from . import settings_plan
+            settings_plan.check(state, args.revision)
             system_packages.install(config, args.packages, args.apply_gate)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             raise SystemExit(f'Error: {error}') from None
@@ -2339,16 +2366,17 @@ def sandbox_command(args, state, parser):
                 print('Replacing the main agent sandbox; saved workspace and home are preserved.', flush=True)
                 profile_replacement.apply(original, config, state)
     elif args.command == 'browser-editor':
-        from . import browser_editor
+        from . import browser_editor, browser_shell
         if not args.stop and not args.background:
-            browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
+            browser_shell.open_editor(config, state, args.archive, args.background, not args.no_open)
         else:
             with operation_locks.sandbox(args.name, 'change the browser editor for'):
                 config = recover_profile(config, state)
                 if args.stop:
+                    browser_shell.stop(state)
                     browser_editor.stop(state)
                 else:
-                    browser_editor.open_browser_editor(config, state, args.archive, args.background, not args.no_open)
+                    browser_shell.open_editor(config, state, args.archive, args.background, not args.no_open)
     elif args.command == 'open':
         open_selected(config, state, args.editor)
     elif args.command == 'configure':

@@ -9,6 +9,8 @@ class Category(NamedTuple):
 
 NETWORK_LABEL = 'Network'
 NETWORK_MODE_LABEL = 'Network mode'
+NETWORK_MODES = (('Restricted — only allowed destinations', 'allowlist'),
+                 ('Unrestricted — ordinary container network', 'unrestricted'))
 WEB_SEARCH_LABEL = 'Web Search'
 LOCAL_MODELS_LABEL = 'Local models'
 HOSTED_PROVIDERS_LABEL = 'Built-in hosted providers'
@@ -19,6 +21,26 @@ SYSTEM_PROMPT_LIBRARY_LABEL = 'System prompt add-ons'
 NO_SYSTEM_PROMPT_ADD_ON = 'No add-on'
 PI_FEATURES_LABEL = 'Pi features'
 INSTALL_SYSTEM_PACKAGES = 'Install system packages…'
+
+CONTROL_LABELS = {
+    'approval': 'Approval mode',
+    'inner_sandbox': 'Use inner command sandbox',
+    'protect_credentials': 'Protect common credential files',
+    'subagents': 'Enable optional subagents',
+    'compaction_recall': 'Conversation recall',
+    'browser': 'Agent browser · Betterwright',
+    'protect_browser_credentials': 'Protect saved browser vault files',
+    'question_forms': 'Question forms',
+    'goals': 'Goals',
+    'scheduling': 'Scheduled prompts',
+    'native_browser': 'Enable the browser',
+    'native_web_search': 'Enable web search',
+    'native_approval': 'Tool approvals',
+}
+
+
+def network_mode_label(mode):
+    return dict((value, label) for label, value in NETWORK_MODES)[mode].split(" — ")[0]
 
 
 # In display order. A focus target opens the shared settings form for a saved

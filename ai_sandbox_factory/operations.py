@@ -305,7 +305,26 @@ class Service:
             yield config
 
     def preview_settings(self, name, changes):
-        from . import aws_access, connector_settings, folders, sandbox_advisors, sandbox_ssh
+        from . import settings_plan
+        with operation_locks.sandbox(name, 'review settings for'):
+            state = self.state / name
+            requested = changes
+            changes = settings_plan.normalize(self.config(name), state, changes)
+            result = self._preview_settings(name, changes)
+            result['revision'] = settings_plan.revision(state)
+            if not changes and isinstance(requested, dict) and set(requested) == {'network'}:
+                from .settings_catalog import network_mode_label
+                label = network_mode_label(requested['network'])
+                result['notes'] = [f'Network mode is already {label}.']
+            if settings_plan.curlie_needed(self.config(name),changes):
+                from . import curlie_catalog
+                result['notes'].append(f'The Curlie website list ({curlie_catalog.DOWNLOAD_SIZE}) will be downloaded.')
+            if isinstance(changes, dict) and changes.get('network') == 'unrestricted' and (state / 'allowlist.txt').read_text().strip():
+                result['notes'].append('Clears the additional allowed destinations.')
+            return result
+
+    def _preview_settings(self, name, changes):
+        from . import aws_access, connector_settings, folders, sandbox_advisors, sandbox_ssh, settings_plan
         config = self.config(name)
         native = coding_agent(config) != 'pi'
         special = {'approval_model', 'native_approval', 'codex_web_search', 'claude_web_search', 'agy_web_search',
@@ -370,6 +389,8 @@ class Service:
                  'Keeps project files, private home and saved chats.']
         if not changes:
             effect, notes = 'none', ['No settings were supplied.']
+        elif settings_plan.network_rules_only(config, changes):
+            effect, notes = 'live-network', ['Updates the network gateway rules. The main agent sandbox stays running.']
         elif set(changes) == {'aws_access'} and candidate['aws_access'] == config.get('aws_access', {}):
             effect, notes = 'none', ['No AWS access settings changed.']
         elif set(changes) == {'aws_access'}:
@@ -401,11 +422,19 @@ class Service:
                 effect, notes = 'none', ['Image setup is already set to this choice.']
             else:
                 effect, notes = 'next-build', ['Saves image setup for future builds.']
+        completion = {
+            'next-build': 'Image setup saved for future builds.',
+            'restart': 'Settings saved. Restart the sandbox to use them.',
+            'next-launch': ('Web search saved. Restart the selected agent to use it.' if requested
+                            else 'Starting directory saved for the next client or terminal launch.'),
+            'next-turn': 'Approval model saved for the next agent turn.',
+        }.get(effect)
         return {'name': name, 'changes': changes, 'runtime_effect': effect, 'notes': notes,
+                **({'completion':completion} if completion else {}),
                 'validation': 'Settings format checked. Builds, credentials and live prerequisites are checked when applying.'}
 
     def save_editor(self, name, changes, log=lambda _: None):
-        from . import browser_editor
+        from . import browser_editor, browser_shell
         with self.changing(name, 'save editor settings for'):
             state = self.state / name
             previous = editor_settings.load(state)
@@ -413,6 +442,7 @@ class Service:
             editor_settings.tls_context(value)
             if value == previous:
                 return {'changed': False, 'editor_stopped': False}
+            browser_shell.stop(state)
             running = browser_editor.active(state)
             if running:
                 log('Saving editor settings stops this browser editor and interrupts its active reply. Saved chats are kept.')
@@ -846,11 +876,14 @@ class Service:
             self.run_update(['update', name, '--settings-file', str(path)], log, update)
             self.setup(name, draft, key, log)
 
-    def update_settings(self, name, settings, log, update=None):
+    def update_settings(self, name, settings, log, update=None, *, revision=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-settings-') as temp:
             path = Path(temp) / 'settings.json'
             write_json(path, settings)
-            self.run_update(['update', name, '--settings-file', str(path)], log, update)
+            args = ['update', name, '--settings-file', str(path)]
+            if revision is not None:
+                args += ['--revision', revision]
+            self.run_update(args, log, update)
 
     def ssh_settings(self, name, settings, log, git_identity, update=None):
         with tempfile.TemporaryDirectory(prefix='sandbox-ssh-') as temp:

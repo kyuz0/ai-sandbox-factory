@@ -192,3 +192,28 @@ The viewer key rotates on restart. Session links are capabilities, visible in
 chat history. Sessions share the container Unix user, so their identifiers prevent
 accidental mix-ups rather than providing isolation against malicious container code.
 The viewer trusts the client and DevTools frontend supplied by the installed browser image.
+
+## Browser settings controls
+
+The browser toolbar runs in a host process with a separate origin and lifetime
+from the editor. It authorizes one sandbox using an in-memory bearer exchanged
+through a one-use link. The browser keeps it in session storage bound to its
+own top-level window; editor-opened popups cannot reuse inherited storage.
+Requests require the exact Host, Origin and bearer. Editor cookies and messages
+cannot authorize a change. Explicitly stopping the editor stops its toolbar;
+container replacement leaves the toolbar and accepted job running.
+
+`settings_controls.py` declares labels, field types, choices and agent relevance.
+The browser renders these descriptors; `show --section controls` exposes the
+same catalogue. `prepare()` translates a form into existing CLI inputs while
+preserving unrelated saved options. Preview and execution use shared operations,
+with a revision check under the lifecycle lock. The browser handler accepts a
+review identifier, never an arbitrary command, sandbox name or host path.
+
+To expose an existing setting, add a `Field` to its group and remove its entry
+from the dedicated-workflow list. The completeness test requires every new
+option to be exposed or assigned to an existing specialised form. Put validation
+and runtime effects in the shared operation, reuse labels and choices in the
+TUI, and test the permitted case, rejected input and failure/retry. A new
+operation needs a named CLI route and an explicit adapter; do not add browser-only
+execution logic. Credentials and host file selection retain their dedicated forms.

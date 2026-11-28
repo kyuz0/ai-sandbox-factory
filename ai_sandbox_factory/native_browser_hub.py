@@ -105,13 +105,5 @@ class AntigravityRelay(Relay):
         return self.scheme + '://' + self.host + path + ('?' + parsed.query if parsed.query else '')
 
     def response_headers(self, lines):
-        # Only this sandbox's editor may embed the native panel. Other local
-        # applications and other sandboxes do not inherit its browser origin.
-        result = []
-        for line in lines:
-            if line.lower().startswith('content-security-policy:'):
-                parts = [part.strip() for part in line.split(':', 1)[1].split(';')
-                         if part.strip() and not part.strip().lower().startswith('frame-ancestors ')]
-                line = 'Content-Security-Policy: ' + '; '.join(parts + ["frame-ancestors 'self' " + self.editor_origin])
-            result.append(line)
-        return result
+        from .browser_editor import frame_ancestors
+        return frame_ancestors(lines, [self.editor_origin, *([self.toolbar_origin()] if self.toolbar_origin() else [])])

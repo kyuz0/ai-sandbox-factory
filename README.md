@@ -91,6 +91,11 @@ client, choose **Actions… → Open with…** and pick one, such as Pi CLI. [Us
 Add Debian packages to a running sandbox with **Actions… → Install system packages…**.
 [Installing system packages](docs/usage.md#install-system-packages)
 
+In the browser editor, the small tab at the top opens **Settings** and **Full screen**.
+Change network rules, approvals and other common settings, or install packages,
+without returning to the terminal. Review the effect before applying.
+[Browser toolbar](docs/browser-editor.md#sandbox-toolbar)
+
 Make permanent profile changes with **Actions… → Profile and services… → Make profile editable…**.
 Factory creates a separate writable copy outside the project for you or your agent.
 Use **Editable profile… → Review changes…** to review and apply later edits.

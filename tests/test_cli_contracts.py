@@ -16,6 +16,20 @@ from test_cli_management import CliCase
 
 
 class CliContracts(CliCase):
+    def test_browser_controls_discovery_and_package_preview_are_read_only(self):
+        from ai_sandbox_factory import settings_controls
+        state = self.sandbox()
+        before = self.tree(state)
+        with patch.object(sandbox, 'run') as engine:
+            result, _ = self.json_ok('show','demo','--section','controls')
+            self.assertEqual(result,json.loads(json.dumps(settings_controls.describe(json.loads((state/'config.json').read_text()),state))))
+            preview, _ = self.json_ok('install-system-packages','demo','--preview','jq','ripgrep')
+            self.assertEqual(preview['packages'],['jq','ripgrep'])
+            self.assertEqual(preview['runtime_effect'],'install')
+            self.assertEqual(len(preview['revision']),64)
+            engine.assert_not_called()
+        self.assertEqual(self.tree(state),before)
+
     def test_create_image_source_precedence(self):
         self.ok('defaults', 'set', '--settings-file', self.file('defaults.json', {'image_source': 'local'}))
         config = self.file('create.json', {'image_source': 'prebuilt'})

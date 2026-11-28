@@ -2132,13 +2132,35 @@ also check Git history, local-origin pushes and dirty edits across restart, add
 that some Windows drive mounts reject. These checks use cached images and do not
 establish an image-build result.
 
-### Browser toolbar experiment
+### Browser toolbar
 
-`PYTHONPATH=.:tests .venv/bin/python tests/browser_settings_probe.py --output /tmp/factory-toolbar`
-compares host-controlled settings with an unsafe same-origin control. It uses
-private fixture state; Apply never changes a live sandbox. Add `--image IMAGE_ID`
-for an owned offline container with the pinned editor. See the
-[probe guide](tests/fixtures/browser_settings/README.md) for scope and dependencies.
-Inspect the screenshots alongside its origin, authorization, review/retry,
-fullscreen, clipboard and editor-reconnect results. This fixture is not a release
-gate or proof that browser-driven Factory lifecycle updates are implemented.
+```sh
+PYTHONPATH=.:tests .venv/bin/python -m unittest test_browser_shell test_settings_controls
+PYTHONPATH=.:tests .venv/bin/python tests/browser_toolbar_controls.py --output /tmp/factory-toolbar-controls
+PYTHONPATH=.:tests .venv/bin/python tests/browser_toolbar.py --output /tmp/factory-toolbar
+PYTHONPATH=.:tests .venv/bin/python tests/browser_toolbar.py --agent codex --output /tmp/factory-toolbar-codex
+PYTHONPATH=.:tests .venv/bin/python tests/browser_editor_updates.py --image WORKSPACE_IMAGE --proxy-image PROXY_IMAGE
+```
+
+The browser fixture creates its own prebuilt sandbox, opens the shipped editor
+and FrostPi, and applies changes through the host toolbar and real CLI workers.
+It checks review/cancel, stale settings, replacement, live destination updates,
+package-manager failure and retry, approval and feature changes, and persistent
+addresses and sign-in. It verifies FrostPi accepts a draft after replacements.
+Screenshots cover desktop, narrow and short windows; inspect them for readable
+controls, keyboard focus and visible actions. Add `--headed` for desktop review.
+The native-client variant accepts `codex`, `claude` or `agy`. It opens the actual
+extension, saves approvals and web search, checks the required restart notice,
+and verifies the editor stays running. It makes no model requests or host sign-in copies.
+The controls fixture checks all four agents and asynchronous form errors without an engine.
+
+The HTTP tests reject foreign origins, missing authority, reused pairing links,
+unknown fields and superseded reviews. Browser checks exercise cross-origin
+editor access, inherited popup storage and fullscreen isolation. Worker-death
+checks distinguish a stopped supervisor from a still-running CLI child.
+The editor-update fixture verifies toolbar continuity during actual startup and
+editor failures, rollback, ordinary rebuilds, and stopped or unopened editors.
+All runtime fixtures remove their own containers, volumes and networks.
+
+New settings must pass the catalogue completeness check: expose an appropriate
+control or name its dedicated workflow. See [extending browser settings](docs/architecture.md#browser-settings-controls).
