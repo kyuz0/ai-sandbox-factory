@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Factory toolbar experiment</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/panel.css">
+<div id="toolbar-shell">
+  <header id="toolbar" hidden aria-label="Sandbox toolbar">
+    <span id="sandbox-name">example</span>
+    <span id="mode">Network mode: Restricted</span>
+    <button id="settings" aria-expanded="false">Settings</button>
+    <button id="fullscreen">Full screen</button>
+  </header>
+  <button id="handle" aria-controls="toolbar" aria-expanded="false"
+          aria-label="Show sandbox toolbar" title="Sandbox toolbar">
+    <span class="chevron" aria-hidden="true"></span>
+  </button>
+</div>
+<main>
+  <iframe id="editor" title="Sandbox browser editor" referrerpolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox"
+          allow="clipboard-read; clipboard-write"></iframe>
+</main>
+<aside id="drawer" hidden aria-label="Sandbox settings">
+  <div class="heading">
+    <h1>Sandbox settings</h1><button id="close" aria-label="Close settings">×</button>
+  </div>
+  <p class="secondary">example</p>
+  <label id="network-label" for="network">Network mode</label>
+  <select id="network">
+    <option value="allowlist">Restricted</option><option value="unrestricted">Unrestricted</option>
+  </select>
+  <details>
+    <summary>More information</summary>
+    <p>Restricted uses the sandbox’s allowed destinations. Unrestricted allows ordinary outbound connections.</p>
+  </details>
+  <div id="review" hidden>
+    <h2>Review change</h2><p id="change"></p><ul id="effect"></ul>
+  </div>
+  <p id="status" role="status"></p>
+  <div class="actions">
+    <button id="cancel">Cancel</button><button id="apply" class="primary" disabled>Review change</button>
+  </div>
+</aside>
+<script src="/panel.js"></script>
+</html>

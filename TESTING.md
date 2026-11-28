@@ -2131,3 +2131,14 @@ also check Git history, local-origin pushes and dirty edits across restart, add
 `--profile-root "$HOME/sandbox-profiles"`. Git requires lock-file metadata changes
 that some Windows drive mounts reject. These checks use cached images and do not
 establish an image-build result.
+
+### Browser toolbar experiment
+
+`PYTHONPATH=.:tests .venv/bin/python tests/browser_settings_probe.py --output /tmp/factory-toolbar`
+compares host-controlled settings with an unsafe same-origin control. It uses
+private fixture state; Apply never changes a live sandbox. Add `--image IMAGE_ID`
+for an owned offline container with the pinned editor. See the
+[probe guide](tests/fixtures/browser_settings/README.md) for scope and dependencies.
+Inspect the screenshots alongside its origin, authorization, review/retry,
+fullscreen, clipboard and editor-reconnect results. This fixture is not a release
+gate or proof that browser-driven Factory lifecycle updates are implemented.
